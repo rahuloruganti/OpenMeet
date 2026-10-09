@@ -1,0 +1,31 @@
+[package]
+name = "openmeet"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.99"
+license = "MIT"
+description = "Local-first meeting notes — foundation preview"
+
+[lib]
+name = "openmeet_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.2", features = ["tray-icon"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+time = { version = "0.3", features = ["formatting"] }
+tempfile = "3"
+cpal = "=0.18.2"
+ringbuf = "0.4"
+hound = "3.5"
+tokio = { version = "1", features = ["time"] }

@@ -1,0 +1,258 @@
+:root {
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  color: #1d302c;
+  background: #f3f6f4;
+  line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  border: 1px solid #aabbb4;
+  background: #fff;
+  border-radius: 6px;
+  padding: 0.5rem 0.8rem;
+  color: inherit;
+}
+button:hover:not(:disabled) {
+  background: #e6efe9;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+:focus-visible {
+  outline: 3px solid #176b53;
+  outline-offset: 3px;
+}
+input:not([type="checkbox"]),
+textarea,
+select {
+  width: 100%;
+  border: 1px solid #aabbb4;
+  border-radius: 6px;
+  padding: 0.6rem;
+  background: white;
+  color: inherit;
+}
+textarea {
+  resize: vertical;
+}
+label {
+  display: block;
+  font-weight: 600;
+  margin: 0.6rem 0;
+}
+label input:not([type="checkbox"]),
+output {
+  display: block;
+  margin-top: 0.3rem;
+}
+output {
+  font-weight: normal;
+  overflow-wrap: anywhere;
+}
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+h1 {
+  margin-bottom: 0;
+  letter-spacing: -0.04em;
+}
+h2 {
+  font-size: 1.15rem;
+}
+h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.app {
+  max-width: 1280px;
+  margin: auto;
+  padding: 1.5rem 2rem;
+}
+header,
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+.section-heading {
+  margin-bottom: 1rem;
+}
+.section-heading h2 {
+  margin: 0;
+}
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  color: #4c675e;
+}
+.recording-state {
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  background: #e0ebe5;
+  white-space: nowrap;
+}
+.recording-state.recording {
+  color: #922d2d;
+  background: #ffe5e5;
+}
+.recording-state.paused {
+  color: #734b00;
+  background: #ffedc2;
+}
+.preview-banner {
+  background: #fff3cf;
+  border: 1px solid #dcca96;
+  padding: 0.8rem 1rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+}
+.error,
+.notice {
+  padding: 0.8rem;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.error {
+  border: 1px solid #b84646;
+  background: #ffeded;
+  margin-bottom: 1rem;
+}
+.notice {
+  background: #dff1e6;
+}
+.recorder,
+.settings {
+  background: #fff;
+  border: 1px solid #d4dfd8;
+  border-radius: 10px;
+  padding: 1rem;
+}
+.check {
+  font-size: 0.85rem;
+  font-weight: 400;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.primary {
+  background: #176b53;
+  color: white;
+  border-color: #176b53;
+}
+.primary:hover:not(:disabled) {
+  background: #10533f;
+}
+main {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 400px;
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+aside {
+  min-width: 0;
+}
+article {
+  padding: 1.3rem;
+  background: white;
+  border: 1px solid #d4dfd8;
+  border-radius: 10px;
+  min-width: 0;
+}
+.meeting-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.meeting-list button {
+  width: 100%;
+  text-align: left;
+  margin-bottom: 0.5rem;
+  overflow-wrap: anywhere;
+}
+.meeting-list button[aria-current="true"] {
+  border-color: #176b53;
+  background: #e6efe9;
+}
+.meeting-list span,
+.meeting-list time {
+  display: block;
+  font-size: 0.78rem;
+  color: #50675e;
+}
+.muted {
+  color: #50675e;
+  font-weight: 400;
+}
+.empty {
+  padding-top: 4rem;
+  text-align: center;
+}
+.settings summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.settings p {
+  margin-top: 1rem;
+}
+footer {
+  padding: 1rem 0;
+  font-size: 0.8rem;
+  color: #50675e;
+}
+.close-panel {
+  position: fixed;
+  right: 2rem;
+  bottom: 2rem;
+  max-width: 420px;
+  background: white;
+  border: 2px solid #176b53;
+  border-radius: 10px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 30px #0003;
+}
+.close-panel button {
+  margin-right: 0.5rem;
+}
+@media (max-width: 800px) {
+  .app {
+    padding: 1rem;
+  }
+  main {
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 0.8rem;
+  }
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
