@@ -25,7 +25,7 @@ impl Core {
                 transaction.execute_batch(include_str!("../migrations/001_foundation.sql"))?;
                 transaction.commit()?;
             }
-            1 | 2 => {}
+            1..=5 => {}
             _ => {
                 return Err(AppError::new(
                     "schema_version",
@@ -50,6 +50,19 @@ impl Core {
             tx.commit()?;
             db.pragma_update(None, "foreign_keys", "ON")?;
         }
+        // Each script sets its own `user_version`, so migration N runs for databases below N.
+        let additive = [
+            include_str!("../migrations/003_local_model.sql"),
+            include_str!("../migrations/004_merge_model.sql"),
+            include_str!("../migrations/005_transcripts.sql"),
+        ];
+        for (number, script) in (3..).zip(additive) {
+            if version < number {
+                let tx = db.transaction()?;
+                tx.execute_batch(script)?;
+                tx.commit()?;
+            }
+        }
         // A restarted process cannot still own a recording from the previous process.
         db.execute(
             "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')",
@@ -68,17 +81,14 @@ impl Core {
         self.recording.clone()
     }
 
-    pub fn start(&mut self, title: &str, simulation: bool) -> Result<RecordingState> {
-        if !simulation {
-            return Err(AppError::new(
-                "not_implemented",
-                "Real audio capture is not implemented. This build supports simulation only.",
-            ));
-        }
-        if matches!(
-            self.recording.status,
-            CaptureStatus::Recording | CaptureStatus::Paused
-        ) || self.capture_report.is_some()
+    /// Rejects a new session while one is active or unfinished; returns the trimmed title.
+    fn begin<'a>(&self, title: &'a str) -> Result<&'a str> {
+        if self.audio.is_some()
+            || self.capture_report.is_some()
+            || matches!(
+                self.recording.status,
+                CaptureStatus::Recording | CaptureStatus::Paused
+            )
         {
             return Err(AppError::new(
                 "already_recording",
@@ -92,6 +102,11 @@ impl Core {
                 "Use a meeting title between 1 and 160 characters.",
             ));
         }
+        Ok(title)
+    }
+
+    pub fn start(&mut self, title: &str) -> Result<RecordingState> {
+        let title = self.begin(title)?;
         let id = Uuid::new_v4().to_string();
         let transaction = self.db.transaction()?;
         transaction.execute(
@@ -122,25 +137,7 @@ impl Core {
                 "Confirm participant consent before recording.",
             ));
         }
-        if self.audio.is_some()
-            || self.capture_report.is_some()
-            || matches!(
-                self.recording.status,
-                CaptureStatus::Recording | CaptureStatus::Paused
-            )
-        {
-            return Err(AppError::new(
-                "already_recording",
-                "Stop the active recording first.",
-            ));
-        }
-        let title = title.trim();
-        if title.is_empty() || title.chars().count() > 160 {
-            return Err(AppError::new(
-                "invalid_title",
-                "Use a title between 1 and 160 characters.",
-            ));
-        }
+        let title = self.begin(title)?;
         if options.microphone_id.is_empty() || options.output_id.is_empty() {
             return Err(AppError::new(
                 "audio_devices",
@@ -187,23 +184,7 @@ impl Core {
                     "UPDATE meetings SET status = 'paused', capture_error = ?1 WHERE id = ?2",
                     params![error, self.recording.meeting_id],
                 )?;
-                self.capture_event("error")?;
             }
-        }
-        Ok(())
-    }
-
-    fn capture_event(&self, kind: &str) -> Result<()> {
-        if let Some(audio) = &self.audio {
-            self.db.execute(
-                "INSERT INTO capture_events(meeting_id, kind, offset_us) VALUES (?1, ?2, ?3)",
-                params![
-                    self.recording.meeting_id,
-                    kind,
-                    i64::try_from(audio.elapsed_us())
-                        .map_err(|_| AppError::new("clock", "Recording timeline overflowed."))?
-                ],
-            )?;
         }
         Ok(())
     }
@@ -220,7 +201,6 @@ impl Core {
                 "UPDATE meetings SET status = 'paused' WHERE id = ?1",
                 [&self.recording.meeting_id],
             )?;
-            self.capture_event("paused")?;
             result?;
             Ok(self.recording_state())
         } else {
@@ -245,7 +225,6 @@ impl Core {
                 self.recording.status = CaptureStatus::Paused;
                 return Err(error.into());
             }
-            self.capture_event("resumed")?;
             Ok(self.recording_state())
         } else {
             self.transition(CaptureStatus::Paused, CaptureStatus::Recording, "recording")
@@ -356,14 +335,15 @@ impl Core {
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let summary = self
+        let (summary, summary_provider, summary_model) = self
             .db
             .query_row(
-                "SELECT markdown FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
+                "SELECT markdown, provider, model FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
                 [id],
-                |row| row.get(0),
+                |row| Ok((Some(row.get(0)?), Some(row.get(1)?), Some(row.get(2)?))),
             )
-            .optional()?;
+            .optional()?
+            .unwrap_or((None, None, None));
         let mut query = self.db.prepare("SELECT kind, path, timing_path, device_name, sample_rate, channels, frames, dropped_frames, finalized FROM tracks WHERE meeting_id = ?1 ORDER BY kind")?;
         let tracks = query
             .query_map([id], |row| {
@@ -386,8 +366,42 @@ impl Core {
             notes_revision,
             segments,
             summary,
+            summary_provider,
+            summary_model,
             tracks,
         })
+    }
+
+    /// Replaces only previously generated (whisper) segments; fixtures and notes are untouched.
+    pub fn replace_transcript(&mut self, id: &str, segments: &[Segment]) -> Result<()> {
+        let tx = self.db.transaction()?;
+        tx.execute(
+            "DELETE FROM segments WHERE meeting_id = ?1 AND source = 'whisper'",
+            [id],
+        )?;
+        for segment in segments {
+            tx.execute(
+                "INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES (?1, ?2, ?3, ?4, ?5, 'whisper', 'final')",
+                params![id, segment.speaker, segment.start_ms, segment.end_ms, segment.text],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Appends a new summary version; earlier summaries are retained.
+    pub fn save_summary(
+        &mut self,
+        id: &str,
+        provider: &str,
+        model: &str,
+        markdown: &str,
+    ) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES (?1, 'summary-v1', ?2, ?3, ?4)",
+            params![id, model, provider, markdown],
+        )?;
+        Ok(())
     }
 
     pub fn save_notes(&mut self, id: &str, markdown: &str, expected_revision: i64) -> Result<i64> {
@@ -409,7 +423,7 @@ impl Core {
 
     pub fn settings(&self) -> Result<Settings> {
         Ok(self.db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, merge_model FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -417,9 +431,22 @@ impl Core {
                     pause_shortcut: row.get(1)?,
                     microphone_id: row.get(2)?,
                     output_id: row.get(3)?,
+                    merge_model: row.get(4)?,
                 })
             },
         )?)
+    }
+
+    pub fn save_merge_model(&mut self, model: &str, available: &[String]) -> Result<Settings> {
+        if model.is_empty() || model.len() > 256 || !available.iter().any(|name| name == model) {
+            return Err(AppError::new(
+                "merge_model_unavailable",
+                "Choose an available Merge model. Refresh the Merge model list and try again.",
+            ));
+        }
+        self.db
+            .execute("UPDATE settings SET merge_model = ?1 WHERE id = 1", [model])?;
+        self.settings()
     }
 
     pub fn save_shortcut(&mut self, shortcut: &str) -> Result<Settings> {
@@ -493,10 +520,9 @@ mod tests {
     #[test]
     fn simulation_transitions_and_idempotent_stop() {
         let mut core = Core::open(Path::new(":memory:")).unwrap();
-        assert!(core.start("Real", false).is_err());
         assert!(core.pause().is_err());
-        let first = core.start("Demo", true).unwrap();
-        assert!(core.start("Duplicate", true).is_err());
+        let first = core.start("Demo").unwrap();
+        assert!(core.start("Duplicate").is_err());
         assert_eq!(core.pause().unwrap().status, CaptureStatus::Paused);
         assert!(core.pause().is_err());
         assert_eq!(core.resume().unwrap().status, CaptureStatus::Recording);
@@ -512,13 +538,50 @@ mod tests {
     }
 
     #[test]
+    fn desktop_start_rejects_denied_consent_and_missing_devices_without_capture() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = Core::open(&dir.path().join("meetings.db")).unwrap();
+        let options = audio::CaptureOptions {
+            microphone_id: "mic".into(),
+            output_id: "out".into(),
+        };
+        assert_eq!(
+            core.start_desktop("Denied", options.clone(), false)
+                .unwrap_err()
+                .code,
+            "consent_required"
+        );
+        for options in [
+            audio::CaptureOptions {
+                microphone_id: String::new(),
+                ..options.clone()
+            },
+            audio::CaptureOptions {
+                output_id: String::new(),
+                ..options
+            },
+        ] {
+            assert_eq!(
+                core.start_desktop("Missing device", options, true)
+                    .unwrap_err()
+                    .code,
+                "audio_devices"
+            );
+        }
+        assert_eq!(core.recording_state().status, CaptureStatus::Idle);
+        assert!(core.list_meetings().unwrap().is_empty());
+        assert!(core.audio.is_none());
+        assert!(!core.audio_root.exists());
+    }
+
+    #[test]
     fn restart_preserves_notes_and_marks_interrupted_sessions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meetings.db");
         let id;
         {
             let mut core = Core::open(&path).unwrap();
-            id = core.start("Interrupted", true).unwrap().meeting_id.unwrap();
+            id = core.start("Interrupted").unwrap().meeting_id.unwrap();
             core.save_notes(&id, "Important user notes", 0).unwrap();
         }
         let core = Core::open(&path).unwrap();
@@ -541,6 +604,127 @@ mod tests {
         assert!(core
             .save_notes(&id, &"x".repeat(1024 * 1024 + 1), 1)
             .is_err());
+    }
+
+    #[test]
+    fn real_transcripts_replace_only_whisper_rows_and_summaries_keep_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        let id = core.create_fixture().unwrap();
+        let line = |text: &str, start: i64| Segment {
+            speaker: "Others".into(),
+            start_ms: start,
+            end_ms: start + 10,
+            text: text.into(),
+        };
+        core.replace_transcript(&id, &[line("first run", 0), line("second", 20)])
+            .unwrap();
+        core.replace_transcript(&id, &[line("rerun", 5)]).unwrap();
+        let texts: Vec<_> = core
+            .get_meeting(&id)
+            .unwrap()
+            .segments
+            .into_iter()
+            .map(|s| s.text)
+            .collect();
+        assert!(texts.contains(&"rerun".to_string()));
+        assert!(!texts.iter().any(|t| t == "first run" || t == "second"));
+        assert_eq!(texts.len(), 3, "two fixture segments plus the rerun");
+        assert_eq!(
+            core.get_meeting(&id).unwrap().summary_provider.as_deref(),
+            Some("fixture")
+        );
+        core.save_summary(&id, "merge", "anthropic/claude-haiku-5-5", "# S")
+            .unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        assert_eq!(detail.summary.as_deref(), Some("# S"));
+        assert_eq!(detail.summary_provider.as_deref(), Some("merge"));
+        assert_eq!(
+            detail.summary_model.as_deref(),
+            Some("anthropic/claude-haiku-5-5")
+        );
+        let bad = Segment {
+            speaker: "Nobody".into(),
+            ..line("x", 0)
+        };
+        assert_eq!(
+            core.replace_transcript(&id, &[bad]).unwrap_err().code,
+            "database"
+        );
+        assert_eq!(core.get_meeting(&id).unwrap().segments.len(), 3);
+    }
+
+    #[test]
+    fn merge_model_selection_requires_an_available_model_and_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        assert_eq!(core.settings().unwrap().merge_model, None);
+        let available = vec!["openai/gpt-5.4".to_string()];
+        for invalid in ["", "gated/model", &"m".repeat(300)] {
+            assert_eq!(
+                core.save_merge_model(invalid, &available).unwrap_err().code,
+                "merge_model_unavailable"
+            );
+        }
+        assert_eq!(core.settings().unwrap().merge_model, None);
+        core.save_merge_model("openai/gpt-5.4", &available).unwrap();
+        drop(core);
+        let core = Core::open(&path).unwrap();
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.merge_model.as_deref(), Some("openai/gpt-5.4"));
+    }
+
+    #[test]
+    fn migrations_preserve_populated_v2_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch(include_str!("../migrations/001_foundation.sql"))
+                .unwrap();
+            db.execute_batch(include_str!("../migrations/002_capture.sql"))
+                .unwrap();
+            db.execute_batch("PRAGMA foreign_keys = ON;
+                INSERT INTO meetings(id, title, started_at, source, status) VALUES ('old', 'Existing fixture', '2026-10-10', 'fixture', 'stopped');
+                INSERT INTO notes(meeting_id, user_markdown, revision) VALUES ('old', 'Existing notes', 7);
+                INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES ('old', 'You', 0, 100, 'Fictional text', 'fixture', 'final');
+                INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES ('old', 'fixture', 'hand-written', 'fixture', 'Existing summary');
+                UPDATE settings SET vault_folder = 'saved-folder', microphone_id = 'mic', output_id = 'out';").unwrap();
+        }
+        let core = Core::open(&path).unwrap();
+        let detail = core.get_meeting("old").unwrap();
+        assert_eq!(detail.user_markdown, "Existing notes");
+        assert_eq!(detail.notes_revision, 7);
+        assert_eq!(detail.segments.len(), 1);
+        assert_eq!(detail.summary.as_deref(), Some("Existing summary"));
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.vault_folder.as_deref(), Some("saved-folder"));
+        assert_eq!(settings.microphone_id.as_deref(), Some("mic"));
+        assert_eq!(settings.output_id.as_deref(), Some("out"));
+        assert_eq!(settings.merge_model, None);
+        assert_eq!(
+            core.db
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            5
+        );
+        assert_eq!(detail.segments[0].text, "Fictional text");
+        assert_eq!(
+            core.db
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            core.db
+                .pragma_query_value(None, "foreign_keys", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
     }
 
     #[test]

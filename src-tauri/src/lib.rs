@@ -1,7 +1,9 @@
 pub mod audio;
 mod domain;
 mod export;
+mod merge;
 mod storage;
+mod stt;
 
 use domain::*;
 use std::{
@@ -144,7 +146,7 @@ async fn start_recording(
 ) -> Result<RecordingState> {
     with_core(app, true, move |core, _| {
         if simulation {
-            core.start(&title, true)
+            core.start(&title)
         } else {
             core.start_desktop(
                 &title,
@@ -163,11 +165,6 @@ async fn list_audio_devices() -> Result<audio::Devices> {
     tauri::async_runtime::spawn_blocking(audio::devices)
         .await
         .map_err(|_| AppError::new("audio", "Device discovery failed."))?
-}
-
-#[tauri::command]
-async fn get_audio_health(app: AppHandle) -> Result<Option<audio::Health>> {
-    with_core(app, false, |core, _| Ok(core.audio_health())).await
 }
 
 #[tauri::command]
@@ -206,6 +203,158 @@ async fn create_fixture_meeting(app: AppHandle) -> Result<String> {
 #[tauri::command]
 async fn get_settings(app: AppHandle) -> Result<Settings> {
     with_core(app, false, |core, _| core.settings()).await
+}
+
+#[tauri::command]
+async fn merge_key_status() -> Result<bool> {
+    blocking(merge::key_present).await
+}
+
+#[tauri::command]
+async fn import_merge_key() -> Result<bool> {
+    blocking(|| merge::import_key_from_env().map(|()| true)).await
+}
+
+#[tauri::command]
+async fn delete_merge_key() -> Result<bool> {
+    blocking(|| merge::delete_key().map(|()| false)).await
+}
+
+#[tauri::command]
+async fn list_merge_models() -> Result<Vec<merge::MergeModel>> {
+    blocking(merge::list_models).await
+}
+
+#[tauri::command]
+async fn save_merge_model(app: AppHandle, model: String) -> Result<Settings> {
+    // Network discovery must not hold the recording/storage mutex.
+    let available: Vec<String> = list_merge_models()
+        .await?
+        .into_iter()
+        .filter(|candidate| candidate.available)
+        .map(|candidate| candidate.model)
+        .collect();
+    with_core(app, false, move |core, _| {
+        core.save_merge_model(&model, &available)
+    })
+    .await
+}
+
+fn stt_root(app: &AppHandle) -> Result<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .map(|dir| dir.join("stt"))
+        .map_err(|_| AppError::new("stt", "The app data folder is unavailable."))
+}
+
+#[tauri::command]
+async fn stt_status(app: AppHandle) -> Result<stt::Status> {
+    let root = stt_root(&app)?;
+    Ok(stt::status(&root))
+}
+
+/// Downloads the pinned engine and models. Only runs on an explicit user action.
+#[tauri::command]
+async fn stt_install(app: AppHandle) -> Result<stt::Status> {
+    let root = stt_root(&app)?;
+    let emitter = app.clone();
+    blocking(move || {
+        stt::install(&root, |progress| {
+            let _ = emitter.emit("stt_progress", progress);
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn transcribe_meeting(app: AppHandle, id: String) -> Result<()> {
+    let root = stt_root(&app)?;
+    let detail = {
+        let id = id.clone();
+        with_core(app.clone(), false, move |core, _| core.get_meeting(&id)).await?
+    };
+    if matches!(detail.meeting.status.as_str(), "recording" | "paused") {
+        return Err(AppError::new(
+            "stt",
+            "Stop the recording before transcribing it.",
+        ));
+    }
+    let tracks: Vec<audio::Track> = detail
+        .tracks
+        .into_iter()
+        .filter(|track| track.finalized && track.frames > 0)
+        .collect();
+    if tracks.is_empty() {
+        return Err(AppError::new(
+            "stt",
+            "This meeting has no finalized audio tracks to transcribe.",
+        ));
+    }
+    let segments = blocking(move || stt::transcribe(&root, &tracks)).await?;
+    with_core(app, true, move |core, _| {
+        core.replace_transcript(&id, &segments)
+    })
+    .await
+}
+
+/// Sends notes + transcript TEXT (never audio) to Merge. Requires explicit consent each call.
+#[tauri::command]
+async fn generate_summary(app: AppHandle, id: String, consent: bool) -> Result<()> {
+    if !consent {
+        return Err(AppError::new(
+            "consent_required",
+            "Confirm what will be sent before generating a summary.",
+        ));
+    }
+    let (detail, settings) = {
+        let id = id.clone();
+        with_core(app.clone(), false, move |core, _| {
+            Ok((core.get_meeting(&id)?, core.settings()?))
+        })
+        .await?
+    };
+    let model = settings.merge_model.ok_or_else(|| {
+        AppError::new(
+            "merge_model_missing",
+            "Choose a Merge model in Settings first.",
+        )
+    })?;
+    let transcript = detail
+        .segments
+        .iter()
+        .map(|segment| {
+            format!(
+                "[{}:{:02}] {}: {}",
+                segment.start_ms / 60_000,
+                segment.start_ms / 1000 % 60,
+                segment.speaker,
+                segment.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let notes = detail.user_markdown.clone();
+    if notes.trim().is_empty() && transcript.is_empty() {
+        return Err(AppError::new(
+            "summary_empty",
+            "There are no notes or transcript to summarize. Nothing was sent.",
+        ));
+    }
+    let used_model = model.clone();
+    let markdown = blocking(move || merge::summarize(&model, &notes, &transcript)).await?;
+    with_core(app, true, move |core, _| {
+        core.save_summary(&id, "merge", &used_model, &markdown)
+    })
+    .await
+}
+
+/// Runs blocking network, disk, or subprocess work off the async runtime.
+async fn blocking<T: Send + 'static>(
+    task: impl FnOnce() -> Result<T> + Send + 'static,
+) -> Result<T> {
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|_| AppError::new("task", "The background task could not be completed."))?
 }
 
 #[tauri::command]
@@ -332,16 +481,18 @@ pub fn run() {
                 })
                 .build(app)?;
             let monitor_app = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    let result = with_core(monitor_app.clone(), false, |core, app| {
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let result = tauri::async_runtime::block_on(with_core(
+                    monitor_app.clone(),
+                    false,
+                    |core, app| {
                         core.poll_audio()?;
                         if let Some(health) = core.audio_health() { let _ = app.emit("audio_health", health); }
                         Ok(())
-                    }).await;
-                    if let Err(error) = result { let _ = monitor_app.emit("backend_error", error.message); }
-                }
+                    },
+                ));
+                if let Err(error) = result { let _ = monitor_app.emit("backend_error", error.message); }
             });
             Ok(())
         })
@@ -355,7 +506,10 @@ pub fn run() {
             list_meetings, get_meeting, get_recording_state, get_startup_warning,
             start_recording, pause_recording, resume_recording, stop_recording,
             save_notes, create_fixture_meeting, get_settings, save_settings,
-            choose_vault_folder, export_meeting, close_application, list_audio_devices, get_audio_health,
+            choose_vault_folder, export_meeting, close_application, list_audio_devices,
+            merge_key_status, import_merge_key, delete_merge_key, list_merge_models,
+            save_merge_model,
+            stt_status, stt_install, transcribe_meeting, generate_summary,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");

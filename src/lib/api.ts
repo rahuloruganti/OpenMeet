@@ -29,6 +29,8 @@ export type MeetingDetail = {
   notes_revision: number;
   segments: Segment[];
   summary: string | null;
+  summary_provider: string | null;
+  summary_model: string | null;
   tracks: Array<{
     kind: string;
     path: string;
@@ -51,6 +53,7 @@ export type AudioHealth = {
     kind: string;
     frames: number;
     dropped_frames: number;
+    gaps: number;
     peak: number;
     callback_age_ms: number;
   }>;
@@ -60,6 +63,26 @@ export type Settings = {
   pause_shortcut: string;
   microphone_id: string | null;
   output_id: string | null;
+  merge_model: string | null;
+};
+export type MergeModel = {
+  model: string;
+  display_name: string | null;
+  available: boolean;
+  unavailable_reason: string | null;
+};
+export type SttStatus = {
+  engine: boolean;
+  model: boolean;
+  vad: boolean;
+  installed: boolean;
+  missing_bytes: number;
+  supported: boolean;
+};
+export type SttProgress = {
+  stage: string;
+  downloaded: number;
+  total: number;
 };
 export type ExportResult = { path: string; created_copy: boolean };
 
@@ -87,7 +110,6 @@ export const api = {
       devices,
     }),
   listDevices: () => invoke<AudioDevices>("list_audio_devices"),
-  audioHealth: () => invoke<AudioHealth | null>("get_audio_health"),
   pause: () => invoke<RecordingState>("pause_recording"),
   resume: () => invoke<RecordingState>("resume_recording"),
   stop: () => invoke<RecordingState>("stop_recording"),
@@ -96,6 +118,17 @@ export const api = {
     invoke<number>("save_notes", { id, markdown, expectedRevision }),
   getStartupWarning: () => invoke<string | null>("get_startup_warning"),
   getSettings: () => invoke<Settings>("get_settings"),
+  mergeKeyStatus: () => invoke<boolean>("merge_key_status"),
+  importMergeKey: () => invoke<boolean>("import_merge_key"),
+  deleteMergeKey: () => invoke<boolean>("delete_merge_key"),
+  listMergeModels: () => invoke<MergeModel[]>("list_merge_models"),
+  saveMergeModel: (model: string) =>
+    invoke<Settings>("save_merge_model", { model }),
+  sttStatus: () => invoke<SttStatus>("stt_status"),
+  sttInstall: () => invoke<SttStatus>("stt_install"),
+  transcribeMeeting: (id: string) => invoke<void>("transcribe_meeting", { id }),
+  generateSummary: (id: string, consent: boolean) =>
+    invoke<void>("generate_summary", { id, consent }),
   saveSettings: (pauseShortcut: string) =>
     invoke<Settings>("save_settings", { pauseShortcut }),
   chooseVaultFolder: () => invoke<Settings>("choose_vault_folder"),
@@ -105,6 +138,8 @@ export const api = {
     listen<RecordingState>("recording_state", (event) =>
       callback(event.payload),
     ),
+  onSttProgress: (callback: (progress: SttProgress) => void) =>
+    listen<SttProgress>("stt_progress", (event) => callback(event.payload)),
   onMeetingUpdated: (callback: () => void) =>
     listen("meeting_updated", callback),
   onCloseRequested: (callback: () => void) => listen("request_close", callback),

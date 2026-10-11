@@ -78,6 +78,8 @@ pub struct MeetingDetail {
     pub notes_revision: i64,
     pub segments: Vec<Segment>,
     pub summary: Option<String>,
+    pub summary_provider: Option<String>,
+    pub summary_model: Option<String>,
     pub tracks: Vec<crate::audio::Track>,
 }
 
@@ -87,6 +89,7 @@ pub struct Settings {
     pub pause_shortcut: String,
     pub microphone_id: Option<String>,
     pub output_id: Option<String>,
+    pub merge_model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

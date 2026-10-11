@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime},
@@ -25,6 +25,7 @@ const STREAM_ERROR: u32 = 1;
 const OVERFLOW: u32 = 2;
 const IO_ERROR: u32 = 4;
 const SUSPENDED: u32 = 8;
+const TIMESTAMP: u32 = 16;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AudioDevice {
@@ -38,6 +39,7 @@ pub struct Devices {
     pub outputs: Vec<AudioDevice>,
 }
 #[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CaptureOptions {
     pub microphone_id: String,
     pub output_id: String,
@@ -59,6 +61,7 @@ pub struct TrackHealth {
     pub kind: String,
     pub frames: u64,
     pub dropped_frames: u64,
+    pub gaps: u64,
     pub peak: f32,
     pub callback_age_ms: u64,
 }
@@ -106,12 +109,16 @@ struct Shared {
     recording: AtomicBool,
     generation: AtomicU64,
     fault: AtomicU32,
+    // First device error text (never audio content); set outside the data callback.
+    detail: Mutex<Option<String>>,
     counters: [Counters; 2],
 }
 #[derive(Default)]
 struct Counters {
     frames: AtomicU64,
     dropped: AtomicU64,
+    // WASAPI data discontinuities (cpal Xrun): non-fatal gaps in captured audio.
+    gaps: AtomicU64,
     peak: AtomicU32,
     last_callback: AtomicU64,
 }
@@ -122,6 +129,7 @@ impl Shared {
             recording: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             fault: AtomicU32::new(0),
+            detail: Mutex::new(None),
             counters: [Counters::default(), Counters::default()],
         }
     }
@@ -136,13 +144,41 @@ impl Shared {
         self.fault.fetch_or(reason, Ordering::SeqCst);
         self.recording.store(false, Ordering::SeqCst);
     }
+    /// Called from the stream error callback, which runs on the audio thread:
+    /// atomics and `try_lock` only. An Xrun is a gap in the audio, not a dead
+    /// stream, so it is counted and capture continues; anything else is fatal.
+    fn fail_stream(&self, index: usize, error: cpal::Error) {
+        if error.kind() == cpal::ErrorKind::Xrun {
+            self.counters[index].gaps.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        if let Ok(mut detail) = self.detail.try_lock() {
+            if detail.is_none() {
+                let track = if index == 0 {
+                    "microphone"
+                } else {
+                    "system output"
+                };
+                let text: String = error.to_string().chars().take(200).collect();
+                *detail = Some(format!("{track}: {text}"));
+            }
+        }
+        self.fail(STREAM_ERROR);
+    }
     fn error(&self) -> Option<String> {
         match self.fault.load(Ordering::SeqCst) {
             0 => None,
             bits if bits & IO_ERROR != 0 => Some("Audio disk write/finalization failed or WAV size limit reached. Stop and check free space; partial files are retained.".into()),
             bits if bits & OVERFLOW != 0 => Some("Audio queue overflowed. Both tracks paused; stop and start a new recording.".into()),
             bits if bits & SUSPENDED != 0 => Some("Capture was interrupted by sleep or a scheduling gap. Stop and start a new recording.".into()),
-            _ => Some("An audio device stopped responding. Both tracks paused; stop, check permissions/devices, and start again.".into()),
+            bits if bits & TIMESTAMP != 0 => Some("A device reported timestamps that moved backwards, so capture timing cannot be trusted. Both tracks paused; stop and start a new recording.".into()),
+            _ => {
+                let detail = self.detail.lock().ok().and_then(|d| d.clone());
+                Some(match detail {
+                    Some(detail) => format!("An audio device stopped responding ({detail}). Both tracks paused; stop, check permissions/devices, and start again."),
+                    None => "An audio device stopped responding. Both tracks paused; stop, check permissions/devices, and start again.".into(),
+                })
+            }
         }
     }
 }
@@ -293,10 +329,10 @@ fn stream(
                             index,
                             &mut producer,
                         ),
-                        None => shared.fail(STREAM_ERROR),
+                        None => shared.fail(TIMESTAMP),
                     }
                 },
-                move |_| fault.fail(STREAM_ERROR),
+                move |error| fault.fail_stream(index, error),
                 Some(Duration::from_secs(5)),
             )
             .map_err(audio_error)?;
@@ -442,9 +478,6 @@ impl Session {
             }
         }
     }
-    pub fn elapsed_us(&self) -> u64 {
-        self.shared.elapsed_us()
-    }
     pub fn pause(&self) -> Result<()> {
         self.shared.mute(); // Immediately revoke queued/in-flight callbacks before waiting for disk work.
         let (tx, rx) = mpsc::channel();
@@ -475,6 +508,7 @@ impl Session {
                     kind: if index == 0 { "mic" } else { "system" }.into(),
                     frames: c.frames.load(Ordering::Relaxed),
                     dropped_frames: c.dropped.load(Ordering::Relaxed),
+                    gaps: c.gaps.load(Ordering::Relaxed),
                     peak: if self.shared.recording.load(Ordering::SeqCst) {
                         f32::from_bits(c.peak.load(Ordering::Relaxed))
                     } else {
@@ -653,6 +687,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn frontend_device_payload_preserves_both_ids() {
+        let request = serde_json::json!({
+            "title": "Untitled meeting",
+            "simulation": false,
+            "consent": true,
+            "devices": { "microphoneId": "mic", "outputId": "out" }
+        });
+        let options: CaptureOptions = serde_json::from_value(request["devices"].clone()).unwrap();
+        assert_eq!(options.microphone_id, "mic");
+        assert_eq!(options.output_id, "out");
+        for invalid in [
+            serde_json::json!({ "microphoneId": "mic" }),
+            serde_json::json!({ "microphoneId": null, "outputId": "out" }),
+            serde_json::json!({ "microphoneId": 42, "outputId": "out" }),
+        ] {
+            assert!(serde_json::from_value::<CaptureOptions>(invalid).is_err());
+        }
+    }
+
+    #[test]
     #[ignore = "requires Windows audio devices; run with --ignored"]
     fn windows_devices_open_and_stop_writes_both_wavs() {
         let devices = devices().unwrap();
@@ -687,6 +741,25 @@ mod tests {
             assert_eq!(wav.spec().channels, track.channels);
             assert_eq!(wav.len() as i64, track.frames * i64::from(track.channels));
         }
+    }
+    #[test]
+    fn stream_failure_reports_which_device_and_why() {
+        let shared = Shared::new();
+        shared.recording.store(true, Ordering::SeqCst);
+        // An Xrun is a recorded gap, never a stop.
+        shared.fail_stream(0, cpal::ErrorKind::Xrun.into());
+        assert!(shared.recording.load(Ordering::SeqCst));
+        assert!(shared.error().is_none());
+        assert_eq!(shared.counters[0].gaps.load(Ordering::Relaxed), 1);
+        shared.fail_stream(1, cpal::ErrorKind::DeviceNotAvailable.into());
+        shared.fail_stream(0, cpal::ErrorKind::Other.into());
+        assert!(!shared.recording.load(Ordering::SeqCst));
+        let message = shared.error().unwrap();
+        assert!(message.contains("system output: The requested audio device is not available"));
+        assert!(!message.contains("microphone:"));
+        let timestamps = Shared::new();
+        timestamps.fail(TIMESTAMP);
+        assert!(timestamps.error().unwrap().contains("timestamps"));
     }
     #[test]
     fn paused_and_previous_generation_audio_is_never_accepted() {
