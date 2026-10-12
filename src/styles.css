@@ -993,3 +993,38 @@ pre {
 .ask-answer {
   margin-top: 16px;
 }
+
+.level-meters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.level-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+}
+
+.level-meter meter {
+  width: 80px;
+}
+
+.level-meter.warn span {
+  font-weight: 600;
+}
+
+.meeting-title-input {
+  font: inherit;
+  font-size: 1.6em;
+  font-weight: 600;
+}
+
+.export-options {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  margin: 16px 0 0;
+}

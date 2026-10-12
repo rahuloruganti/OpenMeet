@@ -42,6 +42,7 @@ export type MeetingDetail = {
     /** WAV size on disk; null if the file is missing. */
     size_bytes: number | null;
   }>;
+  summary_template: string | null;
 };
 export type AudioDevice = { id: string; name: string };
 export type AudioDevices = {
@@ -66,6 +67,12 @@ export type Settings = {
   microphone_id: string | null;
   output_id: string | null;
   merge_model: string | null;
+  export: ExportOptions;
+};
+export type ExportOptions = {
+  transcript: boolean;
+  summary: boolean;
+  filename: "title" | "date_title";
 };
 export type MergeModel = {
   model: string;
@@ -180,6 +187,11 @@ export const api = {
     invoke<SummaryVersion[]>("list_summaries", { id }),
   askMeeting: (id: string, question: string, consent: boolean) =>
     invoke<string>("ask_meeting", { id, question, consent }),
+  renameMeeting: (id: string, title: string) =>
+    invoke<string>("rename_meeting", { id, title }),
+  saveExportOptions: (options: ExportOptions) =>
+    invoke<Settings>("save_export_options", { options }),
+  recoverAudio: (id: string) => invoke<void>("recover_audio", { id }),
 };
 
 export function errorMessage(error: unknown): string {

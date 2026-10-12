@@ -12,6 +12,7 @@ import {
   api,
   type AudioHealth,
   type MeetingDetail,
+  type Settings,
   type SttProgress,
 } from "./lib/api";
 
@@ -61,6 +62,9 @@ vi.mock("./lib/api", async (original) => {
       planSummary: vi.fn(),
       listSummaries: vi.fn(),
       askMeeting: vi.fn(),
+      renameMeeting: vi.fn(),
+      saveExportOptions: vi.fn(),
+      recoverAudio: vi.fn(),
     },
   };
 });
@@ -82,14 +86,16 @@ const sample: MeetingDetail = {
   summary_model: "hand-written",
   segments: [],
   tracks: [],
+  summary_template: "fixture",
 };
 
-const initialSettings = {
+const initialSettings: Settings = {
   vault_folder: null,
   pause_shortcut: "CommandOrControl+Shift+Space",
   microphone_id: null,
   output_id: null,
   merge_model: null,
+  export: { transcript: true, summary: true, filename: "title" },
 };
 
 const notInstalled = {
@@ -1257,6 +1263,188 @@ describe("notes-first polish", () => {
       screen.getByText(/Import a Merge API key in Settings first/),
     ).toBeTruthy();
     expect(screen.getByText("A fictional summary.")).toBeTruthy();
+  });
+
+  it("renames on Enter and restores the title on Escape", async () => {
+    vi.mocked(api.renameMeeting).mockResolvedValue("Planning review");
+    await ready();
+    await userEvent.click(screen.getByRole("heading", { name: "Sample sync" }));
+    const input = screen.getByRole("textbox", { name: "Meeting title" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "Discarded edit{Escape}");
+    expect(screen.getByRole("heading", { name: "Sample sync" })).toBeTruthy();
+    expect(api.renameMeeting).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const again = screen.getByRole("textbox", { name: "Meeting title" });
+    expect((again as HTMLInputElement).value).toBe("Sample sync");
+    await userEvent.clear(again);
+    await userEvent.type(again, "  Planning review {Enter}");
+    expect(api.renameMeeting).toHaveBeenCalledWith(
+      "sample",
+      "  Planning review ",
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Planning review" }),
+    ).toBeTruthy();
+    expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
+  });
+
+  it("keeps the old title and shows the error when a rename is rejected", async () => {
+    vi.mocked(api.renameMeeting).mockRejectedValue({
+      code: "invalid_title",
+      message: "Use a meeting title between 1 and 160 characters.",
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+    await userEvent.clear(
+      screen.getByRole("textbox", { name: "Meeting title" }),
+    );
+    await userEvent.keyboard("{Enter}");
+    await screen.findByText(/between 1 and 160 characters/);
+    expect(screen.getByRole("heading", { name: "Sample sync" })).toBeTruthy();
+  });
+
+  it("shows labelled level meters and warns after sustained mic silence", async () => {
+    let publish: (health: AudioHealth) => void = () => {};
+    vi.mocked(api.onAudioHealth).mockImplementation(async (callback) => {
+      publish = callback;
+      return () => {};
+    });
+    vi.mocked(api.getRecordingState).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "desktop",
+      error: null,
+    });
+    const health = (mic: number): AudioHealth => ({
+      error: null,
+      tracks: [
+        {
+          kind: "mic",
+          frames: 1,
+          dropped_frames: 0,
+          gaps: 0,
+          peak: mic,
+          callback_age_ms: 5,
+        },
+        {
+          kind: "system",
+          frames: 1,
+          dropped_frames: 0,
+          gaps: 0,
+          peak: 0.3,
+          callback_age_ms: 5,
+        },
+      ],
+    });
+    await ready();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    act(() => publish(health(0)));
+    expect(screen.getByText("Mic: quiet")).toBeTruthy();
+    expect(screen.getByText("System: signal")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    clock.mockReturnValue(12_500);
+    act(() => publish(health(0)));
+    expect(screen.getByText("Mic: no signal for 11 s")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain(
+      "no signal for at least 10 seconds",
+    );
+    act(() => publish(health(0.2)));
+    expect(screen.getByText("Mic: signal")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    clock.mockRestore();
+  });
+
+  it("hides level meters for simulations", async () => {
+    let publish: (health: AudioHealth) => void = () => {};
+    vi.mocked(api.onAudioHealth).mockImplementation(async (callback) => {
+      publish = callback;
+      return () => {};
+    });
+    vi.mocked(api.getRecordingState).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "simulation",
+      error: null,
+    });
+    await ready();
+    act(() => publish({ error: null, tracks: [] }));
+    expect(screen.queryByText(/^Mic:/)).toBeNull();
+  });
+
+  it("saves export options from Settings", async () => {
+    vi.mocked(api.saveExportOptions).mockImplementation(async (options) => ({
+      ...initialSettings,
+      export: options,
+    }));
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Include transcript" }),
+    );
+    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
+      transcript: false,
+      summary: true,
+      filename: "title",
+    });
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("checkbox", {
+            name: "Include transcript",
+          }) as HTMLInputElement
+        ).checked,
+      ).toBe(false),
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "File name" }),
+      "date_title",
+    );
+    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
+      transcript: false,
+      summary: true,
+      filename: "date_title",
+    });
+  });
+
+  it("offers audio recovery only for interrupted recordings with unfinished tracks", async () => {
+    const interrupted: MeetingDetail = {
+      ...sample,
+      meeting: {
+        ...sample.meeting,
+        source: "desktop",
+        status: "interrupted",
+      },
+      tracks: [
+        {
+          kind: "mic",
+          path: "fictional-mic.wav",
+          size_bytes: null,
+          device_name: "Fictional microphone",
+          sample_rate: 48000,
+          frames: 0,
+          dropped_frames: 0,
+          finalized: false,
+        },
+      ],
+    };
+    vi.mocked(api.getMeeting).mockResolvedValue(interrupted);
+    vi.mocked(api.recoverAudio).mockImplementation(async () => {
+      vi.mocked(api.getMeeting).mockResolvedValue({
+        ...interrupted,
+        tracks: [{ ...interrupted.tracks[0], frames: 480, finalized: true }],
+      });
+    });
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Recover audio" }),
+    );
+    expect(api.recoverAudio).toHaveBeenCalledWith("sample");
+    await screen.findByText(/original files were left unchanged/);
+    expect(screen.queryByRole("button", { name: "Recover audio" })).toBeNull();
+    expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
   });
 });
 

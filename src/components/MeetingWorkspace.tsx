@@ -35,7 +35,7 @@ type Props = {
   notesStatus: string;
   tab: ContentTab;
   disabled: boolean;
-  /** "transcribe" | "summary" | "install" while a background job runs. */
+  /** "transcribe" | "summary" | "install" | "recover" while a background job runs. */
   job: string | null;
   speechReady: boolean;
   /** Why summary generation is unavailable, or null when it can run. */
@@ -57,6 +57,8 @@ type Props = {
   recordingThis: boolean;
   onDeleteMeeting: () => void;
   onDeleteAudio: () => void;
+  onRename: (title: string) => void;
+  onRecover: () => void;
 };
 
 export function MeetingWorkspace(props: Props) {
@@ -68,6 +70,7 @@ export function MeetingWorkspace(props: Props) {
   const [copyStatus, setCopyStatus] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const meetingId = selected?.meeting.id;
   const [deleting, setDeleting] = useState<"meeting" | "audio" | null>(null);
   const [typed, setTyped] = useState("");
@@ -77,6 +80,7 @@ export function MeetingWorkspace(props: Props) {
     setQuestion("");
     setDeleting(null);
     setTyped("");
+    setTitleDraft(null);
   }, [meetingId]);
   useEffect(() => {
     setVersionId(null);
@@ -145,12 +149,51 @@ export function MeetingWorkspace(props: Props) {
   };
   const blocked = disabled || job !== null || props.enhanceBlocked !== null;
   const contentScope = `your notes (${props.notes.length} characters) and the transcript text (${selected.segments.length} segments)`;
+  const recoverable =
+    meeting.source === "desktop" &&
+    meeting.status === "interrupted" &&
+    selected.tracks.some((track) => !track.finalized);
+  const startRename = () => {
+    if (!disabled) setTitleDraft(meeting.title);
+  };
 
   return (
     <article className="content-area">
       <div className="meeting-heading">
-        <h1 className="meeting-title">{meeting.title}</h1>
+        {titleDraft === null ? (
+          <h1 className="meeting-title" onClick={startRename}>
+            {meeting.title}
+          </h1>
+        ) : (
+          <input
+            className="meeting-title meeting-title-input"
+            aria-label="Meeting title"
+            autoFocus
+            maxLength={160}
+            value={titleDraft}
+            onChange={(event) => setTitleDraft(event.target.value)}
+            onBlur={() => setTitleDraft(null)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                setTitleDraft(null);
+                // The backend trims and validates; an invalid title is reported, not saved.
+                if (titleDraft !== meeting.title) props.onRename(titleDraft);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setTitleDraft(null);
+              }
+            }}
+          />
+        )}
         <div className="panel-actions">
+          <button
+            disabled={disabled || titleDraft !== null}
+            onClick={startRename}
+          >
+            Rename
+          </button>
           <button disabled={disabled} onClick={props.onExport}>
             Export Markdown
           </button>
@@ -229,6 +272,30 @@ export function MeetingWorkspace(props: Props) {
               : "Saved"}
         </span>
       </div>
+      {recoverable && (
+        <div
+          className="consent-card"
+          role="group"
+          aria-label="Interrupted recording"
+        >
+          <p>
+            This recording was interrupted before its audio files were finished,
+            so they cannot be transcribed yet.
+          </p>
+          <div className="panel-actions">
+            <button
+              disabled={disabled || job !== null}
+              onClick={props.onRecover}
+            >
+              {job === "recover" ? "Recovering…" : "Recover audio"}
+            </button>
+            <span className="muted">
+              Writes repaired copies next to the originals. The original files
+              are not changed.
+            </span>
+          </div>
+        </div>
+      )}
       <div className="content-tabs" role="tablist" aria-label="Meeting content">
         {contentTabs.map((item, index) => (
           <button
