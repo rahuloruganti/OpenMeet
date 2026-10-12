@@ -324,3 +324,25 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Outcome:** Committed the plan and numbered migrations as a base, then ran four worktree agents (core/export, library, transcript/audio, summaries) and merged them into `feat/stt-merge-summaries`, resolving conflicts by hand. The agents' worktrees started from `main`; three rebased onto the feature branch, the summaries agent's copied base was discarded and only its own files applied. Integration fixes: test fixtures for new fields, deleting audio now also removes the unreferenced original left by recovery, and repaired characters double-encoded by an earlier PowerShell edit. Schema v9. Details and open checks in `docs/implementation-status.md`.
 
 **Checks:** typecheck, lint, Prettier, 71 Vitest, build; cargo fmt, Clippy `-D warnings`, 57 Rust tests (hardware test ignored, not run), cargo build `--locked`, cargo-deny ok. No recording, playback, real transcription or Merge call; nothing pushed.
+
+## Project reinspection
+
+**Request:** Look at the project again and make note of the changes.
+
+**Findings:** Reviewed recent commits through 9497fd0, command bindings, migrations, backend feature implementations, feature plan and implementation status. The committed feature batch includes notes-only meetings, FTS5 search, guarded deletion, summary history/templates/copy, chunked summaries, meeting Q&A, rendered Markdown, rename, level meters, stop shortcut, playback/seek, timestamped notes, STT settings/progress/cancel, export options and interrupted-audio recovery; schema v9. Tracked files had no pending changes before this note; .claude/ and two older plan files were untracked. implementation-status.md still contains contradictory older claims (missing STT/summaries, no deletion UI, old test counts). Latest recorded full checks: 71 frontend and 57 Rust tests; not rerun during inspection. Native and hardware qualification remain open.
+
+
+## Native startup smoke check
+
+**Request:** Run the application and see if it works.
+
+**Outcome:** Started the local Vite server and existing native debug executable. Initial Computer Use launch stayed blank and later had no targetable window; a terminal diagnostic launch subsequently loaded the workspace and existing SQLite meeting library. Verified opening/closing Settings, switching to a stopped meeting, and opening Summary and Transcript tabs. Settings displayed the installed speech engine; both audio players loaded approximately 38-second durations. Startup reported pause-shortcut registration unavailable. Left the app running for the user.
+
+**Checks and limits:** Frontend typecheck passed. No recording, playback, transcription, cloud call, deletion, recovery, export, or note edit was performed. Full automated suites were not rerun. Startup inconsistency and shortcut registration remain unresolved; this smoke check is not end-to-end or hardware qualification.
+
+
+## Follow-up: pull request
+
+**Request:** Create a PR without Claude co-author lines; then include the user's ChatGPT-made UI changes.
+
+**Outcome:** Opened rahuloruganti/OpenMeet#2 (`feat/stt-merge-summaries` into `main`); no commit carries attribution trailers. Added the user's uncommitted UI changes (sidebar icon, export-folder flow, playback failure handling, settings/setup layout, styles, 5 new tests) as a separate commit, after fixing literal `` `n `` escapes in two log entries. Frontend checks on that tree: typecheck, lint, Prettier, 76 Vitest tests, build.

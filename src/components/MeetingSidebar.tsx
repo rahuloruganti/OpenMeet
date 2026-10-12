@@ -53,7 +53,17 @@ export function MeetingSidebar(props: Props) {
       <div className="sidebar-top">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            O
+            <svg
+              viewBox="0 0 24 24"
+              width="22"
+              height="22"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            >
+              <path d="M5 10v4M10 5v14M15 8v8M20 10v4" />
+            </svg>
           </span>
           <span className="brand-name">OpenMeet</span>
         </div>
@@ -65,11 +75,11 @@ export function MeetingSidebar(props: Props) {
           <span aria-hidden="true">＋</span> New recording
         </button>
         <button
-          className="sidebar-new"
+          className="sidebar-new secondary-new"
           disabled={disabled}
           onClick={props.onNewNote}
         >
-          New note
+          <span aria-hidden="true">＋</span> New note
         </button>
         <label className="search-label">
           <span className="sr-only">Search meetings</span>
@@ -77,16 +87,14 @@ export function MeetingSidebar(props: Props) {
             type="search"
             value={search}
             onChange={(event) => props.onSearch(event.target.value)}
-            placeholder="Search meetings…"
+            placeholder="Search notes & meetings…"
           />
         </label>
       </div>
       <h2 className="sidebar-section-title">Recent meetings</h2>
       <div className="meeting-scroll">
         {meetings.length === 0 && (
-          <p className="muted">
-            No meetings yet. Load the fictional sample or start a simulation.
-          </p>
+          <p className="muted">Your meetings and notes will appear here.</p>
         )}
         {groupMeetings(visible).map((group) => (
           <section key={group.label} aria-label={group.label}>
@@ -102,15 +110,20 @@ export function MeetingSidebar(props: Props) {
                     onClick={() => props.onOpenMeeting(meeting.id)}
                   >
                     <strong>{meeting.title}</strong>
-                    <span>
-                      {sourceLabels[meeting.source]} · {meeting.status}
+                    <span className="meeting-item-meta">
+                      <span>
+                        {sourceLabels[meeting.source]}
+                        {meeting.status === "stopped"
+                          ? ""
+                          : ` · ${meeting.status}`}
+                      </span>
+                      <time dateTime={meeting.started_at}>
+                        {new Date(meeting.started_at).toLocaleDateString(
+                          undefined,
+                          { month: "short", day: "numeric" },
+                        )}
+                      </time>
                     </span>
-                    <time dateTime={meeting.started_at}>
-                      {new Date(meeting.started_at).toLocaleDateString(
-                        undefined,
-                        { month: "short", day: "numeric", year: "numeric" },
-                      )}
-                    </time>
                   </button>
                 </li>
               ))}
@@ -149,7 +162,11 @@ export function MeetingSidebar(props: Props) {
         <button onClick={(event) => props.onSettings(event.currentTarget)}>
           Settings
         </button>
-        <button disabled={disabled} onClick={props.onLoadSample}>
+        <button
+          className="sample-button"
+          disabled={disabled}
+          onClick={props.onLoadSample}
+        >
           Load fictional sample
         </button>
         <p className="local-storage-note">

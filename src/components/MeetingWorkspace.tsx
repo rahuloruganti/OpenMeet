@@ -36,6 +36,7 @@ export const contentTabs = [
 export type ContentTab = (typeof contentTabs)[number]["id"];
 
 type Props = {
+  hidden: boolean;
   selected: MeetingDetail | null;
   firstRun: boolean;
   notes: string;
@@ -88,6 +89,8 @@ export function MeetingWorkspace(props: Props) {
   const [asking, setAsking] = useState(false);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [jumpHint, setJumpHint] = useState("");
+  const [playbackError, setPlaybackError] = useState("");
+  const actions = useRef<HTMLDetailsElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const players = useRef<Record<string, HTMLAudioElement | null>>({});
   const meetingId = selected?.meeting.id;
@@ -101,7 +104,13 @@ export function MeetingWorkspace(props: Props) {
     setTyped("");
     setTitleDraft(null);
     setJumpHint("");
+    setPlaybackError("");
+    if (actions.current) actions.current.open = false;
   }, [meetingId]);
+  useEffect(() => {
+    if (tab !== "transcript" || props.hidden)
+      Object.values(players.current).forEach((player) => player?.pause());
+  }, [tab, props.hidden]);
   useEffect(() => {
     setVersionId(null);
     setCopyStatus("");
@@ -109,8 +118,12 @@ export function MeetingWorkspace(props: Props) {
 
   if (!selected) {
     return (
-      <article className="content-area">
+      <article className="content-area" hidden={props.hidden}>
         <div className="empty-workspace">
+          <div className="empty-mark" aria-hidden="true">
+            ✎
+          </div>
+          <span className="eyebrow">A little room to think</span>
           {props.firstRun ? (
             <>
               <h2>Start your first note</h2>
@@ -144,6 +157,7 @@ export function MeetingWorkspace(props: Props) {
   );
   const deleteDisabled = disabled || job !== null || props.recordingThis;
   const askDelete = (what: "meeting" | "audio") => {
+    if (actions.current) actions.current.open = false;
     setTyped("");
     setDeleting(what);
   };
@@ -162,7 +176,14 @@ export function MeetingWorkspace(props: Props) {
     const player = players.current[kind];
     if (!player) return;
     player.currentTime = fileMs / 1000;
-    void player.play()?.catch(() => {});
+    setPlaybackError("");
+    void player
+      .play()
+      ?.catch(() =>
+        setPlaybackError(
+          "Audio could not play. Check your output device and try again.",
+        ),
+      );
   };
   const insertTimestamp = async () => {
     const offset = await props.getRecordingOffset();
@@ -219,7 +240,7 @@ export function MeetingWorkspace(props: Props) {
   };
 
   return (
-    <article className="content-area">
+    <article className="content-area" hidden={props.hidden}>
       <div className="meeting-heading">
         {titleDraft === null ? (
           <h1 className="meeting-title" onClick={startRename}>
@@ -248,7 +269,7 @@ export function MeetingWorkspace(props: Props) {
             }}
           />
         )}
-        <div className="panel-actions">
+        <div className="meeting-actions">
           <button
             disabled={disabled || titleDraft !== null}
             onClick={startRename}
@@ -258,20 +279,25 @@ export function MeetingWorkspace(props: Props) {
           <button disabled={disabled} onClick={props.onExport}>
             Export Markdown
           </button>
-          {selected.tracks.length > 0 && (
-            <button
-              disabled={deleteDisabled}
-              onClick={() => askDelete("audio")}
-            >
-              Delete audio…
-            </button>
-          )}
-          <button
-            disabled={deleteDisabled}
-            onClick={() => askDelete("meeting")}
-          >
-            Delete meeting…
-          </button>
+          <details className="more-actions" ref={actions} key={meeting.id}>
+            <summary aria-label="More meeting actions">•••</summary>
+            <div className="action-menu">
+              {selected.tracks.length > 0 && (
+                <button
+                  disabled={deleteDisabled}
+                  onClick={() => askDelete("audio")}
+                >
+                  Delete audio…
+                </button>
+              )}
+              <button
+                disabled={deleteDisabled}
+                onClick={() => askDelete("meeting")}
+              >
+                Delete meeting…
+              </button>
+            </div>
+          </details>
         </div>
       </div>
       {deleting && !props.recordingThis && (
@@ -402,7 +428,7 @@ export function MeetingWorkspace(props: Props) {
             value={props.notes}
             disabled={disabled}
             rows={10}
-            placeholder="Your own notes stay separate from generated content."
+            placeholder="Start writing. Capture a thought, a decision, or what happens next…"
             ref={editor}
             onChange={(event) => props.onNotes(event.target.value)}
             onKeyDown={(event) => {
@@ -440,7 +466,9 @@ export function MeetingWorkspace(props: Props) {
                 {jumpHint}
               </span>
             )}
-            <span className="muted">Markdown · Your notes stay yours</span>
+            <span className="muted">
+              Autosaved on this device · Markdown supported
+            </span>
           </div>
         </section>
         <section
@@ -471,6 +499,7 @@ export function MeetingWorkspace(props: Props) {
                 </select>
               </label>
               <button
+                className="primary"
                 disabled={blocked}
                 aria-describedby="enhance-hint"
                 onClick={() =>
@@ -665,7 +694,17 @@ export function MeetingWorkspace(props: Props) {
           hidden={tab !== "transcript"}
           tabIndex={0}
         >
-          <h3>Transcript</h3>
+          <div className="section-intro">
+            <h3>Transcript</h3>
+            <p className="muted">
+              Follow the conversation. Select a timestamp to listen.
+            </p>
+          </div>
+          {playbackError && (
+            <p className="error" role="alert">
+              {playbackError}
+            </p>
+          )}
           {playable.map((track) => (
             <div className="audio-player" key={track.kind}>
               <span aria-hidden="true">
@@ -676,6 +715,11 @@ export function MeetingWorkspace(props: Props) {
                 preload="metadata"
                 aria-label={trackLabels[track.kind] ?? track.kind}
                 src={api.audioSrc(track.path)}
+                onError={() =>
+                  setPlaybackError(
+                    "An audio file could not be opened. It may have been moved or is incomplete.",
+                  )
+                }
                 ref={(element) => {
                   players.current[track.kind] = element;
                 }}
@@ -712,6 +756,7 @@ export function MeetingWorkspace(props: Props) {
           {transcribable && (
             <div className="panel-actions">
               <button
+                className="primary"
                 disabled={disabled || job !== null || !props.speechReady}
                 onClick={props.onTranscribe}
               >

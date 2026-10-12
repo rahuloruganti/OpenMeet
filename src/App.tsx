@@ -357,13 +357,19 @@ export function App() {
           openPanel("setup", trigger);
         }}
         onSettings={(trigger) => openPanel("settings", trigger)}
-        onOpenMeeting={(id) => void run(() => openMeeting(id))}
+        onOpenMeeting={(id) =>
+          void run(async () => {
+            await openMeeting(id);
+            setPanel(null);
+          })
+        }
         onLoadSample={() =>
           void run(async () => {
             await writer.current?.flush();
             const id = await api.createFixture();
             await refreshList();
             await openMeeting(id);
+            setPanel(null);
           })
         }
         onNewNote={() =>
@@ -372,6 +378,7 @@ export function App() {
             const id = await api.createNote("Untitled note");
             await refreshList();
             await openMeeting(id);
+            setPanel(null);
             setTab("notes");
           })
         }
@@ -379,6 +386,7 @@ export function App() {
         onOpenHit={(hit) =>
           void run(async () => {
             await openMeeting(hit.meeting_id);
+            setPanel(null);
             setTab(
               hit.kind === "transcript" || hit.kind === "summary"
                 ? hit.kind
@@ -397,18 +405,46 @@ export function App() {
               aria-expanded={sidebarOpen}
               onClick={() => setSidebarOpen((open) => !open)}
             >
-              Meetings
+              <svg
+                viewBox="0 0 20 20"
+                width="18"
+                height="18"
+                fill="none"
+                aria-hidden="true"
+              >
+                <rect x="2.5" y="3" width="15" height="14" rx="2" />
+                <path d="M7.5 3v14" />
+              </svg>
+              <span>Meetings</span>
             </button>
-            <span className="eyebrow">YOUR WORKSPACE</span>
+            <span className="toolbar-location">
+              {panel === "settings"
+                ? "Preferences"
+                : panel === "setup"
+                  ? "New recording"
+                  : "Workspace"}
+            </span>
           </div>
+          <details className="privacy-details">
+            <summary>
+              <span className="status-dot" aria-hidden="true" /> Local workspace{" "}
+              <span className="preview-tag">Preview</span>
+            </summary>
+            <div className="privacy-popover">
+              <strong>Your notes stay on this device.</strong>
+              <p>
+                Recording saves microphone and system audio locally.
+                Transcription runs on this computer. Summaries and questions
+                send text to Merge only after you confirm.
+              </p>
+              <p>
+                Windows capture is not yet qualified. macOS capture is not
+                available. Local files are unencrypted.
+              </p>
+            </div>
+          </details>
         </header>
         <div className="feedback-stack">
-          <p className="preview-banner">
-            <strong>Windows capture preview.</strong> Real recording saves
-            microphone and system audio locally; capture is not yet qualified.
-            Transcription runs on this computer. Summaries send text to Merge
-            only after you confirm. macOS capture is not yet available.
-          </p>
           {!desktop && (
             <p role="alert">
               Open this app with <code>corepack pnpm tauri dev</code>. The
@@ -433,9 +469,15 @@ export function App() {
             </p>
           )}
           {notice && (
-            <p className="notice" role="status">
-              {notice}
-            </p>
+            <div className="notice" role="status">
+              <span>{notice}</span>
+              <button
+                aria-label="Dismiss notification"
+                onClick={() => setNotice("")}
+              >
+                Dismiss
+              </button>
+            </div>
           )}
           {desktop && !ready && !error && (
             <p role="status">Opening local database…</p>
@@ -499,6 +541,7 @@ export function App() {
           />
         )}
         <MeetingWorkspace
+          hidden={panel !== null}
           selected={selected}
           firstRun={ready && meetings.length === 0}
           job={job}
@@ -607,6 +650,11 @@ export function App() {
             void run(async () => {
               await writer.current?.flush();
               if (!selected) return;
+              if (!settings?.vault_folder) {
+                const updated = await api.chooseVaultFolder();
+                setSettings(updated);
+                if (!updated.vault_folder) return;
+              }
               const result = await api.exportMeeting(selected.meeting.id);
               setNotice(
                 `${result.created_copy ? "Existing file preserved; created a new snapshot" : "Exported"}: ${result.path}`,

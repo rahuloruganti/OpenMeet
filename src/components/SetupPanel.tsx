@@ -40,7 +40,7 @@ export function SetupPanel(props: Props) {
           Close
         </button>
       </div>
-      <p className="muted">
+      <p className="panel-description">
         Microphone and system audio are saved on this device. Capture is a
         Windows preview; hardware qualification is pending.
       </p>
@@ -70,18 +70,6 @@ export function SetupPanel(props: Props) {
           disabled={disabled || active}
           onChange={(event) => props.onTitle(event.target.value)}
         />
-      </label>
-      <label className="check">
-        <input
-          type="checkbox"
-          checked={props.consent}
-          disabled={disabled || active}
-          onChange={(event) => props.onConsent(event.target.checked)}
-        />
-        <span>
-          I have informed participants and have consent to record microphone and
-          system audio.
-        </span>
       </label>
       <div className="field-row">
         {[
@@ -126,6 +114,18 @@ export function SetupPanel(props: Props) {
           </label>
         ))}
       </div>
+      <label className="check consent-check">
+        <input
+          type="checkbox"
+          checked={props.consent}
+          disabled={disabled || active}
+          onChange={(event) => props.onConsent(event.target.checked)}
+        />
+        <span>
+          I have informed participants and have consent to record microphone and
+          system audio.
+        </span>
+      </label>
       <div className="panel-actions">
         <button
           className="primary"
@@ -142,13 +142,19 @@ export function SetupPanel(props: Props) {
         >
           Start recording
         </button>
+      </div>
+      <details className="help-details simulation-details">
+        <summary>Try a simulation instead</summary>
+        <p className="muted">
+          Explore the recording controls without capturing audio.
+        </p>
         <button
           disabled={disabled || active || !props.title.trim()}
           onClick={props.onStartSimulation}
         >
           Start simulation
         </button>
-      </div>
+      </details>
     </section>
   );
 }

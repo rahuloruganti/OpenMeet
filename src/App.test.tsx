@@ -148,6 +148,10 @@ beforeEach(() => {
     recording_offset_ms: null,
   });
   vi.mocked(api.getSettings).mockResolvedValue(initialSettings);
+  vi.mocked(api.chooseVaultFolder).mockResolvedValue({
+    ...initialSettings,
+    vault_folder: "C:/notes",
+  });
   vi.mocked(api.listDevices).mockResolvedValue({
     capture_supported: true,
     microphones: [{ id: "mic", name: "Microphone" }],
@@ -695,6 +699,51 @@ describe("desktop foundation", () => {
     expect(vi.mocked(api.saveNotes).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(api.exportMeeting).mock.invocationCallOrder[0],
     );
+  });
+
+  it("cancels the first export cleanly when no folder is chosen", async () => {
+    vi.mocked(api.chooseVaultFolder).mockResolvedValue(initialSettings);
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Export Markdown" }),
+    );
+    await waitFor(() => expect(api.chooseVaultFolder).toHaveBeenCalledOnce());
+    expect(api.exportMeeting).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
+  });
+
+  it("uses an existing export folder without asking again", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      vault_folder: "C:/notes",
+    });
+    vi.mocked(api.exportMeeting).mockResolvedValue({
+      path: "C:/notes/sample.md",
+      created_copy: false,
+    });
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Export Markdown" }),
+    );
+    await screen.findByText("Exported: C:/notes/sample.md");
+    expect(api.chooseVaultFolder).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    expect(screen.queryByText("Exported: C:/notes/sample.md")).toBeNull();
+  });
+
+  it("keeps the draft mounted while settings replace the document", async () => {
+    await ready();
+    const editor = screen.getByRole("textbox", { name: /My notes/ });
+    fireEvent.change(editor, { target: { value: "Draft to preserve" } });
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(editor.closest("article")?.hidden).toBe(true);
+    expect(screen.queryByRole("tab", { name: "My notes" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    expect(screen.getByDisplayValue("Draft to preserve")).toBe(editor);
+    expect(editor.closest("article")?.hidden).toBe(false);
   });
 
   it("does not close or discard notes when saving fails", async () => {
@@ -1523,6 +1572,7 @@ describe("meeting library", () => {
 
   it("deletes a meeting only after its exact title is typed", async () => {
     await ready();
+    await userEvent.click(screen.getByLabelText("More meeting actions"));
     await userEvent.click(
       screen.getByRole("button", { name: "Delete meeting…" }),
     );
@@ -1637,6 +1687,7 @@ describe("transcript and audio", () => {
 
   beforeEach(() => {
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
     vi.mocked(api.audioSrc).mockImplementation((path) => `asset://${path}`);
   });
 
@@ -1658,6 +1709,36 @@ describe("transcript and audio", () => {
       (screen.getByLabelText("You (microphone)") as HTMLAudioElement)
         .currentTime,
     ).toBe(0);
+  });
+
+  it("reports a playback failure and pauses audio when leaving the transcript", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue(recorded);
+    vi.mocked(api.audioPosition).mockResolvedValue(2250);
+    vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValue(
+      new Error("Output unavailable"),
+    );
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Play Others from 8.3s" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "Audio could not play. Check your output device and try again.",
+    );
+    vi.mocked(HTMLMediaElement.prototype.pause).mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports missing audio without a silent playback failure", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue(recorded);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    fireEvent.error(screen.getByLabelText("You (microphone)"));
+    expect(screen.getByRole("alert").textContent).toBe(
+      "An audio file could not be opened. It may have been moved or is incomplete.",
+    );
   });
 
   it("jumps from a [mm:ss] note line to the audio", async () => {

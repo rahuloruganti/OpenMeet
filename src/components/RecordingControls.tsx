@@ -49,7 +49,10 @@ export function RecordingControls(props: Props) {
   const micSilent = (silentFor.mic ?? 0) >= SILENT_WARN_MS;
 
   return (
-    <section className="recording-bar" aria-label="Recording controls">
+    <section
+      className={`recording-bar${active ? " is-active" : ""}`}
+      aria-label="Recording controls"
+    >
       <div className="recording-indicator">
         <span className={`status-dot ${recording.status}`} aria-hidden="true" />
         <span className={`recording-state ${recording.status}`} role="status">
@@ -97,7 +100,11 @@ export function RecordingControls(props: Props) {
         <button disabled={controlsDisabled} onClick={props.onToggle}>
           {recording.status === "paused" ? "Resume" : "Pause"}
         </button>
-        <button disabled={controlsDisabled} onClick={props.onStop}>
+        <button
+          className={active ? "stop-button" : ""}
+          disabled={controlsDisabled}
+          onClick={props.onStop}
+        >
           Stop
         </button>
       </div>
