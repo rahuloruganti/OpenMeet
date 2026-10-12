@@ -300,3 +300,19 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Outcome:** Folded the open items of `docs/execution-plan.md` and `docs/granola-style-redesign-plan.md` into an Open work section in `docs/implementation-status.md`; deleting those two untracked files was blocked by the permission prompt and awaits the user's go-ahead. Removed `src/test/migration.test.ts` (stale 001-only schema checks), unused CSS plus the footnote/toolbar tagline and their grid row, the write-only `capture_events` inserts and `Session::elapsed_us`, the unused `get_audio_health` command and `api.audioHealth`, the always-true `simulation` flag on `Core::start`, and the direct `tokio` dependency (monitor loop is a std thread). Shared title/active-session validation in `Core::begin`. `App.tsx` uses one `guard` for the UI, control and job locks.
 
 **Checks:** see the handoff message. No recording started, no commit or push.
+
+## Follow-up: run the real-device capture test
+
+**Request:** "i want to test if it works", then authorized the ignored `windows_devices_open_and_stop_writes_both_wavs` test.
+
+**Outcome:** First run failed: the test never resumed after `Session::prepare` (streams start muted), and it picked `outputs[0]` (Realtek Digital Output) instead of the default endpoint, so system loopback received no callbacks. Fixed the test to resume immediately (as `Core::start` does) and select the default input/output devices. Rerun with a Windows sound playing passed on Headset (SoundCore 2) mic + Headphones (SoundCore 2) loopback: two finalized WAVs, mic peak ~0.40. This is a ~2 s smoke test, not capture qualification: audible-content review, pause privacy, device loss/switch, sleep/wake, and the 60-minute drift run are still open. WASAPI loopback delivers no data while nothing plays, so the system track can be shorter than the mic track in silence.
+
+**Checks:** typecheck, ESLint, Prettier, 38 Vitest tests, build; cargo fmt, Clippy `-D warnings`, 27 Rust tests, cargo build; the authorized hardware test (1 failed run, then 1 pass). No commit or push.
+
+## Follow-up: feature review and build plan
+
+**Request:** Understand the project in depth and list features to add; then "create a plan to build all of this".
+
+**Outcome:** Wrote `docs/feature-plan.md`: Milestones 0–6 (housekeeping; summary history/templates/copy/rename/level meters/stop shortcut; notes-only meetings, delete, FTS5 search; playback with seek, timestamped notes, transcription settings, progress/cancel; key entry, long-meeting summaries, per-meeting Q&A, rendered Markdown; export options, interrupted-recording recovery, compression; encryption, local LLM, macOS, installers), each with files, tests and exit gates, plus four open decisions. Planning only: no code changed, no checks run.
+
+**Decisions recorded in the plan:** no API-key entry in the webview (env-var import only); user-facing deletion approved with typed confirmation; FLAC compression and encryption deferred; local LLM option dropped (Merge-only).

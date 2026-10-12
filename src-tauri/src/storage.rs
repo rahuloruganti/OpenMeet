@@ -4,6 +4,9 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Highest `user_version` this build understands; bump with every new migration.
+const LATEST_SCHEMA: i64 = 5;
+
 pub struct Core {
     pub(crate) db: Connection,
     recording: RecordingState,
@@ -25,7 +28,7 @@ impl Core {
                 transaction.execute_batch(include_str!("../migrations/001_foundation.sql"))?;
                 transaction.commit()?;
             }
-            1..=5 => {}
+            1..=LATEST_SCHEMA => {}
             _ => {
                 return Err(AppError::new(
                     "schema_version",
@@ -51,12 +54,13 @@ impl Core {
             db.pragma_update(None, "foreign_keys", "ON")?;
         }
         // Each script sets its own `user_version`, so migration N runs for databases below N.
+        // Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
         let additive = [
-            include_str!("../migrations/003_local_model.sql"),
-            include_str!("../migrations/004_merge_model.sql"),
-            include_str!("../migrations/005_transcripts.sql"),
+            (3, include_str!("../migrations/003_local_model.sql")),
+            (4, include_str!("../migrations/004_merge_model.sql")),
+            (5, include_str!("../migrations/005_transcripts.sql")),
         ];
-        for (number, script) in (3..).zip(additive) {
+        for (number, script) in additive {
             if version < number {
                 let tx = db.transaction()?;
                 tx.execute_batch(script)?;

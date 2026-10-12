@@ -719,12 +719,18 @@ mod tests {
             !devices.outputs.is_empty(),
             "No system output endpoint is available."
         );
+        // Default endpoints: that is where test audio actually plays.
+        let host = cpal::default_host();
+        let id = |d: Option<cpal::Device>| d.unwrap().id().unwrap().to_string();
         let options = CaptureOptions {
-            microphone_id: devices.microphones[0].id.clone(),
-            output_id: devices.outputs[0].id.clone(),
+            microphone_id: id(host.default_input_device()),
+            output_id: id(host.default_output_device()),
         };
+        eprintln!("devices: {devices:?}\nselected: {options:?}");
         let folder = tempfile::tempdir().unwrap();
         let mut session = Session::prepare(folder.path().join("capture"), options).unwrap();
+        // prepare() opens muted streams; the app's start() resumes immediately.
+        session.resume().unwrap();
         thread::sleep(Duration::from_secs(1));
         let health = session.health();
         session.pause().unwrap();
