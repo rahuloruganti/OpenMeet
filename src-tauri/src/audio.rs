@@ -139,6 +139,12 @@ impl Shared {
     fn elapsed_us(&self) -> u64 {
         self.start.elapsed().as_micros() as u64
     }
+    /// Microphone audio written so far. Paused or rejected packets never reach the
+    /// counter, so this excludes paused time by construction (no wall clock involved).
+    fn offset_ms(&self, rate: u32) -> i64 {
+        let frames = self.counters[0].frames.load(Ordering::Relaxed);
+        (frames.saturating_mul(1000) / u64::from(rate.max(1))).min(i64::MAX as u64) as i64
+    }
     fn mute(&self) {
         self.recording.store(false, Ordering::SeqCst);
         self.generation.fetch_add(1, Ordering::SeqCst);
@@ -373,6 +379,16 @@ struct TrackWriter {
 }
 impl TrackWriter {
     fn new(folder: &Path, kind: &str, input: &Input) -> Result<Self> {
+        let (rate, channels) = (input.config.sample_rate(), input.config.channels());
+        Self::create(folder, kind, input.device.to_string(), rate, channels)
+    }
+    fn create(
+        folder: &Path,
+        kind: &str,
+        device_name: String,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<Self> {
         let path = folder.join(format!("{kind}.wav"));
         let timing_path = folder.join(format!("{kind}.timing.jsonl"));
         let file = OpenOptions::new()
@@ -382,8 +398,8 @@ impl TrackWriter {
         let wav = hound::WavWriter::new(
             BufWriter::new(file),
             hound::WavSpec {
-                channels: input.config.channels(),
-                sample_rate: input.config.sample_rate(),
+                channels,
+                sample_rate,
                 bits_per_sample: 32,
                 sample_format: hound::SampleFormat::Float,
             },
@@ -402,9 +418,9 @@ impl TrackWriter {
                 kind: kind.into(),
                 path: path.to_string_lossy().into_owned(),
                 timing_path: timing_path.to_string_lossy().into_owned(),
-                device_name: input.device.to_string(),
-                sample_rate: input.config.sample_rate(),
-                channels: input.config.channels(),
+                device_name,
+                sample_rate,
+                channels,
                 frames: 0,
                 dropped_frames: 0,
                 finalized: false,
@@ -500,6 +516,10 @@ impl Session {
             .map_err(audio_error)?;
         rx.recv().map_err(audio_error)?
     }
+    pub fn offset_ms(&self) -> i64 {
+        self.shared
+            .offset_ms(self.tracks.first().map_or(0, |track| track.sample_rate))
+    }
     pub fn health(&self) -> Health {
         Health {
             error: self.shared.error(),
@@ -549,6 +569,21 @@ fn accepted(block: &Block, shared: &Shared) -> bool {
     shared.recording.load(Ordering::SeqCst)
         && shared.fault.load(Ordering::SeqCst) == 0
         && block.generation == shared.generation.load(Ordering::SeqCst)
+}
+
+/// Writes every accepted queued packet for one track and publishes its frame count.
+fn drain(index: usize, consumer: &mut HeapCons<Block>, writer: &mut TrackWriter, shared: &Shared) {
+    while let Some(block) = consumer.try_pop() {
+        if accepted(&block, shared) {
+            if writer.write(&block).is_err() {
+                shared.fail(IO_ERROR);
+                break;
+            }
+            shared.counters[index]
+                .frames
+                .store(writer.track.frames as u64, Ordering::Relaxed);
+        }
+    }
 }
 
 fn worker(
@@ -641,17 +676,7 @@ fn worker(
             }
         }
         for (index, (_, consumer)) in streams.iter_mut().enumerate() {
-            while let Some(block) = consumer.try_pop() {
-                if accepted(&block, &shared) {
-                    if writers[index].write(&block).is_err() {
-                        shared.fail(IO_ERROR);
-                        break;
-                    }
-                    shared.counters[index]
-                        .frames
-                        .store(writers[index].track.frames as u64, Ordering::Relaxed);
-                }
-            }
+            drain(index, consumer, &mut writers[index], &shared);
         }
         if stopping {
             break;
@@ -952,5 +977,49 @@ mod tests {
         fs::write(&garbage, b"not a wav file").unwrap();
         assert!(repair_wav(&garbage, &dir.path().join("garbage.recovered.wav")).is_err());
         assert!(!dir.path().join("garbage.recovered.wav").exists());
+    }
+
+    #[test]
+    fn recording_offset_counts_written_frames_and_excludes_paused_audio() {
+        let shared = Shared::new();
+        let folder = tempfile::tempdir().unwrap();
+        let mut writer =
+            TrackWriter::create(folder.path(), "mic", "Synthetic".into(), 16000, 1).unwrap();
+        let (mut producer, mut consumer) = HeapRb::new(QUEUE_BLOCKS).split();
+        let second = [0.25_f32; 16000];
+        shared.recording.store(true, Ordering::SeqCst);
+        push_samples(&second, 0, 1, 16000, &shared, 0, &mut producer);
+        drain(0, &mut consumer, &mut writer, &shared);
+        assert_eq!(shared.offset_ms(16000), 1000);
+        // A packet in flight when the user pauses, then audio arriving while paused.
+        push_samples(&second, 1_000_000, 1, 16000, &shared, 0, &mut producer);
+        shared.mute();
+        push_samples(&second, 2_000_000, 1, 16000, &shared, 0, &mut producer);
+        drain(0, &mut consumer, &mut writer, &shared);
+        assert_eq!(
+            shared.offset_ms(16000),
+            1000,
+            "paused audio must not advance the offset"
+        );
+        // Resume (as the worker does): new generation, half a second more, ten seconds later.
+        shared.generation.fetch_add(1, Ordering::SeqCst);
+        shared.recording.store(true, Ordering::SeqCst);
+        push_samples(
+            &second[..8000],
+            12_000_000,
+            1,
+            16000,
+            &shared,
+            0,
+            &mut producer,
+        );
+        drain(0, &mut consumer, &mut writer, &shared);
+        assert_eq!(shared.offset_ms(16000), 1500);
+        assert_eq!(writer.track.frames, 24000);
+        assert_eq!(
+            shared.offset_ms(0),
+            24_000_000,
+            "a zero rate cannot divide by zero"
+        );
     }
 }

@@ -1,11 +1,18 @@
-import { useEffect, useState } from "react";
-import type {
-  MeetingDetail,
-  SummaryTemplate,
-  SummaryVersion,
+import { useEffect, useRef, useState } from "react";
+import {
+  api,
+  type MeetingDetail,
+  type SummaryTemplate,
+  type SummaryVersion,
 } from "../lib/api";
 import { extractSection, renderMarkdown } from "../lib/markdown";
 import { formatBytes, sourceLabels } from "../lib/meeting-labels";
+import { formatTimestamp, timestampAtCaret } from "../lib/timestamps";
+
+const trackLabels: Record<string, string> = {
+  mic: "You (microphone)",
+  system: "Others (system audio)",
+};
 
 const templates: { id: SummaryTemplate; label: string }[] = [
   { id: "general-v1", label: "General" },
@@ -59,6 +66,15 @@ type Props = {
   onDeleteAudio: () => void;
   onRename: (title: string) => void;
   onRecover: () => void;
+  /** The selected meeting is the active real recording. */
+  live: boolean;
+  /** Percent per track kind while transcribing. */
+  transcribeProgress: Record<string, number>;
+  onCancelTranscribe: () => void;
+  /** Fresh backend offset (frames written, pauses excluded), or null. */
+  getRecordingOffset: () => Promise<number | null>;
+  /** Maps a transcript time to the track's file time in ms, or null on failure. */
+  onSeek: (kind: string, sessionMs: number) => Promise<number | null>;
 };
 
 export function MeetingWorkspace(props: Props) {
@@ -71,6 +87,9 @@ export function MeetingWorkspace(props: Props) {
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  const [jumpHint, setJumpHint] = useState("");
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const players = useRef<Record<string, HTMLAudioElement | null>>({});
   const meetingId = selected?.meeting.id;
   const [deleting, setDeleting] = useState<"meeting" | "audio" | null>(null);
   const [typed, setTyped] = useState("");
@@ -81,6 +100,7 @@ export function MeetingWorkspace(props: Props) {
     setDeleting(null);
     setTyped("");
     setTitleDraft(null);
+    setJumpHint("");
   }, [meetingId]);
   useEffect(() => {
     setVersionId(null);
@@ -132,6 +152,47 @@ export function MeetingWorkspace(props: Props) {
   const summary = shown?.markdown ?? selected.summary;
   const provider = shown?.provider ?? selected.summary_provider;
   const model = shown?.model ?? selected.summary_model;
+  const playable =
+    meeting.source === "desktop" &&
+    meeting.status !== "recording" &&
+    meeting.status !== "paused"
+      ? selected.tracks.filter((track) => track.finalized && track.frames > 0)
+      : [];
+  const play = (kind: string, fileMs: number) => {
+    const player = players.current[kind];
+    if (!player) return;
+    player.currentTime = fileMs / 1000;
+    void player.play()?.catch(() => {});
+  };
+  const insertTimestamp = async () => {
+    const offset = await props.getRecordingOffset();
+    const area = editor.current;
+    if (offset === null || !area) return;
+    const { selectionStart: start, selectionEnd: end, value } = area;
+    const stamp = `${formatTimestamp(offset)} `;
+    props.onNotes(value.slice(0, start) + stamp + value.slice(end));
+    requestAnimationFrame(() => {
+      area.focus();
+      area.setSelectionRange(start + stamp.length, start + stamp.length);
+    });
+  };
+  const jumpToAudio = () => {
+    const area = editor.current;
+    const ms = area ? timestampAtCaret(area.value, area.selectionStart) : null;
+    if (ms === null) {
+      setJumpHint("Put the cursor on a line with a [mm:ss] timestamp.");
+      return;
+    }
+    setJumpHint("");
+    props.onTab("transcript");
+    // Note timestamps are microphone file time. Both tracks pause together, so the
+    // system track is seeked to the same position (approximate, not index-mapped).
+    for (const track of playable) {
+      const player = players.current[track.kind];
+      if (player) player.currentTime = ms / 1000;
+    }
+    play(playable.some((t) => t.kind === "mic") ? "mic" : playable[0].kind, ms);
+  };
   const summaryLabel =
     meeting.source === "fixture" && provider === "fixture"
       ? "Sample summary (hand-written)"
@@ -342,12 +403,43 @@ export function MeetingWorkspace(props: Props) {
             disabled={disabled}
             rows={10}
             placeholder="Your own notes stay separate from generated content."
+            ref={editor}
             onChange={(event) => props.onNotes(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                props.live &&
+                event.shiftKey &&
+                (event.ctrlKey || event.metaKey) &&
+                event.key.toLowerCase() === "t"
+              ) {
+                event.preventDefault();
+                void insertTimestamp();
+              }
+            }}
           />
           <div className="editor-footer">
             <button disabled={disabled} onClick={props.onSaveNow}>
               Save notes now
             </button>
+            {props.live && (
+              <button
+                disabled={disabled}
+                title="Ctrl+Shift+T while typing"
+                onClick={() => void insertTimestamp()}
+              >
+                Insert timestamp
+              </button>
+            )}
+            {playable.length > 0 && (
+              <button disabled={disabled} onClick={jumpToAudio}>
+                Jump to audio
+              </button>
+            )}
+            {jumpHint && (
+              <span className="muted" role="status">
+                {jumpHint}
+              </span>
+            )}
             <span className="muted">Markdown · Your notes stay yours</span>
           </div>
         </section>
@@ -574,6 +666,22 @@ export function MeetingWorkspace(props: Props) {
           tabIndex={0}
         >
           <h3>Transcript</h3>
+          {playable.map((track) => (
+            <div className="audio-player" key={track.kind}>
+              <span aria-hidden="true">
+                {trackLabels[track.kind] ?? track.kind}
+              </span>
+              <audio
+                controls
+                preload="metadata"
+                aria-label={trackLabels[track.kind] ?? track.kind}
+                src={api.audioSrc(track.path)}
+                ref={(element) => {
+                  players.current[track.kind] = element;
+                }}
+              />
+            </div>
+          ))}
           {selected.tracks.length > 0 && (
             <details className="track-details">
               <summary>Audio track details</summary>
@@ -619,28 +727,58 @@ export function MeetingWorkspace(props: Props) {
                 </span>
               )}
               {job === "transcribe" && (
-                <span className="muted" role="status">
-                  This runs on your computer and can take about as long as the
-                  recording.
-                </span>
+                <>
+                  <button onClick={props.onCancelTranscribe}>
+                    Cancel transcription
+                  </button>
+                  <span className="muted" role="status">
+                    This runs on your computer and can take about as long as the
+                    recording. Cancelling keeps the previous transcript.
+                  </span>
+                </>
               )}
             </div>
           )}
+          {job === "transcribe" &&
+            Object.entries(props.transcribeProgress).map(([kind, percent]) => (
+              <label className="audio-player" key={kind}>
+                Transcribing {trackLabels[kind] ?? kind}: {percent}%
+                <progress max={100} value={percent} />
+              </label>
+            ))}
           {hasTranscript && meeting.source === "desktop" && (
             <p className="muted">
               Generated locally with Whisper. “You” is your microphone, “Others”
               is system audio. Check names and numbers before relying on it.
             </p>
           )}
-          {selected.segments.map((segment, index) => (
-            <p className="transcript-segment" key={index}>
-              <strong>{segment.speaker}</strong>{" "}
-              <span className="muted">
-                {(segment.start_ms / 1000).toFixed(1)}s
-              </span>{" "}
-              — {segment.text}
-            </p>
-          ))}
+          {selected.segments.map((segment, index) => {
+            const kind = segment.speaker === "You" ? "mic" : "system";
+            const time = `${(segment.start_ms / 1000).toFixed(1)}s`;
+            return (
+              <p className="transcript-segment" key={index}>
+                <strong>{segment.speaker}</strong>{" "}
+                {playable.some((track) => track.kind === kind) ? (
+                  <button
+                    className="seek-button"
+                    aria-label={`Play ${segment.speaker} from ${time}`}
+                    onClick={() =>
+                      void props
+                        .onSeek(kind, segment.start_ms)
+                        .then((fileMs) => {
+                          if (fileMs !== null) play(kind, fileMs);
+                        })
+                    }
+                  >
+                    {time}
+                  </button>
+                ) : (
+                  <span className="muted">{time}</span>
+                )}{" "}
+                — {segment.text}
+              </p>
+            );
+          })}
         </section>
       </div>
     </article>

@@ -50,6 +50,9 @@ pub struct RecordingState {
     pub meeting_id: Option<String>,
     pub source: Option<String>,
     pub error: Option<String>,
+    /// Audio written so far (microphone frames / rate), so paused time is excluded.
+    /// Computed from capture counters on every read; `None` without real capture.
+    pub recording_offset_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -91,6 +94,10 @@ pub struct Settings {
     pub microphone_id: Option<String>,
     pub output_id: Option<String>,
     pub merge_model: Option<String>,
+    pub stt_language: String,
+    pub stt_prompt: String,
+    pub stt_model: String,
+    pub stop_shortcut: Option<String>,
     pub export: ExportOptions,
 }
 
@@ -137,4 +144,24 @@ pub struct SearchHit {
     pub meeting_id: String,
     pub kind: String,
     pub snippet: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_state_payload_matches_the_typescript_shape() {
+        let state = RecordingState {
+            recording_offset_ms: Some(1500),
+            ..RecordingState::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&state).unwrap(),
+            serde_json::json!({
+                "revision": 0, "status": "idle", "meeting_id": null, "source": null,
+                "error": null, "recording_offset_ms": 1500
+            })
+        );
+    }
 }

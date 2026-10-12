@@ -1028,3 +1028,20 @@ pre {
   padding: 0;
   margin: 16px 0 0;
 }
+
+.audio-player {
+  display: grid;
+  gap: 4px;
+  margin-block: 8px;
+}
+
+.audio-player audio,
+.audio-player progress {
+  width: 100%;
+}
+
+.seek-button {
+  min-height: 0;
+  padding: 0 6px;
+  font-size: 0.85em;
+}

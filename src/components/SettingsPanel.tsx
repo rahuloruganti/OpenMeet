@@ -3,11 +3,24 @@ import type {
   ExportOptions,
   MergeModel,
   Settings,
-  SttProgress,
+  SttDownloadProgress,
   SttStatus,
 } from "../lib/api";
 
+export type SttDraft = Pick<
+  Settings,
+  "stt_language" | "stt_prompt" | "stt_model"
+>;
+
 const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
+const languageName = (code: string) => {
+  if (code === "auto") return "Detect automatically";
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+};
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -15,7 +28,7 @@ type Props = {
   disabled: boolean;
   shortcut: string;
   stt: SttStatus | null;
-  sttProgress: SttProgress | null;
+  sttProgress: SttDownloadProgress | null;
   installing: boolean;
   onInstallStt: () => void;
   mergeKey: boolean | null;
@@ -31,6 +44,11 @@ type Props = {
   onChooseFolder: () => void;
   onSaveShortcut: () => void;
   onExportOptions: (options: ExportOptions) => void;
+  stopShortcut: string;
+  onStopShortcut: (value: string) => void;
+  sttDraft: SttDraft;
+  onStt: (change: Partial<SttDraft>) => void;
+  onSaveStt: () => void;
 };
 
 export function SettingsPanel(props: Props) {
@@ -64,12 +82,57 @@ export function SettingsPanel(props: Props) {
         </strong>
       </p>
       <p className="muted">
-        Uses whisper.cpp with the multilingual Whisper “small” model and Silero
+        Uses whisper.cpp with the selected multilingual Whisper model and Silero
         voice detection. The files are downloaded once from github.com (engine)
         and huggingface.co (models), checked against pinned SHA-256 checksums,
-        and run entirely on this computer. Audio is never uploaded. Windows x64
-        only for now.
+        and run entirely on this computer. Audio is never uploaded. Changing the
+        model never deletes one you already downloaded. Windows x64 only for
+        now.
       </p>
+      <label>
+        Speech model
+        <select
+          value={props.sttDraft.stt_model}
+          disabled={disabled}
+          onChange={(event) => props.onStt({ stt_model: event.target.value })}
+        >
+          {props.stt?.models.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.id} ({mb(item.size)} MB
+              {item.installed ? ", downloaded" : ""})
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Spoken language
+        <select
+          value={props.sttDraft.stt_language}
+          disabled={disabled}
+          onChange={(event) =>
+            props.onStt({ stt_language: event.target.value })
+          }
+        >
+          {props.stt?.languages.map((code) => (
+            <option key={code} value={code}>
+              {languageName(code)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Vocabulary hint (names, jargon; optional)
+        <input
+          value={props.sttDraft.stt_prompt}
+          disabled={disabled}
+          maxLength={500}
+          placeholder="e.g. Priya, Okta, Kubernetes"
+          onChange={(event) => props.onStt({ stt_prompt: event.target.value })}
+        />
+      </label>
+      <button disabled={disabled || !props.stt} onClick={props.onSaveStt}>
+        Save transcription settings
+      </button>
       {props.sttProgress && (
         <p role="status">
           Downloading {props.sttProgress.stage}:{" "}
@@ -180,11 +243,24 @@ export function SettingsPanel(props: Props) {
           placeholder="CommandOrControl+Shift+Space"
         />
       </label>
+      <label>
+        Stop recording shortcut (optional)
+        <input
+          value={props.stopShortcut}
+          disabled={disabled}
+          onChange={(event) => props.onStopShortcut(event.target.value)}
+          placeholder="Leave empty for none"
+        />
+      </label>
+      <p className="muted">
+        There is no shortcut to start recording: starting always goes through
+        setup and consent.
+      </p>
       <button
         disabled={disabled || !props.shortcut.trim()}
         onClick={props.onSaveShortcut}
       >
-        Save shortcut
+        Save shortcuts
       </button>
       {settings && (
         <fieldset className="export-options" disabled={disabled}>

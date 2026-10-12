@@ -98,22 +98,54 @@ fn show_window(app: &AppHandle) {
     }
 }
 
-fn tray_action(app: &AppHandle, stop: bool) {
+fn tray_action(
+    app: &AppHandle,
+    action: impl FnOnce(&mut Core) -> Result<RecordingState> + Send + 'static,
+) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let result = with_core(app.clone(), true, move |core, _| {
-            if stop {
-                core.stop()
-            } else {
-                core.toggle_pause()
-            }
-        })
-        .await;
+        let result = with_core(app.clone(), true, move |core, _| action(core)).await;
         if let Err(error) = result {
             show_window(&app);
             let _ = app.emit("backend_error", error.message);
         }
     });
+}
+
+/// Global shortcuts can pause/resume or stop. There is deliberately no start shortcut:
+/// starting always goes through setup and consent.
+fn shortcut_action(app: &AppHandle, pressed: Shortcut) {
+    tray_action(app, move |core| {
+        let stop = core.settings()?.stop_shortcut;
+        if stop.and_then(|text| text.parse::<Shortcut>().ok()) == Some(pressed) {
+            core.stop()
+        } else {
+            core.toggle_pause()
+        }
+    });
+}
+
+fn parse_shortcuts(pause: &str, stop: Option<&str>) -> Result<(Shortcut, Option<Shortcut>)> {
+    let parse = |text: &str| -> Result<Shortcut> {
+        if text.len() > 100 {
+            return Err(AppError::new("invalid_shortcut", "Shortcut is too long."));
+        }
+        text.parse().map_err(|_| {
+            AppError::new(
+                "invalid_shortcut",
+                "Use a shortcut such as CommandOrControl+Shift+Space.",
+            )
+        })
+    };
+    let pause = parse(pause)?;
+    let stop = stop.map(parse).transpose()?;
+    if stop == Some(pause) {
+        return Err(AppError::new(
+            "invalid_shortcut",
+            "Use different shortcuts for pause and stop.",
+        ));
+    }
+    Ok((pause, stop))
 }
 
 #[tauri::command]
@@ -247,19 +279,25 @@ fn stt_root(app: &AppHandle) -> Result<std::path::PathBuf> {
         .map_err(|_| AppError::new("stt", "The app data folder is unavailable."))
 }
 
+async fn stt_model(app: &AppHandle) -> Result<String> {
+    with_core(app.clone(), false, |core, _| Ok(core.settings()?.stt_model)).await
+}
+
 #[tauri::command]
 async fn stt_status(app: AppHandle) -> Result<stt::Status> {
     let root = stt_root(&app)?;
-    Ok(stt::status(&root))
+    let model = stt_model(&app).await?;
+    Ok(stt::status(&root, &model))
 }
 
-/// Downloads the pinned engine and models. Only runs on an explicit user action.
+/// Downloads the pinned engine and the selected model. Only runs on an explicit user action.
 #[tauri::command]
 async fn stt_install(app: AppHandle) -> Result<stt::Status> {
     let root = stt_root(&app)?;
+    let model = stt_model(&app).await?;
     let emitter = app.clone();
     blocking(move || {
-        stt::install(&root, |progress| {
+        stt::install(&root, &model, |progress| {
             let _ = emitter.emit("stt_progress", progress);
         })
     })
@@ -269,9 +307,12 @@ async fn stt_install(app: AppHandle) -> Result<stt::Status> {
 #[tauri::command]
 async fn transcribe_meeting(app: AppHandle, id: String) -> Result<()> {
     let root = stt_root(&app)?;
-    let detail = {
+    let (detail, settings) = {
         let id = id.clone();
-        with_core(app.clone(), false, move |core, _| core.get_meeting(&id)).await?
+        with_core(app.clone(), false, move |core, _| {
+            Ok((core.get_meeting(&id)?, core.settings()?))
+        })
+        .await?
     };
     if matches!(detail.meeting.status.as_str(), "recording" | "paused") {
         return Err(AppError::new(
@@ -290,7 +331,19 @@ async fn transcribe_meeting(app: AppHandle, id: String) -> Result<()> {
             "This meeting has no finalized audio tracks to transcribe.",
         ));
     }
-    let segments = blocking(move || stt::transcribe(&root, &tracks)).await?;
+    let emitter = app.clone();
+    // A failed or cancelled run returns early here, so the previous transcript is kept.
+    let segments = blocking(move || {
+        stt::transcribe(&root, &tracks, &settings, |track, percent| {
+            let progress = stt::TranscribeProgress {
+                stage: "transcribing",
+                track: track.to_string(),
+                percent,
+            };
+            let _ = emitter.emit("stt_progress", progress);
+        })
+    })
+    .await?;
     with_core(app, true, move |core, _| {
         core.replace_transcript(&id, &segments)
     })
@@ -409,47 +462,57 @@ async fn blocking<T: Send + 'static>(
 }
 
 #[tauri::command]
-async fn save_settings(app: AppHandle, pause_shortcut: String) -> Result<Settings> {
+async fn save_settings(
+    app: AppHandle,
+    pause_shortcut: String,
+    stop_shortcut: Option<String>,
+) -> Result<Settings> {
     with_core(app, false, move |core, app| {
-        if pause_shortcut.len() > 100 {
-            return Err(AppError::new("invalid_shortcut", "Shortcut is too long."));
-        }
-        let next: Shortcut = pause_shortcut.parse().map_err(|_| {
-            AppError::new(
-                "invalid_shortcut",
-                "Use a shortcut such as CommandOrControl+Shift+Space.",
-            )
-        })?;
-        let old = core.settings()?.pause_shortcut;
+        let stop_text = stop_shortcut
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty());
+        let (pause, stop) = parse_shortcuts(&pause_shortcut, stop_text)?;
+        let saved = core.settings()?;
+        let old = [
+            Some(saved.pause_shortcut.as_str()),
+            saved.stop_shortcut.as_deref(),
+        ]
+        .map(|text| text.and_then(|text| text.parse::<Shortcut>().ok()));
+        let next = [Some(pause), stop];
         let shortcuts = app.global_shortcut();
-        let old_parsed: Shortcut = old
-            .parse()
-            .map_err(|_| AppError::new("invalid_shortcut", "The saved shortcut is invalid."))?;
-        if next == old_parsed && shortcuts.is_registered(next) {
+        if old == next && next.iter().flatten().all(|s| shortcuts.is_registered(*s)) {
             return core.settings();
         }
-        shortcuts.register(next).map_err(|_| {
-            AppError::new(
-                "shortcut_unavailable",
-                "This shortcut could not be registered. Choose another combination.",
-            )
-        })?;
-        if let Err(error) = core.save_shortcut(&pause_shortcut) {
-            let _ = shortcuts.unregister(next);
-            return Err(error);
+        // Release both old shortcuts first so pause and stop can swap; restore them on failure.
+        for shortcut in old.iter().flatten() {
+            if shortcuts.is_registered(*shortcut) {
+                let _ = shortcuts.unregister(*shortcut);
+            }
         }
-        if old_parsed != next
-            && shortcuts.is_registered(old_parsed)
-            && shortcuts.unregister(old_parsed).is_err()
-        {
-            let _ = shortcuts.unregister(next);
-            core.save_shortcut(&old)?;
-            return Err(AppError::new(
-                "shortcut_unavailable",
-                "Could not replace the old shortcut. Restart before trying again.",
-            ));
+        let result = next
+            .iter()
+            .flatten()
+            .try_for_each(|shortcut| {
+                shortcuts.register(*shortcut).map_err(|_| {
+                    AppError::new(
+                        "shortcut_unavailable",
+                        "This shortcut could not be registered. Choose another combination.",
+                    )
+                })
+            })
+            .and_then(|()| core.save_shortcuts(&pause_shortcut, stop_text));
+        if result.is_err() {
+            for shortcut in next.iter().flatten() {
+                if shortcuts.is_registered(*shortcut) {
+                    let _ = shortcuts.unregister(*shortcut);
+                }
+            }
+            for shortcut in old.iter().flatten() {
+                let _ = shortcuts.register(*shortcut);
+            }
         }
-        core.settings()
+        result
     })
     .await
 }
@@ -543,6 +606,24 @@ async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<S
     .await
 }
 
+#[tauri::command]
+fn cancel_transcription() -> bool {
+    stt::cancel()
+}
+
+#[tauri::command]
+async fn save_stt_settings(
+    app: AppHandle,
+    language: String,
+    prompt: String,
+    model: String,
+) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_stt_settings(&language, &prompt, &model)
+    })
+    .await
+}
+
 /// Writes repaired copies of an interrupted recording's unfinished WAVs; originals are never modified.
 #[tauri::command]
 async fn recover_audio(app: AppHandle, id: String) -> Result<()> {
@@ -566,19 +647,33 @@ async fn recover_audio(app: AppHandle, id: String) -> Result<()> {
     Ok(())
 }
 
+/// Maps a transcript (session) time to a position in one track's WAV for seeking playback.
+#[tauri::command]
+async fn audio_position(app: AppHandle, id: String, kind: String, session_ms: i64) -> Result<i64> {
+    let detail = with_core(app, false, move |core, _| core.get_meeting(&id)).await?;
+    let track = detail
+        .tracks
+        .into_iter()
+        .find(|track| track.kind == kind)
+        .ok_or_else(|| AppError::new("not_found", "That audio track does not exist."))?;
+    blocking(move || Ok(stt::track_file_ms(&track, session_ms))).await
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_window(app)))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app, _, event| {
-            if event.state == ShortcutState::Pressed { tray_action(app, false); }
+        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app, shortcut, event| {
+            if event.state == ShortcutState::Pressed { shortcut_action(app, *shortcut); }
         }).build())
         .setup(|app| {
             let folder = app.path().app_data_dir()?;
             std::fs::create_dir_all(&folder)?;
             let core = Core::open(&folder.join("meetings.db"))?;
-            let shortcut = core.settings()?.pause_shortcut;
-            let startup_warning = app.global_shortcut().register(shortcut.as_str()).err().map(|_| "Pause shortcut unavailable. Use the on-screen controls and choose another shortcut in Settings.".to_string());
+            let settings = core.settings()?;
+            let pause_failed = app.global_shortcut().register(settings.pause_shortcut.as_str()).is_err();
+            let stop_failed = settings.stop_shortcut.as_deref().is_some_and(|stop| app.global_shortcut().register(stop).is_err());
+            let startup_warning = (pause_failed || stop_failed).then(|| format!("{} shortcut unavailable. Use the on-screen controls and choose another shortcut in Settings.", if pause_failed { "Pause" } else { "Stop" }));
             app.manage(AppState { core: Mutex::new(core), startup_warning, allow_exit: AtomicBool::new(false) });
             let show = MenuItem::with_id(app, "show", "Open OpenMeet", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "Pause / resume recording", true, None::<&str>)?;
@@ -591,8 +686,8 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_window(app),
-                    "pause" => tray_action(app, false),
-                    "stop" => tray_action(app, true),
+                    "pause" => tray_action(app, Core::toggle_pause),
+                    "stop" => tray_action(app, Core::stop),
                     "quit" => { show_window(app); let _ = app.emit("request_close", ()); }
                     _ => {}
                 })
@@ -630,6 +725,7 @@ pub fn run() {
             create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
             plan_summary, list_summaries, ask_meeting,
             rename_meeting, save_export_options, recover_audio,
+            cancel_transcription, save_stt_settings, audio_position,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");
@@ -643,4 +739,35 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_shortcut_is_optional_and_must_differ_from_pause() {
+        let (pause, stop) = parse_shortcuts("CommandOrControl+Shift+Space", None).unwrap();
+        assert_eq!(stop, None);
+        let (_, stop) =
+            parse_shortcuts("CommandOrControl+Shift+Space", Some("Alt+Shift+S")).unwrap();
+        assert!(stop.is_some_and(|stop| stop != pause));
+        for (pause, stop) in [
+            (
+                "CommandOrControl+Shift+Space",
+                Some("CommandOrControl+Shift+Space"),
+            ),
+            // Same keys spelled differently are still the same shortcut.
+            ("Ctrl+Shift+Space", Some("Shift+Control+Space")),
+            ("CommandOrControl+Shift+Space", Some("not a shortcut")),
+            ("", None),
+        ] {
+            assert_eq!(
+                parse_shortcuts(pause, stop).unwrap_err().code,
+                "invalid_shortcut",
+                "{pause} / {stop:?}"
+            );
+        }
+        assert!(parse_shortcuts(&"A+".repeat(60), None).is_err());
+    }
 }

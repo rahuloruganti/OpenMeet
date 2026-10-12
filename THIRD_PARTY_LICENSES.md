@@ -22,9 +22,10 @@ Bundled SQLite                                         | Public domain; https://
 | hound                                                                              | Apache-2.0; https://github.com/ruuda/hound                       |
 | keyring (+ keyring-core, windows-native-keyring-store, apple-native-keyring-store) | MIT OR Apache-2.0; https://github.com/open-source-cooperative/keyring-rs |
 | whisper.cpp (downloaded binary, release b5454) | MIT; https://github.com/ggml-org/whisper.cpp |
-| OpenAI Whisper "small" weights in ggml format (downloaded) | MIT; https://github.com/openai/whisper , https://huggingface.co/ggerganov/whisper.cpp |
+| OpenAI Whisper "base", "small" and "large-v3-turbo" weights in ggml format (downloaded on request, selected model only) | MIT; https://github.com/openai/whisper , https://huggingface.co/ggerganov/whisper.cpp |
 | Silero VAD v5.1.2 ggml model (downloaded) | MIT; https://github.com/snakers4/silero-vad , https://huggingface.co/ggml-org/whisper-vad |
 | zip | MIT; https://github.com/zip-rs/zip2 |
+| http-range (via the Tauri `protocol-asset` feature, for audio playback range requests) | MIT; https://github.com/bancek/rust-http-range |
 | sha2 | MIT OR Apache-2.0; https://github.com/RustCrypto/hashes |
 | reqwest `native-tls` feature (native-tls, hyper-tls, tokio-native-tls; Windows SChannel / macOS Security.framework) | MIT OR Apache-2.0; https://github.com/seanmonstar/reqwest |
 | tokio                                                                              | MIT; https://github.com/tokio-rs/tokio                           |

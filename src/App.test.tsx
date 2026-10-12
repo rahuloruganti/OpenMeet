@@ -65,6 +65,10 @@ vi.mock("./lib/api", async (original) => {
       renameMeeting: vi.fn(),
       saveExportOptions: vi.fn(),
       recoverAudio: vi.fn(),
+      cancelTranscription: vi.fn(),
+      saveSttSettings: vi.fn(),
+      audioPosition: vi.fn(),
+      audioSrc: vi.fn(),
     },
   };
 });
@@ -96,6 +100,10 @@ const initialSettings: Settings = {
   output_id: null,
   merge_model: null,
   export: { transcript: true, summary: true, filename: "title" },
+  stt_language: "auto",
+  stt_prompt: "",
+  stt_model: "small",
+  stop_shortcut: null,
 };
 
 const notInstalled = {
@@ -105,6 +113,11 @@ const notInstalled = {
   installed: false,
   missing_bytes: 496_000_000,
   supported: true,
+  models: [
+    { id: "base", size: 147_951_465, installed: false },
+    { id: "small", size: 487_601_967, installed: false },
+  ],
+  languages: ["auto", "de", "en"],
 };
 const installed = {
   engine: true,
@@ -113,6 +126,11 @@ const installed = {
   installed: true,
   missing_bytes: 0,
   supported: true,
+  models: [
+    { id: "base", size: 147_951_465, installed: false },
+    { id: "small", size: 487_601_967, installed: true },
+  ],
+  languages: ["auto", "de", "en"],
 };
 
 beforeEach(() => {
@@ -127,6 +145,7 @@ beforeEach(() => {
     meeting_id: null,
     source: null,
     error: null,
+    recording_offset_ms: null,
   });
   vi.mocked(api.getSettings).mockResolvedValue(initialSettings);
   vi.mocked(api.listDevices).mockResolvedValue({
@@ -272,6 +291,7 @@ describe("desktop foundation", () => {
       meeting_id: "active",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     vi.mocked(api.getMeeting).mockImplementation(async (id) =>
       id === "active"
@@ -353,6 +373,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     vi.mocked(api.stop).mockResolvedValue({
       revision: 2,
@@ -360,6 +381,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     await ready();
     vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
@@ -502,6 +524,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     await userEvent.click(start);
     await waitFor(() =>
@@ -537,6 +560,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     vi.mocked(api.stop).mockResolvedValue({
       revision: 2,
@@ -544,6 +568,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     await ready();
     vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
@@ -575,6 +600,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     vi.mocked(api.stop).mockResolvedValue({
       revision: 2,
@@ -582,6 +608,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     let finishSave!: (revision: number) => void;
     vi.mocked(api.saveNotes).mockImplementation(
@@ -612,6 +639,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     let finishExport!: (result: {
       path: string;
@@ -629,6 +657,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: "Device stopped responding",
+      recording_offset_ms: null,
     });
     await ready();
     await userEvent.click(
@@ -734,6 +763,7 @@ describe("desktop foundation", () => {
         meeting_id: "sample",
         source: "simulation",
         error: null,
+        recording_offset_ms: null,
       });
       notify({
         revision: 1,
@@ -741,6 +771,7 @@ describe("desktop foundation", () => {
         meeting_id: "sample",
         source: "simulation",
         error: null,
+        recording_offset_ms: null,
       });
     });
     expect(screen.getByText("Simulation: paused")).toBeTruthy();
@@ -843,6 +874,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     await ready();
     expect(screen.queryByText(/Audio gaps detected/)).toBeNull();
@@ -1316,6 +1348,7 @@ describe("notes-first polish", () => {
       meeting_id: "sample",
       source: "desktop",
       error: null,
+      recording_offset_ms: null,
     });
     const health = (mic: number): AudioHealth => ({
       error: null,
@@ -1368,6 +1401,7 @@ describe("notes-first polish", () => {
       meeting_id: "sample",
       source: "simulation",
       error: null,
+      recording_offset_ms: null,
     });
     await ready();
     act(() => publish({ error: null, tracks: [] }));
@@ -1522,6 +1556,7 @@ describe("meeting library", () => {
       meeting_id: "sample",
       source: "simulation",
       error: null,
+      recording_offset_ms: null,
     });
     await ready();
     expect(
@@ -1563,5 +1598,214 @@ describe("meeting library", () => {
       ).toBe("true"),
     );
     expect(api.getMeeting).toHaveBeenLastCalledWith("second");
+  });
+});
+
+describe("transcript and audio", () => {
+  const recorded: MeetingDetail = {
+    ...sample,
+    meeting: { ...sample.meeting, source: "desktop" },
+    summary: null,
+    summary_provider: null,
+    summary_model: null,
+    segments: [
+      { speaker: "Others", start_ms: 8250, end_ms: 9000, text: "After pause" },
+    ],
+    tracks: [
+      {
+        kind: "mic",
+        path: "mic.wav",
+        device_name: "Microphone",
+        sample_rate: 16000,
+        frames: 48000,
+        dropped_frames: 0,
+        finalized: true,
+        size_bytes: null,
+      },
+      {
+        kind: "system",
+        path: "system.wav",
+        device_name: "Speakers",
+        sample_rate: 16000,
+        frames: 48000,
+        dropped_frames: 0,
+        finalized: true,
+        size_bytes: null,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.mocked(api.audioSrc).mockImplementation((path) => `asset://${path}`);
+  });
+
+  it("seeks the speaker's track to the backend-mapped file time", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue(recorded);
+    vi.mocked(api.audioPosition).mockResolvedValue(2250);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    const system = screen.getByLabelText(
+      "Others (system audio)",
+    ) as HTMLAudioElement;
+    expect(system.getAttribute("src")).toBe("asset://system.wav");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Play Others from 8.3s" }),
+    );
+    expect(api.audioPosition).toHaveBeenCalledWith("sample", "system", 8250);
+    await waitFor(() => expect(system.currentTime).toBe(2.25));
+    expect(
+      (screen.getByLabelText("You (microphone)") as HTMLAudioElement)
+        .currentTime,
+    ).toBe(0);
+  });
+
+  it("jumps from a [mm:ss] note line to the audio", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...recorded,
+      user_markdown: "Original notes\n[00:12] decision",
+    });
+    render(<App />);
+    const editor = (await screen.findByDisplayValue(
+      /\[00:12\] decision/,
+    )) as HTMLTextAreaElement;
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Jump to audio",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+    editor.setSelectionRange(0, 0);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Jump to audio" }),
+    );
+    expect(screen.getByText(/Put the cursor on a line/)).toBeTruthy();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Jump to audio" }),
+    );
+    expect(
+      screen
+        .getByRole("tab", { name: "Transcript" })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      (screen.getByLabelText("You (microphone)") as HTMLAudioElement)
+        .currentTime,
+    ).toBe(12);
+    expect(api.audioPosition).not.toHaveBeenCalled();
+  });
+
+  it("inserts a backend-derived timestamp at the caret while recording", async () => {
+    const live = {
+      revision: 1,
+      status: "recording" as const,
+      meeting_id: "sample",
+      source: "desktop",
+      error: null,
+      recording_offset_ms: 1000,
+    };
+    vi.mocked(api.getRecordingState)
+      .mockResolvedValueOnce(live)
+      .mockResolvedValue({ ...live, recording_offset_ms: 65_400 });
+    await ready();
+    const editor = screen.getByDisplayValue(
+      "Original notes",
+    ) as HTMLTextAreaElement;
+    editor.setSelectionRange(0, 0);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Insert timestamp" }),
+    );
+    await waitFor(() => expect(editor.value).toBe("[01:05] Original notes"));
+    expect(screen.queryByRole("button", { name: "Jump to audio" })).toBeNull();
+  });
+
+  it("shows per-track progress and cancels without replacing the transcript", async () => {
+    let progress: (value: SttProgress) => void = () => {};
+    vi.mocked(api.onSttProgress).mockImplementation(async (callback) => {
+      progress = callback;
+      return () => {};
+    });
+    let fail!: (reason: unknown) => void;
+    vi.mocked(api.transcribeMeeting).mockReturnValue(
+      new Promise((_, reject) => {
+        fail = reject;
+      }),
+    );
+    vi.mocked(api.cancelTranscription).mockResolvedValue(true);
+    vi.mocked(api.sttStatus).mockResolvedValue(installed);
+    vi.mocked(api.getMeeting).mockResolvedValue(recorded);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Re-transcribe audio" }),
+    );
+    act(() => progress({ stage: "transcribing", track: "mic", percent: 40 }));
+    expect(
+      await screen.findByText(/Transcribing You \(microphone\): 40%/),
+    ).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Cancel transcription" }),
+    );
+    expect(api.cancelTranscription).toHaveBeenCalledTimes(1);
+    const calls = vi.mocked(api.getMeeting).mock.calls.length;
+    await act(async () =>
+      fail({
+        code: "stt_cancelled",
+        message: "Transcription was cancelled. Nothing was saved.",
+      }),
+    );
+    expect(
+      await screen.findByText(
+        "Transcription was cancelled. Nothing was saved.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Transcribing You/)).toBeNull();
+    expect(screen.getByText(/After pause/)).toBeTruthy();
+    expect(vi.mocked(api.getMeeting).mock.calls.length).toBe(calls);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("saves transcription settings and an optional stop shortcut", async () => {
+    vi.mocked(api.saveSttSettings).mockResolvedValue({
+      ...initialSettings,
+      stt_language: "de",
+      stt_prompt: "Okta",
+      stt_model: "base",
+    });
+    vi.mocked(api.saveSettings).mockResolvedValue({
+      ...initialSettings,
+      stop_shortcut: "Alt+Shift+S",
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.selectOptions(
+      screen.getByLabelText("Speech model"),
+      "base",
+    );
+    await userEvent.selectOptions(
+      screen.getByLabelText("Spoken language"),
+      "de",
+    );
+    await userEvent.type(screen.getByLabelText(/Vocabulary hint/), "Okta");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save transcription settings" }),
+    );
+    expect(api.saveSttSettings).toHaveBeenCalledWith("de", "Okta", "base");
+    await userEvent.type(
+      screen.getByLabelText("Stop recording shortcut (optional)"),
+      "Alt+Shift+S",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save shortcuts" }),
+    );
+    expect(api.saveSettings).toHaveBeenCalledWith(
+      "CommandOrControl+Shift+Space",
+      "Alt+Shift+S",
+    );
+    expect(screen.getByText(/no shortcut to start recording/)).toBeTruthy();
   });
 });

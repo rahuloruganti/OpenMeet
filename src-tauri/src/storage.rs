@@ -47,6 +47,7 @@ impl Core {
             (5, include_str!("../migrations/005_transcripts.sql"), false),
             (6, include_str!("../migrations/006_note_meetings.sql"), true),
             (7, include_str!("../migrations/007_search.sql"), false),
+            (8, include_str!("../migrations/008_stt_settings.sql"), false),
             (
                 9,
                 include_str!("../migrations/009_export_options.sql"),
@@ -94,7 +95,10 @@ impl Core {
     }
 
     pub fn recording_state(&self) -> RecordingState {
-        self.recording.clone()
+        RecordingState {
+            recording_offset_ms: self.audio.as_ref().map(audio::Session::offset_ms),
+            ..self.recording.clone()
+        }
     }
 
     /// Rejects a new session while one is active or unfinished; returns the trimmed title.
@@ -130,6 +134,7 @@ impl Core {
             meeting_id: Some(id),
             source: Some("simulation".into()),
             error: None,
+            recording_offset_ms: None,
         };
         Ok(self.recording_state())
     }
@@ -174,6 +179,7 @@ impl Core {
             meeting_id: Some(id),
             source: Some("desktop".into()),
             error: None,
+            recording_offset_ms: None,
         };
         self.resume()
     }
@@ -455,7 +461,7 @@ impl Core {
 
     pub fn settings(&self) -> Result<Settings> {
         Ok(self.db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, merge_model, export_transcript, export_summary, export_filename FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, merge_model, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -473,6 +479,10 @@ impl Core {
                             _ => FilenamePattern::Title,
                         },
                     },
+                    stt_language: row.get(8)?,
+                    stt_prompt: row.get(9)?,
+                    stt_model: row.get(10)?,
+                    stop_shortcut: row.get(11)?,
                 })
             },
         )?)
@@ -490,10 +500,25 @@ impl Core {
         self.settings()
     }
 
-    pub fn save_shortcut(&mut self, shortcut: &str) -> Result<Settings> {
+    pub fn save_shortcuts(&mut self, pause: &str, stop: Option<&str>) -> Result<Settings> {
         self.db.execute(
-            "UPDATE settings SET pause_shortcut = ?1 WHERE id = 1",
-            [shortcut],
+            "UPDATE settings SET pause_shortcut = ?1, stop_shortcut = ?2 WHERE id = 1",
+            params![pause, stop],
+        )?;
+        self.settings()
+    }
+
+    pub fn save_stt_settings(
+        &mut self,
+        language: &str,
+        prompt: &str,
+        model: &str,
+    ) -> Result<Settings> {
+        let prompt = prompt.trim();
+        crate::stt::validate(language, prompt, model)?;
+        self.db.execute(
+            "UPDATE settings SET stt_language = ?1, stt_prompt = ?2, stt_model = ?3 WHERE id = 1",
+            params![language, prompt, model],
         )?;
         self.settings()
     }
@@ -1589,5 +1614,91 @@ mod tests {
             )
             .unwrap();
         assert_eq!(orphans, 0);
+    }
+
+    #[test]
+    fn migration_8_upgrades_a_populated_v5_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = Connection::open(&path).unwrap();
+            for script in [
+                include_str!("../migrations/001_foundation.sql"),
+                include_str!("../migrations/002_capture.sql"),
+                include_str!("../migrations/003_local_model.sql"),
+                include_str!("../migrations/004_merge_model.sql"),
+                include_str!("../migrations/005_transcripts.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("PRAGMA foreign_keys = ON;
+                INSERT INTO meetings(id, title, started_at, source, status) VALUES ('v5', 'Recorded', '2026-10-10', 'desktop', 'stopped');
+                INSERT INTO notes(meeting_id, user_markdown, revision) VALUES ('v5', 'Kept notes', 3);
+                INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES ('v5', 'Others', 0, 100, 'Fictional words', 'whisper', 'final');
+                INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES ('v5', 'summary-v1', 'm', 'merge', 'Kept summary');
+                INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels, frames, finalized) VALUES ('v5', 'mic', 'mic.wav', 'mic.timing.jsonl', 'Mic', 48000, 1, 4800, 1);
+                UPDATE settings SET pause_shortcut = 'Alt+P', merge_model = 'openai/gpt-5.4';").unwrap();
+            let version: i64 = db
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, 5);
+        }
+        let core = Core::open(&path).unwrap();
+        let detail = core.get_meeting("v5").unwrap();
+        assert_eq!(detail.user_markdown, "Kept notes");
+        assert_eq!(detail.notes_revision, 3);
+        assert_eq!(detail.segments[0].text, "Fictional words");
+        assert_eq!(detail.summary.as_deref(), Some("Kept summary"));
+        assert_eq!(detail.tracks[0].frames, 4800);
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.pause_shortcut, "Alt+P");
+        assert_eq!(settings.merge_model.as_deref(), Some("openai/gpt-5.4"));
+        assert_eq!(settings.stt_language, "auto");
+        assert_eq!(settings.stt_prompt, "");
+        assert_eq!(settings.stt_model, "small");
+        assert_eq!(settings.stop_shortcut, None);
+        let version: i64 = core
+            .db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, LATEST_SCHEMA);
+        let violations: i64 = core
+            .db
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
+    }
+
+    #[test]
+    fn transcription_and_shortcut_settings_validate_and_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        let long = "x".repeat(501);
+        for (language, prompt, model) in [
+            ("klingon", "", "small"),
+            ("de", "", "huge"),
+            ("de", long.as_str(), "small"),
+            ("de", "line\nbreak", "small"),
+        ] {
+            let error = core.save_stt_settings(language, prompt, model).unwrap_err();
+            assert_eq!(error.code, "stt_settings");
+        }
+        assert_eq!(core.settings().unwrap().stt_model, "small");
+        core.save_stt_settings("de", "  Kubernetes, Okta  ", "base")
+            .unwrap();
+        assert_eq!(core.settings().unwrap().stt_prompt, "Kubernetes, Okta");
+        core.save_stt_settings("en", &"é".repeat(500), "large-v3-turbo")
+            .unwrap();
+        core.save_shortcuts("Alt+P", Some("Alt+S")).unwrap();
+        drop(core);
+        let settings = Core::open(&path).unwrap().settings().unwrap();
+        assert_eq!(settings.stt_language, "en");
+        assert_eq!(settings.stt_prompt.chars().count(), 500);
+        assert_eq!(settings.stt_model, "large-v3-turbo");
+        assert_eq!(settings.pause_shortcut, "Alt+P");
+        assert_eq!(settings.stop_shortcut.as_deref(), Some("Alt+S"));
     }
 }
