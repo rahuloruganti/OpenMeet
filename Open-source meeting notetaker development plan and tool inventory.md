@@ -2,6 +2,8 @@
 
 Oct 9, 2026 · @rahul oruganti
 
+This is the original design and tool proposal, not the current dependency inventory. Several providers, libraries, and integrations below were not implemented. See [current documentation](docs/README.md), [dependencies actually used](docs/dependencies.md), and [implementation status](docs/implementation-status.md).
+
 ## Goal and scope
 
 Build a macOS and Windows desktop app that records meetings without a bot, transcribes and summarizes them locally by default, and can send a bot into meetings that cannot be captured on the device. Nothing leaves the machine unless the user picks a cloud model or turns on the SharePoint webhook.
