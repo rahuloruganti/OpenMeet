@@ -12,11 +12,13 @@ import {
   type RecordingState,
   type SearchHit,
   type Settings,
+  type SummaryVersion,
 } from "./lib/api";
 import { createNoteWriter } from "./lib/note-writer";
 import { MeetingSidebar } from "./components/MeetingSidebar";
 import {
   MeetingWorkspace,
+  type Answer,
   type ContentTab,
 } from "./components/MeetingWorkspace";
 import { RecordingControls } from "./components/RecordingControls";
@@ -76,6 +78,8 @@ export function App() {
   const selectedIdRef = useRef<string | null>(null);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [audioBytes, setAudioBytes] = useState<number | null>(null);
+  const [summaryVersions, setSummaryVersions] = useState<SummaryVersion[]>([]);
+  const [answer, setAnswer] = useState<Answer | null>(null);
 
   const refreshList = useCallback(async () => {
     const request = ++listRequest.current;
@@ -220,6 +224,23 @@ export function App() {
   useEffect(() => {
     if (job === null) setSttProgress(null);
   }, [job]);
+  // Summary history for the open meeting; reloaded whenever its detail reloads.
+  useEffect(() => {
+    const id = selected?.meeting.id;
+    setSummaryVersions([]);
+    if (!desktop || !id) return;
+    let current = true;
+    api.listSummaries(id).then(
+      (list) => current && setSummaryVersions(list),
+      (failure: unknown) => current && setError(errorMessage(failure)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [desktop, selected]);
+  // Answers are never stored; leaving the meeting discards the shown one.
+  const selectedId = selected?.meeting.id;
+  useEffect(() => setAnswer(null), [selectedId]);
 
   // Full-text matches for searches of 2+ characters; re-run when meetings change so hits stay current.
   useEffect(() => {
@@ -467,17 +488,40 @@ export function App() {
               setNotice("Transcript generated locally and saved.");
             });
           }}
-          onGenerate={() => {
+          onGenerate={(template, requests) => {
             const id = selected?.meeting.id;
             if (!id) return;
             void runJob("summary", async () => {
               await writer.current?.flush();
               // Consent is only ever true from the explicit confirmation card.
-              await api.generateSummary(id, true);
+              await api.generateSummary(id, true, template, requests);
               await finishJob(id);
               setNotice(
                 "Summary generated and saved. Only notes and transcript text were sent to Merge.",
               );
+            });
+          }}
+          versions={summaryVersions}
+          onPlanSummary={async () => {
+            const id = selected?.meeting.id;
+            let requests: number | null = null;
+            if (!id) return requests;
+            await run(async () => {
+              await writer.current?.flush();
+              requests = await api.planSummary(id);
+            });
+            return requests;
+          }}
+          answer={answer}
+          onAsk={(question) => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void runJob("ask", async () => {
+              await writer.current?.flush();
+              // Consent is only ever true from the explicit confirmation card.
+              const text = await api.askMeeting(id, question, true);
+              if (selectedIdRef.current === id)
+                setAnswer({ meetingId: id, question, text });
             });
           }}
           notes={notes}

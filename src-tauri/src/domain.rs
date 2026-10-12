@@ -92,6 +92,16 @@ pub struct Settings {
     pub merge_model: Option<String>,
 }
 
+/// One stored summary; `template` is the versioned template id (`general-v1`, …).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SummaryVersion {
+    pub id: i64,
+    pub provider: String,
+    pub model: String,
+    pub template: String,
+    pub markdown: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExportResult {
     pub path: String,

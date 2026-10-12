@@ -297,29 +297,14 @@ async fn transcribe_meeting(app: AppHandle, id: String) -> Result<()> {
     .await
 }
 
-/// Sends notes + transcript TEXT (never audio) to Merge. Requires explicit consent each call.
-#[tauri::command]
-async fn generate_summary(app: AppHandle, id: String, consent: bool) -> Result<()> {
-    if !consent {
-        return Err(AppError::new(
-            "consent_required",
-            "Confirm what will be sent before generating a summary.",
-        ));
-    }
-    let (detail, settings) = {
-        let id = id.clone();
-        with_core(app.clone(), false, move |core, _| {
-            Ok((core.get_meeting(&id)?, core.settings()?))
-        })
-        .await?
-    };
-    let model = settings.merge_model.ok_or_else(|| {
-        AppError::new(
-            "merge_model_missing",
-            "Choose a Merge model in Settings first.",
-        )
-    })?;
-    let transcript = detail
+/// The saved model, notes and one transcript line per segment of meeting `id` only.
+async fn meeting_text(app: &AppHandle, id: &str) -> Result<(Option<String>, String, Vec<String>)> {
+    let id = id.to_string();
+    let (detail, settings) = with_core(app.clone(), false, move |core, _| {
+        Ok((core.get_meeting(&id)?, core.settings()?))
+    })
+    .await?;
+    let lines: Vec<String> = detail
         .segments
         .iter()
         .map(|segment| {
@@ -331,21 +316,87 @@ async fn generate_summary(app: AppHandle, id: String, consent: bool) -> Result<(
                 segment.text
             )
         })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let notes = detail.user_markdown.clone();
-    if notes.trim().is_empty() && transcript.is_empty() {
+        .collect();
+    if detail.user_markdown.trim().is_empty() && lines.is_empty() {
         return Err(AppError::new(
             "summary_empty",
-            "There are no notes or transcript to summarize. Nothing was sent.",
+            "There are no notes or transcript to send. Nothing was sent.",
+        ));
+    }
+    Ok((settings.merge_model, detail.user_markdown, lines))
+}
+
+fn require_model(model: Option<String>) -> Result<String> {
+    model.ok_or_else(|| {
+        AppError::new(
+            "merge_model_missing",
+            "Choose a Merge model in Settings first.",
+        )
+    })
+}
+
+/// Sends notes + transcript TEXT (never audio) to Merge. Requires explicit consent each call,
+/// and `requests` must match the count shown in that consent (see `plan_summary`).
+#[tauri::command]
+async fn generate_summary(
+    app: AppHandle,
+    id: String,
+    consent: bool,
+    template: merge::Template,
+    requests: usize,
+) -> Result<()> {
+    if !consent {
+        return Err(AppError::new(
+            "consent_required",
+            "Confirm what will be sent before generating a summary.",
+        ));
+    }
+    let (model, notes, lines) = meeting_text(&app, &id).await?;
+    let model = require_model(model)?;
+    if merge::summary_requests(&notes, &lines)? != requests {
+        return Err(AppError::new(
+            "summary_plan_changed",
+            "The meeting changed since you confirmed, so the number of requests differs. Nothing was sent; review and confirm again.",
         ));
     }
     let used_model = model.clone();
-    let markdown = blocking(move || merge::summarize(&model, &notes, &transcript)).await?;
+    let markdown = blocking(move || merge::summarize(&model, template, &notes, &lines)).await?;
     with_core(app, true, move |core, _| {
-        core.save_summary(&id, "merge", &used_model, &markdown)
+        core.save_summary(&id, "merge", &used_model, &markdown, template.id())
     })
     .await
+}
+
+/// How many Merge requests a summary would send; sends nothing.
+#[tauri::command]
+async fn plan_summary(app: AppHandle, id: String) -> Result<usize> {
+    let (_, notes, lines) = meeting_text(&app, &id).await?;
+    merge::summary_requests(&notes, &lines)
+}
+
+#[tauri::command]
+async fn list_summaries(app: AppHandle, id: String) -> Result<Vec<SummaryVersion>> {
+    with_core(app, false, move |core, _| core.list_summaries(&id)).await
+}
+
+/// Sends one question with this meeting's notes + transcript TEXT to Merge after
+/// explicit consent. The answer is returned only; nothing is stored.
+#[tauri::command]
+async fn ask_meeting(
+    app: AppHandle,
+    id: String,
+    question: String,
+    consent: bool,
+) -> Result<String> {
+    if !consent {
+        return Err(AppError::new(
+            "consent_required",
+            "Confirm what will be sent before asking. Nothing was sent.",
+        ));
+    }
+    let (model, notes, lines) = meeting_text(&app, &id).await?;
+    let model = require_model(model)?;
+    blocking(move || merge::ask(consent, &model, &notes, &lines, &question)).await
 }
 
 /// Runs blocking network, disk, or subprocess work off the async runtime.
@@ -536,6 +587,7 @@ pub fn run() {
             save_merge_model,
             stt_status, stt_install, transcribe_meeting, generate_summary,
             create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
+            plan_summary, list_summaries, ask_meeting,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");

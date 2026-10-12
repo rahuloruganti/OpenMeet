@@ -402,12 +402,32 @@ impl Core {
         provider: &str,
         model: &str,
         markdown: &str,
+        template: &str,
     ) -> Result<()> {
         self.db.execute(
-            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES (?1, 'summary-v1', ?2, ?3, ?4)",
-            params![id, model, provider, markdown],
+            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES (?1, ?5, ?2, ?3, ?4)",
+            params![id, model, provider, markdown, template],
         )?;
         Ok(())
+    }
+
+    /// Every summary version, newest first. The table has no timestamp, so ids order them.
+    pub fn list_summaries(&self, id: &str) -> Result<Vec<SummaryVersion>> {
+        let mut query = self.db.prepare(
+            "SELECT id, provider, model, template_hash, markdown FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC",
+        )?;
+        let versions = query
+            .query_map([id], |row| {
+                Ok(SummaryVersion {
+                    id: row.get(0)?,
+                    provider: row.get(1)?,
+                    model: row.get(2)?,
+                    template: row.get(3)?,
+                    markdown: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(versions)
     }
 
     pub fn save_notes(&mut self, id: &str, markdown: &str, expected_revision: i64) -> Result<i64> {
@@ -643,7 +663,7 @@ impl Core {
         // The trailing `*` prefix-matches the last word for search-as-you-type.
         let phrase = format!("\"{}\"*", query.replace('"', "\"\""));
         let mut statement = self.db.prepare(
-            "SELECT meeting_id, kind, snippet(search, 2, '', '', '…', 12) FROM search WHERE search MATCH ?1 ORDER BY rank LIMIT 200",
+            "SELECT meeting_id, kind, snippet(search, 2, '', '', 'â€¦', 12) FROM search WHERE search MATCH ?1 ORDER BY rank LIMIT 200",
         )?;
         let rows = statement.query_map([phrase], |row| {
             Ok(SearchHit {
@@ -679,7 +699,7 @@ fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
     })
 }
 
-/// Returns the trimmed title if it has 1–160 characters.
+/// Returns the trimmed title if it has 1â€“160 characters.
 fn validate_title(title: &str) -> Result<&str> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > 160 {
@@ -813,8 +833,14 @@ mod tests {
             core.get_meeting(&id).unwrap().summary_provider.as_deref(),
             Some("fixture")
         );
-        core.save_summary(&id, "merge", "anthropic/claude-haiku-5-5", "# S")
-            .unwrap();
+        core.save_summary(
+            &id,
+            "merge",
+            "anthropic/claude-haiku-5-5",
+            "# S",
+            "general-v1",
+        )
+        .unwrap();
         let detail = core.get_meeting(&id).unwrap();
         assert_eq!(detail.summary.as_deref(), Some("# S"));
         assert_eq!(detail.summary_provider.as_deref(), Some("merge"));
@@ -831,6 +857,38 @@ mod tests {
             "database"
         );
         assert_eq!(core.get_meeting(&id).unwrap().segments.len(), 3);
+    }
+
+    #[test]
+    fn summary_versions_list_newest_first_with_templates_and_latest_stays_current() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_fixture().unwrap();
+        let other = core.create_fixture().unwrap();
+        core.save_summary(&id, "merge", "m1", "one", "general-v1")
+            .unwrap();
+        core.save_summary(&id, "merge", "m2", "two", "standup-v1")
+            .unwrap();
+        core.save_summary(&other, "merge", "m9", "elsewhere", "general-v1")
+            .unwrap();
+        let versions = core.list_summaries(&id).unwrap();
+        let rows: Vec<_> = versions
+            .iter()
+            .map(|v| (v.markdown.as_str(), v.template.as_str(), v.model.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("two", "standup-v1", "m2"),
+                ("one", "general-v1", "m1"),
+                (versions[2].markdown.as_str(), "fixture", "hand-written"),
+            ]
+        );
+        assert!(versions[0].id > versions[1].id && versions[1].id > versions[2].id);
+        assert_eq!(
+            core.get_meeting(&id).unwrap().summary.as_deref(),
+            Some("two")
+        );
+        assert!(core.list_summaries("missing").unwrap().is_empty());
     }
 
     #[test]
@@ -1091,7 +1149,7 @@ mod tests {
         core.replace_transcript(&note, &[line("guava")]).unwrap();
         assert!(found(&core, "papaya").is_empty());
         assert_eq!(found(&core, "guava"), ours("transcript"));
-        core.save_summary(&note, "merge", "m", "lychee summary")
+        core.save_summary(&note, "merge", "m", "lychee summary", "general-v1")
             .unwrap();
         assert_eq!(found(&core, "lychee"), ours("summary"));
         core.db
@@ -1125,7 +1183,7 @@ mod tests {
             "\"unterminated",
             "'; DROP TABLE search; --",
             "!!!",
-            "ünïcode",
+            "Ã¼nÃ¯code",
         ] {
             assert!(core.search_meetings(hostile).is_ok(), "{hostile:?}");
         }

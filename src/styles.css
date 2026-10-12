@@ -970,3 +970,26 @@ pre {
 .danger {
   color: var(--danger);
 }
+
+.summary-heading .panel-actions {
+  margin-top: 0;
+}
+
+.summary-version {
+  display: block;
+  margin: 12px 0;
+}
+
+.ask-meeting {
+  display: grid;
+  gap: 8px;
+  margin-top: 32px;
+}
+
+.ask-meeting .panel-actions {
+  margin-top: 0;
+}
+
+.ask-answer {
+  margin-top: 16px;
+}

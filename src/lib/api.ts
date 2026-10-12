@@ -92,6 +92,16 @@ export type SearchHit = {
   kind: "title" | "notes" | "transcript" | "summary";
   snippet: string;
 };
+/** Versioned template ids; must match `merge::Template` serde names in Rust. */
+export type SummaryTemplate = "general-v1" | "standup-v1" | "one-to-one-v1";
+export type SummaryVersion = {
+  id: number;
+  provider: string;
+  model: string;
+  /** Stored template id; older rows may hold "summary-v1" or "fixture". */
+  template: string;
+  markdown: string;
+};
 
 export const api = {
   isDesktop: isTauri,
@@ -134,8 +144,12 @@ export const api = {
   sttStatus: () => invoke<SttStatus>("stt_status"),
   sttInstall: () => invoke<SttStatus>("stt_install"),
   transcribeMeeting: (id: string) => invoke<void>("transcribe_meeting", { id }),
-  generateSummary: (id: string, consent: boolean) =>
-    invoke<void>("generate_summary", { id, consent }),
+  generateSummary: (
+    id: string,
+    consent: boolean,
+    template: SummaryTemplate,
+    requests: number,
+  ) => invoke<void>("generate_summary", { id, consent, template, requests }),
   saveSettings: (pauseShortcut: string) =>
     invoke<Settings>("save_settings", { pauseShortcut }),
   chooseVaultFolder: () => invoke<Settings>("choose_vault_folder"),
@@ -160,6 +174,12 @@ export const api = {
   deleteMeeting: (id: string) => invoke<void>("delete_meeting", { id }),
   searchMeetings: (query: string) =>
     invoke<SearchHit[]>("search_meetings", { query }),
+  /** Number of Merge requests a summary would send; sends nothing. */
+  planSummary: (id: string) => invoke<number>("plan_summary", { id }),
+  listSummaries: (id: string) =>
+    invoke<SummaryVersion[]>("list_summaries", { id }),
+  askMeeting: (id: string, question: string, consent: boolean) =>
+    invoke<string>("ask_meeting", { id, question, consent }),
 };
 
 export function errorMessage(error: unknown): string {
