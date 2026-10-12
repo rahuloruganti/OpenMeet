@@ -2,16 +2,68 @@ use crate::domain::*;
 use std::{fs, io::Write, path::Path};
 use uuid::Uuid;
 
-pub fn render(detail: &MeetingDetail) -> String {
+fn banner(source: &str) -> &'static str {
+    match source {
+        "simulation" => "Simulation: no audio was recorded.",
+        "fixture" => "Fictional sample: no audio was recorded and the summary is hand-written.",
+        "desktop" => "Recorded on this device with the Windows capture preview. Audio files are not included in this export.",
+        _ => "OpenMeet preview export.",
+    }
+}
+
+/// Longest finalized track, e.g. "0:12:34"; None when no audio was captured.
+fn duration(detail: &MeetingDetail) -> Option<String> {
+    let seconds = detail
+        .tracks
+        .iter()
+        .filter(|track| track.frames > 0 && track.sample_rate > 0)
+        .map(|track| track.frames / i64::from(track.sample_rate))
+        .max()?;
+    Some(format!(
+        "{}:{:02}:{:02}",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    ))
+}
+
+pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
     // JSON-quoted strings are valid YAML double-quoted scalar values.
     let quote =
         |value: &str| serde_json::to_string(value).expect("string serialization is infallible");
     let mut output = format!(
-        "---\ntitle: {}\ndate: {}\nmeeting_id: {}\nsource: {}\ntags: [meeting]\n---\n\n> Foundation preview: {}. No audio was recorded by this build.\n\n## Summary\n%%ai-start%%\n{}\n%%ai-end%%\n\n## My notes\n{}\n\n## Transcript\n",
-        quote(&detail.meeting.title), quote(&detail.meeting.started_at), quote(&detail.meeting.id),
-        quote(&detail.meeting.source), detail.meeting.source,
-        detail.summary.as_deref().unwrap_or("No summary generated."), detail.user_markdown,
+        "---\ntitle: {}\ndate: {}\nmeeting_id: {}\nsource: {}\n",
+        quote(&detail.meeting.title),
+        quote(&detail.meeting.started_at),
+        quote(&detail.meeting.id),
+        quote(&detail.meeting.source),
     );
+    if let Some(duration) = duration(detail) {
+        output.push_str(&format!("duration: {}\n", quote(&duration)));
+    }
+    if options.summary && detail.summary.is_some() {
+        if let Some(template) = &detail.summary_template {
+            output.push_str(&format!("template: {}\n", quote(template)));
+        }
+        if let Some(model) = &detail.summary_model {
+            output.push_str(&format!("model: {}\n", quote(model)));
+        }
+    }
+    output.push_str(&format!(
+        "tags: [meeting]\n---\n\n> {}\n\n",
+        banner(&detail.meeting.source)
+    ));
+    if options.summary {
+        output.push_str(&format!(
+            "## Summary\n%%ai-start%%\n{}\n%%ai-end%%\n\n",
+            detail.summary.as_deref().unwrap_or("No summary generated.")
+        ));
+    }
+    output.push_str(&format!("## My notes\n{}\n", detail.user_markdown));
+    if !options.transcript {
+        return output;
+    }
+    output.push_str("\n## Transcript\n");
     if detail.segments.is_empty() {
         output.push_str("No transcript generated.\n");
     }
@@ -26,14 +78,9 @@ pub fn render(detail: &MeetingDetail) -> String {
     output
 }
 
-pub fn filename(detail: &MeetingDetail) -> Result<String> {
-    let id = Uuid::parse_str(&detail.meeting.id)
-        .map_err(|_| AppError::new("invalid_id", "The meeting ID is invalid."))?;
-    let title: String = detail
-        .meeting
-        .title
-        .chars()
-        .take(64)
+fn safe_name(text: &str, max: usize) -> String {
+    text.chars()
+        .take(max)
         .map(|c| {
             if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ' ') {
                 c
@@ -41,12 +88,31 @@ pub fn filename(detail: &MeetingDetail) -> Result<String> {
                 '-'
             }
         })
-        .collect();
-    // A fixed prefix and UUID avoid Windows device names and title collisions.
-    Ok(format!("Meeting {} - {id}.md", title.trim()))
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
-pub fn write_snapshot(detail: &MeetingDetail, vault: &Path) -> Result<ExportResult> {
+pub fn filename(detail: &MeetingDetail, options: &ExportOptions) -> Result<String> {
+    let id = Uuid::parse_str(&detail.meeting.id)
+        .map_err(|_| AppError::new("invalid_id", "The meeting ID is invalid."))?;
+    let title = safe_name(&detail.meeting.title, 64);
+    // A fixed prefix (or leading date) and UUID avoid Windows device names and title collisions.
+    Ok(match options.filename {
+        FilenamePattern::Title => format!("Meeting {title} - {id}.md"),
+        // ponytail: UTC date from started_at; use the local date if users find midnight meetings misfiled.
+        FilenamePattern::DateTitle => format!(
+            "{} {title} - {id}.md",
+            safe_name(&detail.meeting.started_at, 10)
+        ),
+    })
+}
+
+pub fn write_snapshot(
+    detail: &MeetingDetail,
+    vault: &Path,
+    options: &ExportOptions,
+) -> Result<ExportResult> {
     let vault = vault.canonicalize()?;
     let folder = vault.join("Meetings");
     fs::create_dir_all(&folder)?;
@@ -57,8 +123,8 @@ pub fn write_snapshot(detail: &MeetingDetail, vault: &Path) -> Result<ExportResu
             "The Meetings folder resolves outside the selected folder.",
         ));
     }
-    let output = render(detail);
-    let original = folder.join(filename(detail)?);
+    let output = render(detail, options);
+    let original = folder.join(filename(detail, options)?);
     match fs::symlink_metadata(&original) {
         Ok(metadata)
             if metadata.file_type().is_file()
@@ -107,19 +173,25 @@ mod tests {
     use super::*;
     use crate::storage::Core;
 
+    const ALL: ExportOptions = ExportOptions {
+        transcript: true,
+        summary: true,
+        filename: FilenamePattern::Title,
+    };
+
     #[test]
     fn export_preserves_external_edits_and_reuses_identical_snapshot() {
         let dir = tempfile::tempdir().unwrap();
         let mut core = Core::open(Path::new(":memory:")).unwrap();
         let id = core.create_fixture().unwrap();
         let detail = core.get_meeting(&id).unwrap();
-        let first = write_snapshot(&detail, dir.path()).unwrap();
+        let first = write_snapshot(&detail, dir.path(), &ALL).unwrap();
         assert_eq!(
             first.path,
-            write_snapshot(&detail, dir.path()).unwrap().path
+            write_snapshot(&detail, dir.path(), &ALL).unwrap().path
         );
         fs::write(&first.path, "External edits must survive").unwrap();
-        let second = write_snapshot(&detail, dir.path()).unwrap();
+        let second = write_snapshot(&detail, dir.path(), &ALL).unwrap();
         assert!(second.created_copy);
         assert_ne!(first.path, second.path);
         assert_eq!(
@@ -137,9 +209,9 @@ mod tests {
         let id = core.create_fixture().unwrap();
         let mut detail = core.get_meeting(&id).unwrap();
         detail.meeting.title = "../CON:<bad>\"\n---\nkey: injected".into();
-        let name = filename(&detail).unwrap();
+        let name = filename(&detail, &ALL).unwrap();
         assert!(!name.chars().any(|c| "<>:\"/\\|?*\n".contains(c)));
-        assert!(render(&detail).contains("\\n---\\nkey: injected"));
+        assert!(render(&detail, &ALL).contains("\\n---\\nkey: injected"));
     }
 
     #[test]
@@ -149,10 +221,116 @@ mod tests {
         let mut core = Core::open(Path::new(":memory:")).unwrap();
         let id = core.create_fixture().unwrap();
         let detail = core.get_meeting(&id).unwrap();
-        assert!(write_snapshot(&detail, dir.path()).is_err());
+        assert!(write_snapshot(&detail, dir.path(), &ALL).is_err());
         assert_eq!(
             core.get_meeting(&id).unwrap().user_markdown,
             detail.user_markdown
         );
+    }
+
+    #[test]
+    fn simulation_banner_says_no_audio_was_recorded() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.start("Simulated").unwrap().meeting_id.unwrap();
+        core.stop().unwrap();
+        let text = render(&core.get_meeting(&id).unwrap(), &ALL);
+        assert!(text.contains("> Simulation: no audio was recorded."));
+        assert!(!text.contains("duration:"));
+    }
+
+    #[test]
+    fn fixture_banner_says_sample_and_hand_written() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_fixture().unwrap();
+        let text = render(&core.get_meeting(&id).unwrap(), &ALL);
+        assert!(text.contains("> Fictional sample: no audio was recorded"));
+        assert!(text.contains("hand-written"));
+    }
+
+    #[test]
+    fn desktop_banner_does_not_claim_missing_audio_and_reports_duration() {
+        let core = Core::open(Path::new(":memory:")).unwrap();
+        core.db
+            .execute_batch(
+                "INSERT INTO meetings(id, title, started_at, ended_at, source, status) VALUES ('6f9619ff-8b86-d011-b42d-00cf4fc964ff', 'Recorded', '2026-10-09T10:00:00Z', '2026-10-09T11:00:00Z', 'desktop', 'stopped');
+                 INSERT INTO notes(meeting_id) VALUES ('6f9619ff-8b86-d011-b42d-00cf4fc964ff');
+                 INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels, frames, finalized) VALUES
+                   ('6f9619ff-8b86-d011-b42d-00cf4fc964ff', 'mic', 'mic.wav', 'mic.timing.jsonl', 'Fictional mic', 48000, 1, 3624000, 1),
+                   ('6f9619ff-8b86-d011-b42d-00cf4fc964ff', 'system', 'system.wav', 'system.timing.jsonl', 'Fictional out', 44100, 2, 44100, 1);",
+            )
+            .unwrap();
+        let detail = core
+            .get_meeting("6f9619ff-8b86-d011-b42d-00cf4fc964ff")
+            .unwrap();
+        let text = render(&detail, &ALL);
+        assert!(!text.to_lowercase().contains("no audio was recorded"));
+        assert!(text.contains("> Recorded on this device"));
+        assert!(text.contains("duration: \"0:01:15\"\n"));
+        assert!(!text.contains("model:"), "no summary, no model");
+    }
+
+    #[test]
+    fn export_options_render_each_combination() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_fixture().unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        for transcript in [true, false] {
+            for summary in [true, false] {
+                for pattern in [FilenamePattern::Title, FilenamePattern::DateTitle] {
+                    let options = ExportOptions {
+                        transcript,
+                        summary,
+                        filename: pattern,
+                    };
+                    let text = render(&detail, &options);
+                    let case = format!("{options:?}");
+                    assert!(text.starts_with("---\ntitle: "), "{case}");
+                    assert!(text.contains(&detail.user_markdown), "{case}");
+                    assert_eq!(text.contains("## Summary"), summary, "{case}");
+                    assert_eq!(text.contains("%%ai-start%%"), summary, "{case}");
+                    assert_eq!(text.contains("template: \"fixture\"\n"), summary, "{case}");
+                    assert_eq!(
+                        text.contains("model: \"hand-written\"\n"),
+                        summary,
+                        "{case}"
+                    );
+                    assert_eq!(text.contains("## Transcript"), transcript, "{case}");
+                    assert_eq!(
+                        text.contains(&detail.segments[0].text),
+                        transcript,
+                        "{case}"
+                    );
+                    let name = filename(&detail, &options).unwrap();
+                    assert!(name.ends_with(&format!(" - {id}.md")), "{case}");
+                    match pattern {
+                        FilenamePattern::Title => {
+                            assert!(name.starts_with("Meeting Sample"), "{case}: {name}")
+                        }
+                        FilenamePattern::DateTitle => assert!(
+                            name.starts_with(&format!(
+                                "{} Sample",
+                                &detail.meeting.started_at[..10]
+                            )),
+                            "{case}: {name}"
+                        ),
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn filename_pattern_is_a_closed_set_at_the_serde_boundary() {
+        let parsed: ExportOptions = serde_json::from_value(
+            serde_json::json!({ "transcript": false, "summary": true, "filename": "date_title" }),
+        )
+        .unwrap();
+        assert_eq!(parsed.filename, FilenamePattern::DateTitle);
+        for invalid in ["../evil", "Title", "", "date title"] {
+            assert!(serde_json::from_value::<ExportOptions>(serde_json::json!({
+                "transcript": true, "summary": true, "filename": invalid
+            }))
+            .is_err());
+        }
     }
 }

@@ -4,12 +4,26 @@ import {
   errorMessage,
   type Meeting,
   type MeetingDetail,
+  type MergeModel,
+  type SttDownloadProgress,
+  type SttStatus,
   type AudioDevices,
   type AudioHealth,
   type RecordingState,
+  type SearchHit,
   type Settings,
+  type SummaryVersion,
 } from "./lib/api";
 import { createNoteWriter } from "./lib/note-writer";
+import { MeetingSidebar } from "./components/MeetingSidebar";
+import {
+  MeetingWorkspace,
+  type Answer,
+  type ContentTab,
+} from "./components/MeetingWorkspace";
+import { RecordingControls } from "./components/RecordingControls";
+import { SetupPanel } from "./components/SetupPanel";
+import { SettingsPanel, type SttDraft } from "./components/SettingsPanel";
 
 type Writer = ReturnType<typeof createNoteWriter>;
 
@@ -18,9 +32,18 @@ export function App() {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const [controlBusy, setControlBusy] = useState(false);
+  const controlBusyRef = useRef(false);
   const [error, setError] = useState("");
+  const [notesError, setNotesError] = useState("");
+  const noteFailure = useRef<unknown>(undefined);
   const [notice, setNotice] = useState("");
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [search, setSearch] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => window.matchMedia?.("(min-width: 801px)").matches ?? true,
+  );
+  const [tab, setTab] = useState<ContentTab>("notes");
   const [selected, setSelected] = useState<MeetingDetail | null>(null);
   const [notes, setNotes] = useState("");
   const [notesStatus, setNotesStatus] = useState("saved");
@@ -31,9 +54,27 @@ export function App() {
     meeting_id: null,
     source: null,
     error: null,
+    recording_offset_ms: null,
   });
   const [settings, setSettings] = useState<Settings | null>(null);
   const [shortcut, setShortcut] = useState("");
+  const [stopShortcut, setStopShortcut] = useState("");
+  const [sttDraft, setSttDraft] = useState<SttDraft>({
+    stt_language: "auto",
+    stt_prompt: "",
+    stt_model: "small",
+  });
+  const [stt, setStt] = useState<SttStatus | null>(null);
+  const [sttProgress, setSttProgress] = useState<SttDownloadProgress | null>(
+    null,
+  );
+  const [transcribeProgress, setTranscribeProgress] = useState<
+    Record<string, number>
+  >({});
+  const [job, setJob] = useState<string | null>(null);
+  const [mergeKey, setMergeKey] = useState<boolean | null>(null);
+  const [mergeModel, setMergeModel] = useState("");
+  const [mergeModels, setMergeModels] = useState<MergeModel[] | null>(null);
   const [title, setTitle] = useState("Untitled meeting");
   const [consent, setConsent] = useState(false);
   const [devices, setDevices] = useState<AudioDevices | null>(null);
@@ -41,12 +82,23 @@ export function App() {
   const [output, setOutput] = useState("");
   const [health, setHealth] = useState<AudioHealth | null>(null);
   const [closeRequested, setCloseRequested] = useState(false);
+  const [panel, setPanel] = useState<"setup" | "settings" | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const panelTrigger = useRef<HTMLButtonElement | null>(null);
   const listRequest = useRef(0);
+  const jobRef = useRef(false);
+  const selectedIdRef = useRef<string | null>(null);
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [audioBytes, setAudioBytes] = useState<number | null>(null);
+  const [summaryVersions, setSummaryVersions] = useState<SummaryVersion[]>([]);
+  const [answer, setAnswer] = useState<Answer | null>(null);
 
   const refreshList = useCallback(async () => {
     const request = ++listRequest.current;
     const list = await api.listMeetings();
     if (request === listRequest.current) setMeetings(list);
+    // Disk usage is informational; failing to measure it must not block the list.
+    void api.audioUsage().then(setAudioBytes, () => setAudioBytes(null));
     return list;
   }, []);
 
@@ -66,29 +118,59 @@ export function App() {
       (text, revision) => api.saveNotes(id, text, revision),
       (status, failure) => {
         setNotesStatus(status);
-        if (failure) setError(errorMessage(failure));
+        noteFailure.current = failure;
+        setNotesError(status === "error" ? errorMessage(failure) : "");
       },
     );
     setNotes(detail.user_markdown);
     setNotesStatus("saved");
+    selectedIdRef.current = id;
     setSelected(detail);
   }, []);
 
-  const run = useCallback(async (task: () => Promise<void>) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      await task();
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  }, []);
+  // One in-flight task per lock; `mark` mirrors the lock into render state.
+  const guard = useCallback(
+    async (
+      lock: { current: boolean },
+      mark: (on: boolean) => void,
+      task: () => Promise<void>,
+      keepMessages = false,
+    ) => {
+      if (lock.current) return;
+      lock.current = true;
+      mark(true);
+      if (!keepMessages) {
+        setError("");
+        setNotice("");
+      }
+      try {
+        await task();
+      } catch (failure) {
+        // Note-save failures are already shown by the notes banner.
+        if (keepMessages || failure !== noteFailure.current)
+          setError(errorMessage(failure));
+      } finally {
+        lock.current = false;
+        mark(false);
+      }
+    },
+    [],
+  );
+  const run = useCallback(
+    (task: () => Promise<void>) => guard(busyRef, setBusy, task),
+    [guard],
+  );
+  // Recording controls stay live while other tasks run, so they keep their own lock.
+  const runControl = (task: () => Promise<void>) =>
+    guard(controlBusyRef, setControlBusy, task, true);
+  // Long local/remote jobs use their own flag so notes stay editable and recording controls stay live.
+  const runJob = (kind: string, task: () => Promise<void>) =>
+    guard(jobRef, (on) => setJob(on ? kind : null), task);
+  const finishJob = async (id: string) => {
+    await refreshList();
+    // Do not yank the user back if they moved to another meeting meanwhile.
+    if (selectedIdRef.current === id) await openMeeting(id);
+  };
 
   useEffect(() => {
     if (!desktop) return;
@@ -112,17 +194,36 @@ export function App() {
       await register(api.onCloseRequested(() => setCloseRequested(true)));
       await register(api.onError(setError));
       await register(api.onAudioHealth(setHealth));
+      await register(
+        api.onSttProgress((progress) => {
+          if (progress.stage === "transcribing")
+            setTranscribeProgress((previous) => ({
+              ...previous,
+              [progress.track]: progress.percent,
+            }));
+          else setSttProgress(progress);
+        }),
+      );
       if (disposed) return;
-      const [state, preferences, warning, discovered] = await Promise.all([
-        api.getRecordingState(),
-        api.getSettings(),
-        api.getStartupWarning(),
-        api.listDevices(),
-      ]);
+      const [state, preferences, warning, discovered, keyPresent, speech] =
+        await Promise.all([
+          api.getRecordingState(),
+          api.getSettings(),
+          api.getStartupWarning(),
+          api.listDevices(),
+          // A keychain failure must not block startup; the panel shows "unavailable".
+          api.mergeKeyStatus().catch(() => null),
+          api.sttStatus().catch(() => null),
+        ]);
       if (disposed) return;
       updateRecording(state);
       setSettings(preferences);
       setShortcut(preferences.pause_shortcut);
+      setStopShortcut(preferences.stop_shortcut ?? "");
+      setSttDraft(preferences);
+      setMergeModel(preferences.merge_model ?? "");
+      setMergeKey(keyPresent ?? null);
+      setStt(speech ?? null);
       setDevices(discovered);
       setMicrophone(
         preferences.microphone_id ?? discovered.microphones[0]?.id ?? "",
@@ -144,117 +245,277 @@ export function App() {
   }, [desktop, openMeeting, refreshList, updateRecording]);
 
   useEffect(() => {
-    const guard = (event: BeforeUnloadEvent) => {
+    if (job === null) {
+      setSttProgress(null);
+      setTranscribeProgress({});
+    }
+  }, [job]);
+  // Summary history for the open meeting; reloaded whenever its detail reloads.
+  useEffect(() => {
+    const id = selected?.meeting.id;
+    setSummaryVersions([]);
+    if (!desktop || !id) return;
+    let current = true;
+    api.listSummaries(id).then(
+      (list) => current && setSummaryVersions(list),
+      (failure: unknown) => current && setError(errorMessage(failure)),
+    );
+    return () => {
+      current = false;
+    };
+  }, [desktop, selected]);
+  // Answers are never stored; leaving the meeting discards the shown one.
+  const selectedId = selected?.meeting.id;
+  useEffect(() => setAnswer(null), [selectedId]);
+
+  // Full-text matches for searches of 2+ characters; re-run when meetings change so hits stay current.
+  useEffect(() => {
+    const query = search.trim();
+    if (!desktop || query.length < 2) {
+      setHits([]);
+      return;
+    }
+    let current = true;
+    const timer = setTimeout(() => {
+      api.searchMeetings(query).then(
+        (found) => {
+          if (current) setHits(found);
+        },
+        (failure: unknown) => {
+          if (current) setError(errorMessage(failure));
+        },
+      );
+    }, 150);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [desktop, search, meetings]);
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
       if (writer.current?.isDirty()) event.preventDefault();
     };
-    window.addEventListener("beforeunload", guard);
-    return () => window.removeEventListener("beforeunload", guard);
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
   }, []);
 
   const active =
     recording.status === "recording" || recording.status === "paused";
-  const disabled = !ready || busy;
+  const openPanel = (
+    next: "setup" | "settings",
+    trigger: HTMLButtonElement,
+  ) => {
+    panelTrigger.current = trigger;
+    setPanel(next);
+  };
+  useEffect(() => {
+    if (panel) {
+      panelRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    } else {
+      if (panelTrigger.current?.isConnected) panelTrigger.current.focus();
+      panelTrigger.current = null;
+    }
+  }, [panel]);
+
+  useEffect(() => {
+    if (!panel || closeRequested) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setPanel(null);
+      }
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [panel, closeRequested]);
+  const disabled = !ready || busy || controlBusy;
+  const hasSummaryInput =
+    notes.trim().length > 0 || (selected?.segments.length ?? 0) > 0;
+  const enhanceBlocked = !selected
+    ? "Select a meeting first."
+    : mergeKey !== true
+      ? "Import a Merge API key in Settings first."
+      : !settings?.merge_model
+        ? "Choose and save a Merge model in Settings first."
+        : !hasSummaryInput
+          ? "Add notes or transcribe the audio first."
+          : null;
 
   return (
-    <div className="app">
-      <header>
-        <div>
-          <span className="eyebrow">LOCAL-FIRST MEETING NOTES</span>
-          <h1>OpenMeet</h1>
+    <div className={`app${sidebarOpen ? "" : " sidebar-collapsed"}`}>
+      <MeetingSidebar
+        open={sidebarOpen}
+        meetings={meetings}
+        search={search}
+        selectedId={selected?.meeting.id}
+        disabled={disabled}
+        recordingActive={active}
+        onSearch={setSearch}
+        onNewRecording={(trigger) => {
+          setConsent(false);
+          openPanel("setup", trigger);
+        }}
+        onSettings={(trigger) => openPanel("settings", trigger)}
+        onOpenMeeting={(id) =>
+          void run(async () => {
+            await openMeeting(id);
+            setPanel(null);
+          })
+        }
+        onLoadSample={() =>
+          void run(async () => {
+            await writer.current?.flush();
+            const id = await api.createFixture();
+            await refreshList();
+            await openMeeting(id);
+            setPanel(null);
+          })
+        }
+        onNewNote={() =>
+          void run(async () => {
+            await writer.current?.flush();
+            const id = await api.createNote("Untitled note");
+            await refreshList();
+            await openMeeting(id);
+            setPanel(null);
+            setTab("notes");
+          })
+        }
+        hits={hits}
+        onOpenHit={(hit) =>
+          void run(async () => {
+            await openMeeting(hit.meeting_id);
+            setPanel(null);
+            setTab(
+              hit.kind === "transcript" || hit.kind === "summary"
+                ? hit.kind
+                : "notes",
+            );
+          })
+        }
+        audioBytes={audioBytes}
+      />
+      <main className="workspace">
+        <header className="workspace-toolbar">
+          <div className="toolbar-context">
+            <button
+              aria-label="Toggle meetings"
+              aria-controls="meeting-sidebar"
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen((open) => !open)}
+            >
+              <svg
+                viewBox="0 0 20 20"
+                width="18"
+                height="18"
+                fill="none"
+                aria-hidden="true"
+              >
+                <rect x="2.5" y="3" width="15" height="14" rx="2" />
+                <path d="M7.5 3v14" />
+              </svg>
+              <span>Meetings</span>
+            </button>
+            <span className="toolbar-location">
+              {panel === "settings"
+                ? "Preferences"
+                : panel === "setup"
+                  ? "New recording"
+                  : "Workspace"}
+            </span>
+          </div>
+          <details className="privacy-details">
+            <summary>
+              <span className="status-dot" aria-hidden="true" /> Local workspace{" "}
+              <span className="preview-tag">Preview</span>
+            </summary>
+            <div className="privacy-popover">
+              <strong>Your notes stay on this device.</strong>
+              <p>
+                Recording saves microphone and system audio locally.
+                Transcription runs on this computer. Summaries and questions
+                send text to Merge only after you confirm.
+              </p>
+              <p>
+                Windows capture is not yet qualified. macOS capture is not
+                available. Local files are unencrypted.
+              </p>
+            </div>
+          </details>
+        </header>
+        <div className="feedback-stack">
+          {!desktop && (
+            <p role="alert">
+              Open this app with <code>corepack pnpm tauri dev</code>. The
+              browser preview cannot access the desktop database; it does not
+              simulate persistence.
+            </p>
+          )}
+          {error && (
+            <div className="error" role="alert">
+              {error} <button onClick={() => setError("")}>Dismiss</button>
+            </div>
+          )}
+          {notesError && (
+            <p className="error" role="alert">
+              Notes not saved: {notesError}. Keep or copy your edits before
+              quitting.
+            </p>
+          )}
+          {recording.error && (
+            <p className="error" role="alert">
+              Capture: {recording.error}
+            </p>
+          )}
+          {notice && (
+            <div className="notice" role="status">
+              <span>{notice}</span>
+              <button
+                aria-label="Dismiss notification"
+                onClick={() => setNotice("")}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {desktop && !ready && !error && (
+            <p role="status">Opening local database…</p>
+          )}
+          {active && health?.tracks.some((track) => track.gaps > 0) && (
+            <p className="notice" role="status">
+              Audio gaps detected (
+              {health.tracks
+                .filter((track) => track.gaps > 0)
+                .map((track) => `${track.kind}: ${track.gaps}`)
+                .join(", ")}
+              ). Recording continues; exact positions are kept in the timing
+              index.
+            </p>
+          )}
+          {health?.error && (
+            <p className="error" role="alert">
+              Audio: {health.error}
+            </p>
+          )}
         </div>
-        <div className={`recording-state ${recording.status}`} role="status">
-          <span aria-hidden="true">●</span>{" "}
-          {recording.source === "desktop" ? "Recording" : "Simulation"}:{" "}
-          {recording.status}
-        </div>
-      </header>
-      <p className="preview-banner">
-        <strong>Windows capture preview.</strong> Real recording saves
-        microphone and system audio locally. Transcription and AI summaries are
-        not implemented. macOS capture is not yet available.
-      </p>
-      {!desktop && (
-        <p role="alert">
-          Open this app with <code>corepack pnpm tauri dev</code>. The browser
-          preview cannot access the desktop database; it does not simulate
-          persistence.
-        </p>
-      )}
-      {error && (
-        <div className="error" role="alert">
-          {error} <button onClick={() => setError("")}>Dismiss</button>
-        </div>
-      )}
-      {notice && (
-        <p className="notice" role="status">
-          {notice}
-        </p>
-      )}
-      {desktop && !ready && !error && (
-        <p role="status">Opening local database…</p>
-      )}
 
-      <section className="recorder" aria-label="Recording controls">
-        <label>
-          Meeting title
-          <input
-            value={title}
-            maxLength={160}
-            disabled={disabled || active}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={consent}
-            disabled={disabled || active}
-            onChange={(event) => setConsent(event.target.checked)}
-          />
-          I have informed participants and have consent to record microphone and
-          system audio.
-        </label>
-        <div className="actions">
-          <label>
-            Microphone
-            <select
-              value={microphone}
-              disabled={disabled || active || !devices?.capture_supported}
-              onChange={(event) => setMicrophone(event.target.value)}
-            >
-              {devices?.microphones.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            System output
-            <select
-              value={output}
-              disabled={disabled || active || !devices?.capture_supported}
-              onChange={(event) => setOutput(event.target.value)}
-            >
-              {devices?.outputs.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="primary"
-            disabled={
-              disabled ||
-              active ||
-              !consent ||
-              !title.trim() ||
-              !devices?.capture_supported ||
-              !microphone ||
-              !output
-            }
-            onClick={() =>
+        {panel === "setup" && (
+          <SetupPanel
+            panelRef={panelRef}
+            devices={devices}
+            title={title}
+            consent={consent}
+            microphone={microphone}
+            output={output}
+            disabled={disabled}
+            active={active}
+            onTitle={setTitle}
+            onConsent={setConsent}
+            onMicrophone={setMicrophone}
+            onOutput={setOutput}
+            onClose={() => setPanel(null)}
+            onStartCapture={() =>
               void run(async () => {
                 await writer.current?.flush();
                 const state = await api.startCapture(title, consent, {
@@ -262,277 +523,373 @@ export function App() {
                   outputId: output,
                 });
                 updateRecording(state);
+                setPanel(null);
                 if (state.meeting_id) await openMeeting(state.meeting_id);
                 await refreshList();
               })
             }
-          >
-            Start recording
-          </button>
-          <button
-            disabled={disabled || active || !title.trim()}
-            onClick={() =>
+            onStartSimulation={() =>
               void run(async () => {
                 await writer.current?.flush();
                 const state = await api.start(title);
                 updateRecording(state);
+                setPanel(null);
                 if (state.meeting_id) await openMeeting(state.meeting_id);
                 await refreshList();
               })
             }
-          >
-            Start simulation
-          </button>
-          <button
-            disabled={disabled || !active}
-            onClick={() =>
+          />
+        )}
+        <MeetingWorkspace
+          hidden={panel !== null}
+          selected={selected}
+          firstRun={ready && meetings.length === 0}
+          job={job}
+          speechReady={stt?.installed === true}
+          enhanceBlocked={enhanceBlocked}
+          mergeModel={settings?.merge_model ?? ""}
+          onTranscribe={() => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void runJob("transcribe", async () => {
+              await writer.current?.flush();
+              try {
+                await api.transcribeMeeting(id);
+              } catch (failure) {
+                const code = (failure as { code?: string } | null)?.code;
+                if (code !== "stt_cancelled") throw failure;
+                setNotice(errorMessage(failure));
+                return;
+              }
+              await finishJob(id);
+              setNotice("Transcript generated locally and saved.");
+            });
+          }}
+          live={
+            active &&
+            recording.source === "desktop" &&
+            recording.meeting_id === selected?.meeting.id
+          }
+          transcribeProgress={transcribeProgress}
+          onCancelTranscribe={() =>
+            void api
+              .cancelTranscription()
+              .catch((failure: unknown) => setError(errorMessage(failure)))
+          }
+          getRecordingOffset={async () => {
+            try {
+              const state = await api.getRecordingState();
+              updateRecording(state);
+              return state.recording_offset_ms;
+            } catch (failure) {
+              setError(errorMessage(failure));
+              return null;
+            }
+          }}
+          onSeek={async (kind, sessionMs) => {
+            const id = selected?.meeting.id;
+            if (!id) return null;
+            try {
+              return await api.audioPosition(id, kind, sessionMs);
+            } catch (failure) {
+              setError(errorMessage(failure));
+              return null;
+            }
+          }}
+          onGenerate={(template, requests) => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void runJob("summary", async () => {
+              await writer.current?.flush();
+              // Consent is only ever true from the explicit confirmation card.
+              await api.generateSummary(id, true, template, requests);
+              await finishJob(id);
+              setNotice(
+                "Summary generated and saved. Only notes and transcript text were sent to Merge.",
+              );
+            });
+          }}
+          versions={summaryVersions}
+          onPlanSummary={async () => {
+            const id = selected?.meeting.id;
+            let requests: number | null = null;
+            if (!id) return requests;
+            await run(async () => {
+              await writer.current?.flush();
+              requests = await api.planSummary(id);
+            });
+            return requests;
+          }}
+          answer={answer}
+          onAsk={(question) => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void runJob("ask", async () => {
+              await writer.current?.flush();
+              // Consent is only ever true from the explicit confirmation card.
+              const text = await api.askMeeting(id, question, true);
+              if (selectedIdRef.current === id)
+                setAnswer({ meetingId: id, question, text });
+            });
+          }}
+          notes={notes}
+          notesStatus={notesStatus}
+          tab={tab}
+          disabled={disabled}
+          onTab={setTab}
+          onNotes={(text) => {
+            setNotes(text);
+            writer.current?.update(text);
+          }}
+          onSaveNow={() =>
+            void run(async () => {
+              await writer.current?.flush();
+            })
+          }
+          onExport={() =>
+            void run(async () => {
+              await writer.current?.flush();
+              if (!selected) return;
+              if (!settings?.vault_folder) {
+                const updated = await api.chooseVaultFolder();
+                setSettings(updated);
+                if (!updated.vault_folder) return;
+              }
+              const result = await api.exportMeeting(selected.meeting.id);
+              setNotice(
+                `${result.created_copy ? "Existing file preserved; created a new snapshot" : "Exported"}: ${result.path}`,
+              );
+            })
+          }
+          recordingThis={
+            active && recording.meeting_id === selected?.meeting.id
+          }
+          onDeleteMeeting={() => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void run(async () => {
+              // The notes are being deleted; a failed final save must not block that.
+              await writer.current?.flush().catch(() => {});
+              await api.deleteMeeting(id);
+              writer.current?.dispose();
+              writer.current = null;
+              selectedIdRef.current = null;
+              setSelected(null);
+              setNotes("");
+              setNotesStatus("saved");
+              setNotesError("");
+              const list = await refreshList();
+              if (list[0]) await openMeeting(list[0].id);
+              setNotice(
+                "Meeting deleted from this device. Exported Markdown snapshots were not touched.",
+              );
+            });
+          }}
+          onDeleteAudio={() => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void run(async () => {
+              await writer.current?.flush();
+              await api.deleteAudio(id);
+              await refreshList();
+              await openMeeting(id);
+              setNotice(
+                "Audio deleted. Notes, transcript and summaries were kept.",
+              );
+            });
+          }}
+          onRename={(next) => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void run(async () => {
+              const stored = await api.renameMeeting(id, next);
+              // The sidebar refreshes from the backend's meeting_updated event.
+              setSelected((current) =>
+                current?.meeting.id === id
+                  ? {
+                      ...current,
+                      meeting: { ...current.meeting, title: stored },
+                    }
+                  : current,
+              );
+            });
+          }}
+          onRecover={() => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void runJob("recover", async () => {
+              await writer.current?.flush();
+              await api.recoverAudio(id);
+              await finishJob(id);
+              setNotice(
+                "Recovered audio saved as new copies. The original files were left unchanged.",
+              );
+            });
+          }}
+        />
+
+        {panel === "settings" && (
+          <SettingsPanel
+            panelRef={panelRef}
+            settings={settings}
+            disabled={disabled}
+            shortcut={shortcut}
+            mergeKey={mergeKey}
+            mergeModel={mergeModel}
+            mergeModels={mergeModels}
+            stt={stt}
+            sttProgress={sttProgress}
+            installing={job !== null}
+            onInstallStt={() =>
+              void runJob("install", async () => {
+                setStt(await api.sttInstall());
+                setNotice("Speech engine and models downloaded and verified.");
+              })
+            }
+            onMergeModel={setMergeModel}
+            onImportKey={() =>
               void run(async () => {
-                updateRecording(
-                  await (recording.status === "paused"
-                    ? api.resume()
-                    : api.pause()),
+                setMergeKey(await api.importMergeKey());
+                setMergeModels(null);
+                setNotice("Merge API key saved to the OS keychain.");
+              })
+            }
+            onDeleteKey={() =>
+              void run(async () => {
+                setMergeKey(await api.deleteMergeKey());
+                setMergeModels(null);
+                setNotice("Merge API key removed from the OS keychain.");
+              })
+            }
+            onRefreshMerge={() =>
+              void run(async () => {
+                setMergeModels(null);
+                setMergeModels(await api.listMergeModels());
+                setNotice(
+                  "Connected to Merge Gateway. Only the API key was sent.",
                 );
               })
             }
-          >
-            {recording.status === "paused" ? "Resume" : "Pause"}
-          </button>
-          <button
-            disabled={disabled || !active}
-            onClick={() =>
+            onSaveMerge={() =>
               void run(async () => {
-                await writer.current?.flush();
-                updateRecording(await api.stop());
-                await refreshList();
+                const updated = await api.saveMergeModel(mergeModel);
+                setSettings(updated);
+                setNotice("Merge model selection saved.");
               })
             }
+            onShortcut={setShortcut}
+            onClose={() => setPanel(null)}
+            onChooseFolder={() =>
+              void run(async () => {
+                setSettings(await api.chooseVaultFolder());
+              })
+            }
+            onSaveShortcut={() =>
+              void run(async () => {
+                const updated = await api.saveSettings(
+                  shortcut,
+                  stopShortcut.trim() || null,
+                );
+                setSettings(updated);
+                setShortcut(updated.pause_shortcut);
+                setStopShortcut(updated.stop_shortcut ?? "");
+                setNotice("Shortcuts saved.");
+              })
+            }
+            stopShortcut={stopShortcut}
+            onStopShortcut={setStopShortcut}
+            sttDraft={sttDraft}
+            onStt={(change) =>
+              setSttDraft((draft) => ({ ...draft, ...change }))
+            }
+            onSaveStt={() =>
+              void run(async () => {
+                const updated = await api.saveSttSettings(
+                  sttDraft.stt_language,
+                  sttDraft.stt_prompt,
+                  sttDraft.stt_model,
+                );
+                setSettings(updated);
+                setSttDraft(updated);
+                setStt(await api.sttStatus());
+                setNotice("Transcription settings saved.");
+              })
+            }
+            onExportOptions={(options) =>
+              void run(async () => {
+                setSettings(await api.saveExportOptions(options));
+              })
+            }
+          />
+        )}
+        <RecordingControls
+          recording={recording}
+          active={active}
+          ready={ready}
+          controlBusy={controlBusy}
+          disabled={disabled}
+          showOpenActive={
+            active &&
+            !!recording.meeting_id &&
+            recording.meeting_id !== selected?.meeting.id
+          }
+          onOpenActive={() =>
+            void run(() => openMeeting(recording.meeting_id!))
+          }
+          onToggle={() =>
+            void runControl(async () => {
+              updateRecording(
+                await (recording.status === "paused"
+                  ? api.resume()
+                  : api.pause()),
+              );
+            })
+          }
+          onStop={() =>
+            void runControl(async () => {
+              updateRecording(await api.stop());
+              // Stopping is independent of saving; failed drafts remain in the writer.
+              await Promise.all([
+                refreshList(),
+                writer.current?.flush().catch(() => {}),
+              ]);
+            })
+          }
+          health={health}
+        />
+        {closeRequested && (
+          <section
+            className="close-panel"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="close-title"
           >
-            Stop
-          </button>
-        </div>
-      </section>
-
-      <main>
-        <aside>
-          <div className="section-heading">
-            <h2>Meetings</h2>
+            <h2 id="close-title">Save and quit?</h2>
+            <p>
+              Your notes will be saved first. Any active recording or simulation
+              will stop.
+            </p>
             <button
-              disabled={disabled}
+              autoFocus
+              disabled={busy || controlBusy}
               onClick={() =>
                 void run(async () => {
                   await writer.current?.flush();
-                  const id = await api.createFixture();
-                  await refreshList();
-                  await openMeeting(id);
+                  await api.close();
                 })
               }
             >
-              Load sample
+              Save and quit
             </button>
-          </div>
-          {health && (
-            <p className="muted">
-              {health.error ??
-                health.tracks
-                  .map(
-                    (track) =>
-                      `${track.kind}: ${track.frames} frames, peak ${track.peak.toFixed(2)}`,
-                  )
-                  .join(" · ")}
-            </p>
-          )}
-          {meetings.length === 0 && (
-            <p className="muted">
-              No meetings yet. Load the fictional sample or start a simulation.
-            </p>
-          )}
-          <ul className="meeting-list">
-            {meetings.map((meeting) => (
-              <li key={meeting.id}>
-                <button
-                  disabled={disabled}
-                  aria-current={
-                    selected?.meeting.id === meeting.id ? "true" : undefined
-                  }
-                  onClick={() => void run(() => openMeeting(meeting.id))}
-                >
-                  <strong>{meeting.title}</strong>
-                  <span>
-                    {meeting.source} · {meeting.status}
-                  </span>
-                  <time dateTime={meeting.started_at}>
-                    {new Date(meeting.started_at).toLocaleString()}
-                  </time>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        <article>
-          {selected ? (
-            <>
-              <div className="section-heading">
-                <h2>{selected.meeting.title}</h2>
-                <button
-                  disabled={disabled}
-                  onClick={() =>
-                    void run(async () => {
-                      await writer.current?.flush();
-                      const result = await api.exportMeeting(
-                        selected.meeting.id,
-                      );
-                      setNotice(
-                        `${result.created_copy ? "Existing file preserved; created a new snapshot" : "Exported"}: ${result.path}`,
-                      );
-                    })
-                  }
-                >
-                  Export Markdown
-                </button>
-              </div>
-              <label htmlFor="notes">
-                My notes <span className="muted">({notesStatus})</span>
-              </label>
-              <textarea
-                id="notes"
-                value={notes}
-                disabled={disabled}
-                rows={10}
-                placeholder="Your own notes stay separate from generated content."
-                onChange={(event) => {
-                  setNotes(event.target.value);
-                  writer.current?.update(event.target.value);
-                }}
-              />
-              <button
-                disabled={disabled}
-                onClick={() =>
-                  void run(async () => {
-                    await writer.current?.flush();
-                  })
-                }
-              >
-                Save notes now
-              </button>
-              <h3>
-                {selected.meeting.source === "fixture"
-                  ? "Sample summary (hand-written)"
-                  : "Summary"}
-              </h3>
-              <pre>
-                {selected.summary ??
-                  "No summary generated. AI processing is not available in this preview."}
-              </pre>
-              <h3>Transcript</h3>
-              {selected.tracks.length > 0 && (
-                <p className="muted">
-                  {selected.tracks
-                    .map((track) => `${track.kind}: ${track.path}`)
-                    .join("\n")}
-                </p>
-              )}
-              {selected.segments.length === 0 && (
-                <p className="muted">
-                  No transcript. Transcription is not implemented yet.
-                </p>
-              )}
-              {selected.segments.map((segment, index) => (
-                <p key={index}>
-                  <strong>{segment.speaker}</strong>{" "}
-                  <span className="muted">
-                    {(segment.start_ms / 1000).toFixed(1)}s
-                  </span>{" "}
-                  — {segment.text}
-                </p>
-              ))}
-            </>
-          ) : (
-            <div className="empty">
-              <h2>Your meeting notes, on your device.</h2>
-              <p>
-                Select a meeting to edit notes and export a Markdown snapshot.
-              </p>
-            </div>
-          )}
-        </article>
+            <button
+              disabled={busy || controlBusy}
+              onClick={() => setCloseRequested(false)}
+            >
+              Keep working
+            </button>
+          </section>
+        )}
       </main>
-
-      <details className="settings">
-        <summary>Settings</summary>
-        <p>
-          <strong>Storage:</strong> SQLite in the OS app-data folder. No network
-          requests, telemetry, or cloud processing in this preview.
-        </p>
-        <label>
-          Export folder
-          <output>{settings?.vault_folder ?? "Not selected"}</output>
-        </label>
-        <button
-          disabled={disabled}
-          onClick={() =>
-            void run(async () => {
-              setSettings(await api.chooseVaultFolder());
-            })
-          }
-        >
-          Choose export folder
-        </button>
-        <label>
-          Pause / resume shortcut
-          <input
-            value={shortcut}
-            disabled={disabled}
-            onChange={(event) => setShortcut(event.target.value)}
-            placeholder="CommandOrControl+Shift+Space"
-          />
-        </label>
-        <button
-          disabled={disabled || !shortcut.trim()}
-          onClick={() =>
-            void run(async () => {
-              const updated = await api.saveSettings(shortcut);
-              setSettings(updated);
-              setShortcut(updated.pause_shortcut);
-              setNotice("Shortcut saved.");
-            })
-          }
-        >
-          Save shortcut
-        </button>
-      </details>
-      <footer>
-        Phase 1A · Foundation preview · Files are local and unencrypted. Choose
-        your export folder carefully.
-      </footer>
-      {closeRequested && (
-        <section
-          className="close-panel"
-          role="dialog"
-          aria-modal="false"
-          aria-labelledby="close-title"
-        >
-          <h2 id="close-title">Save and quit?</h2>
-          <p>
-            Your notes will be saved first. Any active simulation will stop.
-          </p>
-          <button
-            autoFocus
-            disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                await writer.current?.flush();
-                await api.close();
-              })
-            }
-          >
-            Save and quit
-          </button>
-          <button disabled={busy} onClick={() => setCloseRequested(false)}>
-            Keep working
-          </button>
-        </section>
-      )}
     </div>
   );
 }

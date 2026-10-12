@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
-        mpsc, Arc,
+        mpsc, Arc, Mutex,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime},
@@ -25,6 +25,7 @@ const STREAM_ERROR: u32 = 1;
 const OVERFLOW: u32 = 2;
 const IO_ERROR: u32 = 4;
 const SUSPENDED: u32 = 8;
+const TIMESTAMP: u32 = 16;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AudioDevice {
@@ -38,6 +39,7 @@ pub struct Devices {
     pub outputs: Vec<AudioDevice>,
 }
 #[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CaptureOptions {
     pub microphone_id: String,
     pub output_id: String,
@@ -53,12 +55,16 @@ pub struct Track {
     pub frames: i64,
     pub dropped_frames: i64,
     pub finalized: bool,
+    /// WAV size on disk when read back from storage; `None` while capturing or if the file is missing.
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct TrackHealth {
     pub kind: String,
     pub frames: u64,
     pub dropped_frames: u64,
+    pub gaps: u64,
     pub peak: f32,
     pub callback_age_ms: u64,
 }
@@ -106,12 +112,16 @@ struct Shared {
     recording: AtomicBool,
     generation: AtomicU64,
     fault: AtomicU32,
+    // First device error text (never audio content); set outside the data callback.
+    detail: Mutex<Option<String>>,
     counters: [Counters; 2],
 }
 #[derive(Default)]
 struct Counters {
     frames: AtomicU64,
     dropped: AtomicU64,
+    // WASAPI data discontinuities (cpal Xrun): non-fatal gaps in captured audio.
+    gaps: AtomicU64,
     peak: AtomicU32,
     last_callback: AtomicU64,
 }
@@ -122,11 +132,18 @@ impl Shared {
             recording: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             fault: AtomicU32::new(0),
+            detail: Mutex::new(None),
             counters: [Counters::default(), Counters::default()],
         }
     }
     fn elapsed_us(&self) -> u64 {
         self.start.elapsed().as_micros() as u64
+    }
+    /// Microphone audio written so far. Paused or rejected packets never reach the
+    /// counter, so this excludes paused time by construction (no wall clock involved).
+    fn offset_ms(&self, rate: u32) -> i64 {
+        let frames = self.counters[0].frames.load(Ordering::Relaxed);
+        (frames.saturating_mul(1000) / u64::from(rate.max(1))).min(i64::MAX as u64) as i64
     }
     fn mute(&self) {
         self.recording.store(false, Ordering::SeqCst);
@@ -136,13 +153,41 @@ impl Shared {
         self.fault.fetch_or(reason, Ordering::SeqCst);
         self.recording.store(false, Ordering::SeqCst);
     }
+    /// Called from the stream error callback, which runs on the audio thread:
+    /// atomics and `try_lock` only. An Xrun is a gap in the audio, not a dead
+    /// stream, so it is counted and capture continues; anything else is fatal.
+    fn fail_stream(&self, index: usize, error: cpal::Error) {
+        if error.kind() == cpal::ErrorKind::Xrun {
+            self.counters[index].gaps.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        if let Ok(mut detail) = self.detail.try_lock() {
+            if detail.is_none() {
+                let track = if index == 0 {
+                    "microphone"
+                } else {
+                    "system output"
+                };
+                let text: String = error.to_string().chars().take(200).collect();
+                *detail = Some(format!("{track}: {text}"));
+            }
+        }
+        self.fail(STREAM_ERROR);
+    }
     fn error(&self) -> Option<String> {
         match self.fault.load(Ordering::SeqCst) {
             0 => None,
             bits if bits & IO_ERROR != 0 => Some("Audio disk write/finalization failed or WAV size limit reached. Stop and check free space; partial files are retained.".into()),
             bits if bits & OVERFLOW != 0 => Some("Audio queue overflowed. Both tracks paused; stop and start a new recording.".into()),
             bits if bits & SUSPENDED != 0 => Some("Capture was interrupted by sleep or a scheduling gap. Stop and start a new recording.".into()),
-            _ => Some("An audio device stopped responding. Both tracks paused; stop, check permissions/devices, and start again.".into()),
+            bits if bits & TIMESTAMP != 0 => Some("A device reported timestamps that moved backwards, so capture timing cannot be trusted. Both tracks paused; stop and start a new recording.".into()),
+            _ => {
+                let detail = self.detail.lock().ok().and_then(|d| d.clone());
+                Some(match detail {
+                    Some(detail) => format!("An audio device stopped responding ({detail}). Both tracks paused; stop, check permissions/devices, and start again."),
+                    None => "An audio device stopped responding. Both tracks paused; stop, check permissions/devices, and start again.".into(),
+                })
+            }
         }
     }
 }
@@ -293,10 +338,10 @@ fn stream(
                             index,
                             &mut producer,
                         ),
-                        None => shared.fail(STREAM_ERROR),
+                        None => shared.fail(TIMESTAMP),
                     }
                 },
-                move |_| fault.fail(STREAM_ERROR),
+                move |error| fault.fail_stream(index, error),
                 Some(Duration::from_secs(5)),
             )
             .map_err(audio_error)?;
@@ -334,6 +379,16 @@ struct TrackWriter {
 }
 impl TrackWriter {
     fn new(folder: &Path, kind: &str, input: &Input) -> Result<Self> {
+        let (rate, channels) = (input.config.sample_rate(), input.config.channels());
+        Self::create(folder, kind, input.device.to_string(), rate, channels)
+    }
+    fn create(
+        folder: &Path,
+        kind: &str,
+        device_name: String,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<Self> {
         let path = folder.join(format!("{kind}.wav"));
         let timing_path = folder.join(format!("{kind}.timing.jsonl"));
         let file = OpenOptions::new()
@@ -343,8 +398,8 @@ impl TrackWriter {
         let wav = hound::WavWriter::new(
             BufWriter::new(file),
             hound::WavSpec {
-                channels: input.config.channels(),
-                sample_rate: input.config.sample_rate(),
+                channels,
+                sample_rate,
                 bits_per_sample: 32,
                 sample_format: hound::SampleFormat::Float,
             },
@@ -363,12 +418,13 @@ impl TrackWriter {
                 kind: kind.into(),
                 path: path.to_string_lossy().into_owned(),
                 timing_path: timing_path.to_string_lossy().into_owned(),
-                device_name: input.device.to_string(),
-                sample_rate: input.config.sample_rate(),
-                channels: input.config.channels(),
+                device_name,
+                sample_rate,
+                channels,
                 frames: 0,
                 dropped_frames: 0,
                 finalized: false,
+                size_bytes: None,
             },
         })
     }
@@ -442,9 +498,6 @@ impl Session {
             }
         }
     }
-    pub fn elapsed_us(&self) -> u64 {
-        self.shared.elapsed_us()
-    }
     pub fn pause(&self) -> Result<()> {
         self.shared.mute(); // Immediately revoke queued/in-flight callbacks before waiting for disk work.
         let (tx, rx) = mpsc::channel();
@@ -463,6 +516,10 @@ impl Session {
             .map_err(audio_error)?;
         rx.recv().map_err(audio_error)?
     }
+    pub fn offset_ms(&self) -> i64 {
+        self.shared
+            .offset_ms(self.tracks.first().map_or(0, |track| track.sample_rate))
+    }
     pub fn health(&self) -> Health {
         Health {
             error: self.shared.error(),
@@ -475,6 +532,7 @@ impl Session {
                     kind: if index == 0 { "mic" } else { "system" }.into(),
                     frames: c.frames.load(Ordering::Relaxed),
                     dropped_frames: c.dropped.load(Ordering::Relaxed),
+                    gaps: c.gaps.load(Ordering::Relaxed),
                     peak: if self.shared.recording.load(Ordering::SeqCst) {
                         f32::from_bits(c.peak.load(Ordering::Relaxed))
                     } else {
@@ -511,6 +569,21 @@ fn accepted(block: &Block, shared: &Shared) -> bool {
     shared.recording.load(Ordering::SeqCst)
         && shared.fault.load(Ordering::SeqCst) == 0
         && block.generation == shared.generation.load(Ordering::SeqCst)
+}
+
+/// Writes every accepted queued packet for one track and publishes its frame count.
+fn drain(index: usize, consumer: &mut HeapCons<Block>, writer: &mut TrackWriter, shared: &Shared) {
+    while let Some(block) = consumer.try_pop() {
+        if accepted(&block, shared) {
+            if writer.write(&block).is_err() {
+                shared.fail(IO_ERROR);
+                break;
+            }
+            shared.counters[index]
+                .frames
+                .store(writer.track.frames as u64, Ordering::Relaxed);
+        }
+    }
 }
 
 fn worker(
@@ -603,17 +676,7 @@ fn worker(
             }
         }
         for (index, (_, consumer)) in streams.iter_mut().enumerate() {
-            while let Some(block) = consumer.try_pop() {
-                if accepted(&block, &shared) {
-                    if writers[index].write(&block).is_err() {
-                        shared.fail(IO_ERROR);
-                        break;
-                    }
-                    shared.counters[index]
-                        .frames
-                        .store(writers[index].track.frames as u64, Ordering::Relaxed);
-                }
-            }
+            drain(index, consumer, &mut writers[index], &shared);
         }
         if stopping {
             break;
@@ -648,9 +711,103 @@ fn worker(
     }
 }
 
+/// Writes a playable copy of a WAV whose header was never finalized (crash, power loss).
+/// Sizes come from the actual file length, truncated to whole frames. The original is only read.
+/// Assumes the data chunk is the last chunk, as hound writes it. Returns the frames in the copy.
+pub fn repair_wav(original: &Path, copy: &Path) -> Result<i64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let invalid = || audio_error("The audio file header is unreadable. Nothing was recovered.");
+    let mut file = File::open(original)?;
+    let length = file.metadata()?.len();
+    let mut header = vec![0_u8; length.min(64 * 1024) as usize];
+    file.read_exact(&mut header)?;
+    if header.len() < 12 || &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return Err(invalid());
+    }
+    let mut at = 12;
+    let mut block_align = 0_u64;
+    let data_start = loop {
+        if at + 8 > header.len() {
+            return Err(invalid());
+        }
+        let size = u32::from_le_bytes([
+            header[at + 4],
+            header[at + 5],
+            header[at + 6],
+            header[at + 7],
+        ]) as usize;
+        match &header[at..at + 4] {
+            b"data" => break at + 8,
+            // fmt layout: tag u16, channels u16, rate u32, byte rate u32, block align u16.
+            b"fmt " if size >= 16 && at + 22 <= header.len() => {
+                block_align = u64::from(u16::from_le_bytes([header[at + 20], header[at + 21]]));
+            }
+            _ => {}
+        }
+        at += 8 + size + size % 2;
+    };
+    if block_align == 0 {
+        return Err(invalid());
+    }
+    // Both RIFF and data sizes are u32; never write a header that overflows them.
+    let available = (length - data_start as u64).min(u64::from(u32::MAX) - data_start as u64);
+    let data_len = available / block_align * block_align;
+    let pad = data_len % 2;
+    let mut fixed = header[..data_start].to_vec();
+    fixed[4..8].copy_from_slice(&((data_start as u64 + data_len + pad - 8) as u32).to_le_bytes());
+    fixed[data_start - 4..data_start].copy_from_slice(&(data_len as u32).to_le_bytes());
+    let folder = copy.parent().ok_or_else(invalid)?;
+    let mut temp = tempfile::NamedTempFile::new_in(folder)?;
+    {
+        let mut out = BufWriter::new(temp.as_file_mut());
+        out.write_all(&fixed)?;
+        file.seek(SeekFrom::Start(data_start as u64))?;
+        if std::io::copy(&mut (&mut file).take(data_len), &mut out)? != data_len {
+            return Err(invalid());
+        }
+        out.write_all(&[0; 1][..pad as usize])?;
+        out.flush()?;
+    }
+    temp.as_file().sync_all()?;
+    temp.persist_noclobber(copy).map_err(|error| {
+        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::new(
+                "recovery_exists",
+                format!(
+                    "A recovered copy already exists at {}. Nothing was overwritten.",
+                    copy.display()
+                ),
+            )
+        } else {
+            error.error.into()
+        }
+    })?;
+    Ok((data_len / block_align) as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frontend_device_payload_preserves_both_ids() {
+        let request = serde_json::json!({
+            "title": "Untitled meeting",
+            "simulation": false,
+            "consent": true,
+            "devices": { "microphoneId": "mic", "outputId": "out" }
+        });
+        let options: CaptureOptions = serde_json::from_value(request["devices"].clone()).unwrap();
+        assert_eq!(options.microphone_id, "mic");
+        assert_eq!(options.output_id, "out");
+        for invalid in [
+            serde_json::json!({ "microphoneId": "mic" }),
+            serde_json::json!({ "microphoneId": null, "outputId": "out" }),
+            serde_json::json!({ "microphoneId": 42, "outputId": "out" }),
+        ] {
+            assert!(serde_json::from_value::<CaptureOptions>(invalid).is_err());
+        }
+    }
 
     #[test]
     #[ignore = "requires Windows audio devices; run with --ignored"]
@@ -665,12 +822,18 @@ mod tests {
             !devices.outputs.is_empty(),
             "No system output endpoint is available."
         );
+        // Default endpoints: that is where test audio actually plays.
+        let host = cpal::default_host();
+        let id = |d: Option<cpal::Device>| d.unwrap().id().unwrap().to_string();
         let options = CaptureOptions {
-            microphone_id: devices.microphones[0].id.clone(),
-            output_id: devices.outputs[0].id.clone(),
+            microphone_id: id(host.default_input_device()),
+            output_id: id(host.default_output_device()),
         };
+        eprintln!("devices: {devices:?}\nselected: {options:?}");
         let folder = tempfile::tempdir().unwrap();
         let mut session = Session::prepare(folder.path().join("capture"), options).unwrap();
+        // prepare() opens muted streams; the app's start() resumes immediately.
+        session.resume().unwrap();
         thread::sleep(Duration::from_secs(1));
         let health = session.health();
         session.pause().unwrap();
@@ -687,6 +850,25 @@ mod tests {
             assert_eq!(wav.spec().channels, track.channels);
             assert_eq!(wav.len() as i64, track.frames * i64::from(track.channels));
         }
+    }
+    #[test]
+    fn stream_failure_reports_which_device_and_why() {
+        let shared = Shared::new();
+        shared.recording.store(true, Ordering::SeqCst);
+        // An Xrun is a recorded gap, never a stop.
+        shared.fail_stream(0, cpal::ErrorKind::Xrun.into());
+        assert!(shared.recording.load(Ordering::SeqCst));
+        assert!(shared.error().is_none());
+        assert_eq!(shared.counters[0].gaps.load(Ordering::Relaxed), 1);
+        shared.fail_stream(1, cpal::ErrorKind::DeviceNotAvailable.into());
+        shared.fail_stream(0, cpal::ErrorKind::Other.into());
+        assert!(!shared.recording.load(Ordering::SeqCst));
+        let message = shared.error().unwrap();
+        assert!(message.contains("system output: The requested audio device is not available"));
+        assert!(!message.contains("microphone:"));
+        let timestamps = Shared::new();
+        timestamps.fail(TIMESTAMP);
+        assert!(timestamps.error().unwrap().contains("timestamps"));
     }
     #[test]
     fn paused_and_previous_generation_audio_is_never_accepted() {
@@ -739,5 +921,105 @@ mod tests {
         let second = consumer.try_pop().unwrap();
         assert!((first.samples[0] - 1.0).abs() < 0.001);
         assert_eq!(second.start_us, 100 + 1024 * 1_000_000 / 48000);
+    }
+    #[test]
+    fn truncated_wavs_are_repaired_into_new_copies_with_whole_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("synthetic.wav");
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 48000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let samples: Vec<f32> = (0..2000).map(|i| (i as f32 / 2000.0) - 0.5).collect();
+        let mut writer = hound::WavWriter::create(&source, spec).unwrap();
+        for sample in &samples {
+            writer.write_sample(*sample).unwrap();
+        }
+        writer.finalize().unwrap();
+        let mut finished = fs::read(&source).unwrap();
+        let data_start = finished.windows(4).position(|w| w == b"data").unwrap() + 8;
+        // An interrupted writer leaves zero (or stale) sizes in the header.
+        finished[4..8].fill(0);
+        finished[data_start - 4..data_start].fill(0);
+        for (case, cut) in [
+            data_start,               // header only
+            data_start + 3,           // partial first sample
+            data_start + 8 * 100,     // whole frames
+            data_start + 8 * 250 + 5, // mid-frame
+            finished.len(),           // nothing lost, header still broken
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let original = dir.path().join(format!("mic-{case}.wav"));
+            fs::write(&original, &finished[..cut]).unwrap();
+            let copy = dir.path().join(format!("mic-{case}.recovered.wav"));
+            let frames = repair_wav(&original, &copy).unwrap() as usize;
+            assert_eq!(frames, (cut - data_start) / 8, "cut at {cut}");
+            let mut reader = hound::WavReader::open(&copy).unwrap();
+            assert_eq!(reader.spec(), spec);
+            assert_eq!(reader.len() as usize, frames * 2);
+            let recovered: Vec<f32> = reader.samples().map(|s| s.unwrap()).collect();
+            assert_eq!(recovered, samples[..frames * 2]);
+            assert_eq!(
+                fs::read(&original).unwrap(),
+                &finished[..cut],
+                "original untouched"
+            );
+            assert_eq!(
+                repair_wav(&original, &copy).unwrap_err().code,
+                "recovery_exists"
+            );
+        }
+        let garbage = dir.path().join("garbage.wav");
+        fs::write(&garbage, b"not a wav file").unwrap();
+        assert!(repair_wav(&garbage, &dir.path().join("garbage.recovered.wav")).is_err());
+        assert!(!dir.path().join("garbage.recovered.wav").exists());
+    }
+
+    #[test]
+    fn recording_offset_counts_written_frames_and_excludes_paused_audio() {
+        let shared = Shared::new();
+        let folder = tempfile::tempdir().unwrap();
+        let mut writer =
+            TrackWriter::create(folder.path(), "mic", "Synthetic".into(), 16000, 1).unwrap();
+        let (mut producer, mut consumer) = HeapRb::new(QUEUE_BLOCKS).split();
+        let second = [0.25_f32; 16000];
+        shared.recording.store(true, Ordering::SeqCst);
+        push_samples(&second, 0, 1, 16000, &shared, 0, &mut producer);
+        drain(0, &mut consumer, &mut writer, &shared);
+        assert_eq!(shared.offset_ms(16000), 1000);
+        // A packet in flight when the user pauses, then audio arriving while paused.
+        push_samples(&second, 1_000_000, 1, 16000, &shared, 0, &mut producer);
+        shared.mute();
+        push_samples(&second, 2_000_000, 1, 16000, &shared, 0, &mut producer);
+        drain(0, &mut consumer, &mut writer, &shared);
+        assert_eq!(
+            shared.offset_ms(16000),
+            1000,
+            "paused audio must not advance the offset"
+        );
+        // Resume (as the worker does): new generation, half a second more, ten seconds later.
+        shared.generation.fetch_add(1, Ordering::SeqCst);
+        shared.recording.store(true, Ordering::SeqCst);
+        push_samples(
+            &second[..8000],
+            12_000_000,
+            1,
+            16000,
+            &shared,
+            0,
+            &mut producer,
+        );
+        drain(0, &mut consumer, &mut writer, &shared);
+        assert_eq!(shared.offset_ms(16000), 1500);
+        assert_eq!(writer.track.frames, 24000);
+        assert_eq!(
+            shared.offset_ms(0),
+            24_000_000,
+            "a zero rate cannot divide by zero"
+        );
     }
 }

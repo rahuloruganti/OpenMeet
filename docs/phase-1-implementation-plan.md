@@ -8,7 +8,7 @@ Source: `Open-source meeting notetaker development plan and tool inventory.md`, 
 
 **Execution model:** five gate-driven implementation subphases (1A–1E), not a calendar schedule. Begin after the relevant Phase 0 build, capture, and inference spikes have passed. Missing prerequisites must be completed explicitly. Advance only when the current subphase's exit gate passes.
 
-**Implementation status:** Phase 1A foundation code is present; frontend checks pass, but native build/runtime validation and Phase 0 hardware gates remain open. Phases 1B–1E are not implemented. See [implementation-status.md](implementation-status.md) for evidence, blockers, and deliberate limits.
+**Implementation status:** Phase 1A foundation and Phase 1B Windows capture code are present. Local Windows native checks and the previous macOS CI shell/build job passed; interactive validation and Phase 0 hardware gates remain open. Windows capture is not hardware-qualified, macOS capture is unsupported, and Phases 1C–1E are not implemented. See [implementation-status.md](implementation-status.md) for evidence, blockers, and deliberate limits.
 
 ### Included
 
@@ -27,6 +27,8 @@ Source: `Open-source meeting notetaker development plan and tool inventory.md`, 
 Automatic meeting detection; live STT; diarization and named speakers; Parakeet; calendar integration; voiceprints; template editor; provider-switch regeneration UI; SharePoint/outbox; bots; updater; public-release signing/notarization; Windows ARM; Intel Mac builds.
 
 Phase 1 supports retrying failed processing. Rich regeneration with a different model/template belongs to Phase 2, although summary history is built now.
+
+**Current user-selected LLM mode:** API-backed use through Merge Gateway (`merge.dev`), with the model not yet chosen. Use its documented OpenAI-compatible base URL, `https://api-gateway.merge.dev/v1/openai`, for the cloud adapter. This is a provider decision, not a completed integration. Existing Ollama selection is settings-only; no capture or processing gate is waived. Require backend-only, OS-keychain credentials and explicit per-action consent before cloud content submission.
 
 ## 2. Prerequisites and decisions
 
