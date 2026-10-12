@@ -14,7 +14,7 @@ export type Meeting = {
   started_at: string;
   ended_at: string | null;
   status: "recording" | "paused" | "stopped" | "interrupted";
-  source: "simulation" | "fixture" | "desktop";
+  source: "simulation" | "fixture" | "desktop" | "note";
   capture_error: string | null;
 };
 export type Segment = {
@@ -39,6 +39,8 @@ export type MeetingDetail = {
     frames: number;
     dropped_frames: number;
     finalized: boolean;
+    /** WAV size on disk; null if the file is missing. */
+    size_bytes: number | null;
   }>;
 };
 export type AudioDevice = { id: string; name: string };
@@ -85,6 +87,11 @@ export type SttProgress = {
   total: number;
 };
 export type ExportResult = { path: string; created_copy: boolean };
+export type SearchHit = {
+  meeting_id: string;
+  kind: "title" | "notes" | "transcript" | "summary";
+  snippet: string;
+};
 
 export const api = {
   isDesktop: isTauri,
@@ -147,6 +154,12 @@ export const api = {
     listen<AudioHealth>("audio_health", (event) => callback(event.payload)),
   onError: (callback: (message: string) => void) =>
     listen<string>("backend_error", (event) => callback(event.payload)),
+  createNote: (title: string) => invoke<string>("create_note", { title }),
+  audioUsage: () => invoke<number>("audio_usage"),
+  deleteAudio: (id: string) => invoke<void>("delete_audio", { id }),
+  deleteMeeting: (id: string) => invoke<void>("delete_meeting", { id }),
+  searchMeetings: (query: string) =>
+    invoke<SearchHit[]>("search_meetings", { query }),
 };
 
 export function errorMessage(error: unknown): string {

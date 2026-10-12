@@ -449,6 +449,31 @@ async fn close_application(app: AppHandle) -> Result<()> {
     Ok(())
 }
 
+#[tauri::command]
+async fn create_note(app: AppHandle, title: String) -> Result<String> {
+    with_core(app, true, move |core, _| core.create_note(&title)).await
+}
+
+#[tauri::command]
+async fn audio_usage(app: AppHandle) -> Result<u64> {
+    with_core(app, false, |core, _| core.audio_usage()).await
+}
+
+#[tauri::command]
+async fn delete_audio(app: AppHandle, id: String) -> Result<()> {
+    with_core(app, true, move |core, _| core.delete_audio(&id)).await
+}
+
+#[tauri::command]
+async fn delete_meeting(app: AppHandle, id: String) -> Result<()> {
+    with_core(app, true, move |core, _| core.delete_meeting(&id)).await
+}
+
+#[tauri::command]
+async fn search_meetings(app: AppHandle, query: String) -> Result<Vec<SearchHit>> {
+    with_core(app, false, move |core, _| core.search_meetings(&query)).await
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_window(app)))
@@ -510,6 +535,7 @@ pub fn run() {
             merge_key_status, import_merge_key, delete_merge_key, list_merge_models,
             save_merge_model,
             stt_status, stt_install, transcribe_meeting, generate_summary,
+            create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");

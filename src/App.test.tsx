@@ -53,6 +53,11 @@ vi.mock("./lib/api", async (original) => {
       onMeetingUpdated: vi.fn(),
       onCloseRequested: vi.fn(),
       onError: vi.fn(),
+      createNote: vi.fn(),
+      audioUsage: vi.fn(),
+      deleteAudio: vi.fn(),
+      deleteMeeting: vi.fn(),
+      searchMeetings: vi.fn(),
     },
   };
 });
@@ -124,6 +129,8 @@ beforeEach(() => {
   vi.mocked(api.saveNotes).mockResolvedValue(1);
   vi.mocked(api.mergeKeyStatus).mockResolvedValue(false);
   vi.mocked(api.sttStatus).mockResolvedValue(notInstalled);
+  vi.mocked(api.audioUsage).mockResolvedValue(0);
+  vi.mocked(api.searchMeetings).mockResolvedValue([]);
   for (const method of [
     api.onRecordingState,
     api.onMeetingUpdated,
@@ -183,6 +190,7 @@ describe("desktop foundation", () => {
           frames: 48000,
           dropped_frames: 0,
           finalized: true,
+          size_bytes: null,
         },
       ],
     });
@@ -917,6 +925,7 @@ describe("desktop foundation", () => {
           frames: 44100,
           dropped_frames: 0,
           finalized: true,
+          size_bytes: null,
         },
       ],
     };
@@ -961,6 +970,7 @@ describe("desktop foundation", () => {
           frames: 16000,
           dropped_frames: 0,
           finalized: true,
+          size_bytes: null,
         },
       ],
     });
@@ -1079,5 +1089,123 @@ describe("notes-first polish", () => {
       screen.getByText(/Import a Merge API key in Settings first/),
     ).toBeTruthy();
     expect(screen.getByText("A fictional summary.")).toBeTruthy();
+  });
+});
+
+describe("meeting library", () => {
+  const note: MeetingDetail = {
+    ...sample,
+    meeting: {
+      ...sample.meeting,
+      id: "note",
+      title: "Untitled note",
+      source: "note",
+    },
+    user_markdown: "",
+    summary: null,
+    summary_provider: null,
+    summary_model: null,
+  };
+
+  it("creates a notes-only meeting without touching recording", async () => {
+    await ready();
+    vi.mocked(api.createNote).mockResolvedValue("note");
+    vi.mocked(api.listMeetings).mockResolvedValue([
+      note.meeting,
+      sample.meeting,
+    ]);
+    vi.mocked(api.getMeeting).mockResolvedValue(note);
+    await userEvent.click(screen.getByRole("button", { name: "New note" }));
+    await screen.findByRole("heading", { name: "Untitled note" });
+    expect(api.createNote).toHaveBeenCalledWith("Untitled note");
+    expect(api.start).not.toHaveBeenCalled();
+    expect(api.startCapture).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("Note", { selector: ".source-badge" }),
+    ).toBeTruthy();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(
+      screen.getByText("No transcript. Notes have no recorded audio."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Transcribe/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete audio…" })).toBeNull();
+  });
+
+  it("deletes a meeting only after its exact title is typed", async () => {
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete meeting…" }),
+    );
+    const confirm = screen.getByRole("button", {
+      name: "Delete meeting",
+    }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(
+      screen.getByText(/Exported Markdown snapshots are not touched/),
+    ).toBeTruthy();
+    const input = screen.getByRole("textbox", {
+      name: "Type the meeting title to confirm",
+    });
+    await userEvent.type(input, "Sample syn");
+    expect(confirm.disabled).toBe(true);
+    await userEvent.type(input, "c");
+    expect(confirm.disabled).toBe(false);
+    vi.mocked(api.listMeetings).mockResolvedValue([]);
+    vi.mocked(api.deleteMeeting).mockResolvedValue();
+    await userEvent.click(confirm);
+    await screen.findByText(/Meeting deleted from this device/);
+    expect(api.deleteMeeting).toHaveBeenCalledWith("sample");
+    expect(api.deleteAudio).not.toHaveBeenCalled();
+    expect(screen.queryByDisplayValue("Original notes")).toBeNull();
+  });
+
+  it("refuses deletion controls for the meeting being recorded", async () => {
+    vi.mocked(api.getRecordingState).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "simulation",
+      error: null,
+    });
+    await ready();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Delete meeting…",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
+  it("shows full-text matches and opens the meeting on the matching tab", async () => {
+    const second = {
+      ...sample.meeting,
+      id: "second",
+      title: "Planning review",
+    };
+    vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting, second]);
+    vi.mocked(api.searchMeetings).mockResolvedValue([
+      { meeting_id: "second", kind: "transcript", snippet: "roadmap slipped" },
+      { meeting_id: "second", kind: "title", snippet: "Planning review" },
+    ]);
+    await ready();
+    await userEvent.type(
+      screen.getByRole("searchbox", { name: "Search meetings" }),
+      "roadmap",
+    );
+    const hit = await screen.findByRole("button", { name: /roadmap slipped/ });
+    expect(api.searchMeetings).toHaveBeenLastCalledWith("roadmap");
+    expect(api.searchMeetings).not.toHaveBeenCalledWith("r");
+    expect(screen.queryByText("No matching meetings.")).toBeNull();
+    vi.mocked(api.getMeeting).mockResolvedValue({ ...sample, meeting: second });
+    await userEvent.click(hit);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: "Transcript" })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
+    expect(api.getMeeting).toHaveBeenLastCalledWith("second");
   });
 });

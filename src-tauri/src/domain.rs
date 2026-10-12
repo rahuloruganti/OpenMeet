@@ -103,3 +103,11 @@ pub fn now() -> Result<String> {
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|_| AppError::new("clock", "Could not format the current time."))
 }
+
+/// One full-text match; `kind` is `title`, `notes`, `transcript` or `summary`.
+#[derive(Clone, Debug, Serialize)]
+pub struct SearchHit {
+    pub meeting_id: String,
+    pub kind: String,
+    pub snippet: String,
+}

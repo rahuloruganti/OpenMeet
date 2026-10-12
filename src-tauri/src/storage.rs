@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 5;
+const LATEST_SCHEMA: i64 = 7;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -36,35 +36,42 @@ impl Core {
                 ))
             }
         }
-        if version < 2 {
-            db.pragma_update(None, "foreign_keys", "OFF")?;
-            let tx = db.transaction()?;
-            tx.execute_batch(include_str!("../migrations/002_capture.sql"))?;
-            let violations: i64 =
-                tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                    row.get(0)
-                })?;
-            if violations != 0 {
-                return Err(AppError::new(
-                    "migration",
-                    "Capture migration would break existing references.",
-                ));
-            }
-            tx.commit()?;
-            db.pragma_update(None, "foreign_keys", "ON")?;
-        }
         // Each script sets its own `user_version`, so migration N runs for databases below N.
         // Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
+        // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
+        // (only switchable outside a transaction) and must pass foreign_key_check before commit.
         let additive = [
-            (3, include_str!("../migrations/003_local_model.sql")),
-            (4, include_str!("../migrations/004_merge_model.sql")),
-            (5, include_str!("../migrations/005_transcripts.sql")),
+            (2, include_str!("../migrations/002_capture.sql"), true),
+            (3, include_str!("../migrations/003_local_model.sql"), false),
+            (4, include_str!("../migrations/004_merge_model.sql"), false),
+            (5, include_str!("../migrations/005_transcripts.sql"), false),
+            (6, include_str!("../migrations/006_note_meetings.sql"), true),
+            (7, include_str!("../migrations/007_search.sql"), false),
         ];
-        for (number, script) in additive {
-            if version < number {
-                let tx = db.transaction()?;
-                tx.execute_batch(script)?;
-                tx.commit()?;
+        for (number, script, rebuilds_referenced) in additive {
+            if version >= number {
+                continue;
+            }
+            if rebuilds_referenced {
+                db.pragma_update(None, "foreign_keys", "OFF")?;
+            }
+            let tx = db.transaction()?;
+            tx.execute_batch(script)?;
+            if rebuilds_referenced {
+                let violations: i64 =
+                    tx.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get(0)
+                    })?;
+                if violations != 0 {
+                    return Err(AppError::new(
+                        "migration",
+                        format!("Migration {number} would break existing references."),
+                    ));
+                }
+            }
+            tx.commit()?;
+            if rebuilds_referenced {
+                db.pragma_update(None, "foreign_keys", "ON")?;
             }
         }
         // A restarted process cannot still own a recording from the previous process.
@@ -99,14 +106,7 @@ impl Core {
                 "Stop the active recording before starting another.",
             ));
         }
-        let title = title.trim();
-        if title.is_empty() || title.chars().count() > 160 {
-            return Err(AppError::new(
-                "invalid_title",
-                "Use a meeting title between 1 and 160 characters.",
-            ));
-        }
-        Ok(title)
+        validate_title(title)
     }
 
     pub fn start(&mut self, title: &str) -> Result<RecordingState> {
@@ -351,9 +351,11 @@ impl Core {
         let mut query = self.db.prepare("SELECT kind, path, timing_path, device_name, sample_rate, channels, frames, dropped_frames, finalized FROM tracks WHERE meeting_id = ?1 ORDER BY kind")?;
         let tracks = query
             .query_map([id], |row| {
+                let path: String = row.get(1)?;
                 Ok(audio::Track {
                     kind: row.get(0)?,
-                    path: row.get(1)?,
+                    size_bytes: std::fs::metadata(&path).ok().map(|file| file.len()),
+                    path,
                     timing_path: row.get(2)?,
                     device_name: row.get(3)?,
                     sample_rate: row.get(4)?,
@@ -503,6 +505,166 @@ impl Core {
         tx.commit()?;
         Ok(id)
     }
+
+    /// A notes-only meeting. It never touches `RecordingState`, so it is allowed during a recording.
+    pub fn create_note(&mut self, title: &str) -> Result<String> {
+        let title = validate_title(title)?;
+        let id = Uuid::new_v4().to_string();
+        let tx = self.db.transaction()?;
+        tx.execute(
+            "INSERT INTO meetings(id, title, started_at, source, status) VALUES (?1, ?2, ?3, 'note', 'stopped')",
+            params![id, title, now()?],
+        )?;
+        tx.execute("INSERT INTO notes(meeting_id) VALUES (?1)", [&id])?;
+        tx.commit()?;
+        Ok(id)
+    }
+
+    /// Bytes stored in the per-meeting audio folders (WAV and timing files), without following links.
+    pub fn audio_usage(&self) -> Result<u64> {
+        let folders = match std::fs::read_dir(&self.audio_root) {
+            Ok(folders) => folders,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error.into()),
+        };
+        let mut total = 0;
+        for folder in folders {
+            let folder = folder?;
+            if !folder.file_type()?.is_dir() {
+                continue;
+            }
+            for file in std::fs::read_dir(folder.path())? {
+                let metadata = file?.metadata()?;
+                if metadata.is_file() {
+                    total += metadata.len();
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    /// Removes this meeting's track files and rows; notes, transcript and summaries stay.
+    pub fn delete_audio(&mut self, id: &str) -> Result<()> {
+        if self.recording.meeting_id.as_deref() == Some(id)
+            && (self.audio.is_some()
+                || self.capture_report.is_some()
+                || matches!(
+                    self.recording.status,
+                    CaptureStatus::Recording | CaptureStatus::Paused
+                ))
+        {
+            return Err(AppError::new(
+                "recording_active",
+                "Stop the recording before deleting it or its audio.",
+            ));
+        }
+        let exists: bool = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1)",
+            [id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(AppError::new("not_found", "Meeting not found."));
+        }
+        for file in self.owned_audio_files(id)? {
+            match std::fs::remove_file(&file) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        self.db
+            .execute("DELETE FROM tracks WHERE meeting_id = ?1", [id])?;
+        if Uuid::parse_str(id).is_ok() {
+            // Succeeds only once the folder is empty; unknown files are left in place.
+            let _ = std::fs::remove_dir(self.audio_root.join(id));
+        }
+        Ok(())
+    }
+
+    /// Deletes the audio (same guard), then the meeting; notes, transcript and summaries cascade.
+    /// Exported Markdown snapshots live outside app data and are never touched.
+    pub fn delete_meeting(&mut self, id: &str) -> Result<()> {
+        self.delete_audio(id)?;
+        self.db
+            .execute("DELETE FROM meetings WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Existing track files, refusing (before deleting anything) any file that is not directly inside
+    /// `audio_root/<uuid>/` once `..` and links are resolved. Already-missing files are skipped.
+    fn owned_audio_files(&self, id: &str) -> Result<Vec<PathBuf>> {
+        let folder = Uuid::parse_str(id).ok().and_then(|_| {
+            let root = self.audio_root.canonicalize().ok()?;
+            let folder = self.audio_root.join(id).canonicalize().ok()?;
+            (folder.parent() == Some(root.as_path())).then_some(folder)
+        });
+        let mut query = self
+            .db
+            .prepare("SELECT path, timing_path FROM tracks WHERE meeting_id = ?1")?;
+        let stored = query
+            .query_map([id], |row| {
+                Ok([row.get::<_, String>(0)?, row.get::<_, String>(1)?])
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut files = Vec::new();
+        for path in stored.iter().flatten() {
+            let file = match Path::new(path).canonicalize() {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if file.parent() != folder.as_deref() || !file.is_file() {
+                return Err(AppError::new(
+                    "unsafe_audio_path",
+                    "A stored audio path points outside this meeting's audio folder. Nothing was deleted.",
+                ));
+            }
+            files.push(file);
+        }
+        Ok(files)
+    }
+
+    /// Best match per meeting and kind, ranked by relevance (bm25).
+    pub fn search_meetings(&self, query: &str) -> Result<Vec<SearchHit>> {
+        let query: String = query.chars().filter(|c| !c.is_control()).collect();
+        let query = query.trim();
+        if query.chars().count() > 200 {
+            return Err(AppError::new(
+                "invalid_query",
+                "Search for 200 characters or fewer.",
+            ));
+        }
+        // FTS5 tokens are letters and digits; anything else alone would be an empty phrase.
+        if !query.chars().any(char::is_alphanumeric) {
+            return Ok(Vec::new());
+        }
+        // One quoted phrase with doubled quotes, so `"`, `*`, `:`, NEAR, AND/OR/NOT stay literal text.
+        // The trailing `*` prefix-matches the last word for search-as-you-type.
+        let phrase = format!("\"{}\"*", query.replace('"', "\"\""));
+        let mut statement = self.db.prepare(
+            "SELECT meeting_id, kind, snippet(search, 2, '', '', '…', 12) FROM search WHERE search MATCH ?1 ORDER BY rank LIMIT 200",
+        )?;
+        let rows = statement.query_map([phrase], |row| {
+            Ok(SearchHit {
+                meeting_id: row.get(0)?,
+                kind: row.get(1)?,
+                snippet: row.get(2)?,
+            })
+        })?;
+        let mut seen = std::collections::HashSet::new();
+        let mut hits = Vec::new();
+        for hit in rows {
+            let hit = hit?;
+            if seen.insert((hit.meeting_id.clone(), hit.kind.clone())) {
+                hits.push(hit);
+                if hits.len() == 20 {
+                    break;
+                }
+            }
+        }
+        Ok(hits)
+    }
 }
 
 fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
@@ -515,6 +677,18 @@ fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
         source: row.get(5)?,
         capture_error: row.get(6)?,
     })
+}
+
+/// Returns the trimmed title if it has 1–160 characters.
+fn validate_title(title: &str) -> Result<&str> {
+    let title = title.trim();
+    if title.is_empty() || title.chars().count() > 160 {
+        return Err(AppError::new(
+            "invalid_title",
+            "Use a meeting title between 1 and 160 characters.",
+        ));
+    }
+    Ok(title)
 }
 
 #[cfg(test)]
@@ -712,7 +886,7 @@ mod tests {
             core.db
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            5
+            LATEST_SCHEMA
         );
         assert_eq!(detail.segments[0].text, "Fictional text");
         assert_eq!(
@@ -758,5 +932,318 @@ mod tests {
                 .unwrap(),
             "wal"
         );
+    }
+
+    fn count(core: &Core, sql: &str) -> i64 {
+        core.db.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    fn found(core: &Core, query: &str) -> Vec<(String, String)> {
+        core.search_meetings(query)
+            .unwrap()
+            .into_iter()
+            .map(|hit| (hit.meeting_id, hit.kind))
+            .collect()
+    }
+
+    #[test]
+    fn fts5_is_available_in_bundled_sqlite() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE VIRTUAL TABLE probe USING fts5(body); INSERT INTO probe VALUES ('hello world');",
+        )
+        .unwrap();
+        let matches: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM probe WHERE probe MATCH 'hello'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(matches, 1);
+    }
+
+    #[test]
+    fn migrations_preserve_populated_v5_database_and_backfill_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = Connection::open(&path).unwrap();
+            for script in [
+                include_str!("../migrations/001_foundation.sql"),
+                include_str!("../migrations/002_capture.sql"),
+                include_str!("../migrations/003_local_model.sql"),
+                include_str!("../migrations/004_merge_model.sql"),
+                include_str!("../migrations/005_transcripts.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("PRAGMA foreign_keys = ON;
+                INSERT INTO meetings(id, title, started_at, ended_at, source, status, capture_error) VALUES ('m1', 'Planning sync', '2026-10-10', '2026-10-10', 'desktop', 'interrupted', 'device lost');
+                INSERT INTO meetings(id, title, started_at, source, status) VALUES ('m2', 'Other fixture', '2026-10-09', 'fixture', 'stopped');
+                INSERT INTO notes(meeting_id, user_markdown, revision) VALUES ('m1', 'Discuss quarterly budget', 3), ('m2', 'Unrelated', 0);
+                INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES ('m1', 'You', 0, 100, 'The roadmap slipped', 'whisper', 'final');
+                INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES ('m1', 'summary-v1', 'model-x', 'merge', 'Hire a contractor');
+                INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels, frames, finalized) VALUES ('m1', 'mic', 'mic.wav', 'mic.timing.jsonl', 'Mic', 48000, 1, 480, 1);
+                INSERT INTO capture_events(meeting_id, kind, offset_us) VALUES ('m1', 'paused', 5);").unwrap();
+        }
+        let mut core = Core::open(&path).unwrap();
+        assert_eq!(
+            core.db
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            LATEST_SCHEMA
+        );
+        assert_eq!(
+            count(&core, "SELECT COUNT(*) FROM pragma_foreign_key_check"),
+            0
+        );
+        assert_eq!(
+            core.db
+                .pragma_query_value(None, "foreign_keys", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        let detail = core.get_meeting("m1").unwrap();
+        assert_eq!(detail.meeting.source, "desktop");
+        assert_eq!(detail.meeting.status, "interrupted");
+        assert_eq!(detail.meeting.capture_error.as_deref(), Some("device lost"));
+        assert_eq!(detail.user_markdown, "Discuss quarterly budget");
+        assert_eq!(detail.notes_revision, 3);
+        assert_eq!(detail.segments[0].text, "The roadmap slipped");
+        assert_eq!(detail.summary.as_deref(), Some("Hire a contractor"));
+        assert_eq!(detail.tracks.len(), 1);
+        assert_eq!(detail.tracks[0].frames, 480);
+        assert_eq!(count(&core, "SELECT COUNT(*) FROM capture_events"), 1);
+        assert_eq!(core.list_meetings().unwrap().len(), 2);
+        let m1 = |kind: &str| vec![("m1".to_string(), kind.to_string())];
+        assert_eq!(found(&core, "planning"), m1("title"));
+        assert_eq!(found(&core, "budget"), m1("notes"));
+        assert_eq!(found(&core, "roadmap"), m1("transcript"));
+        assert_eq!(found(&core, "contractor"), m1("summary"));
+        // The rebuilt meetings table accepts notes and still enforces and cascades every reference.
+        core.create_note("Scratch").unwrap();
+        assert!(core
+            .db
+            .execute("INSERT INTO notes(meeting_id) VALUES ('missing')", [])
+            .is_err());
+        core.db
+            .execute("DELETE FROM meetings WHERE id = 'm1'", [])
+            .unwrap();
+        for table in ["notes", "segments", "summaries", "tracks", "capture_events"] {
+            let sql = format!("SELECT COUNT(*) FROM {table} WHERE meeting_id = 'm1'");
+            assert_eq!(count(&core, &sql), 0, "{table}");
+        }
+        assert_eq!(core.get_meeting("m2").unwrap().user_markdown, "Unrelated");
+        assert!(found(&core, "roadmap").is_empty());
+    }
+
+    #[test]
+    fn note_meetings_never_appear_as_recordings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let note;
+        {
+            let mut core = Core::open(&path).unwrap();
+            let live = core.start("Live").unwrap();
+            note = core.create_note("  Ideas  ").unwrap();
+            assert_eq!(core.recording_state(), live, "recording state is untouched");
+            assert_eq!(core.create_note(" ").unwrap_err().code, "invalid_title");
+            assert_eq!(core.save_notes(&note, "First idea", 0).unwrap(), 1);
+        }
+        let core = Core::open(&path).unwrap();
+        let detail = core.get_meeting(&note).unwrap();
+        assert_eq!(detail.meeting.title, "Ideas");
+        assert_eq!(detail.meeting.source, "note");
+        assert_eq!(
+            detail.meeting.status, "stopped",
+            "restart does not interrupt notes"
+        );
+        assert_eq!(detail.user_markdown, "First idea");
+        assert!(detail.tracks.is_empty() && detail.segments.is_empty());
+        assert_eq!(found(&core, "first"), vec![(note, "notes".to_string())]);
+    }
+
+    #[test]
+    fn search_index_follows_edits_and_deletes_and_escapes_queries() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let note = core.create_note("Alpha").unwrap();
+        let fixture = core.create_fixture().unwrap();
+        let ours = |kind: &str| vec![(note.clone(), kind.to_string())];
+        core.save_notes(&note, "kiwi plan", 0).unwrap();
+        assert_eq!(found(&core, "kiwi"), ours("notes"));
+        core.save_notes(&note, "mango plan", 1).unwrap();
+        assert!(found(&core, "kiwi").is_empty());
+        assert_eq!(found(&core, "man"), ours("notes"), "prefix match");
+        let line = |text: &str| Segment {
+            speaker: "You".into(),
+            start_ms: 0,
+            end_ms: 1,
+            text: text.into(),
+        };
+        core.replace_transcript(&note, &[line("papaya talk"), line("papaya talk")])
+            .unwrap();
+        assert_eq!(
+            found(&core, "papaya"),
+            ours("transcript"),
+            "one hit per kind"
+        );
+        core.replace_transcript(&note, &[line("guava")]).unwrap();
+        assert!(found(&core, "papaya").is_empty());
+        assert_eq!(found(&core, "guava"), ours("transcript"));
+        core.save_summary(&note, "merge", "m", "lychee summary")
+            .unwrap();
+        assert_eq!(found(&core, "lychee"), ours("summary"));
+        core.db
+            .execute(
+                "UPDATE meetings SET title = 'Durian' WHERE id = ?1",
+                [&note],
+            )
+            .unwrap();
+        assert_eq!(found(&core, "durian"), ours("title"));
+        assert!(found(&core, "alpha").is_empty());
+        assert_eq!(
+            found(&core, "checklist").len(),
+            3,
+            "fixture notes, transcript, summary"
+        );
+        for hostile in [
+            "\"",
+            "\"\"",
+            "*",
+            "kiwi*",
+            "NEAR(a b)",
+            "a OR",
+            "AND",
+            "NOT x",
+            "body:kiwi",
+            "-x",
+            "^x",
+            "(",
+            "{body}",
+            "\0",
+            "\"unterminated",
+            "'; DROP TABLE search; --",
+            "!!!",
+            "ünïcode",
+        ] {
+            assert!(core.search_meetings(hostile).is_ok(), "{hostile:?}");
+        }
+        assert_eq!(
+            found(&core, "\"mango plan\""),
+            ours("notes"),
+            "quotes are literal"
+        );
+        assert!(found(&core, "").is_empty());
+        assert_eq!(
+            core.search_meetings(&"x".repeat(201)).unwrap_err().code,
+            "invalid_query"
+        );
+        core.delete_meeting(&note).unwrap();
+        for gone in ["mango", "guava", "lychee", "durian"] {
+            assert!(found(&core, gone).is_empty(), "{gone}");
+        }
+        let sql = format!("SELECT COUNT(*) FROM search WHERE meeting_id = '{note}'");
+        assert_eq!(count(&core, &sql), 0);
+        assert_eq!(found(&core, "checklist").len(), 3);
+        assert!(core.get_meeting(&fixture).is_ok());
+    }
+
+    #[test]
+    fn deletion_is_confined_to_the_meeting_audio_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = Core::open(&dir.path().join("meetings.db")).unwrap();
+        let root = core.audio_root.clone();
+        // A stopped desktop meeting whose mic track is stored at `wav` / `timing`.
+        let add = |core: &Core, id: &str, wav: &Path, timing: &Path| {
+            std::fs::create_dir_all(root.join(id)).unwrap();
+            core.db.execute("INSERT INTO meetings(id, title, started_at, source, status) VALUES (?1, 'Rec', '2026-10-10', 'desktop', 'stopped')", [id]).unwrap();
+            core.db
+                .execute(
+                    "INSERT INTO notes(meeting_id, user_markdown) VALUES (?1, 'keep me')",
+                    [id],
+                )
+                .unwrap();
+            core.db.execute("INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels, finalized) VALUES (?1, 'mic', ?2, ?3, 'Mic', 48000, 1, 1)",
+                params![id, wav.to_str().unwrap(), timing.to_str().unwrap()]).unwrap();
+        };
+        let good = Uuid::new_v4().to_string();
+        let folder = root.join(&good);
+        add(
+            &core,
+            &good,
+            &folder.join("mic.wav"),
+            &folder.join("mic.timing.jsonl"),
+        );
+        std::fs::write(folder.join("mic.wav"), [0u8; 10]).unwrap();
+        std::fs::write(folder.join("mic.timing.jsonl"), [0u8; 3]).unwrap();
+        let detail = core.get_meeting(&good).unwrap();
+        assert_eq!(detail.tracks[0].size_bytes, Some(10));
+        assert!(serde_json::to_value(&detail).unwrap()["tracks"][0]["size_bytes"].is_u64());
+        assert_eq!(core.audio_usage().unwrap(), 13);
+
+        // Stored paths that escape the meeting folder are refused before anything is removed.
+        let outside = root.join("outside.wav");
+        std::fs::write(&outside, b"x").unwrap();
+        let secret = dir.path().join("secret.wav");
+        std::fs::write(&secret, b"x").unwrap();
+        let mut hostile = vec![];
+        let dotdot = Uuid::new_v4().to_string();
+        let escape = root.join(&dotdot).join("..").join("outside.wav");
+        // Its WAV is legitimate, but the timing path escapes: nothing at all may be removed.
+        let legit = root.join(&dotdot).join("mic.wav");
+        add(&core, &dotdot, &legit, &escape);
+        std::fs::write(&legit, b"x").unwrap();
+        hostile.push(dotdot);
+        let absolute = Uuid::new_v4().to_string();
+        add(&core, &absolute, &secret, &secret);
+        hostile.push(absolute);
+        let linked = Uuid::new_v4().to_string();
+        let link = root.join(&linked).join("mic.wav");
+        add(&core, &linked, &link, &link);
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&secret, &link).is_ok();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&secret, &link).is_ok();
+        if made {
+            hostile.push(linked);
+        }
+        for id in &hostile {
+            assert_eq!(core.delete_audio(id).unwrap_err().code, "unsafe_audio_path");
+            assert_eq!(
+                core.delete_meeting(id).unwrap_err().code,
+                "unsafe_audio_path"
+            );
+            assert_eq!(core.get_meeting(id).unwrap().tracks.len(), 1);
+        }
+        assert!(outside.exists() && secret.exists() && legit.exists());
+
+        // Delete audio keeps notes; delete meeting cascades; other meetings are intact.
+        core.delete_audio(&good).unwrap();
+        assert!(!folder.exists());
+        let detail = core.get_meeting(&good).unwrap();
+        assert!(detail.tracks.is_empty());
+        assert_eq!(detail.user_markdown, "keep me");
+        core.delete_meeting(&good).unwrap();
+        assert_eq!(core.get_meeting(&good).unwrap_err().code, "not_found");
+        let sql = format!("SELECT COUNT(*) FROM notes WHERE meeting_id = '{good}'");
+        assert_eq!(count(&core, &sql), 0);
+        assert_eq!(core.delete_meeting(&good).unwrap_err().code, "not_found");
+        for id in &hostile {
+            assert_eq!(core.get_meeting(id).unwrap().user_markdown, "keep me");
+        }
+
+        // The active meeting is refused.
+        let live = core.start("Live").unwrap().meeting_id.unwrap();
+        assert_eq!(
+            core.delete_meeting(&live).unwrap_err().code,
+            "recording_active"
+        );
+        assert_eq!(
+            core.delete_audio(&live).unwrap_err().code,
+            "recording_active"
+        );
+        core.stop().unwrap();
+        core.delete_meeting(&live).unwrap();
     }
 }

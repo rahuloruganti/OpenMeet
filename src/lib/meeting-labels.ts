@@ -4,4 +4,11 @@ export const sourceLabels: Record<Meeting["source"], string> = {
   fixture: "Fictional sample",
   simulation: "Simulation",
   desktop: "Desktop capture",
+  note: "Note",
 };
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024 ** 2) return `${Math.ceil(bytes / 1024)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+}

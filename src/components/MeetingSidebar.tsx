@@ -1,6 +1,13 @@
-import type { Meeting } from "../lib/api";
+import type { Meeting, SearchHit } from "../lib/api";
 import { groupMeetings } from "../lib/group-meetings";
-import { sourceLabels } from "../lib/meeting-labels";
+import { formatBytes, sourceLabels } from "../lib/meeting-labels";
+
+const hitLabels: Record<SearchHit["kind"], string> = {
+  title: "Title",
+  notes: "Notes",
+  transcript: "Transcript",
+  summary: "Summary",
+};
 
 type Props = {
   open: boolean;
@@ -14,6 +21,12 @@ type Props = {
   onSettings: (trigger: HTMLButtonElement) => void;
   onOpenMeeting: (id: string) => void;
   onLoadSample: () => void;
+  onNewNote: () => void;
+  /** Full-text matches in notes, transcripts and summaries for the current search. */
+  hits: SearchHit[];
+  onOpenHit: (hit: SearchHit) => void;
+  /** Total audio stored on this device, or null while unknown. */
+  audioBytes: number | null;
 };
 
 export function MeetingSidebar(props: Props) {
@@ -21,6 +34,13 @@ export function MeetingSidebar(props: Props) {
   const needle = search.trim().toLocaleLowerCase();
   const visible = meetings.filter((meeting) =>
     meeting.title.toLocaleLowerCase().includes(needle),
+  );
+  const titles = new Map(
+    meetings.map((meeting) => [meeting.id, meeting.title]),
+  );
+  // Title matches are already in the instant list above; skip hits for meetings not loaded yet.
+  const matches = props.hits.filter(
+    (hit) => hit.kind !== "title" && titles.has(hit.meeting_id),
   );
 
   return (
@@ -43,6 +63,13 @@ export function MeetingSidebar(props: Props) {
           onClick={(event) => props.onNewRecording(event.currentTarget)}
         >
           <span aria-hidden="true">＋</span> New recording
+        </button>
+        <button
+          className="sidebar-new"
+          disabled={disabled}
+          onClick={props.onNewNote}
+        >
+          New note
         </button>
         <label className="search-label">
           <span className="sr-only">Search meetings</span>
@@ -90,9 +117,33 @@ export function MeetingSidebar(props: Props) {
             </ul>
           </section>
         ))}
-        {meetings.length > 0 && visible.length === 0 && (
-          <p className="muted">No matching meetings.</p>
+        {matches.length > 0 && (
+          <section aria-label="Matches in notes and transcripts">
+            <h3 className="meeting-group-title">
+              Matches in notes/transcripts
+            </h3>
+            <ul className="meeting-list">
+              {matches.map((hit) => (
+                <li key={`${hit.meeting_id}-${hit.kind}`}>
+                  <button
+                    disabled={disabled}
+                    onClick={() => props.onOpenHit(hit)}
+                  >
+                    <strong>{titles.get(hit.meeting_id)}</strong>
+                    <span>
+                      {hitLabels[hit.kind]} · {hit.snippet}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
+        {meetings.length > 0 &&
+          visible.length === 0 &&
+          matches.length === 0 && (
+            <p className="muted">No matching meetings.</p>
+          )}
       </div>
       <div className="sidebar-bottom">
         <button onClick={(event) => props.onSettings(event.currentTarget)}>
@@ -101,7 +152,11 @@ export function MeetingSidebar(props: Props) {
         <button disabled={disabled} onClick={props.onLoadSample}>
           Load fictional sample
         </button>
-        <p className="local-storage-note">Notes stored on this device</p>
+        <p className="local-storage-note">
+          Notes stored on this device
+          {props.audioBytes !== null &&
+            ` · Audio uses ${formatBytes(props.audioBytes)}`}
+        </p>
       </div>
     </aside>
   );

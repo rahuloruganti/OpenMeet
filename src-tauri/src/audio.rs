@@ -55,6 +55,9 @@ pub struct Track {
     pub frames: i64,
     pub dropped_frames: i64,
     pub finalized: bool,
+    /// WAV size on disk when read back from storage; `None` while capturing or if the file is missing.
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct TrackHealth {
@@ -405,6 +408,7 @@ impl TrackWriter {
                 frames: 0,
                 dropped_frames: 0,
                 finalized: false,
+                size_bytes: None,
             },
         })
     }

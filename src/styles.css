@@ -960,3 +960,13 @@ pre {
   margin: 8px 0 12px;
   padding-left: 20px;
 }
+
+.delete-card {
+  max-width: 800px;
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.danger {
+  color: var(--danger);
+}

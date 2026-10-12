@@ -10,6 +10,7 @@ import {
   type AudioDevices,
   type AudioHealth,
   type RecordingState,
+  type SearchHit,
   type Settings,
 } from "./lib/api";
 import { createNoteWriter } from "./lib/note-writer";
@@ -73,11 +74,15 @@ export function App() {
   const listRequest = useRef(0);
   const jobRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [audioBytes, setAudioBytes] = useState<number | null>(null);
 
   const refreshList = useCallback(async () => {
     const request = ++listRequest.current;
     const list = await api.listMeetings();
     if (request === listRequest.current) setMeetings(list);
+    // Disk usage is informational; failing to measure it must not block the list.
+    void api.audioUsage().then(setAudioBytes, () => setAudioBytes(null));
     return list;
   }, []);
 
@@ -216,6 +221,30 @@ export function App() {
     if (job === null) setSttProgress(null);
   }, [job]);
 
+  // Full-text matches for searches of 2+ characters; re-run when meetings change so hits stay current.
+  useEffect(() => {
+    const query = search.trim();
+    if (!desktop || query.length < 2) {
+      setHits([]);
+      return;
+    }
+    let current = true;
+    const timer = setTimeout(() => {
+      api.searchMeetings(query).then(
+        (found) => {
+          if (current) setHits(found);
+        },
+        (failure: unknown) => {
+          if (current) setError(errorMessage(failure));
+        },
+      );
+    }, 150);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [desktop, search, meetings]);
+
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       if (writer.current?.isDirty()) event.preventDefault();
@@ -290,6 +319,27 @@ export function App() {
             await openMeeting(id);
           })
         }
+        onNewNote={() =>
+          void run(async () => {
+            await writer.current?.flush();
+            const id = await api.createNote("Untitled note");
+            await refreshList();
+            await openMeeting(id);
+            setTab("notes");
+          })
+        }
+        hits={hits}
+        onOpenHit={(hit) =>
+          void run(async () => {
+            await openMeeting(hit.meeting_id);
+            setTab(
+              hit.kind === "transcript" || hit.kind === "summary"
+                ? hit.kind
+                : "notes",
+            );
+          })
+        }
+        audioBytes={audioBytes}
       />
       <main className="workspace">
         <header className="workspace-toolbar">
@@ -454,6 +504,43 @@ export function App() {
               );
             })
           }
+          recordingThis={
+            active && recording.meeting_id === selected?.meeting.id
+          }
+          onDeleteMeeting={() => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void run(async () => {
+              // The notes are being deleted; a failed final save must not block that.
+              await writer.current?.flush().catch(() => {});
+              await api.deleteMeeting(id);
+              writer.current?.dispose();
+              writer.current = null;
+              selectedIdRef.current = null;
+              setSelected(null);
+              setNotes("");
+              setNotesStatus("saved");
+              setNotesError("");
+              const list = await refreshList();
+              if (list[0]) await openMeeting(list[0].id);
+              setNotice(
+                "Meeting deleted from this device. Exported Markdown snapshots were not touched.",
+              );
+            });
+          }}
+          onDeleteAudio={() => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void run(async () => {
+              await writer.current?.flush();
+              await api.deleteAudio(id);
+              await refreshList();
+              await openMeeting(id);
+              setNotice(
+                "Audio deleted. Notes, transcript and summaries were kept.",
+              );
+            });
+          }}
         />
 
         {panel === "settings" && (

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MeetingDetail } from "../lib/api";
-import { sourceLabels } from "../lib/meeting-labels";
+import { formatBytes, sourceLabels } from "../lib/meeting-labels";
 
 export const contentTabs = [
   { id: "notes", label: "My notes" },
@@ -28,13 +28,23 @@ type Props = {
   onExport: () => void;
   onTranscribe: () => void;
   onGenerate: () => void;
+  /** The selected meeting is being recorded right now, so it cannot be deleted. */
+  recordingThis: boolean;
+  onDeleteMeeting: () => void;
+  onDeleteAudio: () => void;
 };
 
 export function MeetingWorkspace(props: Props) {
   const { selected, tab, disabled, job } = props;
   const [confirming, setConfirming] = useState(false);
   const meetingId = selected?.meeting.id;
-  useEffect(() => setConfirming(false), [meetingId]);
+  const [deleting, setDeleting] = useState<"meeting" | "audio" | null>(null);
+  const [typed, setTyped] = useState("");
+  useEffect(() => {
+    setConfirming(false);
+    setDeleting(null);
+    setTyped("");
+  }, [meetingId]);
 
   if (!selected) {
     return (
@@ -44,8 +54,8 @@ export function MeetingWorkspace(props: Props) {
             <>
               <h2>Start your first note</h2>
               <p>
-                Choose New recording in the sidebar, or load the fictional
-                sample to look around. Your notes stay on this device.
+                Choose New note or New recording in the sidebar, or load the
+                fictional sample to look around. Your notes stay on this device.
               </p>
             </>
           ) : (
@@ -67,6 +77,15 @@ export function MeetingWorkspace(props: Props) {
     meeting.status !== "paused" &&
     selected.tracks.some((track) => track.finalized && track.frames > 0);
   const hasTranscript = selected.segments.length > 0;
+  const audioBytes = selected.tracks.reduce(
+    (total, track) => total + (track.size_bytes ?? 0),
+    0,
+  );
+  const deleteDisabled = disabled || job !== null || props.recordingThis;
+  const askDelete = (what: "meeting" | "audio") => {
+    setTyped("");
+    setDeleting(what);
+  };
   const summaryLabel =
     meeting.source === "fixture" && selected.summary_provider === "fixture"
       ? "Sample summary (hand-written)"
@@ -78,10 +97,72 @@ export function MeetingWorkspace(props: Props) {
     <article className="content-area">
       <div className="meeting-heading">
         <h1 className="meeting-title">{meeting.title}</h1>
-        <button disabled={disabled} onClick={props.onExport}>
-          Export Markdown
-        </button>
+        <div className="panel-actions">
+          <button disabled={disabled} onClick={props.onExport}>
+            Export Markdown
+          </button>
+          {selected.tracks.length > 0 && (
+            <button
+              disabled={deleteDisabled}
+              onClick={() => askDelete("audio")}
+            >
+              Delete audio…
+            </button>
+          )}
+          <button
+            disabled={deleteDisabled}
+            onClick={() => askDelete("meeting")}
+          >
+            Delete meeting…
+          </button>
+        </div>
       </div>
+      {deleting && !props.recordingThis && (
+        <div
+          className="consent-card delete-card"
+          role="group"
+          aria-label={
+            deleting === "meeting"
+              ? "Confirm meeting deletion"
+              : "Confirm audio deletion"
+          }
+        >
+          <p>
+            <strong>
+              {deleting === "meeting"
+                ? `Permanently delete “${meeting.title}”?`
+                : `Permanently delete the audio of “${meeting.title}”?`}
+            </strong>
+          </p>
+          <p>
+            {deleting === "meeting"
+              ? "Removes its notes, transcript, summaries and audio files from this device."
+              : `Removes ${selected.tracks.length} audio track${selected.tracks.length === 1 ? "" : "s"} (${formatBytes(audioBytes)}) and their timing files. Notes, transcript and summaries are kept.`}{" "}
+            Exported Markdown snapshots are not touched. This cannot be undone.
+          </p>
+          <label>
+            Type the meeting title to confirm
+            <input
+              value={typed}
+              onChange={(event) => setTyped(event.target.value)}
+            />
+          </label>
+          <div className="panel-actions">
+            <button
+              className="danger"
+              disabled={deleteDisabled || typed !== meeting.title}
+              onClick={() => {
+                setDeleting(null);
+                if (deleting === "meeting") props.onDeleteMeeting();
+                else props.onDeleteAudio();
+              }}
+            >
+              {deleting === "meeting" ? "Delete meeting" : "Delete audio"}
+            </button>
+            <button onClick={() => setDeleting(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
       <div className="meeting-meta">
         <span className="source-badge">{sourceLabels[meeting.source]}</span>
         <time dateTime={meeting.started_at}>
@@ -241,6 +322,9 @@ export function MeetingWorkspace(props: Props) {
               {selected.tracks.map((track) => (
                 <p key={track.kind}>
                   {track.kind}: {track.path}
+                  {track.size_bytes === null
+                    ? " (file missing)"
+                    : ` (${formatBytes(track.size_bytes)})`}
                 </p>
               ))}
             </details>
@@ -249,12 +333,14 @@ export function MeetingWorkspace(props: Props) {
             <p className="muted">
               {transcribable
                 ? "No transcript yet."
-                : meeting.source !== "desktop"
-                  ? "No transcript. Fictional samples and simulations have no recorded audio."
-                  : meeting.status === "recording" ||
-                      meeting.status === "paused"
-                    ? "No transcript yet. Stop the recording first."
-                    : "No transcript. This recording has no finalized audio tracks."}
+                : meeting.source === "note"
+                  ? "No transcript. Notes have no recorded audio."
+                  : meeting.source !== "desktop"
+                    ? "No transcript. Fictional samples and simulations have no recorded audio."
+                    : meeting.status === "recording" ||
+                        meeting.status === "paused"
+                      ? "No transcript yet. Stop the recording first."
+                      : "No transcript. This recording has no finalized audio tracks."}
             </p>
           )}
           {transcribable && (
