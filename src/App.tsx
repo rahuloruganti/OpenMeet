@@ -5,7 +5,7 @@ import {
   type Meeting,
   type MeetingDetail,
   type MergeModel,
-  type SttProgress,
+  type SttDownloadProgress,
   type SttStatus,
   type AudioDevices,
   type AudioHealth,
@@ -20,7 +20,7 @@ import {
 } from "./components/MeetingWorkspace";
 import { RecordingControls } from "./components/RecordingControls";
 import { SetupPanel } from "./components/SetupPanel";
-import { SettingsPanel } from "./components/SettingsPanel";
+import { SettingsPanel, type SttDraft } from "./components/SettingsPanel";
 
 type Writer = ReturnType<typeof createNoteWriter>;
 
@@ -51,11 +51,23 @@ export function App() {
     meeting_id: null,
     source: null,
     error: null,
+    recording_offset_ms: null,
   });
   const [settings, setSettings] = useState<Settings | null>(null);
   const [shortcut, setShortcut] = useState("");
+  const [stopShortcut, setStopShortcut] = useState("");
+  const [sttDraft, setSttDraft] = useState<SttDraft>({
+    stt_language: "auto",
+    stt_prompt: "",
+    stt_model: "small",
+  });
   const [stt, setStt] = useState<SttStatus | null>(null);
-  const [sttProgress, setSttProgress] = useState<SttProgress | null>(null);
+  const [sttProgress, setSttProgress] = useState<SttDownloadProgress | null>(
+    null,
+  );
+  const [transcribeProgress, setTranscribeProgress] = useState<
+    Record<string, number>
+  >({});
   const [job, setJob] = useState<string | null>(null);
   const [mergeKey, setMergeKey] = useState<boolean | null>(null);
   const [mergeModel, setMergeModel] = useState("");
@@ -173,7 +185,16 @@ export function App() {
       await register(api.onCloseRequested(() => setCloseRequested(true)));
       await register(api.onError(setError));
       await register(api.onAudioHealth(setHealth));
-      await register(api.onSttProgress(setSttProgress));
+      await register(
+        api.onSttProgress((progress) => {
+          if (progress.stage === "transcribing")
+            setTranscribeProgress((previous) => ({
+              ...previous,
+              [progress.track]: progress.percent,
+            }));
+          else setSttProgress(progress);
+        }),
+      );
       if (disposed) return;
       const [state, preferences, warning, discovered, keyPresent, speech] =
         await Promise.all([
@@ -189,6 +210,8 @@ export function App() {
       updateRecording(state);
       setSettings(preferences);
       setShortcut(preferences.pause_shortcut);
+      setStopShortcut(preferences.stop_shortcut ?? "");
+      setSttDraft(preferences);
       setMergeModel(preferences.merge_model ?? "");
       setMergeKey(keyPresent ?? null);
       setStt(speech ?? null);
@@ -213,7 +236,10 @@ export function App() {
   }, [desktop, openMeeting, refreshList, updateRecording]);
 
   useEffect(() => {
-    if (job === null) setSttProgress(null);
+    if (job === null) {
+      setSttProgress(null);
+      setTranscribeProgress({});
+    }
   }, [job]);
 
   useEffect(() => {
@@ -412,10 +438,48 @@ export function App() {
             if (!id) return;
             void runJob("transcribe", async () => {
               await writer.current?.flush();
-              await api.transcribeMeeting(id);
+              try {
+                await api.transcribeMeeting(id);
+              } catch (failure) {
+                const code = (failure as { code?: string } | null)?.code;
+                if (code !== "stt_cancelled") throw failure;
+                setNotice(errorMessage(failure));
+                return;
+              }
               await finishJob(id);
               setNotice("Transcript generated locally and saved.");
             });
+          }}
+          live={
+            active &&
+            recording.source === "desktop" &&
+            recording.meeting_id === selected?.meeting.id
+          }
+          transcribeProgress={transcribeProgress}
+          onCancelTranscribe={() =>
+            void api
+              .cancelTranscription()
+              .catch((failure: unknown) => setError(errorMessage(failure)))
+          }
+          getRecordingOffset={async () => {
+            try {
+              const state = await api.getRecordingState();
+              updateRecording(state);
+              return state.recording_offset_ms;
+            } catch (failure) {
+              setError(errorMessage(failure));
+              return null;
+            }
+          }}
+          onSeek={async (kind, sessionMs) => {
+            const id = selected?.meeting.id;
+            if (!id) return null;
+            try {
+              return await api.audioPosition(id, kind, sessionMs);
+            } catch (failure) {
+              setError(errorMessage(failure));
+              return null;
+            }
           }}
           onGenerate={() => {
             const id = selected?.meeting.id;
@@ -516,10 +580,33 @@ export function App() {
             }
             onSaveShortcut={() =>
               void run(async () => {
-                const updated = await api.saveSettings(shortcut);
+                const updated = await api.saveSettings(
+                  shortcut,
+                  stopShortcut.trim() || null,
+                );
                 setSettings(updated);
                 setShortcut(updated.pause_shortcut);
-                setNotice("Shortcut saved.");
+                setStopShortcut(updated.stop_shortcut ?? "");
+                setNotice("Shortcuts saved.");
+              })
+            }
+            stopShortcut={stopShortcut}
+            onStopShortcut={setStopShortcut}
+            sttDraft={sttDraft}
+            onStt={(change) =>
+              setSttDraft((draft) => ({ ...draft, ...change }))
+            }
+            onSaveStt={() =>
+              void run(async () => {
+                const updated = await api.saveSttSettings(
+                  sttDraft.stt_language,
+                  sttDraft.stt_prompt,
+                  sttDraft.stt_model,
+                );
+                setSettings(updated);
+                setSttDraft(updated);
+                setStt(await api.sttStatus());
+                setNotice("Transcription settings saved.");
               })
             }
           />

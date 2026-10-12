@@ -5,7 +5,7 @@
 //! gates every track so silence is not "transcribed" into hallucinated text.
 use crate::{
     audio::Track,
-    domain::{AppError, Result, Segment},
+    domain::{AppError, Result, Segment, Settings},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -14,7 +14,10 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, TryLockError},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, TryLockError,
+    },
     time::{Duration, Instant},
 };
 
@@ -34,14 +37,48 @@ const ENGINE: Artifact = Artifact {
     sha256: "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb",
     size: 8_928_640,
 };
-// Multilingual "small": SHA-1 matches the whisper.cpp README; SHA-256 matches Hugging Face's LFS digest.
-const MODEL: Artifact = Artifact {
-    name: "model",
-    file: "ggml-small.bin",
-    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
-    sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-    size: 487_601_967,
-};
+// Multilingual models. Size and SHA-256 are Hugging Face's LFS metadata for ggerganov/whisper.cpp
+// (API tree listing and the X-Linked-Size/ETag headers agree); "small" also matches the README SHA-1.
+static MODELS: [(&str, Artifact); 3] = [
+    (
+        "base",
+        Artifact {
+            name: "model",
+            file: "ggml-base.bin",
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+            sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+            size: 147_951_465,
+        },
+    ),
+    (
+        "small",
+        Artifact {
+            name: "model",
+            file: "ggml-small.bin",
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+            sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+            size: 487_601_967,
+        },
+    ),
+    (
+        "large-v3-turbo",
+        Artifact {
+            name: "model",
+            file: "ggml-large-v3-turbo.bin",
+            url:
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+            sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+            size: 1_624_555_275,
+        },
+    ),
+];
+/// Whisper language codes offered in Settings; anything else is rejected before it reaches `-l`.
+pub const LANGUAGES: [&str; 35] = [
+    "auto", "ar", "ca", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hr", "hu",
+    "id", "it", "ja", "ko", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "ta", "th", "tr",
+    "uk", "ur", "vi", "zh",
+];
+const PROMPT_LIMIT: usize = 500;
 const VAD: Artifact = Artifact {
     name: "vad",
     file: "ggml-silero-v5.1.2.bin",
@@ -55,11 +92,28 @@ const ENGINE_MARKER: &str = ".release";
 #[derive(Clone, Debug, Serialize)]
 pub struct Status {
     pub engine: bool,
+    /// Whether the model selected in Settings is installed.
     pub model: bool,
     pub vad: bool,
     pub installed: bool,
     pub missing_bytes: u64,
     pub supported: bool,
+    pub models: Vec<ModelStatus>,
+    pub languages: &'static [&'static str],
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ModelStatus {
+    pub id: &'static str,
+    pub size: u64,
+    pub installed: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TranscribeProgress {
+    pub stage: &'static str,
+    pub track: String,
+    pub percent: u8,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -76,15 +130,42 @@ fn models_dir(root: &Path) -> PathBuf {
     root.join("models")
 }
 
-pub fn status(root: &Path) -> Status {
+fn model(id: &str) -> Result<&'static Artifact> {
+    MODELS
+        .iter()
+        .find(|(name, _)| *name == id)
+        .map(|(_, artifact)| artifact)
+        .ok_or_else(|| AppError::new("stt_settings", "Choose one of the listed speech models."))
+}
+
+/// Checks transcription settings before they are stored or passed to the engine.
+pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
+    if !LANGUAGES.contains(&language) {
+        return Err(AppError::new(
+            "stt_settings",
+            "Choose one of the listed transcription languages.",
+        ));
+    }
+    if prompt.chars().count() > PROMPT_LIMIT || prompt.chars().any(char::is_control) {
+        return Err(AppError::new(
+            "stt_settings",
+            "Keep the vocabulary hint to one line of at most 500 characters.",
+        ));
+    }
+    model(model_id).map(|_| ())
+}
+
+pub fn status(root: &Path, model_id: &str) -> Status {
     let engine = engine_dir(root).join(ENGINE_EXE).is_file()
         && fs::read_to_string(engine_dir(root).join(ENGINE_MARKER))
             .is_ok_and(|marker| marker.trim() == ENGINE.sha256);
     let present = |artifact: &Artifact| {
         fs::metadata(models_dir(root).join(artifact.file)).is_ok_and(|m| m.len() == artifact.size)
     };
-    let (model, vad) = (present(&MODEL), present(&VAD));
-    let missing = [(engine, ENGINE.size), (model, MODEL.size), (vad, VAD.size)]
+    let selected = model(model_id).ok();
+    let (model, vad) = (selected.is_some_and(present), present(&VAD));
+    let model_size = selected.map_or(0, |artifact| artifact.size);
+    let missing = [(engine, ENGINE.size), (model, model_size), (vad, VAD.size)]
         .iter()
         .filter(|(have, _)| !have)
         .map(|(_, size)| size)
@@ -96,6 +177,15 @@ pub fn status(root: &Path) -> Status {
         installed: engine && model && vad,
         missing_bytes: missing,
         supported: cfg!(all(target_os = "windows", target_arch = "x86_64")),
+        models: MODELS
+            .iter()
+            .map(|(id, artifact)| ModelStatus {
+                id,
+                size: artifact.size,
+                installed: present(artifact),
+            })
+            .collect(),
+        languages: &LANGUAGES,
     }
 }
 
@@ -198,9 +288,11 @@ fn extract_engine(zip_path: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Downloads whatever is missing. Each artifact is verified before it is installed.
-pub fn install(root: &Path, mut report: impl FnMut(Progress)) -> Result<Status> {
-    if !status(root).supported {
+/// Downloads whatever is missing for the selected model. Each artifact is verified before it
+/// is installed. Other models already on disk are kept.
+pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) -> Result<Status> {
+    let selected = model(model_id)?;
+    if !status(root, model_id).supported {
         return Err(stt_error(
             "Local speech-to-text is only set up for Windows x64 in this preview.",
         ));
@@ -218,11 +310,11 @@ pub fn install(root: &Path, mut report: impl FnMut(Progress)) -> Result<Status> 
         .build()
         .map_err(|_| stt_error("Could not prepare the download client."))?;
     fs::create_dir_all(models_dir(root))?;
-    let before = status(root);
+    let before = status(root, model_id);
     let pending = [
         (before.engine, &ENGINE),
         (before.vad, &VAD),
-        (before.model, &MODEL),
+        (before.model, selected),
     ];
     for (present, artifact) in pending {
         if present {
@@ -249,7 +341,7 @@ pub fn install(root: &Path, mut report: impl FnMut(Progress)) -> Result<Status> 
             fs::write(engine_dir(root).join(ENGINE_MARKER), ENGINE.sha256)?;
         }
     }
-    Ok(status(root))
+    Ok(status(root, model_id))
 }
 
 #[derive(Deserialize)]
@@ -281,6 +373,31 @@ fn session_ms(index: &[Block], rate: u32, audio_ms: i64) -> i64 {
     let block = &index[at];
     let within = (frame - block.frame_offset).clamp(0, block.frames);
     (block.capture_start_us + within * 1_000_000 / rate) / 1000
+}
+
+/// Inverse of `session_ms`: maps a session-time position to a position in the WAV.
+/// A time inside a pause gap lands on the first frame recorded after it.
+fn file_ms(index: &[Block], rate: u32, session_ms: i64) -> i64 {
+    if index.is_empty() || rate == 0 {
+        return session_ms.max(0);
+    }
+    let rate = i64::from(rate);
+    let session_us = session_ms.saturating_mul(1000);
+    let at = index.partition_point(|block| block.capture_start_us <= session_us);
+    let Some(block) = at.checked_sub(1).map(|at| &index[at]) else {
+        return 0;
+    };
+    let within = ((session_us - block.capture_start_us) * rate / 1_000_000).clamp(0, block.frames);
+    (block.frame_offset + within) * 1000 / rate
+}
+
+/// Where a transcript time (session time) is in this track's WAV, for playback seeking.
+pub fn track_file_ms(track: &Track, session_ms: i64) -> i64 {
+    file_ms(
+        &read_index(Path::new(&track.timing_path)),
+        track.sample_rate,
+        session_ms,
+    )
 }
 
 #[derive(Deserialize)]
@@ -324,11 +441,27 @@ fn parse_output(json: &[u8], speaker: &str, rate: u32, index: &[Block]) -> Resul
 
 // Held for the whole run so only one transcription uses the CPU at a time.
 static BUSY: Mutex<()> = Mutex::new(());
+// Set by `cancel`; the run loop that owns the child process sees it and kills the engine.
+static CANCEL: AtomicBool = AtomicBool::new(false);
 
-fn run_engine(root: &Path, track: &Track) -> Result<Vec<Segment>> {
-    let scratch = tempfile::tempdir()?;
-    let output_base = scratch.path().join("out");
-    let log_path = scratch.path().join("engine.log");
+/// Parses whisper-cli `-pp` lines such as `whisper_print_progress_callback: progress =  45%`.
+fn parse_progress(line: &str) -> Option<u8> {
+    let (_, rest) = line.split_once("progress =")?;
+    let percent: u8 = rest.trim().strip_suffix('%')?.trim().parse().ok()?;
+    (percent <= 100).then_some(percent)
+}
+
+fn engine_command(
+    root: &Path,
+    settings: &Settings,
+    track: &Track,
+    output_base: &Path,
+) -> Result<Command> {
+    validate(
+        &settings.stt_language,
+        &settings.stt_prompt,
+        &settings.stt_model,
+    )?;
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
         .min(8);
@@ -336,7 +469,7 @@ fn run_engine(root: &Path, track: &Track) -> Result<Vec<Segment>> {
     command
         .current_dir(engine_dir(root))
         .arg("-m")
-        .arg(models_dir(root).join(MODEL.file))
+        .arg(models_dir(root).join(model(&settings.stt_model)?.file))
         .arg("--vad")
         .arg("-vm")
         .arg(models_dir(root).join(VAD.file))
@@ -344,12 +477,29 @@ fn run_engine(root: &Path, track: &Track) -> Result<Vec<Segment>> {
         .arg(&track.path)
         .arg("-oj")
         .arg("-of")
-        .arg(&output_base)
-        .args(["-l", "auto", "-np", "-sns", "-t"])
-        .arg(threads.to_string())
+        .arg(output_base)
+        .args(["-l", settings.stt_language.as_str()])
+        .args(["-np", "-pp", "-sns", "-t"])
+        .arg(threads.to_string());
+    if !settings.stt_prompt.is_empty() {
+        command.args(["--prompt", settings.stt_prompt.as_str()]);
+    }
+    Ok(command)
+}
+
+fn run_engine(
+    mut command: Command,
+    track: &Track,
+    scratch: &Path,
+    output_base: &Path,
+    mut report: impl FnMut(u8),
+) -> Result<Vec<Segment>> {
+    let log_path = scratch.join("engine.log");
+    command
         .stdin(Stdio::null())
         // Transcript text is printed to stdout; it is parsed from the JSON file instead.
         .stdout(Stdio::null())
+        // Progress lines go to stderr; the log is read back incrementally below.
         .stderr(File::create(&log_path)?);
     #[cfg(windows)]
     {
@@ -359,29 +509,49 @@ fn run_engine(root: &Path, track: &Track) -> Result<Vec<Segment>> {
     let mut child = command
         .spawn()
         .map_err(|_| stt_error("The speech engine could not be started."))?;
+    let mut log = File::open(&log_path)?;
+    let mut pending = Vec::new();
     // Generous bound: 4x the audio length plus two minutes.
     let audio_secs = (track.frames.max(0) as u64) / u64::from(track.sample_rate.max(1));
     let deadline = Instant::now() + Duration::from_secs(120 + 4 * audio_secs);
     let status = loop {
-        if let Some(status) = child
+        let exited = child
             .try_wait()
-            .map_err(|_| stt_error("The speech engine stopped unexpectedly."))?
-        {
+            .map_err(|_| stt_error("The speech engine stopped unexpectedly."))?;
+        let _ = log.read_to_end(&mut pending);
+        while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = pending.drain(..=end).collect();
+            if let Some(percent) = parse_progress(&String::from_utf8_lossy(&line)) {
+                report(percent);
+            }
+        }
+        if let Some(status) = exited {
             break status;
         }
-        if Instant::now() > deadline {
+        let stop = if CANCEL.load(Ordering::SeqCst) {
+            Some(AppError::new(
+                "stt_cancelled",
+                "Transcription was cancelled. Nothing was saved; the previous transcript is unchanged.",
+            ))
+        } else if Instant::now() > deadline {
+            Some(stt_error(
+                "Transcription timed out and was stopped. Nothing was saved.",
+            ))
+        } else {
+            None
+        };
+        if let Some(error) = stop {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(stt_error(
-                "Transcription timed out and was stopped. Nothing was saved.",
-            ));
+            return Err(error);
         }
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(100));
     };
     if !status.success() {
         let tail: String = fs::read_to_string(&log_path)
             .unwrap_or_default()
             .lines()
+            .filter(|line| parse_progress(line).is_none())
             .rev()
             .take(2)
             .collect::<Vec<_>>()
@@ -402,13 +572,13 @@ fn run_engine(root: &Path, track: &Track) -> Result<Vec<Segment>> {
     )
 }
 
-/// Transcribes finalized tracks one at a time. Nothing is returned (or saved) on failure.
-pub fn transcribe(root: &Path, tracks: &[Track]) -> Result<Vec<Segment>> {
-    if !status(root).installed {
-        return Err(stt_error(
-            "The speech engine and models are not installed. Download them in Settings first.",
-        ));
-    }
+/// Runs one engine process per track under the BUSY guard. Nothing is returned on failure
+/// or cancellation, so callers never replace an existing transcript with partial output.
+fn run_tracks(
+    tracks: &[Track],
+    mut command_for: impl FnMut(&Track, &Path) -> Result<Command>,
+    mut report: impl FnMut(&str, u8),
+) -> Result<Vec<Segment>> {
     let _guard = match BUSY.try_lock() {
         Ok(guard) => guard,
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -418,14 +588,54 @@ pub fn transcribe(root: &Path, tracks: &[Track]) -> Result<Vec<Segment>> {
             ))
         }
     };
+    CANCEL.store(false, Ordering::SeqCst);
     let mut segments = Vec::new();
     for track in tracks {
-        segments.extend(run_engine(root, track)?);
+        let scratch = tempfile::tempdir()?;
+        let output_base = scratch.path().join("out");
+        let command = command_for(track, &output_base)?;
+        segments.extend(run_engine(
+            command,
+            track,
+            scratch.path(),
+            &output_base,
+            |percent| report(&track.kind, percent),
+        )?);
     }
     segments.sort_by(|a, b| {
         (a.start_ms, &a.speaker, a.end_ms).cmp(&(b.start_ms, &b.speaker, b.end_ms))
     });
     Ok(segments)
+}
+
+/// Transcribes finalized tracks one at a time. Nothing is returned (or saved) on failure.
+pub fn transcribe(
+    root: &Path,
+    tracks: &[Track],
+    settings: &Settings,
+    report: impl FnMut(&str, u8),
+) -> Result<Vec<Segment>> {
+    if !status(root, &settings.stt_model).installed {
+        return Err(stt_error(
+            "The speech engine and the selected model are not installed. Download them in Settings first.",
+        ));
+    }
+    run_tracks(
+        tracks,
+        |track, output_base| engine_command(root, settings, track, output_base),
+        report,
+    )
+}
+
+/// Asks the running transcription (if any) to stop. Returns whether one was running.
+pub fn cancel() -> bool {
+    match BUSY.try_lock() {
+        Err(TryLockError::WouldBlock) => {
+            CANCEL.store(true, Ordering::SeqCst);
+            true
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -523,17 +733,263 @@ mod tests {
     #[test]
     fn status_requires_matching_marker_and_exact_model_sizes() {
         let dir = tempfile::tempdir().unwrap();
-        let initial = status(dir.path());
+        let small = model("small").unwrap();
+        let initial = status(dir.path(), "small");
         assert!(!initial.installed);
-        assert_eq!(initial.missing_bytes, ENGINE.size + MODEL.size + VAD.size);
+        assert_eq!(initial.missing_bytes, ENGINE.size + small.size + VAD.size);
         fs::create_dir_all(engine_dir(dir.path())).unwrap();
         fs::write(engine_dir(dir.path()).join(ENGINE_EXE), b"x").unwrap();
         // Executable alone, with no release marker, is not trusted.
-        assert!(!status(dir.path()).engine);
+        assert!(!status(dir.path(), "small").engine);
         fs::write(engine_dir(dir.path()).join(ENGINE_MARKER), ENGINE.sha256).unwrap();
-        assert!(status(dir.path()).engine);
+        assert!(status(dir.path(), "small").engine);
         fs::create_dir_all(models_dir(dir.path())).unwrap();
         fs::write(models_dir(dir.path()).join(VAD.file), b"short").unwrap();
-        assert!(!status(dir.path()).vad);
+        assert!(!status(dir.path(), "small").vad);
+    }
+
+    fn stored_settings() -> Settings {
+        crate::storage::Core::open(Path::new(":memory:"))
+            .unwrap()
+            .settings()
+            .unwrap()
+    }
+
+    #[test]
+    fn session_times_map_back_to_file_times_across_a_pause() {
+        // Same index as above: 0–2 s recorded, paused 3–8 s of session time, 1 s more.
+        let index = [
+            block(0, 16000, 1_000_000),
+            block(16000, 16000, 2_000_000),
+            block(32000, 16000, 8_000_000),
+        ];
+        assert_eq!(file_ms(&index, 16000, 1750), 750);
+        assert_eq!(file_ms(&index, 16000, 8250), 2250);
+        // Inside the pause gap: the first frame recorded after it.
+        assert_eq!(file_ms(&index, 16000, 5000), 2000);
+        // Before capture began, and past the end, clamp to the file.
+        assert_eq!(file_ms(&index, 16000, 500), 0);
+        assert_eq!(file_ms(&index, 16000, 99_000), 3000);
+        for audio in [0, 250, 1000, 1999, 2000, 2600, 3000] {
+            assert_eq!(
+                file_ms(&index, 16000, session_ms(&index, 16000, audio)),
+                audio
+            );
+        }
+        assert_eq!(file_ms(&[], 16000, 1234), 1234);
+        assert_eq!(file_ms(&[], 16000, -5), 0);
+    }
+
+    #[test]
+    fn engine_arguments_follow_the_transcription_settings() {
+        let root = Path::new("stt-root");
+        let track = Track {
+            kind: "mic".into(),
+            path: "mic.wav".into(),
+            timing_path: "mic.timing.jsonl".into(),
+            device_name: "Synthetic".into(),
+            sample_rate: 16000,
+            channels: 1,
+            frames: 16000,
+            dropped_frames: 0,
+            finalized: true,
+        };
+        let args = |settings: &Settings| -> Vec<String> {
+            engine_command(root, settings, &track, Path::new("out"))
+                .unwrap()
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        let after = |args: &[String], flag: &str| {
+            let at = args.iter().position(|arg| arg == flag).unwrap();
+            args[at + 1].clone()
+        };
+        let defaults = args(&stored_settings());
+        assert_eq!(after(&defaults, "-l"), "auto");
+        assert!(after(&defaults, "-m").ends_with("ggml-small.bin"));
+        assert!(defaults.contains(&"-pp".to_string()));
+        assert!(!defaults.contains(&"--prompt".to_string()));
+        let mut custom = stored_settings();
+        custom.stt_language = "de".into();
+        custom.stt_prompt = "Okta, Kubernetes, Priya".into();
+        custom.stt_model = "large-v3-turbo".into();
+        let custom_args = args(&custom);
+        assert_eq!(after(&custom_args, "-l"), "de");
+        assert_eq!(after(&custom_args, "--prompt"), "Okta, Kubernetes, Priya");
+        assert!(after(&custom_args, "-m").ends_with("ggml-large-v3-turbo.bin"));
+        // A tampered setting never reaches the command line.
+        custom.stt_language = "de; rm".into();
+        assert_eq!(
+            engine_command(root, &custom, &track, Path::new("out"))
+                .unwrap_err()
+                .code,
+            "stt_settings"
+        );
+    }
+
+    #[test]
+    fn progress_lines_are_parsed_and_noise_is_ignored() {
+        assert_eq!(
+            parse_progress("whisper_print_progress_callback: progress =  45%\r\n"),
+            Some(45)
+        );
+        assert_eq!(parse_progress("progress = 100%"), Some(100));
+        for noise in [
+            "progress = 250%",
+            "progress = -1%",
+            "whisper_init: loading model",
+            "progress = 45",
+            "",
+        ] {
+            assert_eq!(parse_progress(noise), None, "{noise}");
+        }
+    }
+
+    #[test]
+    fn status_reports_each_model_and_unknown_settings_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(models_dir(dir.path())).unwrap();
+        let base = model("base").unwrap();
+        File::create(models_dir(dir.path()).join(base.file))
+            .unwrap()
+            .set_len(base.size)
+            .unwrap();
+        let small = status(dir.path(), "small");
+        assert!(!small.model);
+        let installed: Vec<_> = small.models.iter().map(|m| (m.id, m.installed)).collect();
+        assert_eq!(
+            installed,
+            [("base", true), ("small", false), ("large-v3-turbo", false)]
+        );
+        assert!(status(dir.path(), "base").model);
+        assert!(!status(dir.path(), "huge").model);
+        assert!(small.languages.contains(&"auto"));
+        assert!(validate("auto", "", "small").is_ok());
+        assert_eq!(
+            validate("xx", "", "small").unwrap_err().code,
+            "stt_settings"
+        );
+        assert_eq!(validate("en", "", "huge").unwrap_err().code, "stt_settings");
+        assert_eq!(
+            install(dir.path(), "huge", |_| {}).unwrap_err().code,
+            "stt_settings"
+        );
+    }
+
+    #[test]
+    fn fake_engine_reports_progress_and_cancel_keeps_the_previous_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let json =
+            r#"{"transcription":[{"offsets":{"from":0,"to":500},"text":" Fictional words"}]}"#;
+        #[cfg(windows)]
+        let (script, body) = (
+            dir.path().join("fake-engine.cmd"),
+            format!(
+                "@echo off\r\n\
+                 echo whisper_print_progress_callback: progress =  10%% 1>&2\r\n\
+                 if \"%~1\"==\"slow\" ping -n 30 127.0.0.1 >nul\r\n\
+                 echo whisper_print_progress_callback: progress = 100%% 1>&2\r\n\
+                 >\"%~2.json\" echo {json}\r\n"
+            ),
+        );
+        #[cfg(not(windows))]
+        let (script, body) = (
+            dir.path().join("fake-engine.sh"),
+            format!(
+                "echo 'whisper_print_progress_callback: progress =  10%' >&2\n\
+                 [ \"$1\" = slow ] && sleep 30\n\
+                 echo 'whisper_print_progress_callback: progress = 100%' >&2\n\
+                 printf '%s' '{json}' > \"$2.json\"\n"
+            ),
+        );
+        fs::write(&script, body).unwrap();
+        let fake = move |mode: &'static str| {
+            let script = script.clone();
+            move |_: &Track, output_base: &Path| -> Result<Command> {
+                #[cfg(windows)]
+                let mut command = Command::new(&script);
+                #[cfg(not(windows))]
+                let mut command = {
+                    let mut command = Command::new("sh");
+                    command.arg(&script);
+                    command
+                };
+                command.arg(mode).arg(output_base);
+                Ok(command)
+            }
+        };
+        let track = Track {
+            kind: "mic".into(),
+            path: "mic.wav".into(),
+            timing_path: dir.path().join("missing.jsonl").to_string_lossy().into(),
+            device_name: "Synthetic".into(),
+            sample_rate: 16000,
+            channels: 1,
+            frames: 16000,
+            dropped_frames: 0,
+            finalized: true,
+        };
+
+        let mut seen = Vec::new();
+        let segments = run_tracks(
+            std::slice::from_ref(&track),
+            fake("fast"),
+            |kind, percent| seen.push((kind.to_string(), percent)),
+        )
+        .unwrap();
+        assert_eq!(seen, [("mic".to_string(), 10), ("mic".to_string(), 100)]);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(
+            (segments[0].speaker.as_str(), segments[0].text.as_str()),
+            ("You", "Fictional words")
+        );
+        assert!(!cancel(), "nothing is running");
+
+        let mut core = crate::storage::Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_fixture().unwrap();
+        core.replace_transcript(
+            &id,
+            &[Segment {
+                speaker: "Others".into(),
+                start_ms: 0,
+                end_ms: 10,
+                text: "Earlier run".into(),
+            }],
+        )
+        .unwrap();
+        let (progress_tx, progress_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn({
+            let track = track.clone();
+            move || {
+                run_tracks(&[track], fake("slow"), move |_, percent| {
+                    let _ = progress_tx.send(percent);
+                })
+            }
+        });
+        assert_eq!(
+            progress_rx.recv_timeout(Duration::from_secs(20)).unwrap(),
+            10
+        );
+        let cancelled_at = Instant::now();
+        assert!(cancel());
+        let result = worker.join().unwrap();
+        assert!(
+            cancelled_at.elapsed() < Duration::from_secs(10),
+            "the engine was killed"
+        );
+        // Same order as `transcribe_meeting`: the transcript is replaced only on success.
+        let saved = result.and_then(|segments| core.replace_transcript(&id, &segments));
+        assert_eq!(saved.unwrap_err().code, "stt_cancelled");
+        assert!(progress_rx.try_iter().all(|percent| percent != 100));
+        let texts: Vec<_> = core
+            .get_meeting(&id)
+            .unwrap()
+            .segments
+            .into_iter()
+            .map(|segment| segment.text)
+            .collect();
+        assert!(texts.contains(&"Earlier run".to_string()));
+        assert_eq!(texts.len(), 3, "two fixture segments plus the earlier run");
     }
 }

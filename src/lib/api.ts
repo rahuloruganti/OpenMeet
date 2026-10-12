@@ -1,4 +1,4 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export type RecordingState = {
@@ -7,6 +7,8 @@ export type RecordingState = {
   meeting_id: string | null;
   source: string | null;
   error: string | null;
+  /** Audio written so far (paused time excluded); null without real capture. */
+  recording_offset_ms: number | null;
 };
 export type Meeting = {
   id: string;
@@ -64,6 +66,10 @@ export type Settings = {
   microphone_id: string | null;
   output_id: string | null;
   merge_model: string | null;
+  stt_language: string;
+  stt_prompt: string;
+  stt_model: string;
+  stop_shortcut: string | null;
 };
 export type MergeModel = {
   model: string;
@@ -78,12 +84,20 @@ export type SttStatus = {
   installed: boolean;
   missing_bytes: number;
   supported: boolean;
+  models: Array<{ id: string; size: number; installed: boolean }>;
+  languages: string[];
 };
-export type SttProgress = {
-  stage: string;
+export type SttDownloadProgress = {
+  stage: "engine" | "model" | "vad";
   downloaded: number;
   total: number;
 };
+export type SttTranscribeProgress = {
+  stage: "transcribing";
+  track: string;
+  percent: number;
+};
+export type SttProgress = SttDownloadProgress | SttTranscribeProgress;
 export type ExportResult = { path: string; created_copy: boolean };
 
 export const api = {
@@ -129,11 +143,19 @@ export const api = {
   transcribeMeeting: (id: string) => invoke<void>("transcribe_meeting", { id }),
   generateSummary: (id: string, consent: boolean) =>
     invoke<void>("generate_summary", { id, consent }),
-  saveSettings: (pauseShortcut: string) =>
-    invoke<Settings>("save_settings", { pauseShortcut }),
+  saveSettings: (pauseShortcut: string, stopShortcut: string | null) =>
+    invoke<Settings>("save_settings", { pauseShortcut, stopShortcut }),
   chooseVaultFolder: () => invoke<Settings>("choose_vault_folder"),
   exportMeeting: (id: string) => invoke<ExportResult>("export_meeting", { id }),
   close: () => invoke<void>("close_application"),
+  cancelTranscription: () => invoke<boolean>("cancel_transcription"),
+  saveSttSettings: (language: string, prompt: string, model: string) =>
+    invoke<Settings>("save_stt_settings", { language, prompt, model }),
+  /** Maps a transcript (session) time to a position in that track's file, in ms. */
+  audioPosition: (id: string, kind: string, sessionMs: number) =>
+    invoke<number>("audio_position", { id, kind, sessionMs }),
+  /** Asset-protocol URL; the backend scope only serves the app-data audio folder. */
+  audioSrc: (path: string) => convertFileSrc(path),
   onRecordingState: (callback: (state: RecordingState) => void) =>
     listen<RecordingState>("recording_state", (event) =>
       callback(event.payload),
