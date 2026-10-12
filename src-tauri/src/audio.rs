@@ -682,6 +682,80 @@ fn worker(
     }
 }
 
+/// Writes a playable copy of a WAV whose header was never finalized (crash, power loss).
+/// Sizes come from the actual file length, truncated to whole frames. The original is only read.
+/// Assumes the data chunk is the last chunk, as hound writes it. Returns the frames in the copy.
+pub fn repair_wav(original: &Path, copy: &Path) -> Result<i64> {
+    use std::io::{Read, Seek, SeekFrom};
+    let invalid = || audio_error("The audio file header is unreadable. Nothing was recovered.");
+    let mut file = File::open(original)?;
+    let length = file.metadata()?.len();
+    let mut header = vec![0_u8; length.min(64 * 1024) as usize];
+    file.read_exact(&mut header)?;
+    if header.len() < 12 || &header[0..4] != b"RIFF" || &header[8..12] != b"WAVE" {
+        return Err(invalid());
+    }
+    let mut at = 12;
+    let mut block_align = 0_u64;
+    let data_start = loop {
+        if at + 8 > header.len() {
+            return Err(invalid());
+        }
+        let size = u32::from_le_bytes([
+            header[at + 4],
+            header[at + 5],
+            header[at + 6],
+            header[at + 7],
+        ]) as usize;
+        match &header[at..at + 4] {
+            b"data" => break at + 8,
+            // fmt layout: tag u16, channels u16, rate u32, byte rate u32, block align u16.
+            b"fmt " if size >= 16 && at + 22 <= header.len() => {
+                block_align = u64::from(u16::from_le_bytes([header[at + 20], header[at + 21]]));
+            }
+            _ => {}
+        }
+        at += 8 + size + size % 2;
+    };
+    if block_align == 0 {
+        return Err(invalid());
+    }
+    // Both RIFF and data sizes are u32; never write a header that overflows them.
+    let available = (length - data_start as u64).min(u64::from(u32::MAX) - data_start as u64);
+    let data_len = available / block_align * block_align;
+    let pad = data_len % 2;
+    let mut fixed = header[..data_start].to_vec();
+    fixed[4..8].copy_from_slice(&((data_start as u64 + data_len + pad - 8) as u32).to_le_bytes());
+    fixed[data_start - 4..data_start].copy_from_slice(&(data_len as u32).to_le_bytes());
+    let folder = copy.parent().ok_or_else(invalid)?;
+    let mut temp = tempfile::NamedTempFile::new_in(folder)?;
+    {
+        let mut out = BufWriter::new(temp.as_file_mut());
+        out.write_all(&fixed)?;
+        file.seek(SeekFrom::Start(data_start as u64))?;
+        if std::io::copy(&mut (&mut file).take(data_len), &mut out)? != data_len {
+            return Err(invalid());
+        }
+        out.write_all(&[0; 1][..pad as usize])?;
+        out.flush()?;
+    }
+    temp.as_file().sync_all()?;
+    temp.persist_noclobber(copy).map_err(|error| {
+        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::new(
+                "recovery_exists",
+                format!(
+                    "A recovered copy already exists at {}. Nothing was overwritten.",
+                    copy.display()
+                ),
+            )
+        } else {
+            error.error.into()
+        }
+    })?;
+    Ok((data_len / block_align) as i64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -818,5 +892,61 @@ mod tests {
         let second = consumer.try_pop().unwrap();
         assert!((first.samples[0] - 1.0).abs() < 0.001);
         assert_eq!(second.start_us, 100 + 1024 * 1_000_000 / 48000);
+    }
+    #[test]
+    fn truncated_wavs_are_repaired_into_new_copies_with_whole_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("synthetic.wav");
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 48000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let samples: Vec<f32> = (0..2000).map(|i| (i as f32 / 2000.0) - 0.5).collect();
+        let mut writer = hound::WavWriter::create(&source, spec).unwrap();
+        for sample in &samples {
+            writer.write_sample(*sample).unwrap();
+        }
+        writer.finalize().unwrap();
+        let mut finished = fs::read(&source).unwrap();
+        let data_start = finished.windows(4).position(|w| w == b"data").unwrap() + 8;
+        // An interrupted writer leaves zero (or stale) sizes in the header.
+        finished[4..8].fill(0);
+        finished[data_start - 4..data_start].fill(0);
+        for (case, cut) in [
+            data_start,               // header only
+            data_start + 3,           // partial first sample
+            data_start + 8 * 100,     // whole frames
+            data_start + 8 * 250 + 5, // mid-frame
+            finished.len(),           // nothing lost, header still broken
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let original = dir.path().join(format!("mic-{case}.wav"));
+            fs::write(&original, &finished[..cut]).unwrap();
+            let copy = dir.path().join(format!("mic-{case}.recovered.wav"));
+            let frames = repair_wav(&original, &copy).unwrap() as usize;
+            assert_eq!(frames, (cut - data_start) / 8, "cut at {cut}");
+            let mut reader = hound::WavReader::open(&copy).unwrap();
+            assert_eq!(reader.spec(), spec);
+            assert_eq!(reader.len() as usize, frames * 2);
+            let recovered: Vec<f32> = reader.samples().map(|s| s.unwrap()).collect();
+            assert_eq!(recovered, samples[..frames * 2]);
+            assert_eq!(
+                fs::read(&original).unwrap(),
+                &finished[..cut],
+                "original untouched"
+            );
+            assert_eq!(
+                repair_wav(&original, &copy).unwrap_err().code,
+                "recovery_exists"
+            );
+        }
+        let garbage = dir.path().join("garbage.wav");
+        fs::write(&garbage, b"not a wav file").unwrap();
+        assert!(repair_wav(&garbage, &dir.path().join("garbage.recovered.wav")).is_err());
+        assert!(!dir.path().join("garbage.recovered.wav").exists());
     }
 }

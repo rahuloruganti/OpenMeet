@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 5;
+const LATEST_SCHEMA: i64 = 9;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -59,6 +59,7 @@ impl Core {
             (3, include_str!("../migrations/003_local_model.sql")),
             (4, include_str!("../migrations/004_merge_model.sql")),
             (5, include_str!("../migrations/005_transcripts.sql")),
+            (9, include_str!("../migrations/009_export_options.sql")),
         ];
         for (number, script) in additive {
             if version < number {
@@ -99,14 +100,7 @@ impl Core {
                 "Stop the active recording before starting another.",
             ));
         }
-        let title = title.trim();
-        if title.is_empty() || title.chars().count() > 160 {
-            return Err(AppError::new(
-                "invalid_title",
-                "Use a meeting title between 1 and 160 characters.",
-            ));
-        }
-        Ok(title)
+        validate_title(title)
     }
 
     pub fn start(&mut self, title: &str) -> Result<RecordingState> {
@@ -339,15 +333,15 @@ impl Core {
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let (summary, summary_provider, summary_model) = self
+        let (summary, summary_provider, summary_model, summary_template) = self
             .db
             .query_row(
-                "SELECT markdown, provider, model FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
+                "SELECT markdown, provider, model, template_hash FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
                 [id],
-                |row| Ok((Some(row.get(0)?), Some(row.get(1)?), Some(row.get(2)?))),
+                |row| Ok((Some(row.get(0)?), Some(row.get(1)?), Some(row.get(2)?), Some(row.get(3)?))),
             )
             .optional()?
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None, None, None));
         let mut query = self.db.prepare("SELECT kind, path, timing_path, device_name, sample_rate, channels, frames, dropped_frames, finalized FROM tracks WHERE meeting_id = ?1 ORDER BY kind")?;
         let tracks = query
             .query_map([id], |row| {
@@ -373,6 +367,7 @@ impl Core {
             summary_provider,
             summary_model,
             tracks,
+            summary_template,
         })
     }
 
@@ -427,7 +422,7 @@ impl Core {
 
     pub fn settings(&self) -> Result<Settings> {
         Ok(self.db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, merge_model FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, merge_model, export_transcript, export_summary, export_filename FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -436,6 +431,15 @@ impl Core {
                     microphone_id: row.get(2)?,
                     output_id: row.get(3)?,
                     merge_model: row.get(4)?,
+                    export: ExportOptions {
+                        transcript: row.get(5)?,
+                        summary: row.get(6)?,
+                        // The column CHECK constraint allows only these two values.
+                        filename: match row.get::<_, String>(7)?.as_str() {
+                            "date_title" => FilenamePattern::DateTitle,
+                            _ => FilenamePattern::Title,
+                        },
+                    },
                 })
             },
         )?)
@@ -503,6 +507,77 @@ impl Core {
         tx.commit()?;
         Ok(id)
     }
+
+    /// Returns the stored (trimmed) title. Exported snapshots keep their old names.
+    pub fn rename_meeting(&mut self, id: &str, title: &str) -> Result<String> {
+        let title = validate_title(title)?;
+        let changed = self.db.execute(
+            "UPDATE meetings SET title = ?1 WHERE id = ?2",
+            params![title, id],
+        )?;
+        if changed != 1 {
+            return Err(AppError::new("not_found", "Meeting not found."));
+        }
+        Ok(title.to_string())
+    }
+
+    pub fn save_export_options(&mut self, options: &ExportOptions) -> Result<Settings> {
+        let filename = match options.filename {
+            FilenamePattern::Title => "title",
+            FilenamePattern::DateTitle => "date_title",
+        };
+        self.db.execute(
+            "UPDATE settings SET export_transcript = ?1, export_summary = ?2, export_filename = ?3 WHERE id = 1",
+            params![options.transcript, options.summary, filename],
+        )?;
+        self.settings()
+    }
+
+    /// Unfinalized tracks of an interrupted desktop recording as (kind, original, repaired copy).
+    /// Copying happens outside the core lock; see `mark_recovered`.
+    pub fn recoverable_tracks(&self, id: &str) -> Result<Vec<(String, PathBuf, PathBuf)>> {
+        let detail = self.get_meeting(id)?;
+        if detail.meeting.source != "desktop" || detail.meeting.status != "interrupted" {
+            return Err(AppError::new(
+                "not_recoverable",
+                "Only interrupted recordings can be recovered.",
+            ));
+        }
+        let mut tracks = Vec::new();
+        for track in detail.tracks.into_iter().filter(|track| !track.finalized) {
+            let original = PathBuf::from(&track.path);
+            if !original.starts_with(&self.audio_root) {
+                return Err(AppError::new(
+                    "unsafe_path",
+                    "A track path is outside the OpenMeet audio folder. Nothing was changed.",
+                ));
+            }
+            let copy = original.with_file_name(format!("{}.recovered.wav", track.kind));
+            tracks.push((track.kind, original, copy));
+        }
+        if tracks.is_empty() {
+            return Err(AppError::new(
+                "not_recoverable",
+                "This recording has no unfinished audio tracks to recover.",
+            ));
+        }
+        Ok(tracks)
+    }
+
+    /// Points a track at its repaired copy. The original file stays on disk unchanged.
+    pub fn mark_recovered(&mut self, id: &str, kind: &str, copy: &Path, frames: i64) -> Result<()> {
+        let changed = self.db.execute(
+            "UPDATE tracks SET path = ?1, frames = ?2, finalized = 1 WHERE meeting_id = ?3 AND kind = ?4 AND finalized = 0",
+            params![copy.to_string_lossy(), frames, id, kind],
+        )?;
+        if changed != 1 {
+            return Err(AppError::new(
+                "not_recoverable",
+                "The track changed during recovery. The repaired copy was kept on disk.",
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
@@ -515,6 +590,18 @@ fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
         source: row.get(5)?,
         capture_error: row.get(6)?,
     })
+}
+
+/// Returns the trimmed title when it has 1 to 160 characters.
+fn validate_title(title: &str) -> Result<&str> {
+    let title = title.trim();
+    if title.is_empty() || title.chars().count() > 160 {
+        return Err(AppError::new(
+            "invalid_title",
+            "Use a meeting title between 1 and 160 characters.",
+        ));
+    }
+    Ok(title)
 }
 
 #[cfg(test)]
@@ -712,7 +799,7 @@ mod tests {
             core.db
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            5
+            LATEST_SCHEMA
         );
         assert_eq!(detail.segments[0].text, "Fictional text");
         assert_eq!(
@@ -757,6 +844,206 @@ mod tests {
                 .pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))
                 .unwrap(),
             "wal"
+        );
+    }
+
+    #[test]
+    fn rename_validates_titles_and_keeps_the_old_one_on_rejection() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_fixture().unwrap();
+        assert_eq!(
+            core.rename_meeting(&id, "  Planning review  ").unwrap(),
+            "Planning review"
+        );
+        for invalid in ["", "   ", &"x".repeat(161)] {
+            assert_eq!(
+                core.rename_meeting(&id, invalid).unwrap_err().code,
+                "invalid_title"
+            );
+        }
+        assert!(core.rename_meeting(&id, &"é".repeat(160)).is_ok());
+        core.rename_meeting(&id, "Planning review").unwrap();
+        assert_eq!(
+            core.rename_meeting("missing", "Title").unwrap_err().code,
+            "not_found"
+        );
+        assert_eq!(
+            core.get_meeting(&id).unwrap().meeting.title,
+            "Planning review"
+        );
+        assert_eq!(core.list_meetings().unwrap()[0].title, "Planning review");
+    }
+
+    #[test]
+    fn export_options_default_on_and_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        assert_eq!(
+            core.settings().unwrap().export,
+            ExportOptions {
+                transcript: true,
+                summary: true,
+                filename: FilenamePattern::Title
+            }
+        );
+        let chosen = ExportOptions {
+            transcript: false,
+            summary: true,
+            filename: FilenamePattern::DateTitle,
+        };
+        assert_eq!(core.save_export_options(&chosen).unwrap().export, chosen);
+        drop(core);
+        assert_eq!(
+            Core::open(&path).unwrap().settings().unwrap().export,
+            chosen
+        );
+    }
+
+    #[test]
+    fn migrations_preserve_populated_v5_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = Connection::open(&path).unwrap();
+            for script in [
+                include_str!("../migrations/001_foundation.sql"),
+                include_str!("../migrations/002_capture.sql"),
+                include_str!("../migrations/003_local_model.sql"),
+                include_str!("../migrations/004_merge_model.sql"),
+                include_str!("../migrations/005_transcripts.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("PRAGMA foreign_keys = ON;
+                INSERT INTO meetings(id, title, started_at, ended_at, source, status, capture_error) VALUES ('rec', 'Recorded', '2026-10-10T09:00:00Z', '2026-10-10T10:00:00Z', 'desktop', 'interrupted', 'Device lost');
+                INSERT INTO meetings(id, title, started_at, source, status) VALUES ('fix', 'Fixture', '2026-10-10T08:00:00Z', 'fixture', 'stopped');
+                INSERT INTO notes(meeting_id, user_markdown, revision) VALUES ('rec', 'Recorded notes', 3), ('fix', 'Fixture notes', 1);
+                INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES ('rec', 'Others', 0, 900, 'Fictional words', 'whisper', 'final'), ('fix', 'You', 0, 100, 'Fixture words', 'fixture', 'final');
+                INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES ('rec', 'summary-v1', 'openai/gpt-x', 'merge', 'Old summary'), ('rec', 'summary-v1', 'openai/gpt-y', 'merge', 'New summary');
+                INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels, frames, finalized) VALUES ('rec', 'mic', 'mic.wav', 'mic.timing.jsonl', 'Mic', 48000, 1, 0, 0), ('rec', 'system', 'system.wav', 'system.timing.jsonl', 'Out', 48000, 2, 96000, 1);
+                UPDATE settings SET vault_folder = 'saved-folder', microphone_id = 'mic', output_id = 'out', merge_model = 'openai/gpt-y';").unwrap();
+        }
+        let core = Core::open(&path).unwrap();
+        let rec = core.get_meeting("rec").unwrap();
+        assert_eq!(rec.meeting.status, "interrupted");
+        assert_eq!(rec.meeting.capture_error.as_deref(), Some("Device lost"));
+        assert_eq!(
+            (rec.user_markdown.as_str(), rec.notes_revision),
+            ("Recorded notes", 3)
+        );
+        assert_eq!(rec.segments[0].text, "Fictional words");
+        assert_eq!(rec.summary.as_deref(), Some("New summary"));
+        assert_eq!(rec.summary_template.as_deref(), Some("summary-v1"));
+        assert_eq!(rec.tracks.len(), 2);
+        assert!(!rec.tracks[0].finalized && rec.tracks[1].frames == 96000);
+        let fix = core.get_meeting("fix").unwrap();
+        assert_eq!(fix.user_markdown, "Fixture notes");
+        assert_eq!(fix.segments.len(), 1);
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.vault_folder.as_deref(), Some("saved-folder"));
+        assert_eq!(settings.merge_model.as_deref(), Some("openai/gpt-y"));
+        assert!(settings.export.transcript && settings.export.summary);
+        assert_eq!(settings.export.filename, FilenamePattern::Title);
+        let version: i64 = core
+            .db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, LATEST_SCHEMA);
+        let violations: i64 = core
+            .db
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
+        // Cascades still work after the upgrade.
+        core.db
+            .execute("DELETE FROM meetings WHERE id = 'fix'", [])
+            .unwrap();
+        let orphans: i64 = core
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM notes WHERE meeting_id = 'fix'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0);
+    }
+
+    #[test]
+    fn interrupted_tracks_recover_into_copies_and_originals_stay() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = Core::open(&dir.path().join("meetings.db")).unwrap();
+        let folder = dir.path().join("audio").join("rec");
+        std::fs::create_dir_all(&folder).unwrap();
+        let mic = folder.join("mic.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(&mic, spec).unwrap();
+        for i in 0..1000 {
+            writer.write_sample(i as f32 / 1000.0).unwrap();
+        }
+        writer.finalize().unwrap();
+        // Simulate a crash: stale header sizes and a partial last sample.
+        let mut bytes = std::fs::read(&mic).unwrap();
+        bytes[4..8].fill(0);
+        bytes.truncate(bytes.len() - 2);
+        std::fs::write(&mic, &bytes).unwrap();
+        let outside = dir.path().join("elsewhere.wav");
+        core.db.execute_batch(&format!(
+            "INSERT INTO meetings(id, title, started_at, source, status) VALUES ('rec', 'Crashed', '2026-10-10T09:00:00Z', 'desktop', 'interrupted'), ('ok', 'Fine', '2026-10-10T09:00:00Z', 'desktop', 'stopped'), ('bad', 'Odd path', '2026-10-10T09:00:00Z', 'desktop', 'interrupted');
+             INSERT INTO notes(meeting_id) VALUES ('rec'), ('ok'), ('bad');
+             INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels, frames, finalized) VALUES
+               ('rec', 'mic', '{mic}', 'mic.timing.jsonl', 'Mic', 16000, 1, 0, 0),
+               ('rec', 'system', 'system.wav', 'system.timing.jsonl', 'Out', 16000, 1, 500, 1),
+               ('ok', 'mic', 'mic.wav', 'mic.timing.jsonl', 'Mic', 16000, 1, 0, 0),
+               ('bad', 'mic', '{outside}', 'mic.timing.jsonl', 'Mic', 16000, 1, 0, 0);",
+            mic = mic.to_string_lossy().replace('\'', "''"),
+            outside = outside.to_string_lossy().replace('\'', "''"),
+        )).unwrap();
+        assert_eq!(
+            core.recoverable_tracks("ok").unwrap_err().code,
+            "not_recoverable"
+        );
+        assert_eq!(
+            core.recoverable_tracks("bad").unwrap_err().code,
+            "unsafe_path"
+        );
+        let tracks = core.recoverable_tracks("rec").unwrap();
+        assert_eq!(tracks.len(), 1, "finalized tracks are left alone");
+        let (kind, original, copy) = &tracks[0];
+        assert_eq!(copy, &folder.join("mic.recovered.wav"));
+        let frames = audio::repair_wav(original, copy).unwrap();
+        assert_eq!(frames, 999);
+        core.mark_recovered("rec", kind, copy, frames).unwrap();
+        let detail = core.get_meeting("rec").unwrap();
+        let track = detail.tracks.iter().find(|t| t.kind == "mic").unwrap();
+        assert!(track.finalized);
+        assert_eq!(track.frames, 999);
+        assert_eq!(track.path, copy.to_string_lossy());
+        assert_eq!(
+            detail.meeting.status, "interrupted",
+            "still labelled as interrupted"
+        );
+        assert_eq!(
+            std::fs::read(&mic).unwrap(),
+            bytes,
+            "original bytes unchanged"
+        );
+        assert_eq!(hound::WavReader::open(copy).unwrap().len(), 999);
+        assert_eq!(
+            core.recoverable_tracks("rec").unwrap_err().code,
+            "not_recoverable"
+        );
+        assert_eq!(
+            core.mark_recovered("rec", "mic", copy, 1).unwrap_err().code,
+            "not_recoverable"
         );
     }
 }

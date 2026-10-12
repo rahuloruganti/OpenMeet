@@ -308,8 +308,9 @@ export function App() {
         <div className="feedback-stack">
           <p className="preview-banner">
             <strong>Windows capture preview.</strong> Real recording saves
-            microphone and system audio locally. Transcription and AI summaries
-            are not implemented. macOS capture is not yet available.
+            microphone and system audio locally; capture is not yet qualified.
+            Transcription runs on this computer. Summaries send text to Merge
+            only after you confirm. macOS capture is not yet available.
           </p>
           {!desktop && (
             <p role="alert">
@@ -454,6 +455,34 @@ export function App() {
               );
             })
           }
+          onRename={(next) => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void run(async () => {
+              const stored = await api.renameMeeting(id, next);
+              // The sidebar refreshes from the backend's meeting_updated event.
+              setSelected((current) =>
+                current?.meeting.id === id
+                  ? {
+                      ...current,
+                      meeting: { ...current.meeting, title: stored },
+                    }
+                  : current,
+              );
+            });
+          }}
+          onRecover={() => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void runJob("recover", async () => {
+              await writer.current?.flush();
+              await api.recoverAudio(id);
+              await finishJob(id);
+              setNotice(
+                "Recovered audio saved as new copies. The original files were left unchanged.",
+              );
+            });
+          }}
         />
 
         {panel === "settings" && (
@@ -502,9 +531,7 @@ export function App() {
               void run(async () => {
                 const updated = await api.saveMergeModel(mergeModel);
                 setSettings(updated);
-                setNotice(
-                  "Merge model selection saved. Summary generation is not implemented yet.",
-                );
+                setNotice("Merge model selection saved.");
               })
             }
             onShortcut={setShortcut}
@@ -520,6 +547,11 @@ export function App() {
                 setSettings(updated);
                 setShortcut(updated.pause_shortcut);
                 setNotice("Shortcut saved.");
+              })
+            }
+            onExportOptions={(options) =>
+              void run(async () => {
+                setSettings(await api.saveExportOptions(options));
               })
             }
           />
@@ -557,6 +589,7 @@ export function App() {
               ]);
             })
           }
+          health={health}
         />
         {closeRequested && (
           <section

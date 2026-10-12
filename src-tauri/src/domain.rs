@@ -81,6 +81,7 @@ pub struct MeetingDetail {
     pub summary_provider: Option<String>,
     pub summary_model: Option<String>,
     pub tracks: Vec<crate::audio::Track>,
+    pub summary_template: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -90,12 +91,28 @@ pub struct Settings {
     pub microphone_id: Option<String>,
     pub output_id: Option<String>,
     pub merge_model: Option<String>,
+    pub export: ExportOptions,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ExportResult {
     pub path: String,
     pub created_copy: bool,
+}
+
+/// Markdown export choices; the filename pattern is a closed set so untrusted input cannot pick one.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ExportOptions {
+    pub transcript: bool,
+    pub summary: bool,
+    pub filename: FilenamePattern,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilenamePattern {
+    Title,
+    DateTitle,
 }
 
 pub fn now() -> Result<String> {

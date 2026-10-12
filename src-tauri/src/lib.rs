@@ -430,10 +430,15 @@ async fn choose_vault_folder(app: AppHandle) -> Result<Settings> {
 #[tauri::command]
 async fn export_meeting(app: AppHandle, id: String) -> Result<ExportResult> {
     with_core(app, false, move |core, _| {
-        let folder = core.settings()?.vault_folder.ok_or_else(|| {
+        let settings = core.settings()?;
+        let folder = settings.vault_folder.ok_or_else(|| {
             AppError::new("no_vault", "Choose an export folder in Settings first.")
         })?;
-        export::write_snapshot(&core.get_meeting(&id)?, Path::new(&folder))
+        export::write_snapshot(
+            &core.get_meeting(&id)?,
+            Path::new(&folder),
+            &settings.export,
+        )
     })
     .await
 }
@@ -446,6 +451,42 @@ async fn close_application(app: AppHandle) -> Result<()> {
         .allow_exit
         .store(true, Ordering::Release);
     app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
+async fn rename_meeting(app: AppHandle, id: String, title: String) -> Result<String> {
+    with_core(app, true, move |core, _| core.rename_meeting(&id, &title)).await
+}
+
+#[tauri::command]
+async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_export_options(&options)
+    })
+    .await
+}
+
+/// Writes repaired copies of an interrupted recording's unfinished WAVs; originals are never modified.
+#[tauri::command]
+async fn recover_audio(app: AppHandle, id: String) -> Result<()> {
+    let tracks = {
+        let id = id.clone();
+        with_core(app.clone(), false, move |core, _| {
+            core.recoverable_tracks(&id)
+        })
+        .await?
+    };
+    for (kind, original, copy) in tracks {
+        // Copying can take a while; do it without holding the recording/storage lock.
+        let target = copy.clone();
+        let frames = blocking(move || audio::repair_wav(&original, &target)).await?;
+        let id = id.clone();
+        with_core(app.clone(), true, move |core, _| {
+            core.mark_recovered(&id, &kind, &copy, frames)
+        })
+        .await?;
+    }
     Ok(())
 }
 
@@ -510,6 +551,7 @@ pub fn run() {
             merge_key_status, import_merge_key, delete_merge_key, list_merge_models,
             save_merge_model,
             stt_status, stt_install, transcribe_meeting, generate_summary,
+            rename_meeting, save_export_options, recover_audio,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");

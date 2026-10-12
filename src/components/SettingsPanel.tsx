@@ -1,5 +1,11 @@
 import type { Ref } from "react";
-import type { MergeModel, Settings, SttProgress, SttStatus } from "../lib/api";
+import type {
+  ExportOptions,
+  MergeModel,
+  Settings,
+  SttProgress,
+  SttStatus,
+} from "../lib/api";
 
 const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 
@@ -24,6 +30,7 @@ type Props = {
   onClose: () => void;
   onChooseFolder: () => void;
   onSaveShortcut: () => void;
+  onExportOptions: (options: ExportOptions) => void;
 };
 
 export function SettingsPanel(props: Props) {
@@ -96,9 +103,9 @@ export function SettingsPanel(props: Props) {
         The key is imported from the OPENMEET_LLM_API_KEY environment variable
         by the desktop backend and stored in the OS keychain; it never enters
         this window. Set the variable before starting OpenMeet. Connecting sends
-        only your API key to api-gateway.merge.dev to list models. No meeting
-        notes, transcripts, or audio are sent, and summaries are not implemented
-        yet.
+        only your API key to api-gateway.merge.dev to list models; no meeting
+        content is sent. Notes and transcript text are sent only when you
+        confirm Enhance notes for a meeting. Audio is never sent.
       </p>
       <div className="panel-actions">
         <button disabled={disabled} onClick={props.onImportKey}>
@@ -179,6 +186,56 @@ export function SettingsPanel(props: Props) {
       >
         Save shortcut
       </button>
+      {settings && (
+        <fieldset className="export-options" disabled={disabled}>
+          <legend>Markdown export</legend>
+          <label>
+            <input
+              type="checkbox"
+              checked={settings.export.summary}
+              onChange={(event) =>
+                props.onExportOptions({
+                  ...settings.export,
+                  summary: event.target.checked,
+                })
+              }
+            />
+            Include summary
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={settings.export.transcript}
+              onChange={(event) =>
+                props.onExportOptions({
+                  ...settings.export,
+                  transcript: event.target.checked,
+                })
+              }
+            />
+            Include transcript
+          </label>
+          <label>
+            File name
+            <select
+              value={settings.export.filename}
+              onChange={(event) =>
+                props.onExportOptions({
+                  ...settings.export,
+                  filename: event.target.value as ExportOptions["filename"],
+                })
+              }
+            >
+              <option value="title">Meeting title</option>
+              <option value="date_title">Date, then meeting title</option>
+            </select>
+          </label>
+          <p className="muted">
+            Applies to new exports. Earlier snapshots are never renamed or
+            overwritten.
+          </p>
+        </fieldset>
+      )}
     </section>
   );
 }

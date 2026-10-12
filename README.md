@@ -5,16 +5,19 @@ A local-first meeting notetaker under development. **This is a Windows capture p
 ## What exists
 
 - Tauri 2 / React desktop shell; Rust owns SQLite, settings, recording state, exports, tray, and shortcuts.
-- Windows microphone + system-output capture code with separate local WAVs and timing indexes; real-device qualification remains blocked by a missing microphone.
+- Windows microphone + system-output capture code with separate local WAVs and timing indexes; real-device qualification has not passed (the last hardware attempt found no microphone). While recording, per-track level meters warn when the microphone stays silent.
 - Clearly labeled simulation with start, pause/resume, stop, and interrupted-session marking.
+- **Recover audio** for interrupted recordings: writes a repaired copy of each unfinished WAV next to the original and never modifies the original. Tested on synthetic truncated files only.
+- Local transcription (Windows x64): an explicit download of a pinned whisper.cpp build, the Whisper "small" model, and the Silero VAD model, verified by SHA-256, transcribes finalized tracks on this computer. Audio is never uploaded. Accuracy has only been spot-checked.
+- Merge Gateway summaries: the API key is imported from `OPENMEET_LLM_API_KEY` into the OS keychain by the backend. **Enhance notes** sends notes and transcript text (never audio) only after a per-send confirmation. Tested against mock servers; no live summary has been verified.
 - Fictional sample meeting, transcript, and hand-written summary.
-- Persistent Markdown notes with debounced, serialized saves and optimistic revision checks.
+- Persistent Markdown notes with debounced, serialized saves and optimistic revision checks. Meetings can be renamed.
 - Save-before-switch, save-before-export, and save-before-quit behavior. Stop does not wait for saving; failed saves keep edits on screen.
 - Native export-folder picker, configurable pause shortcut, single-instance protection.
-- Markdown snapshot export: never overwrites an existing differing file.
+- Markdown snapshot export: never overwrites an existing differing file. Settings choose whether the summary and transcript are included, and whether filenames start with the date.
 - Frontend tests, Rust regression tests, lockfiles, and Windows/Apple Silicon CI configuration.
 
-**Not implemented:** macOS capture, VAD, Whisper, model downloads beyond the speech engine, Ollama/OpenAI, summary templates, processing jobs, or installers. Windows native checks and the previous macOS CI shell/build job passed; cross-platform capture and interactive qualification have not. See [implementation status](docs/implementation-status.md) and [the phase-wise plan](docs/phase-1-implementation-plan.md).
+**Not implemented:** macOS capture and transcription, summary templates, long-meeting summaries (very long meetings are refused), transcription progress/cancel, processing job queue, or installers. Windows native checks and the previous macOS CI shell/build job passed; cross-platform capture and interactive qualification have not. See [implementation status](docs/implementation-status.md) and [the phase-wise plan](docs/phase-1-implementation-plan.md).
 
 ## Development
 
@@ -64,7 +67,7 @@ The database lives in Tauri's OS app-data directory for `dev.openmeet.preview`:
 - Windows: `%APPDATA%/dev.openmeet.preview/meetings.db`
 - macOS: `~/Library/Application Support/dev.openmeet.preview/meetings.db`
 
-SQLite uses WAL and foreign keys. Windows recordings write separate mic/system WAVs and timing JSONL under the app-data `audio/<meeting ID>/` directory. Partial files are retained after failures; there is no automatic cleanup. Exported snapshots live under `<chosen folder>/Meetings/`. The only application network requests are explicit local Ollama model-list checks. There is no telemetry, cloud processing, generation request, or model download in this preview. Development dependency installation and Vite's local development server are separate from production runtime behavior.
+SQLite uses WAL and foreign keys. Windows recordings write separate mic/system WAVs and timing JSONL under the app-data `audio/<meeting ID>/` directory. Partial files are retained after failures; there is no automatic cleanup. Exported snapshots live under `<chosen folder>/Meetings/`. The application makes network requests only on explicit actions: downloading the speech engine and models (github.com, huggingface.co), connecting to Merge to list models (sends only the API key), and a confirmed **Enhance notes** (sends that meeting's notes and transcript text to Merge). There is no telemetry, automatic upload, or audio upload. Development dependency installation and Vite's local development server are separate from production runtime behavior.
 
 Files are **not encrypted**. OS backups and cloud-synced export folders may copy them off-device. Use only synthetic/non-sensitive data until native validation passes. See [privacy](docs/privacy.md) and [consent](docs/consent.md).
 
