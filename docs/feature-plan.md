@@ -1,6 +1,6 @@
 # Feature plan: from preview to a daily-use notetaker
 
-Status: **planned, nothing in this file is implemented.** It sequences the feature list from the 2026-10-11 codebase review. It does not replace the capture/processing gates in [implementation-status.md](implementation-status.md#open-work); a feature shipping here never marks a hardware gate passed.
+Status (2026-10-12): **M0–M5 implemented and unit/mock-tested; no milestone exit gate is passed.** Every native, hardware and live-Merge exit check below is still open; see [implementation-status.md](implementation-status.md#feature-batch-2026-10-12). Dropped/deferred: 4.1, 5.3, encryption, local LLM. M6 remains gated. It sequences the feature list from the 2026-10-11 codebase review. It does not replace the capture/processing gates in [implementation-status.md](implementation-status.md#open-work); a feature shipping here never marks a hardware gate passed.
 
 ## Ground rules for every milestone
 

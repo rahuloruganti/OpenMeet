@@ -8,6 +8,14 @@ This is provisional work while prerequisite gates remain open, not a complete MV
 
 The user-requested original Granola-inspired notes-first workspace is implemented in the React/Tauri shell: searchable/collapsible meeting navigation, a spacious notes canvas, keyboard-accessible notes/summary/transcript tabs, nonmodal setup/settings panels, and persistent recording controls. The running Windows development window was visually inspected on existing fictional/stopped-simulation data. Native interaction qualification is not complete; a Settings click approval timed out and was not retried. The remaining native-qualification checks are listed under Open work below.
 
+## Feature batch (2026-10-12)
+
+Implemented from [feature-plan.md](feature-plan.md) M0–M5 by four parallel worktree agents, then merged and rechecked on `feat/stt-merge-summaries`: source-aware export banner and README/privacy fixes; summary history, templates, copy buttons, chunked long-meeting summaries, Ask this meeting, rendered summary Markdown; rename, live level meters, stop-only global shortcut; note-only meetings (schema v6), guarded delete meeting/audio with disk usage, FTS5 search (v7); playback with click-to-seek via a scoped asset protocol, timestamped notes from a backend frame offset, transcription language/vocabulary/model settings (v8), transcription progress and cancel; export options (v9) and repaired copies of interrupted recordings. Schema is now v9.
+
+Merged-tree checks: typecheck, lint, Prettier, 71 Vitest tests (5 files), build; cargo fmt, Clippy `-D warnings`, 57 Rust tests (1 hardware test ignored, not run), cargo build `--locked`, cargo-deny advisories/licenses/sources ok. New lockfile entry: `http-range` (MIT, from Tauri's `protocol-asset` feature).
+
+**Not verified:** nothing was run in the native app; no recording, playback, real transcription, or live Merge request was made. Open: asset-scope refusal outside `audio/`, clipboard in the webview, global stop shortcut registration, level-meter silence threshold, progress output with real audio, model behaviour per template/chunked merge, and the symlink deletion case (skipped without Windows Developer Mode). "Jump to audio" seeks the system track approximately.
+
 ## Implemented
 
 - Tauri/React desktop shell, Rust-owned SQLite with WAL, foreign keys, and migrations.

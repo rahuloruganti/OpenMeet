@@ -316,3 +316,11 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Outcome:** Wrote `docs/feature-plan.md`: Milestones 0–6 (housekeeping; summary history/templates/copy/rename/level meters/stop shortcut; notes-only meetings, delete, FTS5 search; playback with seek, timestamped notes, transcription settings, progress/cancel; key entry, long-meeting summaries, per-meeting Q&A, rendered Markdown; export options, interrupted-recording recovery, compression; encryption, local LLM, macOS, installers), each with files, tests and exit gates, plus four open decisions. Planning only: no code changed, no checks run.
 
 **Decisions recorded in the plan:** no API-key entry in the webview (env-var import only); user-facing deletion approved with typed confirmation; FLAC compression and encryption deferred; local LLM option dropped (Merge-only).
+
+## Follow-up: build the whole plan with parallel subagents
+
+**Request:** "create subagents and do all at once".
+
+**Outcome:** Committed the plan and numbered migrations as a base, then ran four worktree agents (core/export, library, transcript/audio, summaries) and merged them into `feat/stt-merge-summaries`, resolving conflicts by hand. The agents' worktrees started from `main`; three rebased onto the feature branch, the summaries agent's copied base was discarded and only its own files applied. Integration fixes: test fixtures for new fields, deleting audio now also removes the unreferenced original left by recovery, and repaired characters double-encoded by an earlier PowerShell edit. Schema v9. Details and open checks in `docs/implementation-status.md`.
+
+**Checks:** typecheck, lint, Prettier, 71 Vitest, build; cargo fmt, Clippy `-D warnings`, 57 Rust tests (hardware test ignored, not run), cargo build `--locked`, cargo-deny ok. No recording, playback, real transcription or Merge call; nothing pushed.

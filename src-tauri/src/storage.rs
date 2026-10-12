@@ -682,6 +682,16 @@ impl Core {
             }
             files.push(file);
         }
+        // Recovery leaves the original partial WAV unreferenced beside its `.recovered.wav` copy,
+        // so also take every other regular file directly in the folder (links are left alone).
+        if let Some(folder) = &folder {
+            for entry in std::fs::read_dir(folder)? {
+                let entry = entry?;
+                if entry.file_type()?.is_file() && !files.contains(&entry.path()) {
+                    files.push(entry.path());
+                }
+            }
+        }
         Ok(files)
     }
 
@@ -703,7 +713,7 @@ impl Core {
         // The trailing `*` prefix-matches the last word for search-as-you-type.
         let phrase = format!("\"{}\"*", query.replace('"', "\"\""));
         let mut statement = self.db.prepare(
-            "SELECT meeting_id, kind, snippet(search, 2, '', '', 'â€¦', 12) FROM search WHERE search MATCH ?1 ORDER BY rank LIMIT 200",
+            "SELECT meeting_id, kind, snippet(search, 2, '', '', '…', 12) FROM search WHERE search MATCH ?1 ORDER BY rank LIMIT 200",
         )?;
         let rows = statement.query_map([phrase], |row| {
             Ok(SearchHit {
@@ -810,7 +820,7 @@ fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
     })
 }
 
-/// Returns the trimmed title if it has 1â€“160 characters.
+/// Returns the trimmed title if it has 1–160 characters.
 fn validate_title(title: &str) -> Result<&str> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > 160 {
@@ -1294,7 +1304,7 @@ mod tests {
             "\"unterminated",
             "'; DROP TABLE search; --",
             "!!!",
-            "Ã¼nÃ¯code",
+            "ünïcode",
         ] {
             assert!(core.search_meetings(hostile).is_ok(), "{hostile:?}");
         }
@@ -1388,6 +1398,8 @@ mod tests {
         assert!(outside.exists() && secret.exists() && legit.exists());
 
         // Delete audio keeps notes; delete meeting cascades; other meetings are intact.
+        // An unreferenced file (a recovered track's original) goes too.
+        std::fs::write(folder.join("system.wav"), b"x").unwrap();
         core.delete_audio(&good).unwrap();
         assert!(!folder.exists());
         let detail = core.get_meeting(&good).unwrap();
