@@ -346,3 +346,27 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Request:** Create a PR without Claude co-author lines; then include the user's ChatGPT-made UI changes.
 
 **Outcome:** Opened rahuloruganti/OpenMeet#2 (`feat/stt-merge-summaries` into `main`); no commit carries attribution trailers. Added the user's uncommitted UI changes (sidebar icon, export-folder flow, playback failure handling, settings/setup layout, styles, 5 new tests) as a separate commit, after fixing literal `` `n `` escapes in two log entries. Frontend checks on that tree: typecheck, lint, Prettier, 76 Vitest tests, build.
+
+## Follow-up: simplify installation
+
+**Request:** Make the README and use just to make installation simpler and clearer.
+
+**Outcome:** Rewrote the README around Windows prerequisites, setup and launch, first use, optional Merge setup, troubleshooting, and macOS limitations. Added a justfile with setup, dev, check, and release build commands. Setup uses the pinned Rust toolchain and pnpm lockfile; system prerequisites remain a one-time installation. Added just to the development-tool license inventory. No installer or hardware qualification is implied.
+
+**Checks:** `just setup` and `just check` passed using the existing temporary Rust toolchain and installed Windows C++ tools. The check recipe ran typecheck, lint, formatting, 76 frontend tests, frontend build, cargo fmt, Clippy with warnings denied, 57 Rust tests, and native debug build. The hardware test stayed ignored. README local links resolve. A clean-machine installation and macOS were not tested; no recording or cloud request was made.
+
+`just build` also passed and produced `src-tauri/target/release/openmeet.exe`. `just dev` started Vite and the native app; the desktop window initially stayed blank, then loaded the saved meeting library and notes workspace. Initial HTTP requests to Vite timed out, while later requests returned 200; the delay's root cause remains unverified. The existing pause-shortcut warning remains. Left the development app running; the release executable was built but not launched.
+
+## Follow-up: project documentation and dependencies
+
+**Request:** Create proper documentation, including dependencies used.
+
+**Outcome:** Added a documentation index, user guide, architecture and data-flow reference, complete direct-dependency inventory with requirements/resolved versions and purposes, and a development/testing/build guide. Replaced contradictory status claims with implemented features, recorded verification, and open gates. Restructured privacy documentation around storage, network actions, credentials, retention, and backups. Repaired the license inventory and distinguished original plans from implemented dependencies. README links to the new guides. No application code, dependencies, or stored user data changed.
+
+**Checks:** Verified 69 local Markdown links/anchors, coverage and version agreement for all 17 direct npm and 19 direct Rust dependencies, and filenames/sizes for all 5 pinned speech artifacts. Checked package license labels against installed npm metadata and cached direct-crate manifests. Markdown formatting, justfile formatting, and whitespace checks passed. Application suites were not rerun for documentation-only edits; the executed installation-work results above remain the latest. Full transitive redistribution notices, fresh-machine setup, macOS, hardware qualification, and live model quality remain open.
+
+## Follow-up: documentation pull request
+
+**Request:** Create a PR.
+
+**Outcome:** Prepared the documentation and just workflow on `codex/docs-and-setup`, based on current `origin/main`. The earlier feature PR #2 was already merged. This change contains the guides, README, license/status/privacy corrections, and justfile; unrelated local agent files are excluded. Rechecked Markdown formatting, justfile formatting, and whitespace before publication. No recording or cloud submission was made.
