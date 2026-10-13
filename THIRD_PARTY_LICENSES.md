@@ -1,35 +1,59 @@
-# Third-party inventory — foundation preview
+# Third-party license inventory
 
-This is an initial direct-dependency inventory, **not a complete redistribution notice bundle**. `pnpm-lock.yaml` and `src-tauri/Cargo.lock` contain exact resolved dependencies. CI checks Rust licenses against `deny.toml`; collect the complete transitive license texts before distributing an installer.
+OpenMeet source is [MIT licensed](LICENSE). This inventory records direct dependency licenses and selected bundled, downloaded, and transitive components. It is not a complete redistribution notice bundle or legal clearance for a release.
 
-| Component                                                                          | License / source                                                 |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Tauri, tauri-build, official dialog/global-shortcut/single-instance plugins        | MIT OR Apache-2.0; https://github.com/tauri-apps                 |
-| React, React DOM                                                                   | MIT; https://github.com/facebook/react                           |
-| Vite, Vitest, React Vite plugin                                                    | MIT; https://github.com/vitejs and https://github.com/vitest-dev |
-| TypeScript                                                                         | Apache-2.0; https://github.com/microsoft/TypeScript              |
-| Testing Library, ESLint, typescript-eslint, Prettier, jsdom, DefinitelyTyped types | MIT; respective package manifests and license files              |
-| rusqlite                                                                           | MIT; https://github.com/rusqlite/rusqlite                        |
-| | col1 | col2 | col3 |
-| ---- | ---- | ---- |
-|      |      |      |
-|      |      |      |
+Exact direct versions and purposes are in [dependencies](docs/dependencies.md). Full resolution is in `pnpm-lock.yaml` and `src-tauri/Cargo.lock`. Package license labels were checked against installed package metadata and cached crate manifests. Collect required license texts, copyright notices, model attribution, and notices from platform binaries before distributing a release.
 
-Bundled SQLite                                         | Public domain; https://www.sqlite.org/copyright.html             |
-| serde, serde_json, thiserror, uuid, time, tempfile                                 | MIT OR Apache-2.0; respective crate manifests and license files  |
-| cpal                                                                               | Apache-2.0; https://github.com/RustAudio/cpal                    |
-| ringbuf (0.5.2 or newer)                                                           | MIT OR Apache-2.0; https://github.com/agerasev/ringbuf           |
-| hound                                                                              | Apache-2.0; https://github.com/ruuda/hound                       |
-| keyring (+ keyring-core, windows-native-keyring-store, apple-native-keyring-store) | MIT OR Apache-2.0; https://github.com/open-source-cooperative/keyring-rs |
-| whisper.cpp (downloaded binary, release b5454) | MIT; https://github.com/ggml-org/whisper.cpp |
-| OpenAI Whisper "base", "small" and "large-v3-turbo" weights in ggml format (downloaded on request, selected model only) | MIT; https://github.com/openai/whisper , https://huggingface.co/ggerganov/whisper.cpp |
-| Silero VAD v5.1.2 ggml model (downloaded) | MIT; https://github.com/snakers4/silero-vad , https://huggingface.co/ggml-org/whisper-vad |
-| zip | MIT; https://github.com/zip-rs/zip2 |
-| http-range (via the Tauri `protocol-asset` feature, for audio playback range requests) | MIT; https://github.com/bancek/rust-http-range |
-| sha2 | MIT OR Apache-2.0; https://github.com/RustCrypto/hashes |
-| reqwest `native-tls` feature (native-tls, hyper-tls, tokio-native-tls; Windows SChannel / macOS Security.framework) | MIT OR Apache-2.0; https://github.com/seanmonstar/reqwest |
-| tokio                                                                              | MIT; https://github.com/tokio-rs/tokio                           |
+## JavaScript packages
 
-Ponytail skills are local development tools, ignored under `.pi/`; they are not bundled with the app.
+| Component                                               | License           | Source                                                                                              |
+| ------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------- |
+| `@tauri-apps/api`, `@tauri-apps/cli`                    | Apache-2.0 OR MIT | [Tauri](https://github.com/tauri-apps/tauri)                                                        |
+| `react`, `react-dom`                                    | MIT               | [React](https://github.com/facebook/react)                                                          |
+| `vite`, `@vitejs/plugin-react`                          | MIT               | [Vite](https://github.com/vitejs/vite), [React plugin](https://github.com/vitejs/vite-plugin-react) |
+| `vitest`                                                | MIT               | [Vitest](https://github.com/vitest-dev/vitest)                                                      |
+| `typescript`                                            | Apache-2.0        | [TypeScript](https://github.com/microsoft/TypeScript)                                               |
+| `@types/react`, `@types/react-dom`                      | MIT               | [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped)                               |
+| `@testing-library/react`, `@testing-library/user-event` | MIT               | [Testing Library](https://github.com/testing-library)                                               |
+| `eslint`, `@eslint/js`                                  | MIT               | [ESLint](https://github.com/eslint/eslint)                                                          |
+| `typescript-eslint`                                     | MIT               | [typescript-eslint](https://github.com/typescript-eslint/typescript-eslint)                         |
+| `prettier`                                              | MIT               | [Prettier](https://github.com/prettier/prettier)                                                    |
+| `jsdom`                                                 | MIT               | [jsdom](https://github.com/jsdom/jsdom)                                                             |
 
-No STT, VAD, diarization, or LLM weights are bundled or downloaded by this build. The fictional meeting fixture and app icon were authored for this project under its MIT license. Meetily was reviewed as a reference; its source was not copied.
+## Rust and native components
+
+| Component                                                                       | License           | Source                                                                             |
+| ------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------- |
+| `tauri`, `tauri-build`, official dialog/global-shortcut/single-instance plugins | Apache-2.0 OR MIT | [Tauri](https://github.com/tauri-apps)                                             |
+| `rusqlite`                                                                      | MIT               | [rusqlite](https://github.com/rusqlite/rusqlite)                                   |
+| Bundled SQLite                                                                  | Public domain     | [SQLite copyright statement](https://www.sqlite.org/copyright.html)                |
+| `serde`, `serde_json`, `thiserror`, `uuid`, `time`, `tempfile`                  | MIT OR Apache-2.0 | Respective crate manifests and license files in the Cargo registry.                |
+| `cpal`                                                                          | Apache-2.0        | [cpal](https://github.com/RustAudio/cpal)                                          |
+| `ringbuf`                                                                       | MIT OR Apache-2.0 | [ringbuf](https://github.com/agerasev/ringbuf)                                     |
+| `hound`                                                                         | Apache-2.0        | [hound](https://github.com/ruuda/hound)                                            |
+| `reqwest` and native TLS dependencies                                           | MIT OR Apache-2.0 | [reqwest](https://github.com/seanmonstar/reqwest) and respective package licenses. |
+| `keyring` and native store adapters                                             | MIT OR Apache-2.0 | [keyring-rs](https://github.com/open-source-cooperative/keyring-rs)                |
+| `sha2`                                                                          | MIT OR Apache-2.0 | [RustCrypto hashes](https://github.com/RustCrypto/hashes)                          |
+| `zip`                                                                           | MIT               | [zip](https://github.com/zip-rs/zip2)                                              |
+| `http-range`, transitive through Tauri playback support                         | MIT               | [http-range](https://github.com/bancek/rust-http-range)                            |
+| `tokio`, transitive runtime dependency                                          | MIT               | [Tokio](https://github.com/tokio-rs/tokio)                                         |
+
+Rust license checks use [deny.toml](deny.toml). An allowed SPDX identifier does not remove the need to include the appropriate notice text. OS runtimes and build tools have their own distribution terms.
+
+## Optional speech downloads
+
+| Artifact                                                       | License                                                                     | Source                                                                                                                       |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| whisper.cpp Windows binary, release `b5454`                    | MIT for whisper.cpp; review packaged binary contents before redistribution. | [whisper.cpp](https://github.com/ggml-org/whisper.cpp)                                                                       |
+| Whisper base, small, and large-v3-turbo weights in ggml format | MIT                                                                         | [OpenAI Whisper](https://github.com/openai/whisper), [ggml model distribution](https://huggingface.co/ggerganov/whisper.cpp) |
+| Silero VAD v5.1.2 in ggml format                               | MIT                                                                         | [Silero VAD](https://github.com/snakers4/silero-vad), [ggml distribution](https://huggingface.co/ggml-org/whisper-vad)       |
+
+No speech engine or model weights are embedded by the application build. They download only on an explicit Settings action. Their pinned URLs, sizes, and checksums live in `src-tauri/src/stt.rs`.
+
+## Development tools and other material
+
+[just](https://github.com/casey/just) is CC0-1.0 and installed separately. Other system/build tools and optional agent skills are development tooling, not bundled application features. Agent-skill licenses belong to their installed packages and are outside this application dependency inventory.
+
+Merge Gateway is an optional hosted service, governed by its and the selected model provider's terms. It is not a bundled software license.
+
+The fictional meeting fixture and app icon were authored for this project under its MIT license. Meetily was reviewed as a reference; its source was not copied. Diarization and LLM weights are neither bundled nor downloaded by the current app.

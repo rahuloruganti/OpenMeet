@@ -1,75 +1,152 @@
 # OpenMeet
 
-A local-first meeting notetaker under development. **This is a Windows capture preview, not a qualified meeting recorder or complete MVP.**
+A desktop meeting notetaker with local notes, Windows audio capture, offline transcription, and optional AI summaries through Merge Gateway.
 
-## What exists
+**Preview:** Windows capture has not passed full hardware qualification. macOS recording and transcription are unavailable. There is no installer yet; run the app from source using the steps below.
 
-- Tauri 2 / React desktop shell; Rust owns SQLite, settings, recording state, exports, tray, and shortcuts.
-- Windows microphone + system-output capture code with separate local WAVs and timing indexes; real-device qualification has not passed (the last hardware attempt found no microphone). While recording, per-track level meters warn when the microphone stays silent.
-- Clearly labeled simulation with start, pause/resume, stop, and interrupted-session marking.
-- **Recover audio** for interrupted recordings: writes a repaired copy of each unfinished WAV next to the original and never modifies the original. Tested on synthetic truncated files only.
-- Local transcription (Windows x64): an explicit download of a pinned whisper.cpp build, the Whisper "small" model, and the Silero VAD model, verified by SHA-256, transcribes finalized tracks on this computer. Audio is never uploaded. Accuracy has only been spot-checked.
-- Merge Gateway summaries: the API key is imported from `OPENMEET_LLM_API_KEY` into the OS keychain by the backend. **Enhance notes** sends notes and transcript text (never audio) only after a per-send confirmation. Tested against mock servers; no live summary has been verified.
-- Fictional sample meeting, transcript, and hand-written summary.
-- Persistent Markdown notes with debounced, serialized saves and optimistic revision checks. Meetings can be renamed.
-- Save-before-switch, save-before-export, and save-before-quit behavior. Stop does not wait for saving; failed saves keep edits on screen.
-- Native export-folder picker, configurable pause shortcut, single-instance protection.
-- Markdown snapshot export: never overwrites an existing differing file. Settings choose whether the summary and transcript are included, and whether filenames start with the date.
-- Frontend tests, Rust regression tests, lockfiles, and Windows/Apple Silicon CI configuration.
+See the [documentation index](docs/README.md) for the [user guide](docs/user-guide.md), [architecture](docs/architecture.md), [dependencies and versions](docs/dependencies.md), and [development guide](docs/development.md).
 
-**Not implemented:** macOS capture and transcription, summary templates, long-meeting summaries (very long meetings are refused), transcription progress/cancel, processing job queue, or installers. Windows native checks and the previous macOS CI shell/build job passed; cross-platform capture and interactive qualification have not. See [implementation status](docs/implementation-status.md) and [the phase-wise plan](docs/phase-1-implementation-plan.md).
+## Install and run on Windows
 
-## Development
+### 1. Install the tools once
 
-Prerequisites:
+| Tool                                                                                    | What to install                                                                                  |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [Node.js 24](https://nodejs.org/dist/latest-v24.x/)                                     | The Windows x64 installer. Use version 24.                                                       |
+| [Rust](https://rustup.rs/)                                                              | Run `rustup-init.exe` with the default MSVC toolchain. The project selects its own Rust version. |
+| [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) | Select **Desktop development with C++**, including the MSVC x64 tools and Windows SDK.           |
+| [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)            | Usually already installed on Windows 11. Install it if missing.                                  |
+| [Git](https://git-scm.com/downloads/win)                                                | Needed to clone this repository.                                                                 |
+| [just](https://just.systems/man/en/packages.html)                                       | Install with the command below.                                                                  |
 
-- Node 24 and Corepack (`npm install -g corepack` if unavailable). `package.json` pins pnpm.
-- Rust via rustup; `rust-toolchain.toml` pins the toolchain and components.
-- Windows: Visual Studio Build Tools with **Desktop development with C++**, MSVC x64 tools, Windows SDK, and WebView2. Use a Developer PowerShell if the compiler is not discovered.
-- macOS: Apple Silicon, Xcode command-line tools (`xcode-select --install`). Actual minimum capture OS is still undecided.
-- CMake/Clang are needed for future native ML work, not this foundation.
+Open PowerShell and run:
 
-```sh
-corepack pnpm install --frozen-lockfile
-corepack pnpm tauri dev
+```powershell
+winget install --id Casey.Just --exact
+npm install --global corepack
 ```
 
-`corepack pnpm dev` opens a frontend-only browser preview. It intentionally disables desktop actions instead of using fake browser persistence.
+Close PowerShell and open it again so the installed tools are on `PATH`.
 
-### Checks
+### 2. Get the project
 
-```sh
-corepack pnpm typecheck
-corepack pnpm lint
-corepack pnpm format:check
-corepack pnpm test
-corepack pnpm build
-cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --locked --manifest-path src-tauri/Cargo.toml
+```powershell
+git clone https://github.com/rahuloruganti/OpenMeet.git
+cd OpenMeet
 ```
 
-Build frontend assets before standalone Cargo checks: Tauri embeds `dist/` outside dev mode.
+If you already have the repository, open PowerShell in its folder instead. Cloning requires access if the repository is private.
 
-### Try the native preview
+### 3. Set up and launch
 
-1. Load the fictional sample; edit its notes; wait for **saved**.
-2. Restart and check that the notes persist.
-3. Choose an export folder in Settings and export Markdown.
-4. Edit that file externally, change a note in the app, and export again. The external file must remain untouched; a new snapshot is created.
-5. Start a simulation and pause/resume using the UI, tray, and shortcut. Simulation opens no microphone or system audio. Real Windows recording is separate, requires consent and both devices, and must use explicitly authorized synthetic signals for qualification.
-6. Close the window or use **Save notes and quit…** in the tray; confirm save and quit. If saving fails, copy your edits and keep the app open.
+```powershell
+just setup
+just dev
+```
+
+`just setup` installs the Rust version from `rust-toolchain.toml` and JavaScript dependencies using the pinned pnpm version. It needs internet access on the first run. It does not install the system tools above or download speech models.
+
+`just dev` builds Rust, starts the local frontend, and opens **OpenMeet Preview**. Keep the terminal open. The first native build can take several minutes. For later launches, run `just dev` from the same project folder.
+
+## Use the app
+
+### Write a note
+
+1. Click **New note**.
+2. Click **Rename**, enter a title, and press **Enter**.
+3. Write in **My notes**. Wait for **Saved** before closing the app.
+4. Click **Export Markdown**. Choose a folder on your first export.
+
+Exported files appear in the chosen folder's `Meetings` directory. Export creates a new snapshot when a differing file exists, preserving external edits. Export options are in **Settings**.
+
+### Record and transcribe
+
+1. Click **New recording** and enter a title.
+2. Choose your microphone and system output. Start some output audio if you want to check the system track.
+3. Inform participants and acknowledge consent, then click **Start recording**.
+4. Use **Pause**, **Resume**, and **Stop** in the bottom bar. Check the microphone meter for a signal.
+5. Open **Settings**, choose a speech model, and download the speech engine and models if needed.
+6. Open the meeting's **Transcript** tab and click **Transcribe audio**.
+
+Audio and transcription stay on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
+
+To explore without capturing audio, load the **fictional sample**, or open **New recording → Try a simulation instead**. Samples and simulations are labeled and do not record audio.
+
+### Set up optional AI summaries
+
+Notes, recording, and local transcription work without a Merge key. Summaries and **Ask this meeting** require a Merge Gateway account and an available model.
+
+Before starting OpenMeet, set the key in PowerShell without putting it in command history:
+
+```powershell
+$mergeKey = Read-Host 'Merge API key' -AsSecureString
+$env:OPENMEET_LLM_API_KEY = [System.Net.NetworkCredential]::new('', $mergeKey).Password
+just dev
+```
+
+In **Settings → Merge Gateway**, click **Import key from environment**, then **Connect / refresh Merge models**. Choose an available model and click **Save Merge model**. The key is stored in the OS keychain; `.env` files are not read.
+
+Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. Review the destination, model, content, and request count before confirming. Notes and transcript text leave your device only after that confirmation. Audio is never sent. Questions have their own confirmation, and earlier summaries remain available in the version picker.
+
+After quitting the development app, clear the key from the launching shell:
+
+```powershell
+Remove-Item Env:OPENMEET_LLM_API_KEY
+Remove-Variable mergeKey
+```
+
+Future launches can use the saved keychain entry without setting the variable again. Live summary quality has not yet been qualified.
+
+## Commands
+
+Run these from the repository folder:
+
+| Command      | Result                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `just`       | List commands.                                                                                 |
+| `just setup` | Install the project's pinned toolchain and dependencies.                                       |
+| `just dev`   | Start the native desktop app.                                                                  |
+| `just check` | Run frontend and Rust checks. The hardware recording test stays ignored.                       |
+| `just build` | Build a standalone release executable with frontend assets embedded. No installer is produced. |
+
+On Windows, `just build` writes `src-tauri/target/release/openmeet.exe`. Close a running release executable before rebuilding it.
+
+Without `just`, use `rustup toolchain install` and `corepack pnpm install --frozen-lockfile` for setup, then `corepack pnpm tauri dev` to launch. `corepack pnpm dev` starts a browser-only preview with desktop actions disabled.
+
+## Troubleshooting
+
+| Problem                                               | What to do                                                                                                                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just`, `node`, `rustup`, or `cargo` is not found     | Install the corresponding tool, then reopen PowerShell. Rust normally lives under `%USERPROFILE%/.cargo/bin`.                                                               |
+| `corepack` is not found                               | Run `npm install --global corepack`, then reopen PowerShell.                                                                                                                |
+| The linker, MSVC, or Windows SDK is missing           | Add the C++ workload in Visual Studio Installer. Try **Developer PowerShell for VS 2022**.                                                                                  |
+| Port 1420 is already in use                           | Stop the earlier Vite or `just dev` process before starting another.                                                                                                        |
+| A manually opened debug executable has a blank window | Launch with `just dev`, which starts the frontend it needs. Use `just build` for a standalone executable.                                                                   |
+| The development window stays blank after launch       | Keep the terminal open while startup completes. If it persists, stop `just dev` with **Ctrl+C** and restart it. A delayed blank startup has occurred in local smoke checks. |
+| Pause shortcut is unavailable                         | Another app may own it. Choose a different shortcut in Settings; on-screen controls remain available.                                                                       |
+| Microphone or output is unavailable                   | Select an available device in recording setup. OpenMeet does not substitute a different device.                                                                             |
+| No microphone signal                                  | Check the selected input, OS microphone permission, headset mode, and mute state.                                                                                           |
+| Export opens a folder picker                          | Choose the destination once; later exports reuse it. Cancel to leave the meeting unchanged.                                                                                 |
+| Notes are not saved                                   | Keep the app open and copy your text before retrying. Do not delete the database to fix a save error.                                                                       |
+
+## macOS development
+
+Apple Silicon and Xcode command-line tools are required. Install Node 24, Rust, Corepack, and `just` (`brew install just` if you use Homebrew). Run `xcode-select --install`, then use the same `just setup` and `just dev` commands.
+
+The shell can build, but macOS recording and transcription are not implemented or qualified. See [Tauri's platform prerequisites](https://v2.tauri.app/start/prerequisites/) for native build setup.
 
 ## Data and privacy
 
-The database lives in Tauri's OS app-data directory for `dev.openmeet.preview`:
+The local database is `meetings.db` in:
 
-- Windows: `%APPDATA%/dev.openmeet.preview/meetings.db`
-- macOS: `~/Library/Application Support/dev.openmeet.preview/meetings.db`
+- Windows: `%APPDATA%/dev.openmeet.preview/`
+- macOS: `~/Library/Application Support/dev.openmeet.preview/`
 
-SQLite uses WAL and foreign keys. Windows recordings write separate mic/system WAVs and timing JSONL under the app-data `audio/<meeting ID>/` directory. Partial files are retained after failures; there is no automatic cleanup. Exported snapshots live under `<chosen folder>/Meetings/`. The application makes network requests only on explicit actions: downloading the speech engine and models (github.com, huggingface.co), connecting to Merge to list models (sends only the API key), and a confirmed **Enhance notes** (sends that meeting's notes and transcript text to Merge). There is no telemetry, automatic upload, or audio upload. Development dependency installation and Vite's local development server are separate from production runtime behavior.
+Audio and timing files are under `audio/<meeting ID>/` in the same directory. Files are **unencrypted**. OS backups and cloud-synced export folders may copy them off-device.
 
-Files are **not encrypted**. OS backups and cloud-synced export folders may copy them off-device. Use only synthetic/non-sensitive data until native validation passes. See [privacy](docs/privacy.md) and [consent](docs/consent.md).
+There is no telemetry, automatic cloud processing, or audio upload. Model downloads and Merge requests happen on explicit actions. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm. Exported snapshots remain untouched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
+
+Full capture qualification, long-run drift measurements, macOS support, and installers remain open. See [implementation status](docs/implementation-status.md), [feature plan](docs/feature-plan.md), [privacy](docs/privacy.md), and [consent](docs/consent.md).
 
 ## License
 

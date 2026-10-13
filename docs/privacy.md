@@ -1,13 +1,67 @@
-# Privacy: Windows capture preview
+# Data and privacy
 
-This build stores meeting metadata, typed notes, fictional fixtures, and settings in a local SQLite database. Export uses a folder explicitly chosen through the native picker. Windows desktop capture code writes separate microphone/system WAVs and timing JSONL locally under the app-data `audio/<meeting ID>/` directory. Capture qualification has not passed; macOS capture is unsupported. Simulation opens no audio devices. **Merge model discovery.** When you press Connect / refresh or save a Merge model, Rust sends one authenticated `GET https://api-gateway.merge.dev/v1/models` (paginated, bounded, redirects refused) carrying only your API key; no meeting content is sent by that request. The key is read from the `OPENMEET_LLM_API_KEY` environment variable by Rust on explicit import and stored in the OS keychain; it is never sent to the webview, SQLite, or logs, but the environment variable itself stays in your shell or profile until you remove it. **Local speech-to-text.** Only when you press Download in Settings, the app fetches a pinned whisper.cpp Windows build (release b5454, github.com), the Whisper model selected in Settings (base, small or large-v3-turbo) and the Silero VAD model (huggingface.co), rejecting anything whose size or SHA-256 differs. Switching models never deletes one already downloaded. The chosen language and optional vocabulary hint are stored in SQLite and passed only to the local engine. Cancelling a transcription stops the engine and keeps the previous transcript. Finalized WAV tracks are then transcribed by that engine as a local subprocess; audio is never uploaded. Transcript text is stored unencrypted in the local SQLite database. The engine receives file paths and model paths only; transcript text is not logged.
+This page describes the implemented preview. It is not a claim that hardware pause privacy, local-only network behavior, or the complete release security boundary has passed qualification. See [implementation status](implementation-status.md).
 
-**Summaries.** Pressing Enhance notes shows what will be sent; only after you confirm does the backend POST your notes and the transcript text (never audio) to `https://api-gateway.merge.dev/v1/chat/completions` with the model you saved. Each send needs fresh confirmation, nothing is generated automatically, and Merge and the model provider's own terms govern that text once sent. The confirmation names the template (General, Stand-up, One-to-one) and the number of requests. A meeting too long for one request is split on segment boundaries: each part of the transcript goes in its own request, then one more request combines those partial notes with your notes; above 9 requests the summary is refused locally rather than truncated, and if the content changes after you confirm, nothing is sent. The result is stored with its provider, model and template and never replaces your notes; earlier summaries are kept and can be viewed in the Summary tab (export uses the latest). **Ask this meeting** sends one question with that meeting's notes and transcript text (never audio, never other meetings) in one request, again only after its own confirmation; the answer is shown and not stored. Copy buttons put summary text on the system clipboard, where other apps can read it. There is no telemetry or updater.
+## Local storage
 
-For playback, the webview can load files under the app-data `audio/` folder through Tauri's asset protocol; its scope is limited to that folder. Otherwise the packaged frontend has no permission to read arbitrary files, register shortcuts, open dialogs directly, or call arbitrary network services. Merge model discovery and summaries are performed by Rust, not by the webview. Rust exposes specific operations; its folder picker is the only way to change the export destination. Development mode also uses Vite's localhost server.
+The app-data root uses the identifier `dev.openmeet.preview`:
 
-The database, audio, timing files, and exported Markdown are **not encrypted**. Device administrators, OS backups, and sync software can access them. Choosing a cloud-synced folder can upload exports even though OpenMeet makes no upload request. Titles, notes, transcript text and summaries are also copied into a local full-text search index inside the same database. There is no automatic retention cleanup: audio, including partial files from failed captures, stays until you delete it. **Recover audio** reads an interrupted recording's partial WAV and writes a repaired copy (`<track>.recovered.wav`) beside it; the original partial file is kept unchanged, so recovered audio takes roughly twice the disk space. **Delete audio** removes every file located directly in that meeting's app-data `audio/<meeting ID>/` folder (WAV, timing and recovered copies); its notes, transcript and summaries are kept. **Delete meeting** does the same and then removes the meeting, its notes, transcript, summaries and search-index entries from the database. Both need the meeting title typed to confirm, are refused while that meeting is recording, and cannot be undone in the app. Deletion is not secure erasure: OS backups, sync copies, and unreclaimed database or disk space can still hold the data. Export settings can leave the summary or transcript out of new Markdown snapshots; existing snapshots are never changed or deleted and must be removed separately. Close the app before manually removing its app-data directory.
+| Platform | App-data root                                         |
+| -------- | ----------------------------------------------------- |
+| Windows  | `%APPDATA%/dev.openmeet.preview/`                     |
+| macOS    | `~/Library/Application Support/dev.openmeet.preview/` |
 
-Autosave waits 400 ms and serializes writes. Stop requests capture shutdown without waiting for note saving; failed drafts remain on screen. Graceful close flushes notes and refuses to quit on save failure. A forced process termination or power loss can lose edits not yet saved. Use synthetic data during this unvalidated preview.
+| Path within the root                 | Contents                                                                                |
+| ------------------------------------ | --------------------------------------------------------------------------------------- |
+| `meetings.db`                        | Meeting metadata, notes, transcripts, summaries, settings, and full-text search copies. |
+| `meetings.db-wal`, `meetings.db-shm` | SQLite sidecar files that can exist while WAL mode is active.                           |
+| `audio/<meeting ID>/`                | Microphone/system WAV files, timing indexes, and any repaired copies.                   |
+| `stt/engine/`                        | Downloaded local speech engine and its release marker.                                  |
+| `stt/models/`                        | Selected speech models and VAD model.                                                   |
 
-Real recording requires participant consent acknowledgement and OS/device access. System capture can include unrelated application audio. Before qualification or cloud processing ships, validate pause privacy and local-only egress, and extend this policy for model downloads and provider disclosure. Those checks have not passed.
+Markdown exports are separate files under the chosen destination's `Meetings` directory. The database, recordings, timing files, transcripts, models, and exports are unencrypted. Device administrators, backups, and sync software may access them. Choosing a cloud-synced export folder can move content off-device without an OpenMeet upload request.
+
+Simulation opens no audio devices. The fictional sample is authored test content. Windows desktop capture writes the selected microphone and system output locally. System output can contain audio from unrelated applications. macOS capture is unsupported.
+
+## Network actions
+
+| Explicit action                                       | Destination                                                       | Sent or downloaded                                                                |
+| ----------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Download speech engine and models                     | GitHub and Hugging Face, including their artifact delivery hosts. | Downloads pinned engine/model files. Meeting audio and notes are not uploaded.    |
+| Connect/refresh Merge models or save a selected model | `https://api-gateway.merge.dev/v1/models`                         | Authenticated, bounded, paginated model discovery. No meeting content.            |
+| Confirm Enhance notes                                 | `https://api-gateway.merge.dev/v1/chat/completions`               | Selected meeting notes and transcript text, model, and prompt/template. No audio. |
+| Confirm Ask this meeting                              | Same chat-completions route.                                      | The question and that meeting's notes/transcript. No audio or other meetings.     |
+
+There is no telemetry, automatic cloud processing, or updater. Development mode uses a Vite server on localhost. Dependency installation and builds can also contact package registries; those development tools are separate from application content submission.
+
+Model installation checks pinned sizes and SHA-256 hashes. Downloads occur only on an explicit action. Changing a selected model retains existing downloads. Local transcription runs whisper.cpp as a subprocess, with paths and settings passed locally. Output text is parsed from temporary JSON, not emitted to the app's console. Cancelling or failing transcription keeps the previous transcript.
+
+## Credentials and cloud consent
+
+Rust imports `OPENMEET_LLM_API_KEY` only when **Import key from environment** is clicked. The backend stores the key in the OS keychain under service `dev.openmeet.preview`, account `merge-gateway-api-key`. The frontend receives key presence, not its value. The app does not parse `.env` for this credential. Remove the environment variable from the launching shell after use; keychain import does not clear the shell or process environment.
+
+Each summary and question requires its own confirmation. The UI identifies destination, model, content scope, and summary request count. Merge and the model provider's terms apply after submission. OpenMeet cannot retract a submitted request or guarantee provider retention behavior.
+
+Long summaries split transcript segments into bounded requests, then combine the partial results with the user's notes. The maximum plan is eight chunks plus one combination request. Oversized input is refused rather than truncated. The backend refuses if the required request count has changed since confirmation; it does not compare a hash of every confirmed character.
+
+Summary results are saved separately from user notes with provider, model, and template metadata. Older versions remain available; export uses the latest. Question answers are shown in the interface and are not persisted. Summary copy buttons place text on the system clipboard, which other software may read.
+
+## Webview boundary
+
+Rust owns filesystem access, model execution, HTTP requests, native dialogs, shortcuts, and credentials. The webview receives specific commands and events. It can play files under the app-data `audio/` directory through a scoped Tauri asset protocol. The packaged content-security policy restricts network access from the frontend. These controls need native boundary tests and a release review; they are not a completed security audit.
+
+## Retention, deletion, and backups
+
+There is no automatic retention cleanup. Audio, including partial artifacts, remains until explicitly deleted. **Recover audio** writes repaired copies beside original partial WAVs. The originals remain, so recovery needs additional disk space.
+
+**Delete audio** removes tracked audio/timing files and other regular files directly within that meeting's audio folder, including recovery originals. Notes, transcripts, and summaries remain. **Delete meeting** also removes the meeting and associated database rows, including search entries. The UI requires the title for confirmation; the backend refuses deletion of the active meeting. The app has no undo.
+
+Deletion is not secure erasure. OS backups, sync copies, and unreclaimed database or disk space may retain content. Exported snapshots are never deleted by these operations. Links and paths are guarded, but the symlink case remains part of native qualification.
+
+Before a backup, wait for **Saved**, close the app normally, and copy the complete app-data directory plus exports separately. Do not copy or replace only an active `meetings.db` and assume it contains every committed WAL write. Do not reset or delete the database as troubleshooting.
+
+## Saving and recording limits
+
+Autosave waits 400 ms and serializes writes. Graceful close flushes notes and refuses to quit on save failure. A forced termination or power loss may lose unsaved text. Stop requests capture shutdown without waiting for a note save; a failed draft remains on screen.
+
+Real recording requires consent acknowledgement and available device access. The code has pause controls and tests that reject queued samples from old pause generations. Real-machine exclusion of paused audio, failure behavior, timing, and local-only egress still require qualification. Use authorized synthetic content for those checks. See [recording consent](consent.md).
