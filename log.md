@@ -371,6 +371,16 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 
 **Outcome:** Prepared the documentation and just workflow on `codex/docs-and-setup`, based on current `origin/main`. The earlier feature PR #2 was already merged. This change contains the guides, README, license/status/privacy corrections, and justfile; unrelated local agent files are excluded. Rechecked Markdown formatting, justfile formatting, and whitespace before publication. No recording or cloud submission was made.
 
+## Follow-up: resolve PR #4 conflicts
+
+**Request:** Fix the merge conflicts in the open pull request.
+
+**Outcome:** Merged current main into `feat/stt-merge-summaries` in an isolated checkout. Resolved six documentation conflicts using main's newer installation, license, implementation-status, phase-plan, privacy, and history content. Preserved the PR's added planning documents and existing files. The resolved application code and dependency lockfiles match main; uncommitted provider/STT work in the primary checkout was not included or changed.
+
+**Checks:** Confirmed no unmerged entries, no conflict markers, valid documentation file links, and clean diff whitespace. Application suites and hardware/provider tests were not rerun for this documentation-only merge.
+
+**Follow-up:** Main then advanced through the macOS capture PR #5. Merged that update and resolved the new log-only append conflict, retaining both histories and all upstream code. Kept this resolution entry before the macOS entry so later append-only main updates do not compete for the same end-of-file position.
+
 ## Follow-up: macOS capture gate
 
 **Request:** Wire the Mac capture gate after an authorized cpal tap probe.
