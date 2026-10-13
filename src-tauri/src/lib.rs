@@ -1,4 +1,5 @@
 pub mod audio;
+mod capture_gate;
 mod domain;
 mod export;
 mod merge;

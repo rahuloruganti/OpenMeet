@@ -88,6 +88,33 @@ const VAD: Artifact = Artifact {
 };
 const ENGINE_EXE: &str = "whisper-cli.exe";
 const ENGINE_MARKER: &str = ".release";
+const MAC_ENGINE_EXE: &str = "whisper-cli";
+/// SHA-256 of the Apple Silicon `whisper-cli` built from whisper.cpp tag b5454
+/// with Accelerate, not Metal. It is not a published download.
+const MAC_ENGINE_SHA256: &str = "04a0fa1da7916eff12797438f61cb107b6fd7b0a9f0ce31bfe2b6b6adc0d6efe";
+
+fn engine_filename() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        MAC_ENGINE_EXE
+    } else {
+        ENGINE_EXE
+    }
+}
+
+fn engine_pin() -> &'static str {
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        MAC_ENGINE_SHA256
+    } else {
+        ENGINE.sha256
+    }
+}
+
+fn speech_supported() -> bool {
+    cfg!(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64"),
+    ))
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Status {
@@ -156,9 +183,9 @@ pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
 }
 
 pub fn status(root: &Path, model_id: &str) -> Status {
-    let engine = engine_dir(root).join(ENGINE_EXE).is_file()
+    let engine = engine_dir(root).join(engine_filename()).is_file()
         && fs::read_to_string(engine_dir(root).join(ENGINE_MARKER))
-            .is_ok_and(|marker| marker.trim() == ENGINE.sha256);
+            .is_ok_and(|marker| marker.trim() == engine_pin());
     let present = |artifact: &Artifact| {
         fs::metadata(models_dir(root).join(artifact.file)).is_ok_and(|m| m.len() == artifact.size)
     };
@@ -176,7 +203,7 @@ pub fn status(root: &Path, model_id: &str) -> Status {
         vad,
         installed: engine && model && vad,
         missing_bytes: missing,
-        supported: cfg!(all(target_os = "windows", target_arch = "x86_64")),
+        supported: speech_supported(),
         models: MODELS
             .iter()
             .map(|(id, artifact)| ModelStatus {
@@ -294,7 +321,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
     let selected = model(model_id)?;
     if !status(root, model_id).supported {
         return Err(stt_error(
-            "Local speech-to-text is only set up for Windows x64 in this preview.",
+            "Local speech-to-text needs Windows x64, or Apple Silicon with the local whisper.cpp b5454 build.",
         ));
     }
     let client = reqwest::blocking::Client::builder()
@@ -319,6 +346,11 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
     for (present, artifact) in pending {
         if present {
             continue;
+        }
+        if cfg!(all(target_os = "macos", target_arch = "aarch64")) && artifact.name == "engine" {
+            return Err(stt_error(
+                "The Mac speech engine is a local whisper.cpp b5454 build, not a download. It is not installed.",
+            ));
         }
         let is_engine = artifact.name == ENGINE.name;
         let folder = if is_engine {
@@ -465,7 +497,7 @@ fn engine_command(
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
         .min(8);
-    let mut command = Command::new(engine_dir(root).join(ENGINE_EXE));
+    let mut command = Command::new(engine_dir(root).join(engine_filename()));
     command
         .current_dir(engine_dir(root))
         .arg("-m")
@@ -738,10 +770,10 @@ mod tests {
         assert!(!initial.installed);
         assert_eq!(initial.missing_bytes, ENGINE.size + small.size + VAD.size);
         fs::create_dir_all(engine_dir(dir.path())).unwrap();
-        fs::write(engine_dir(dir.path()).join(ENGINE_EXE), b"x").unwrap();
+        fs::write(engine_dir(dir.path()).join(engine_filename()), b"x").unwrap();
         // Executable alone, with no release marker, is not trusted.
         assert!(!status(dir.path(), "small").engine);
-        fs::write(engine_dir(dir.path()).join(ENGINE_MARKER), ENGINE.sha256).unwrap();
+        fs::write(engine_dir(dir.path()).join(ENGINE_MARKER), engine_pin()).unwrap();
         assert!(status(dir.path(), "small").engine);
         fs::create_dir_all(models_dir(dir.path())).unwrap();
         fs::write(models_dir(dir.path()).join(VAD.file), b"short").unwrap();
