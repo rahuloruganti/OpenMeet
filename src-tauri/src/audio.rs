@@ -1,5 +1,7 @@
-//! Windows two-track capture. Device callbacks only convert into bounded SPSC queues.
+//! Two-track capture. Device callbacks only convert into bounded SPSC queues.
 //! WAV and timing-index writes run on a dedicated owner thread, never a callback.
+//! Windows opens an output device as loopback. macOS uses that same call only
+//! when the output has no input, which is cpal's process-tap path.
 use crate::domain::{AppError, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
@@ -92,8 +94,9 @@ pub fn devices() -> Result<Devices> {
         })
     };
     Ok(Devices {
-        // CoreAudio duplex outputs need a separately validated tap adapter, not input capture.
-        capture_supported: cfg!(target_os = "windows"),
+        // CoreAudio output devices with no input use cpal's process tap. Duplex
+        // devices are refused later so they are not recorded as Others.
+        capture_supported: crate::capture_gate::supported(),
         microphones: host
             .input_devices()
             .map_err(audio_error)?
@@ -260,10 +263,8 @@ struct Input {
     config: cpal::SupportedStreamConfig,
 }
 fn inputs(options: &CaptureOptions) -> Result<[Input; 2]> {
-    if !cfg!(target_os = "windows") {
-        return Err(audio_error(
-            "Real capture is currently Windows-only. macOS tap validation is still pending.",
-        ));
+    if !crate::capture_gate::supported() {
+        return Err(crate::capture_gate::unsupported_reason());
     }
     let host = cpal::default_host();
     let mic = host.input_devices().map_err(audio_error)?.find(|d| d.id().is_ok_and(|id| id.to_string() == options.microphone_id))
@@ -275,6 +276,11 @@ fn inputs(options: &CaptureOptions) -> Result<[Input; 2]> {
         .ok_or_else(|| {
             audio_error("Selected system-output device is unavailable. Refresh devices.")
         })?;
+    #[cfg(target_os = "macos")]
+    {
+        crate::capture_gate::ensure_permissions()?;
+        crate::capture_gate::reject_duplex_output(output.supports_input())?;
+    }
     let mic_config = mic.default_input_config().map_err(audio_error)?;
     let output_config = output.default_output_config().map_err(audio_error)?;
     for config in [&mic_config, &output_config] {
@@ -810,6 +816,84 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "opens the microphone and a system-audio tap; run only when authorized"]
+    fn macos_default_output_tap_records_a_played_tone() {
+        let host = cpal::default_host();
+        let mic = host.default_input_device().expect("no default microphone");
+        let output = host.default_output_device().expect("no default output");
+        assert!(
+            !output.supports_input(),
+            "default output {} has an input; this probe only covers the tap path",
+            output
+        );
+        let options = CaptureOptions {
+            microphone_id: mic.id().unwrap().to_string(),
+            output_id: output.id().unwrap().to_string(),
+        };
+        let folder = tempfile::tempdir().unwrap();
+        let tone = folder.path().join("tone.wav");
+        write_probe_tone(&tone);
+        let mut session = Session::prepare(folder.path().join("capture"), options)
+            .expect("prepare should pass the permission and duplex gates");
+        session.resume().expect("resume");
+        let mut play = std::process::Command::new("afplay")
+            .arg(&tone)
+            .spawn()
+            .expect("afplay");
+        thread::sleep(Duration::from_secs(4));
+        let _ = play.wait();
+        let health = session.health();
+        let report = session.stop().unwrap();
+        assert!(
+            report.error.is_none(),
+            "{:?} health={health:?}",
+            report.error
+        );
+        assert_eq!(report.tracks.len(), 2);
+        for track in &report.tracks {
+            assert!(track.finalized, "{track:?}");
+            assert!(track.frames > 0, "{track:?} health={health:?}");
+            let wav = hound::WavReader::open(&track.path).unwrap();
+            let samples: Vec<f32> = wav
+                .into_samples::<f32>()
+                .map(|sample| sample.unwrap())
+                .collect();
+            let peak = samples
+                .iter()
+                .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+            eprintln!(
+                "{} frames={} peak={peak:.4} path={}",
+                track.kind, track.frames, track.path
+            );
+            if track.kind == "system" {
+                assert!(
+                    peak > 0.05,
+                    "system tap was silent (peak {peak}). Permission or mute failure, not a pass. health={health:?}"
+                );
+            }
+        }
+    }
+
+    fn write_probe_tone(path: &std::path::Path) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for i in 0..(48_000 * 3) {
+            let sample = ((i as f32 / 48_000.0) * 1_000.0 * std::f32::consts::TAU).sin() * 0.4;
+            writer
+                .write_sample((sample * i16::MAX as f32) as i16)
+                .unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
     #[ignore = "requires Windows audio devices; run with --ignored"]
     fn windows_devices_open_and_stop_writes_both_wavs() {
         let devices = devices().unwrap();

@@ -42,12 +42,11 @@ export function SetupPanel(props: Props) {
       </div>
       <p className="panel-description">
         Microphone and system audio are saved on this device. Capture is a
-        Windows preview; hardware qualification is pending.
+        preview; hardware qualification is pending.
       </p>
       {devices && !devices.capture_supported && (
         <p role="alert">
-          Recording is not supported on this platform. macOS capture is not
-          implemented.
+          Recording needs Windows, or Apple Silicon on macOS 14.2 or newer.
         </p>
       )}
       {!microphoneAvailable && (

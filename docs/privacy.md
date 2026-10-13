@@ -21,7 +21,7 @@ The app-data root uses the identifier `dev.openmeet.preview`:
 
 Markdown exports are separate files under the chosen destination's `Meetings` directory. The database, recordings, timing files, transcripts, models, and exports are unencrypted. Device administrators, backups, and sync software may access them. Choosing a cloud-synced export folder can move content off-device without an OpenMeet upload request.
 
-Simulation opens no audio devices. The fictional sample is authored test content. Windows desktop capture writes the selected microphone and system output locally. System output can contain audio from unrelated applications. macOS capture is unsupported.
+Simulation opens no audio devices. The fictional sample is authored test content. Desktop capture writes the selected microphone and system output locally. System output can contain audio from unrelated applications. On macOS that system track is an output-only process tap; an output that also has an input is refused. Permission denial has not been tested.
 
 ## Network actions
 

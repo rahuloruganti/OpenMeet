@@ -378,3 +378,11 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Outcome:** Merged current main into `feat/stt-merge-summaries` in an isolated checkout. Resolved six documentation conflicts using main's newer installation, license, implementation-status, phase-plan, privacy, and history content. Preserved the PR's added planning documents and existing files. The resolved application code and dependency lockfiles match main; uncommitted provider/STT work in the primary checkout was not included or changed.
 
 **Checks:** Confirmed no unmerged entries, no conflict markers, valid documentation file links, and clean diff whitespace. Application suites and hardware/provider tests were not rerun for this documentation-only merge.
+
+**Follow-up:** Main then advanced through the macOS capture PR #5. Merged that update and resolved the new log-only append conflict, retaining both histories and all upstream code. Kept this resolution entry before the macOS entry so later append-only main updates do not compete for the same end-of-file position.
+
+## Follow-up: macOS capture gate
+
+**Request:** Wire the Mac capture gate after an authorized cpal tap probe.
+
+**Outcome:** Apple Silicon on macOS 14.2 or newer can start a preview recording. The output track uses cpal's existing process tap only when the selected output has no input. Duplex outputs are refused. A TCC preflight must report a grant for microphone and system audio before streams open; a missing grant fails the start instead of writing silence. Permission denial was not revoked or tested. Transcription is unchanged and still Windows-only. No meeting was recorded as part of this change.

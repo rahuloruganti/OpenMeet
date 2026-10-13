@@ -20,15 +20,15 @@ The **Meetings** button collapses or opens the sidebar. Use **Tab** to move betw
 | Label            | Meaning                                                                                                           |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Note             | A notes-only entry with no capture.                                                                               |
-| Desktop capture  | An entry created through real Windows capture. Its status and errors still determine whether recording completed. |
+| Desktop capture  | An entry created through real capture. Its status and errors still determine whether recording completed. |
 | Simulation       | A recording-state demonstration that opens no audio devices.                                                      |
 | Fictional sample | Test notes, transcript, and a hand-written summary.                                                               |
 
 Click **Load fictional sample** to explore example content. To explore recording controls without capture, open **New recording → Try a simulation instead**. Neither action produces real meeting audio or AI output.
 
-## Record on Windows
+## Record
 
-Capture remains a preview. Read [recording consent](consent.md) and inform participants before starting. System audio can include unrelated applications.
+Capture remains a preview. On Apple Silicon macOS 14.2 or newer, choose an output-only device. A device that also has an input is refused. Permission denial has not been tested. Transcription remains Windows-only. Read [recording consent](consent.md) and inform participants before starting. System audio can include unrelated applications.
 
 1. Click **New recording** and enter a title.
 2. Choose the microphone and system-output device you intend to capture.
