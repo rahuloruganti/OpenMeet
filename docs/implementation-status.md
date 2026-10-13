@@ -6,7 +6,7 @@ OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows captur
 
 No platform has passed the full two-track capture gate. An earlier Windows attempt was blocked by a missing microphone. A later authorized two-second smoke test was recorded as passing in [log.md](../log.md), but it did not establish audible-content quality, pause privacy, device-failure behavior, or long-run drift. No recording was made during the recent UI and installation work.
 
-macOS capture and transcription are unsupported. Notes, audio, transcripts, summaries, and exports remain unencrypted. Simulations and fictional samples are visibly separate from desktop recordings and notes-only entries.
+macOS capture is a preview on Apple Silicon, macOS 14.2 or newer. It is not hardware-qualified, and permission denial has not been tested. Transcription remains Windows-only. Notes, audio, transcripts, summaries, and exports remain unencrypted. Simulations and fictional samples are visibly separate from desktop recordings and notes-only entries.
 
 ## Implemented features
 
@@ -79,7 +79,7 @@ Run a 60-minute two-track test with markers near both ends, recording device/dri
 
 ### Platform, privacy, and release
 
-- Implement and qualify actual macOS system-audio capture and a supported transcription runtime. Choose and document the minimum OS version.
+- Qualify the Apple Silicon tap path: audible distinct tracks, permission denial, duplex refusal on a real device, and the same 60-minute drift gate as Windows. Minimum OS is 14.2. Transcription on macOS is still unimplemented.
 - Run an egress-blocked local workflow and a separate cloud opt-in check. Complete end-to-end pause and privacy qualification.
 - Keep snapshot exports until a tested external-edit merge implementation exists.
 - Complete transitive license notices and model attribution before distribution.

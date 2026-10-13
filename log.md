@@ -370,3 +370,9 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Request:** Create a PR.
 
 **Outcome:** Prepared the documentation and just workflow on `codex/docs-and-setup`, based on current `origin/main`. The earlier feature PR #2 was already merged. This change contains the guides, README, license/status/privacy corrections, and justfile; unrelated local agent files are excluded. Rechecked Markdown formatting, justfile formatting, and whitespace before publication. No recording or cloud submission was made.
+
+## Follow-up: macOS capture gate
+
+**Request:** Wire the Mac capture gate after an authorized cpal tap probe.
+
+**Outcome:** Apple Silicon on macOS 14.2 or newer can start a preview recording. The output track uses cpal's existing process tap only when the selected output has no input. Duplex outputs are refused. A TCC preflight must report a grant for microphone and system audio before streams open; a missing grant fails the start instead of writing silence. Permission denial was not revoked or tested. Transcription is unchanged and still Windows-only. No meeting was recorded as part of this change.

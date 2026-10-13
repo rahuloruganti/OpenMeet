@@ -2,7 +2,7 @@
 
 A desktop meeting notetaker with local notes, Windows audio capture, offline transcription, and optional AI summaries through Merge Gateway.
 
-**Preview:** Windows capture has not passed full hardware qualification. macOS recording and transcription are unavailable. There is no installer yet; run the app from source using the steps below.
+**Preview:** Windows capture has not passed full hardware qualification. Apple Silicon macOS 14.2 or newer can start a capture preview; it is not qualified, and permission denial has not been tested. Transcription is Windows-only. There is no installer yet; run the app from source using the steps below.
 
 See the [documentation index](docs/README.md) for the [user guide](docs/user-guide.md), [architecture](docs/architecture.md), [dependencies and versions](docs/dependencies.md), and [development guide](docs/development.md).
 
@@ -133,7 +133,7 @@ Without `just`, use `rustup toolchain install` and `corepack pnpm install --froz
 
 Apple Silicon and Xcode command-line tools are required. Install Node 24, Rust, Corepack, and `just` (`brew install just` if you use Homebrew). Run `xcode-select --install`, then use the same `just setup` and `just dev` commands.
 
-The shell can build, but macOS recording and transcription are not implemented or qualified. See [Tauri's platform prerequisites](https://v2.tauri.app/start/prerequisites/) for native build setup.
+The shell can build. Apple Silicon on macOS 14.2 or newer can start a preview recording: the microphone plus an output-only system tap. A device that also has an input is refused. Grant Microphone and System Audio Recording to `target/debug/openmeet`; a rebuild can drop that grant. Permission denial has not been tested. Transcription is still Windows-only. See [Tauri's platform prerequisites](https://v2.tauri.app/start/prerequisites/) for native build setup.
 
 ## Data and privacy
 

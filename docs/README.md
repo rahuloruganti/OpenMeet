@@ -18,7 +18,7 @@ OpenMeet is a desktop meeting notetaker built with Tauri, Rust, React, and TypeS
 
 ## Platform boundary
 
-Windows x64 has capture and local transcription implementations. Full capture qualification remains open. macOS capture and transcription are unavailable. Builds and mocked tests do not establish recording reliability, transcript accuracy, or live summary quality.
+Windows x64 has capture and local transcription implementations. Apple Silicon macOS 14.2 or newer has a capture preview only. Full capture qualification remains open, and macOS permission denial has not been tested. macOS transcription is unavailable. Builds and mocked tests do not establish recording reliability, transcript accuracy, or live summary quality.
 
 Notes, audio, transcripts, and exports are unencrypted. Merge summaries and questions send meeting text only after confirmation. Audio stays on the device. See [privacy](privacy.md) for the limits of these statements.
 

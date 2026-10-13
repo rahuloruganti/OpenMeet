@@ -438,8 +438,8 @@ export function App() {
                 send text to Merge only after you confirm.
               </p>
               <p>
-                Windows capture is not yet qualified. macOS capture is not
-                available. Local files are unencrypted.
+                Capture is not yet hardware-qualified. Local files are
+                unencrypted.
               </p>
             </div>
           </details>

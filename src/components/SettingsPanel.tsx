@@ -88,8 +88,8 @@ export function SettingsPanel(props: Props) {
             </strong>
           </p>
           <p className="muted">
-            Transcribe on your computer with Whisper. Audio stays here.
-            Available on Windows x64.
+            Transcribe on your computer with Whisper. Audio stays here. Windows
+            uses the published engine. This Mac uses a local whisper.cpp build.
           </p>
           <details className="help-details">
             <summary>About model downloads</summary>

@@ -70,7 +70,7 @@ The requirement column is the manifest's version constraint. `=` pins an exact v
 | `uuid`                         | `1`         | 1.27.0         | Version-4 meeting IDs and export filename identity.                                       |
 | `time`                         | `0.3`       | 0.3.55         | RFC 3339 timestamps, with `formatting`.                                                   |
 | `tempfile`                     | `3`         | 3.27.0         | Temporary downloads, inference output, export publication, and tests.                     |
-| `cpal`                         | `=0.18.2`   | 0.18.2         | Native audio devices, microphone capture, and Windows output loopback.                    |
+| `cpal`                         | `=0.18.2`   | 0.18.2         | Native audio devices, microphone capture, Windows loopback, and the macOS process tap used when an output has no input. |
 | `ringbuf`                      | `0.5.2`     | 0.5.3          | Bounded audio sample buffers.                                                             |
 | `hound`                        | `3.5`       | 3.5.1          | WAV writing, reading, and recovery.                                                       |
 | `reqwest`                      | `=0.13.5`   | 0.13.5         | Backend downloads and Merge HTTP; defaults disabled, `blocking` and `native-tls` enabled. |

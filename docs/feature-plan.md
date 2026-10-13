@@ -153,7 +153,7 @@ M0 matters because M5 rewrites the export renderer, and the README is what the n
 | --- | --- |
 | Encryption at rest | Deferred (2026-10-11). If revived: rusqlite `bundled-sqlcipher`, key in the OS keychain, migrate via `sqlcipher_export` to a new file and keep the plaintext original until verified; audio needs separate handling. |
 | Local LLM provider | Dropped (2026-10-11): Merge-only. |
-| macOS capture + transcription | Blocked on Apple Silicon hardware (Phase C). Whisper downloads are Windows binaries today. |
+| macOS capture | Preview on Apple Silicon, macOS 14.2+. Output-only tap. Permission denial untested. |
 | Installers, signing, updater | Phase F; `bundle.active` is `false` today. |
 
 ## Explicitly not planned
