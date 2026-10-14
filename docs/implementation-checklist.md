@@ -82,3 +82,5 @@ These are broader parity gaps, not prerequisites for the personal desktop workfl
 Do not rebuild SQLite persistence, protected note autosave, separate Windows audio tracks, pause/resume controls, local Whisper/VAD downloads, generic provider connections including loopback servers, transcription progress/cancellation, playback/seeking, full-text search, the three summary templates, summary history, per-meeting questions, recovery, or non-overwriting Markdown snapshots.
 
 Their presence does not close the qualification checks above. Use [implementation status](implementation-status.md) for executed evidence and [the comparison report](granola-otter-comparison.md) for source locations and competitor references.
+
+Phase 2 settings and model-library code is implemented locally; native qualification remains partial. See [executed checks and remaining gates](phase-2-settings-verification.md). Issue checkboxes remain open pending their acceptance gates.

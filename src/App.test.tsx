@@ -31,9 +31,13 @@ vi.mock("./lib/api", async (original) => {
       saveNotes: vi.fn(),
       getSettings: vi.fn(),
       providerKeyStatus: vi.fn(),
-      saveProviderConnection: vi.fn(),
-      listProviderModels: vi.fn(),
-      saveProviderModel: vi.fn(),
+      saveApiConnection: vi.fn(),
+      apiConnectionKeyStatus: vi.fn(),
+      deleteApiConnection: vi.fn(),
+      onModelLibraryProgress: vi.fn(),
+      cancelModelDownload: vi.fn(),
+      listApiConnectionModels: vi.fn(),
+      saveProviderAssignment: vi.fn(),
       saveSttMode: vi.fn(),
       planTranscription: vi.fn(),
       planQuestion: vi.fn(),
@@ -105,6 +109,8 @@ const textPlan = {
 };
 
 const initialSettings: Settings = {
+  saved_connections: [],
+  provider_assignments: { llm: null, cloud_stt: null },
   vault_folder: null,
   pause_shortcut: "CommandOrControl+Shift+Space",
   microphone_id: null,
@@ -160,6 +166,8 @@ beforeEach(() => {
     error: null,
     recording_offset_ms: null,
   });
+  vi.mocked(api.onModelLibraryProgress).mockResolvedValue(() => {});
+  vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("present");
   vi.mocked(api.getSettings).mockResolvedValue(initialSettings);
   vi.mocked(api.chooseVaultFolder).mockResolvedValue({
     ...initialSettings,
@@ -291,43 +299,6 @@ describe("desktop foundation", () => {
     expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
   });
 
-  it("ignores startup key status that arrives after a replacement key was saved", async () => {
-    let deliver: (status: "missing") => void = () => {};
-    vi.mocked(api.providerKeyStatus)
-      .mockReturnValueOnce(
-        new Promise((resolve) => {
-          deliver = resolve;
-        }),
-      )
-      .mockResolvedValue("present");
-    vi.mocked(api.saveProviderConnection).mockResolvedValue({
-      ...initialSettings,
-      llm: { base_url: textPlan.base_url, model: null, revision: 1 },
-    });
-    await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.type(
-      screen.getByLabelText("Summary API base URL"),
-      textPlan.base_url,
-    );
-    await userEvent.type(
-      screen.getByLabelText("Summary API key"),
-      "synthetic-new-key",
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save summary connection" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Refresh summary models" }),
-      ).toHaveProperty("disabled", false),
-    );
-    await act(async () => deliver("missing"));
-    expect(
-      screen.getByRole("button", { name: "Refresh summary models" }),
-    ).toHaveProperty("disabled", false);
-  });
-
   it("ignores startup engine status after transcription settings refresh it", async () => {
     let deliver: (status: typeof notInstalled) => void = () => {};
     vi.mocked(api.sttStatus)
@@ -348,6 +319,26 @@ describe("desktop foundation", () => {
     expect(
       screen.getByRole("button", { name: "Speech engine installed" }),
     ).toBeTruthy();
+  });
+
+  it("supports arrow and Home keys across settings tabs", async () => {
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const local = screen.getByRole("tab", { name: "Local" });
+    fireEvent.keyDown(local, { key: "ArrowRight" });
+    const general = screen.getByRole("tab", { name: "General" });
+    expect(document.activeElement).toBe(general);
+    expect(general.getAttribute("aria-selected")).toBe("true");
+    expect(
+      screen.getByRole("button", { name: "Choose export folder" }),
+    ).toBeTruthy();
+    fireEvent.keyDown(general, { key: "Home" });
+    const cloud = screen.getByRole("tab", { name: "Cloud API" });
+    expect(document.activeElement).toBe(cloud);
+    expect(cloud.getAttribute("aria-selected")).toBe("true");
+    expect(local.getAttribute("tabindex")).toBe("-1");
+    fireEvent.keyDown(cloud, { key: "End", ctrlKey: true });
+    expect(cloud.getAttribute("aria-selected")).toBe("true");
   });
 
   it("does not enable capture or silently replace an unavailable saved microphone", async () => {
@@ -500,12 +491,11 @@ describe("desktop foundation", () => {
         .getByRole("dialog", { name: "Settings" })
         .getAttribute("aria-modal"),
     ).toBe("false");
-    expect(screen.getByText("No API key saved")).toBeTruthy();
-    expect(screen.getByLabelText("Summary API key")).toHaveProperty(
-      "value",
-      "",
-    );
-    expect(api.listProviderModels).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("tab", { name: "Local", selected: true }),
+    ).toBeTruthy();
+    expect(screen.getAllByLabelText("API key")[1]).toHaveProperty("value", "");
+    expect(api.listApiConnectionModels).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     await screen.findByText(/Notes not saved: Disk full/);
     expect(api.stop).toHaveBeenCalledOnce();
@@ -930,79 +920,6 @@ describe("desktop foundation", () => {
     });
     expect(screen.getByText("Simulation: paused")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
-  });
-
-  it("saves a transient key, refreshes models only on request, and saves a model without catalog restrictions", async () => {
-    const connected: Settings = {
-      ...initialSettings,
-      llm: { base_url: textPlan.base_url, model: null, revision: 1 },
-    };
-    vi.mocked(api.saveProviderConnection).mockResolvedValue(connected);
-    vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
-    vi.mocked(api.listProviderModels).mockResolvedValue([{ id: "chat-model" }]);
-    vi.mocked(api.saveProviderModel).mockResolvedValue({
-      ...connected,
-      llm: { base_url: textPlan.base_url, model: "custom-model", revision: 2 },
-    });
-    await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(api.listProviderModels).not.toHaveBeenCalled();
-    await userEvent.type(
-      screen.getByLabelText("Summary API base URL"),
-      textPlan.base_url,
-    );
-    const key = screen.getByLabelText("Summary API key");
-    await userEvent.type(key, "fictional-test-key");
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save summary connection" }),
-    );
-    await waitFor(() =>
-      expect(api.saveProviderConnection).toHaveBeenCalledWith(
-        "llm",
-        textPlan.base_url,
-        { kind: "replace", key: "fictional-test-key" },
-        null,
-      ),
-    );
-    expect(key).toHaveProperty("value", "");
-    expect(api.generateSummary).not.toHaveBeenCalled();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Refresh summary models" }),
-    );
-    await screen.findByRole("option", { name: "chat-model" });
-    expect(api.listProviderModels).toHaveBeenCalledWith("llm", 1);
-    await userEvent.type(
-      screen.getByLabelText("Summary custom model ID"),
-      "custom-model",
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save summary model" }),
-    );
-    await waitFor(() =>
-      expect(api.saveProviderModel).toHaveBeenCalledWith(
-        "llm",
-        "custom-model",
-        1,
-      ),
-    );
-    expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
-  });
-
-  it("keeps saved model IDs after failed discovery and tolerates an unavailable keychain", async () => {
-    vi.mocked(api.providerKeyStatus).mockRejectedValue(new Error("keychain"));
-    const connected: Settings = {
-      ...initialSettings,
-      llm: { base_url: textPlan.base_url, model: "saved/model", revision: 1 },
-    };
-    vi.mocked(api.getSettings).mockResolvedValue(connected);
-    await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(screen.getByText("API key status unavailable")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Refresh summary models" }),
-    ).toHaveProperty("disabled", true);
-    expect(screen.getByText(/Saved model: saved\/model/)).toBeTruthy();
-    expect(api.saveProviderModel).not.toHaveBeenCalled();
   });
 
   it("surfaces audio gaps without stopping or hiding the recording controls", async () => {
@@ -1705,6 +1622,7 @@ describe("notes-first polish", () => {
     }));
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "General" }));
     await userEvent.click(
       screen.getByRole("checkbox", { name: "Include transcript" }),
     );
@@ -2128,10 +2046,12 @@ describe("transcript and audio", () => {
       screen.getByRole("button", { name: "Save transcription settings" }),
     );
     expect(api.saveSttSettings).toHaveBeenCalledWith("de", "Okta", "base");
+    await userEvent.click(screen.getByRole("tab", { name: "General" }));
     await userEvent.type(
       screen.getByLabelText("Stop recording shortcut (optional)"),
       "Alt+Shift+S",
     );
+    await userEvent.click(screen.getByRole("tab", { name: "General" }));
     await userEvent.click(
       screen.getByRole("button", { name: "Save shortcuts" }),
     );
@@ -2140,6 +2060,102 @@ describe("transcript and audio", () => {
       "Alt+Shift+S",
     );
     expect(screen.getByText(/no shortcut to start recording/)).toBeTruthy();
+  });
+});
+
+describe("saved connections settings tabs", () => {
+  it("can cancel the explicit speech installer while other settings are busy", async () => {
+    vi.mocked(api.sttInstall).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.cancelModelDownload).mockResolvedValue();
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Download speech engine and models/ }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Cancel speech download" }),
+    );
+    expect(api.cancelModelDownload).toHaveBeenCalledOnce();
+  });
+  it("ignores startup key status that arrives after saving a reusable connection", async () => {
+    let deliver: (status: "missing") => void = () => {};
+    vi.mocked(api.providerKeyStatus)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+      )
+      .mockResolvedValue("present");
+    const saved = {
+      id: "remote",
+      name: "Remote",
+      base_url: textPlan.base_url,
+      revision: 1,
+    };
+    const connected: Settings = {
+      ...initialSettings,
+      saved_connections: [saved],
+      provider_assignments: {
+        llm: { connection_id: saved.id, model: "chat", revision: 1 },
+        cloud_stt: null,
+      },
+      llm: { base_url: saved.base_url, model: "chat", revision: 1 },
+    };
+    vi.mocked(api.getSettings).mockResolvedValue(connected);
+    vi.mocked(api.saveApiConnection).mockResolvedValue({
+      ...connected,
+      saved_connections: [{ ...saved, revision: 2 }],
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Cloud API" }));
+    await userEvent.selectOptions(
+      screen.getAllByLabelText("Saved connection")[0],
+      "remote",
+    );
+    const key = screen.getAllByLabelText("API key")[0];
+    await userEvent.type(key, "synthetic-key");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save connection" }),
+    );
+    await waitFor(() => expect(api.providerKeyStatus).toHaveBeenCalledTimes(4));
+    expect(key).toHaveProperty("value", "");
+    await act(async () => deliver("missing"));
+    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(
+      screen.getByRole("button", { name: "Enhance notes" }),
+    ).toHaveProperty("disabled", false);
+  });
+  it("keeps local and cloud drafts separate without changing saved settings", async () => {
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const localPanel = screen.getByRole("tabpanel", { name: "Local" });
+    const localName = localPanel.querySelector("input");
+    expect(localName).toBeTruthy();
+    await userEvent.type(
+      screen.getAllByLabelText("Connection name")[1],
+      "Local draft",
+    );
+    await userEvent.type(screen.getAllByLabelText("API key")[1], "local-key");
+    await userEvent.click(screen.getByRole("tab", { name: "Cloud API" }));
+    expect(screen.getAllByLabelText("API key")[1]).toHaveProperty("value", "");
+    await userEvent.type(
+      screen.getAllByLabelText("Connection name")[0],
+      "Cloud draft",
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "Local" }));
+    expect(screen.getAllByLabelText("Connection name")[1]).toHaveProperty(
+      "value",
+      "Local draft",
+    );
+    expect(screen.getAllByLabelText("Connection name")[0]).toHaveProperty(
+      "value",
+      "Cloud draft",
+    );
+    expect(api.saveApiConnection).not.toHaveBeenCalled();
+    expect(api.saveSttMode).not.toHaveBeenCalled();
+    expect(api.listApiConnectionModels).not.toHaveBeenCalled();
   });
 });
 

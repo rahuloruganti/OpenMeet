@@ -57,3 +57,7 @@ No speech engine or model weights are embedded by the application build. They do
 User-selected OpenAI-compatible services are governed by their provider terms, not a bundled software license. The reqwest multipart feature additionally resolves `mime_guess` 2.0.5 under MIT and `unicase` 2.10.0 under MIT OR Apache-2.0. This feature update is not a complete transitive release audit.
 
 The fictional meeting fixture and app icon were authored for this project under its MIT license. Meetily was reviewed as a reference; its source was not copied. Diarization and LLM weights are neither bundled nor downloaded by the current app.
+
+## User-selected model-library downloads
+
+Phase 2 adds no bundled models or dependencies. Public Hugging Face downloads display repository license metadata and retain it in a local provenance manifest. Generic GGUF models carry their own repository terms; discovery or a download entry is not a completed license audit. The existing pinned Whisper catalog remains the only directly importable speech-model catalog.

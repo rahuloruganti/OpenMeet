@@ -13,13 +13,13 @@
 
 ## Current implementation boundary
 
-The existing primary checkout has generic provider configuration, user-entered keys, local final transcription, and explicit post-meeting cloud transcription and summary actions. Live transcription and automatic post-meeting summary processing are new requirements, not implemented behavior.
+PR #47 merged the provider prerequisites and foundation fixes. Phase 2 now implements reusable connections, task assignments, settings tabs, and the model library in the working tree; see [verification](phase-2-settings-verification.md). Existing processing remains explicit final transcription and summary actions. Live transcription and automatic post-meeting summary processing are new requirements, not implemented behavior.
 
 ## Work checklist
 
 - [x] Trace current settings, provider validation, model installation, and final processing.
 - [x] Compare settings/local-library designs and choose one.
-- [ ] Implement Cloud API and Local tabs, discovery, verified model import/download, and local-server connections.
+- [x] Implement Cloud API and Local tabs, discovery, verified model import/download, and local-server connections.
 - [ ] Verify the settings and model-library flow.
 - [ ] Implement a bounded streaming transcription worker with pause-safe audio ownership and provisional/final text.
 - [ ] Implement post-meeting finalization and automatic summary sequencing with session consent and failure recovery.
@@ -31,12 +31,12 @@ Keep reusable saved API connections, with independent active speech and text ass
 
 Use one local-model inventory for explicit scans and Hugging Face downloads. Reuse the single Whisper catalog and existing managed speech-model paths. Show scan limits and examined folders. Download public complete single-file models with a pinned revision, exact size, and SHA-256; keep original files and distinguish file discovery from a running model server. Private/gated repositories and split model sets need separate support before they can be offered as usable downloads.
 
-Compared `.audit/settings-design-a.md` and `.audit/settings-design-b.md`; the review in `.audit/settings-design-judgment.md` selected B, with A's managed manifest, shared artifact-operation owner, and per-folder scan reporting. Implementation of this design is pending. The earlier per-role provider plan is superseded where it would overwrite a saved cloud/local setup.
+Compared `.audit/settings-design-a.md` and `.audit/settings-design-b.md`; the review in `.audit/settings-design-judgment.md` selected B, with A's managed manifest, shared artifact-operation owner, and per-folder scan reporting. This design is implemented; native qualification remains partial. The earlier per-role provider plan is superseded where it would overwrite a saved cloud/local setup.
 
 ## Overlooked work found during audit
 
-- [ ] Bring the uncommitted generic-provider, demo-removal, standalone-build fix, and local-server work onto current main without losing its macOS capture changes, then deliver the requested changes through a PR when publication is authorized.
-- [ ] Fix main's Windows Clippy failures in platform-specific permission helpers and the macOS probe-tone test helper. The latest macOS CI and dependency-hygiene jobs passed; neither proves hardware capture.
+- [x] Bring the uncommitted generic-provider, demo-removal, standalone-build fix, and local-server work onto current main without losing its macOS capture changes, then deliver the requested changes through a PR when publication is authorized.
+- [x] Fix main's Windows Clippy failures in platform-specific permission helpers and the macOS probe-tone test helper. The latest macOS CI and dependency-hygiene jobs passed; neither proves hardware capture.
 - [ ] Review the existing local cleanup commit that stops tracking four `.claude/worktrees` entries. It has not reached main. Preserve all checkouts and inspect their changes before any cleanup.
 - [ ] Recheck the existing pause-shortcut registration warning and the hardware/provider qualification gates. They are not covered by passing synthetic tests.
 

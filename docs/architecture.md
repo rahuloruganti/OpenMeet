@@ -77,11 +77,13 @@ The transcription run guard covers preparation, processing, and publication. Can
 
 ## Provider requests
 
-One independent connection serves summaries/questions and another serves cloud STT. Rust appends `models`, `chat/completions`, or `audio/transcriptions` to a validated user-supplied HTTPS API base, preserving its path prefix. Redirects are disabled. Credentials and response bodies do not enter diagnostics. HTTP loopback is allowed only in test builds for synthetic test servers.
+Reusable saved connections supply independent summary/question and speech task assignments. Each assignment keeps its own model ID and revision; changing a shared connection invalidates consent for every role using it. Assigned connections cannot be deleted. Rust appends `models`, `chat/completions`, or `audio/transcriptions` to a validated user-supplied HTTPS API base, preserving its path prefix. Redirects are disabled. Credentials and response bodies do not enter diagnostics. Local servers may use loopback HTTP with an optional key. Remote endpoints require HTTPS and a destination-bound key.
 
 Settings submits a transient password input through IPC to the OS keychain. Read responses contain key status only. Saving connection/model settings makes no network request; explicit refresh fetches generic `data[].id` model lists. Custom IDs work without discovery or catalog membership. A model list proves neither chat nor audio capability. Legacy Merge configuration is not automatically activated or converted.
 
 The summary planner chooses a single request or transcript chunks followed by a combination request. Consent binds configuration revision/destination, model, exact content, action/template/question, and request plan. Oversized inputs are refused. Summary versions persist with destination, model, and template ID. Questions use only the selected meeting and return an answer without persisting it. Cloud audio plans additionally bind frozen chunk content/timing hashes. No automatic uploads, provider fallback, or billable retries are performed.
+
+The Rust `model_library` module owns bounded scans, verified catalog imports, public Hugging Face metadata, pinned downloads, and provenance manifests. It shares an artifact-operation guard and cancellation/publication gate with the existing speech installer. Discovery does not activate a model or start inference. `model_library_progress` reports transfer bytes. See [Phase 2 verification](phase-2-settings-verification.md) for limits.
 
 ## Storage and migrations
 
@@ -93,12 +95,13 @@ The summary planner chooses a single request or transcript chunks followed by a 
 | `segments`               | Track label, paired nullable times, text, source, and final pass.                     |
 | `summaries`              | Retained versions with provider, model, and template ID.                              |
 | `settings`               | Devices, shortcuts, local model/language/vocabulary, speech mode, and export choices. |
-| `provider_connections`   | Role-specific nonsecret endpoint/model/revision and OS-keychain account reference.    |
+| `saved_connections` | Named nonsecret endpoint/revision and OS-keychain account reference. |
+| `provider_assignments` | Independent task connection/model selection and monotonic revision. |
 | `meeting_transcriptions` | Last successful provider/model provenance per meeting.                                |
 | `search`                 | FTS5 copies of titles, notes, transcript text, and summaries.                         |
 | `capture_events`         | Historical schema table; current capture no longer writes lifecycle events here.      |
 
-`Core::open` enables WAL and applies numbered migrations using `PRAGMA user_version`. Table rebuilds that need foreign keys disabled perform a foreign-key check before committing. Migration 011 preserves segment IDs and restores FTS triggers while adding cloud/untimed entries. Existing user databases are upgraded without resetting them. Legacy `local_model`/`merge_model` columns remain unused.
+`Core::open` enables WAL and applies numbered migrations using `PRAGMA user_version`. Table rebuilds that need foreign keys disabled perform a foreign-key check before committing. Migration 011 preserves segment IDs and restores FTS triggers while adding cloud/untimed entries. Migration 012 copies existing provider profiles and credential references into saved connections and assignments without reading secrets. Populated upgrade tests cover notes, transcripts, search, and foreign keys. Existing user databases are upgraded without resetting them. Legacy `local_model`/`merge_model` columns remain unused.
 
 Search triggers maintain the FTS5 index as notes, segments, titles, and summaries change. Audio and models are separate files, not database blobs. See [privacy](privacy.md) for paths and backup boundaries.
 

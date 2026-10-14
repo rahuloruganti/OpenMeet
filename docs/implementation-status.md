@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v11 is implemented. This is a preview with open qualification gates, not a complete MVP.
+OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v12 is implemented, with reusable API connections and independent task assignments. This is a preview with open qualification gates, not a complete MVP.
 
 No platform has passed the full two-track capture gate. An earlier Windows attempt was blocked by a missing microphone. A later authorized two-second smoke test was recorded as passing in [log.md](../log.md), but it did not establish audible-content quality, pause privacy, device-failure behavior, or long-run drift. No recording was made during the recent UI and installation work.
 
@@ -18,7 +18,7 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | Capture                 | Windows selected microphone and output loopback, separate WAVs, timing JSONL, bounded queues, pause/resume/stop, tray controls, level meters, and configurable shortcuts.  |
 | Local transcription     | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
 | Playback                | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
-| Provider settings       | Independent HTTPS LLM/cloud-STT bases, transient masked key entry to OS keychain, optional model discovery/custom IDs, and revision-bound consent.                         |
+| Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision-bound consent.                         |
 | Cloud transcription     | Explicit audio confirmation, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
 | Summaries and questions | Configured chat API, three templates, history/copy, bounded chunked summaries, and per-meeting questions.                                                                  |
 | Export                  | Folder picker, source-aware Markdown, optional transcript/summary, filename preferences, and non-overwriting snapshots.                                                    |
@@ -26,6 +26,10 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | Development             | Pinned toolchains and lockfiles, just recipes, automated frontend/Rust checks, and CI definitions.                                                                         |
 
 Implemented does not mean qualified. See [the user guide](user-guide.md), [architecture](architecture.md), and [privacy](privacy.md) for behavior and limits.
+
+## Phase 2 settings and model library (2026-10-14)
+
+Cloud API, Local, and General tabs, reusable connections, schema-v12 migration, bounded local model discovery, verified catalog import, and explicit public Hugging Face search/download are implemented. Routine checks passed with 104 frontend tests and 87 Rust tests; two native tests remained ignored. Native checks confirmed tabs, draft preservation, keyboard navigation, and opening the folder picker in an isolated empty profile. Completing folder selection was blocked by the Windows helper. Provider/keychain workflows and model-library end-to-end qualification remain open. See [Phase 2 verification](phase-2-settings-verification.md). Live transcription and automatic processing remain deferred.
 
 ## Feature batch (2026-10-12)
 

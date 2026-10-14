@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 11;
+const LATEST_SCHEMA: i64 = 12;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -62,6 +62,11 @@ impl Core {
             (
                 11,
                 include_str!("../migrations/011_cloud_transcripts.sql"),
+                false,
+            ),
+            (
+                12,
+                include_str!("../migrations/012_saved_connections.sql"),
                 false,
             ),
         ];
@@ -539,117 +544,132 @@ impl Core {
     }
 
     pub fn settings(&self) -> Result<Settings> {
-        let connection = |role: ProviderRole| {
-            self.db.query_row(
-                "SELECT base_url, model, revision, credential_account FROM provider_connections WHERE role = ?1",
-                [role.as_str()],
-                provider_row,
-            ).optional()
-        };
-        let llm = connection(ProviderRole::Llm)?;
-        let cloud_stt = connection(ProviderRole::CloudStt)?;
-        Ok(self.db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut FROM settings WHERE id = 1",
-            [],
-            |row| {
-                Ok(Settings {
-                    vault_folder: row.get(0)?,
-                    pause_shortcut: row.get(1)?,
-                    microphone_id: row.get(2)?,
-                    output_id: row.get(3)?,
-                    llm,
-                    cloud_stt,
-                    stt_mode: match row.get::<_, String>(4)?.as_str() {
-                        "cloud" => SttMode::Cloud,
-                        _ => SttMode::Local,
-                    },
-                    export: ExportOptions {
-                        transcript: row.get(5)?,
-                        summary: row.get(6)?,
-                        // The column CHECK constraint allows only these two values.
-                        filename: match row.get::<_, String>(7)?.as_str() {
-                            "date_title" => FilenamePattern::DateTitle,
-                            _ => FilenamePattern::Title,
-                        },
-                    },
-                    stt_language: row.get(8)?,
-                    stt_prompt: row.get(9)?,
-                    stt_model: row.get(10)?,
-                    stop_shortcut: row.get(11)?,
-                })
-            },
-        )?)
+        read_settings(&self.db)
     }
 
-    pub fn save_provider_connection(
+    pub fn api_connection(&self, id: &str) -> Result<SavedConnection> {
+        self.db.query_row("SELECT id,name,base_url,revision,credential_account FROM saved_connections WHERE id=?1", [id], saved_connection_row).optional()?.ok_or_else(provider_conflict)
+    }
+
+    pub fn save_api_connection(
         &mut self,
-        role: ProviderRole,
+        id: Option<&str>,
+        name: &str,
         base_url: &str,
         credential_account: Option<&str>,
         expected_revision: Option<i64>,
     ) -> Result<Settings> {
-        let mut settings = self.settings()?;
+        let name = name.trim();
+        if name.is_empty() || name.len() > 120 || name.chars().any(char::is_control) {
+            return Err(AppError::new(
+                "provider_name",
+                "Enter a connection name of at most 120 bytes without control characters.",
+            ));
+        }
+        let base_url = crate::providers::validate_base_url(base_url)?;
         let tx = self.db.transaction()?;
-        let current = tx.query_row(
-            "SELECT base_url, model, revision, credential_account FROM provider_connections WHERE role = ?1",
-            [role.as_str()],
-            provider_row,
-        ).optional()?;
-        if current.as_ref().map(|config| config.revision) != expected_revision {
+        let previous = id.map(|id| {
+            tx.query_row("SELECT id,name,base_url,revision,credential_account FROM saved_connections WHERE id=?1", [id], saved_connection_row).optional()?.ok_or_else(provider_conflict)
+        }).transpose()?;
+        if previous.as_ref().map(|c| c.revision) != expected_revision {
             return Err(provider_conflict());
         }
         let revision = expected_revision
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(provider_conflict)?;
-        let model = current
-            .as_ref()
-            .filter(|config| config.base_url == base_url)
-            .and_then(|config| config.model.as_deref());
-        if let Some(previous) = &current {
-            if previous.base_url != base_url
-                && previous.credential_account.is_some()
-                && previous.credential_account.as_deref() == credential_account
-            {
-                return Err(AppError::new(
-                    "provider_key_required",
-                    "Enter a new API key when changing the provider URL.",
-                ));
-            }
+        let destination_changed = previous.as_ref().is_some_and(|c| c.base_url != base_url);
+        if destination_changed
+            && ((credential_account.is_none() && !crate::providers::is_local_base(&base_url))
+                || (credential_account.is_some()
+                    && previous
+                        .as_ref()
+                        .and_then(|c| c.credential_account.as_deref())
+                        == credential_account))
+        {
+            return Err(AppError::new(
+                "provider_key_required",
+                "Enter a new API key when changing the provider URL.",
+            ));
         }
+        let id = id
+            .map(str::to_string)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        tx.execute("INSERT INTO saved_connections(id,name,base_url,credential_account,revision) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(id) DO UPDATE SET name=excluded.name,base_url=excluded.base_url,credential_account=excluded.credential_account,revision=excluded.revision", params![id,name,base_url,credential_account,revision])?;
+        if tx.query_row("SELECT EXISTS(SELECT 1 FROM provider_assignments WHERE connection_id=?1 AND revision=?2)", params![id,i64::MAX], |row| row.get::<_,bool>(0))? { return Err(provider_conflict()); }
         tx.execute(
-            "INSERT INTO provider_connections(role, base_url, model, credential_account, revision) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(role) DO UPDATE SET base_url = excluded.base_url, model = excluded.model, credential_account = excluded.credential_account, revision = excluded.revision",
-            params![role.as_str(), base_url, model, credential_account, revision],
+            "UPDATE provider_assignments SET revision=revision+1 WHERE connection_id=?1",
+            [&id],
         )?;
-        let config = Some(ProviderConfig {
-            base_url: base_url.to_string(),
-            model: model.map(str::to_string),
-            revision,
-            credential_account: credential_account.map(str::to_string),
-        });
+        let settings = read_settings(&tx)?;
         tx.commit()?;
-        match role {
-            ProviderRole::Llm => settings.llm = config,
-            ProviderRole::CloudStt => settings.cloud_stt = config,
-        }
         Ok(settings)
     }
 
-    pub fn save_provider_model(
-        &mut self,
-        role: ProviderRole,
-        model: &str,
-        expected_revision: i64,
-    ) -> Result<Settings> {
-        crate::providers::validate_model(model)?;
-        let changed = self.db.execute(
-            "UPDATE provider_connections SET model = ?1, revision = revision + 1 WHERE role = ?2 AND revision = ?3 AND revision < ?4",
-            params![model, role.as_str(), expected_revision, i64::MAX],
-        )?;
-        if changed != 1 {
+    pub fn delete_api_connection(&mut self, id: &str, expected_revision: i64) -> Result<Settings> {
+        let tx = self.db.transaction()?;
+        if tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM provider_assignments WHERE connection_id=?1)",
+            [id],
+            |row| row.get::<_, bool>(0),
+        )? {
+            return Err(AppError::new(
+                "provider_assigned",
+                "Unassign this connection from all tasks before deleting it.",
+            ));
+        }
+        if tx.execute(
+            "DELETE FROM saved_connections WHERE id=?1 AND revision=?2",
+            params![id, expected_revision],
+        )? != 1
+        {
             return Err(provider_conflict());
         }
-        self.settings()
+        let settings = read_settings(&tx)?;
+        tx.commit()?;
+        Ok(settings)
+    }
+
+    pub fn save_provider_assignment(
+        &mut self,
+        role: ProviderRole,
+        selection: &ProviderSelection,
+        expected_revision: Option<i64>,
+    ) -> Result<Settings> {
+        let tx = self.db.transaction()?;
+        let (assigned, revision): (Option<String>, i64) = tx.query_row(
+            "SELECT connection_id,revision FROM provider_assignments WHERE role=?1",
+            [role.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if assigned.as_ref().map(|_| revision) != expected_revision {
+            return Err(provider_conflict());
+        }
+        let next = revision.checked_add(1).ok_or_else(provider_conflict)?;
+        let (id, model) = match selection {
+            ProviderSelection::Unassigned => (None, None),
+            ProviderSelection::Assigned {
+                connection_id,
+                model,
+            } => {
+                crate::providers::validate_model(model)?;
+                if !tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM saved_connections WHERE id=?1)",
+                    [connection_id],
+                    |row| row.get::<_, bool>(0),
+                )? {
+                    return Err(provider_conflict());
+                }
+                (Some(connection_id.as_str()), Some(model.as_str()))
+            }
+        };
+        tx.execute(
+            "UPDATE provider_assignments SET connection_id=?1,model=?2,revision=?3 WHERE role=?4",
+            params![id, model, next, role.as_str()],
+        )?;
+        let settings = read_settings(&tx)?;
+        tx.commit()?;
+        Ok(settings)
     }
 
     pub fn save_stt_mode(&mut self, mode: SttMode) -> Result<Settings> {
@@ -981,6 +1001,70 @@ impl Core {
 
 fn provider_conflict() -> AppError {
     AppError::new("provider_conflict", "Provider settings changed elsewhere. Reload Settings and try again; nothing was overwritten.")
+}
+
+fn read_settings(db: &Connection) -> Result<Settings> {
+    let connection = |role: ProviderRole| {
+        db.query_row(
+                "SELECT c.base_url, a.model, a.revision, c.credential_account FROM provider_assignments a JOIN saved_connections c ON c.id = a.connection_id WHERE a.role = ?1",
+                [role.as_str()],
+                provider_row,
+            ).optional()
+    };
+    let saved_connections = db.prepare("SELECT id,name,base_url,revision,credential_account FROM saved_connections ORDER BY name,id")?
+            .query_map([], saved_connection_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let assignment = |role: ProviderRole| {
+        db.query_row("SELECT connection_id,model,revision FROM provider_assignments WHERE role=?1 AND connection_id IS NOT NULL", [role.as_str()], |row| Ok(ProviderAssignment {connection_id:row.get(0)?,model:row.get(1)?,revision:row.get(2)?})).optional()
+    };
+    let provider_assignments = ProviderAssignments {
+        llm: assignment(ProviderRole::Llm)?,
+        cloud_stt: assignment(ProviderRole::CloudStt)?,
+    };
+    let llm = connection(ProviderRole::Llm)?;
+    let cloud_stt = connection(ProviderRole::CloudStt)?;
+    Ok(db.query_row(
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut FROM settings WHERE id = 1",
+            [],
+            |row| {
+                Ok(Settings {
+                    vault_folder: row.get(0)?,
+                    pause_shortcut: row.get(1)?,
+                    microphone_id: row.get(2)?,
+                    output_id: row.get(3)?,
+                    saved_connections,
+                    provider_assignments,
+                    llm,
+                    cloud_stt,
+                    stt_mode: match row.get::<_, String>(4)?.as_str() {
+                        "cloud" => SttMode::Cloud,
+                        _ => SttMode::Local,
+                    },
+                    export: ExportOptions {
+                        transcript: row.get(5)?,
+                        summary: row.get(6)?,
+                        // The column CHECK constraint allows only these two values.
+                        filename: match row.get::<_, String>(7)?.as_str() {
+                            "date_title" => FilenamePattern::DateTitle,
+                            _ => FilenamePattern::Title,
+                        },
+                    },
+                    stt_language: row.get(8)?,
+                    stt_prompt: row.get(9)?,
+                    stt_model: row.get(10)?,
+                    stop_shortcut: row.get(11)?,
+                })
+            },
+        )?)
+}
+
+fn saved_connection_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedConnection> {
+    Ok(SavedConnection {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        base_url: row.get(2)?,
+        revision: row.get(3)?,
+        credential_account: row.get(4)?,
+    })
 }
 
 fn provider_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConfig> {
@@ -1330,100 +1414,261 @@ mod tests {
     }
 
     #[test]
-    fn independent_provider_settings_require_current_revisions_and_survive_restart() {
+    fn saved_connections_share_models_and_preserve_independent_revisions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meetings.db");
         let mut core = Core::open(&path).unwrap();
-        assert!(core.settings().unwrap().llm.is_none());
-        core.save_provider_connection(
-            ProviderRole::Llm,
-            "https://chat.example/v1",
-            Some("key-account-a"),
-            None,
-        )
-        .unwrap();
-        core.save_provider_connection(
-            ProviderRole::CloudStt,
-            "https://speech.example/v1",
-            Some("key-account-b"),
-            None,
-        )
-        .unwrap();
-        core.save_provider_model(ProviderRole::Llm, "custom/manual-model", 1)
+        let settings = core
+            .save_api_connection(
+                None,
+                "Shared",
+                "https://chat.example/v1",
+                Some("synthetic-key-a"),
+                None,
+            )
             .unwrap();
+        let id = settings.saved_connections[0].id.clone();
+        core.save_provider_assignment(
+            ProviderRole::Llm,
+            &ProviderSelection::Assigned {
+                connection_id: id.clone(),
+                model: "chat".into(),
+            },
+            None,
+        )
+        .unwrap();
+        core.save_provider_assignment(
+            ProviderRole::CloudStt,
+            &ProviderSelection::Assigned {
+                connection_id: id.clone(),
+                model: "speech".into(),
+            },
+            None,
+        )
+        .unwrap();
         assert_eq!(
-            core.save_provider_model(ProviderRole::Llm, "stale-model", 1)
-                .unwrap_err()
-                .code,
-            "provider_conflict"
+            core.delete_api_connection(&id, 1).unwrap_err().code,
+            "provider_assigned"
         );
         assert_eq!(
-            core.save_provider_connection(
-                ProviderRole::Llm,
+            core.save_api_connection(
+                Some(&id),
+                "Shared",
                 "https://changed.example/v1",
-                Some("key-account-c"),
+                Some("synthetic-key-a"),
+                Some(1)
+            )
+            .unwrap_err()
+            .code,
+            "provider_key_required"
+        );
+        core.save_api_connection(
+            Some(&id),
+            "Shared",
+            "https://changed.example/v1",
+            Some("synthetic-key-b"),
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(
+            core.save_api_connection(
+                Some(&id),
+                "Stale",
+                "https://changed.example/v1",
+                None,
                 Some(1)
             )
             .unwrap_err()
             .code,
             "provider_conflict"
         );
+        core.save_api_connection(None, "Unrelated", "http://localhost:1234/v1", None, None)
+            .unwrap();
+        assert_eq!(core.settings().unwrap().llm.unwrap().revision, 2);
+        assert_eq!(core.settings().unwrap().cloud_stt.unwrap().revision, 2);
         assert_eq!(
-            core.save_provider_connection(
+            core.save_provider_assignment(
                 ProviderRole::Llm,
-                "https://changed.example/v1",
-                Some("key-account-a"),
+                &ProviderSelection::Unassigned,
+                Some(1)
+            )
+            .unwrap_err()
+            .code,
+            "provider_conflict"
+        );
+        core.save_provider_assignment(ProviderRole::Llm, &ProviderSelection::Unassigned, Some(2))
+            .unwrap();
+        core.save_provider_assignment(
+            ProviderRole::Llm,
+            &ProviderSelection::Assigned {
+                connection_id: id.clone(),
+                model: "new-chat".into(),
+            },
+            None,
+        )
+        .unwrap();
+        drop(core);
+        let core = Core::open(&path).unwrap();
+        let settings = core.settings().unwrap();
+        let llm = settings.llm.as_ref().unwrap();
+        assert_eq!(
+            (
+                llm.model.as_deref(),
+                llm.revision,
+                llm.credential_account.as_deref()
+            ),
+            (Some("new-chat"), 4, Some("synthetic-key-b"))
+        );
+        assert_eq!(
+            settings.cloud_stt.as_ref().unwrap().model.as_deref(),
+            Some("speech")
+        );
+        assert_eq!(settings.cloud_stt.as_ref().unwrap().revision, 2);
+        let serialized = serde_json::to_string(&settings).unwrap();
+        assert!(!serialized.contains("credential_account"));
+        assert!(!serialized.contains("synthetic-key"));
+    }
+
+    #[test]
+    fn connection_updates_roll_back_and_do_not_invalidate_unrelated_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = Core::open(&dir.path().join("meetings.db")).unwrap();
+        let first = core
+            .save_api_connection(None, "First", "http://localhost:1234/v1", None, None)
+            .unwrap()
+            .saved_connections[0]
+            .id
+            .clone();
+        let second = core
+            .save_api_connection(None, "Second", "http://localhost:1235/v1", None, None)
+            .unwrap()
+            .saved_connections
+            .iter()
+            .find(|c| c.name == "Second")
+            .unwrap()
+            .id
+            .clone();
+        core.save_provider_assignment(
+            ProviderRole::Llm,
+            &ProviderSelection::Assigned {
+                connection_id: first.clone(),
+                model: "chat".into(),
+            },
+            None,
+        )
+        .unwrap();
+        core.save_provider_assignment(
+            ProviderRole::CloudStt,
+            &ProviderSelection::Assigned {
+                connection_id: second.clone(),
+                model: "speech".into(),
+            },
+            None,
+        )
+        .unwrap();
+        core.save_api_connection(
+            Some(&first),
+            "Renamed",
+            "http://localhost:1234/v1",
+            None,
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(core.settings().unwrap().llm.unwrap().revision, 2);
+        assert_eq!(core.settings().unwrap().cloud_stt.unwrap().revision, 1);
+        core.db
+            .execute(
+                "UPDATE provider_assignments SET revision=?1 WHERE role='llm'",
+                [i64::MAX],
+            )
+            .unwrap();
+        assert_eq!(
+            core.save_api_connection(
+                Some(&first),
+                "Must roll back",
+                "http://localhost:1234/v1",
+                None,
                 Some(2)
             )
             .unwrap_err()
             .code,
-            "provider_key_required"
+            "provider_conflict"
         );
-        core.save_provider_connection(
-            ProviderRole::Llm,
-            "https://chat.example/v1",
-            Some("key-account-c"),
-            Some(2),
+        assert_eq!(core.api_connection(&first).unwrap().name, "Renamed");
+        assert_eq!(core.api_connection(&first).unwrap().revision, 2);
+        core.save_provider_assignment(
+            ProviderRole::CloudStt,
+            &ProviderSelection::Unassigned,
+            Some(1),
         )
         .unwrap();
         assert_eq!(
-            core.settings().unwrap().llm.unwrap().model.as_deref(),
-            Some("custom/manual-model")
+            core.delete_api_connection(&second, 2).unwrap_err().code,
+            "provider_conflict"
         );
-        core.save_provider_model(ProviderRole::CloudStt, "speech-custom", 1)
-            .unwrap();
-        core.save_stt_mode(SttMode::Cloud).unwrap();
-        drop(core);
-        let mut core = Core::open(&path).unwrap();
+        core.delete_api_connection(&second, 1).unwrap();
+        assert!(core.api_connection(&second).is_err());
+        assert!(core.settings().unwrap().cloud_stt.is_none());
+    }
+
+    #[test]
+    fn v11_migration_preserves_connections_and_dormant_legacy_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let core = Core::open(&path).unwrap();
+            core.db
+                .execute_batch("DROP TABLE provider_assignments; DROP TABLE saved_connections;")
+                .unwrap();
+            core.db
+                .execute_batch(
+                    include_str!("../migrations/010_provider_settings.sql")
+                        .split("ALTER TABLE")
+                        .next()
+                        .unwrap(),
+                )
+                .unwrap();
+            core.db.execute_batch("INSERT INTO provider_connections VALUES ('llm','https://chat.example/v1','chat','existing-account-a',7),('cloud_stt','https://speech.example/v1',NULL,'existing-account-b',4); UPDATE settings SET merge_model='dormant',stt_model='base'; PRAGMA user_version=11;").unwrap();
+        }
+        let core = Core::open(&path).unwrap();
         let settings = core.settings().unwrap();
+        assert_eq!(settings.saved_connections.len(), 2);
         let llm = settings.llm.unwrap();
-        assert_eq!(llm.base_url, "https://chat.example/v1");
-        assert_eq!(llm.model.as_deref(), Some("custom/manual-model"));
-        assert_eq!(llm.revision, 3);
-        assert_eq!(llm.credential_account.as_deref(), Some("key-account-c"));
-        let speech = settings.cloud_stt.unwrap();
-        assert_eq!(speech.base_url, "https://speech.example/v1");
-        assert_eq!(speech.model.as_deref(), Some("speech-custom"));
-        assert_eq!(speech.revision, 2);
-        assert_eq!(settings.stt_mode, SttMode::Cloud);
-        assert_eq!(settings.stt_model, "small");
-        core.save_provider_connection(
-            ProviderRole::Llm,
-            "https://changed.example/v1",
-            Some("key-account-d"),
-            Some(3),
-        )
-        .unwrap();
-        let settings = core.settings().unwrap();
-        assert_eq!(settings.llm.unwrap().model, None);
         assert_eq!(
-            settings.cloud_stt.unwrap().model.as_deref(),
-            Some("speech-custom")
+            (
+                llm.revision,
+                llm.model.as_deref(),
+                llm.credential_account.as_deref()
+            ),
+            (7, Some("chat"), Some("existing-account-a"))
         );
-        let serialized = serde_json::to_string(&core.settings().unwrap()).unwrap();
-        assert!(!serialized.contains("credential_account"));
-        assert!(!serialized.contains("key-account"));
-        assert!(!serialized.contains("merge_model"));
+        assert!(settings.cloud_stt.is_none());
+        assert_eq!(
+            settings
+                .saved_connections
+                .iter()
+                .find(|c| c.id == "migrated-cloud_stt")
+                .unwrap()
+                .credential_account
+                .as_deref(),
+            Some("existing-account-b")
+        );
+        assert_eq!(settings.stt_model, "base");
+        assert_eq!(
+            core.db
+                .query_row("SELECT merge_model FROM settings", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "dormant"
+        );
+        assert_eq!(
+            core.db
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -1541,7 +1786,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_migrations_preserve_populated_v9_database_and_fts_triggers() {
+    fn provider_migrations_preserve_populated_v11_database_and_fts_triggers() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meetings.db");
         {
@@ -1556,6 +1801,8 @@ mod tests {
                 include_str!("../migrations/007_search.sql"),
                 include_str!("../migrations/008_stt_settings.sql"),
                 include_str!("../migrations/009_export_options.sql"),
+                include_str!("../migrations/010_provider_settings.sql"),
+                include_str!("../migrations/011_cloud_transcripts.sql"),
             ] {
                 db.execute_batch(script).unwrap();
             }
@@ -1563,9 +1810,10 @@ mod tests {
                 INSERT INTO meetings(id,title,started_at,source,status) VALUES ('legacy','Legacy fixture','2026-10-10','fixture','stopped'), ('recorded','Recorded','2026-10-10','desktop','stopped');
                 INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('legacy','Edited fixture notes',7), ('recorded','Kept notes',4);
                 INSERT INTO segments(id,meeting_id,speaker,start_ms,end_ms,text,source,pass) VALUES (42,'recorded','You',100,200,'Persimmon original','whisper','final'), (43,'legacy','Others',0,100,'Fictional checklist','fixture','final');
+                INSERT INTO meeting_transcriptions(meeting_id,provider,model) VALUES ('recorded','whisper',NULL);
                 INSERT INTO summaries(meeting_id,template_hash,model,provider,markdown) VALUES ('recorded','general-v1','old-model','merge','Kept summary');
                 INSERT INTO tracks(meeting_id,kind,path,timing_path,device_name,sample_rate,channels,frames,finalized) VALUES ('recorded','mic','mic.wav','mic.jsonl','Mic',16000,1,16000,1);
-                UPDATE settings SET merge_model='legacy/model', stt_model='base', stt_language='de', stt_prompt='Okta', stop_shortcut='Alt+S';").unwrap();
+                INSERT INTO provider_connections VALUES ('llm','https://chat.example/v1',NULL,'preserved-ref-a',9),('cloud_stt','https://speech.example/v1',NULL,'preserved-ref-b',6); UPDATE settings SET merge_model='legacy/model', stt_model='base', stt_language='de', stt_prompt='Okta', stop_shortcut='Alt+S';").unwrap();
             db.execute(
                 "UPDATE tracks SET path = ?1, timing_path = ?2 WHERE meeting_id = 'recorded'",
                 params![
@@ -1605,6 +1853,17 @@ mod tests {
             42
         );
         let settings = core.settings().unwrap();
+        assert_eq!(settings.saved_connections.len(), 2);
+        assert_eq!(
+            settings
+                .saved_connections
+                .iter()
+                .find(|c| c.id == "migrated-llm")
+                .unwrap()
+                .credential_account
+                .as_deref(),
+            Some("preserved-ref-a")
+        );
         assert_eq!(settings.llm, None);
         assert_eq!(settings.cloud_stt, None);
         assert_eq!(settings.stt_mode, SttMode::Local);

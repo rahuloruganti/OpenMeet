@@ -23,6 +23,7 @@ Read `docs/phase-1-implementation-plan.md` and `docs/implementation-status.md` b
 | `src-tauri/src/domain.rs` | Shared backend types and errors |
 | `src-tauri/src/storage.rs` | SQLite, recording lifecycle, capture integration |
 | `src-tauri/src/audio.rs` | Device discovery, native capture, bounded queues, WAV writers |
+| `src-tauri/src/model_library.rs` | Bounded model scans, verified imports, public Hugging Face metadata/downloads |
 | `src-tauri/src/providers.rs` | Independent provider validation, keychain credentials, model discovery, bounded HTTP |
 | `src-tauri/src/llm.rs` | Summary/question prompts and bounded text requests |
 | `src-tauri/src/cloud_stt.rs` | Frozen bounded WAV uploads, timing validation, timed/untimed transcription |

@@ -1204,3 +1204,40 @@ textarea.notes-editor {
 .provider-settings code {
   overflow-wrap: anywhere;
 }
+
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.settings-column {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-width: 0;
+}
+.settings-tabs [aria-selected="true"] {
+  background: var(--selection);
+  border-color: var(--accent);
+}
+.provider-settings fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  margin: 12px 0;
+  border: 1px solid var(--divider);
+  border-radius: 12px;
+}
+.model-library {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.model-library li {
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}
+.model-library form {
+  display: grid;
+  gap: 12px;
+}

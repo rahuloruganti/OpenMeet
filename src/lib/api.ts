@@ -83,6 +83,8 @@ export type Settings = {
   pause_shortcut: string;
   microphone_id: string | null;
   output_id: string | null;
+  saved_connections: SavedConnection[];
+  provider_assignments: Record<ProviderRole, ProviderAssignment | null>;
   llm: ProviderConfig | null;
   cloud_stt: ProviderConfig | null;
   stt_mode: "local" | "cloud";
@@ -103,6 +105,42 @@ export type ProviderConfig = {
   model: string | null;
   revision: number;
 };
+export type SavedConnection = {
+  id: string;
+  name: string;
+  base_url: string;
+  revision: number;
+};
+export type ProviderAssignment = {
+  connection_id: string;
+  model: string;
+  revision: number;
+};
+export type ProviderSelection =
+  | { kind: "unassigned" }
+  | { kind: "assigned"; connection_id: string; model: string };
+export type LocalModel = {
+  path: string;
+  format: "whisper" | "gguf" | "unknown";
+  size: number;
+  model_id: string | null;
+};
+export type ModelScan = {
+  models: LocalModel[];
+  folders: { path: string; status: string }[];
+  truncated: boolean;
+};
+export type HubModel = { id: string; license: string | null };
+export type HubFile = {
+  repo_id: string;
+  revision: string;
+  filename: string;
+  size: number;
+  sha256: string;
+  license: string | null;
+  model_id: string | null;
+};
+export type ModelLibraryProgress = { downloaded: number; total: number };
 export type ProviderModel = { id: string };
 export type KeyStatus = "present" | "missing" | "unavailable";
 export type KeyChange =
@@ -178,26 +216,52 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   providerKeyStatus: (role: ProviderRole) =>
     invoke<KeyStatus>("provider_key_status", { role }),
-  saveProviderConnection: (
-    role: ProviderRole,
-    baseUrl: string,
-    keyChange: KeyChange,
-    expectedRevision: number | null,
-  ) =>
-    invoke<Settings>("save_provider_connection", {
-      role,
-      baseUrl,
-      keyChange,
+  saveApiConnection: (args: {
+    id: string | null;
+    name: string;
+    baseUrl: string;
+    keyChange: KeyChange;
+    expectedRevision: number | null;
+  }) => invoke<Settings>("save_api_connection", args),
+  deleteApiConnection: (id: string, expectedRevision: number) =>
+    invoke<Settings>("delete_api_connection", { id, expectedRevision }),
+  apiConnectionKeyStatus: (id: string) =>
+    invoke<KeyStatus>("api_connection_key_status", { id }),
+  listApiConnectionModels: (id: string, expectedRevision: number) =>
+    invoke<ProviderModel[]>("list_api_connection_models", {
+      id,
       expectedRevision,
     }),
-  listProviderModels: (role: ProviderRole, expectedRevision: number) =>
-    invoke<ProviderModel[]>("list_provider_models", { role, expectedRevision }),
-  saveProviderModel: (
+  saveProviderAssignment: (
     role: ProviderRole,
-    model: string,
-    expectedRevision: number,
+    selection: ProviderSelection,
+    expectedRevision: number | null,
   ) =>
-    invoke<Settings>("save_provider_model", { role, model, expectedRevision }),
+    invoke<Settings>("save_provider_assignment", {
+      role,
+      selection,
+      expectedRevision,
+    }),
+  chooseModelFolder: () => invoke<string | null>("choose_model_folder"),
+  scanLocalModels: (folder: string | null) =>
+    invoke<ModelScan>("scan_local_models", { folder }),
+  importLocalModel: (path: string) =>
+    invoke<{ model_id: string }>("import_local_model", { path }),
+  searchHfModels: (query: string) =>
+    invoke<HubModel[]>("search_hf_models", { query }),
+  listHfFiles: (repoId: string) =>
+    invoke<HubFile[]>("list_hf_files", { repoId }),
+  downloadHfModel: (file: HubFile) =>
+    invoke<{ path: string; model_id: string | null }>("download_hf_model", {
+      file,
+    }),
+  cancelModelDownload: () => invoke<void>("cancel_model_download"),
+  onModelLibraryProgress: (
+    callback: (progress: ModelLibraryProgress) => void,
+  ) =>
+    listen<ModelLibraryProgress>("model_library_progress", (event) =>
+      callback(event.payload),
+    ),
   saveSttMode: (mode: Settings["stt_mode"]) =>
     invoke<Settings>("save_stt_mode", { mode }),
   sttStatus: () => invoke<SttStatus>("stt_status"),

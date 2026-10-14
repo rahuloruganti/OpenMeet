@@ -26,6 +26,8 @@ Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries
 
 [The implementation checklist](implementation-checklist.md) separates missing features from qualification work and lists the suggested delivery order. [The Granola/Otter comparison](granola-otter-comparison.md) records its source and product evidence.
 
+[Phase 2 settings verification](phase-2-settings-verification.md) records saved connections, model discovery/downloads, executed checks, and partial native qualification for issues #14–#18.
+
 [Phase 1 foundation verification](phase-1-foundation-verification.md) records the current fixes, executed tests, and open hardware/provider/native UI gates for issues #7–#13.
 
 [Implementation status](implementation-status.md) records implemented behavior, executed checks, and open gates. [The feature plan](feature-plan.md) tracks milestone acceptance criteria. [The phase plan](phase-1-implementation-plan.md) and [original development plan](../Open-source%20meeting%20notetaker%20development%20plan%20and%20tool%20inventory.md) contain proposed designs, including dependencies that were never added.

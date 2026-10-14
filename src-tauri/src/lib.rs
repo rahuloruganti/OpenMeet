@@ -4,6 +4,7 @@ mod cloud_stt;
 mod domain;
 mod export;
 mod llm;
+mod model_library;
 mod providers;
 mod storage;
 mod stt;
@@ -244,9 +245,10 @@ async fn provider_key_status(app: AppHandle, role: ProviderRole) -> Result<KeySt
 }
 
 #[tauri::command]
-async fn save_provider_connection(
+async fn save_api_connection(
     app: AppHandle,
-    role: ProviderRole,
+    id: Option<String>,
+    name: String,
     base_url: String,
     key_change: KeyChange,
     expected_revision: Option<i64>,
@@ -257,7 +259,7 @@ async fn save_provider_connection(
         let _writer = state.provider_writes.lock().map_err(|_| AppError::new("provider", "Provider settings are unavailable."))?;
         let previous = {
             let core = state.core.lock().map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
-            core.settings()?.connection(role).cloned()
+            id.as_deref().map(|id| core.api_connection(id)).transpose()?
         };
         if previous.as_ref().map(|config| config.revision) != expected_revision {
             return Err(plan_changed());
@@ -275,21 +277,22 @@ async fn save_provider_connection(
                     old_account.clone()
                 }
             }
-            KeyChange::Replace { key } => Some(providers::store_key(role, &key)?),
+            KeyChange::Replace { key } => Some(providers::store_key(&key)?),
             KeyChange::Remove => None,
         };
         let result = state.core.lock()
             .map_err(|_| AppError::new("internal", "Settings are unavailable."))
-            .and_then(|mut core| core.save_provider_connection(role, &base_url, account.as_deref(), expected_revision));
+            .and_then(|mut core| core.save_api_connection(id.as_deref(), &name, &base_url, account.as_deref(), expected_revision));
         if result.is_err() {
             if account != old_account {
-                if let Some(account) = &account { let _ = providers::delete_key(account); }
+                if let Some(account) = &account { providers::delete_key(account).map_err(|_| AppError::new("provider_cleanup", "The connection was not saved, but its new credential could not be removed from the OS keychain."))?; }
             }
             return result;
         }
         if old_account != account {
             if let Some(old_account) = &old_account {
-                providers::delete_key(old_account).map_err(|_| AppError::new("provider_cleanup", "The connection was saved, but its previous credential could not be removed from the OS keychain. Reload Settings to see the current connection."))?;
+                let still_used = result.as_ref().is_ok_and(|settings| settings.saved_connections.iter().any(|c| c.credential_account.as_ref() == Some(old_account)));
+                if !still_used { providers::delete_key(old_account).map_err(|_| AppError::new("provider_cleanup", "The connection was saved, but its previous credential could not be removed from the OS keychain. Reload Settings to see the current connection."))?; }
             }
         }
         result
@@ -297,36 +300,69 @@ async fn save_provider_connection(
 }
 
 #[tauri::command]
-async fn save_provider_model(
+async fn delete_api_connection(
     app: AppHandle,
-    role: ProviderRole,
-    model: String,
+    id: String,
     expected_revision: i64,
 ) -> Result<Settings> {
-    providers::validate_model(&model)?;
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let _writer = state.provider_writes.lock().map_err(|_| AppError::new("provider", "Provider settings are unavailable."))?;
+        let (settings, account) = {
+            let mut core = state.core.lock().map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
+            let account = core.api_connection(&id)?.credential_account;
+            (core.delete_api_connection(&id,expected_revision)?,account)
+        };
+        if let Some(account) = account {
+            if !settings.saved_connections.iter().any(|c| c.credential_account.as_deref() == Some(&account)) {
+                providers::delete_key(&account).map_err(|_| AppError::new("provider_cleanup", "The connection was deleted, but its credential could not be removed from the OS keychain."))?;
+            }
+        }
+        Ok(settings)
+    }).await
+}
+
+#[tauri::command]
+async fn api_connection_key_status(app: AppHandle, id: String) -> Result<KeyStatus> {
+    let account = with_core(app, false, move |core, _| {
+        Ok(core.api_connection(&id)?.credential_account)
+    })
+    .await?;
+    blocking(move || Ok(providers::key_status(account.as_deref()))).await
+}
+
+#[tauri::command]
+async fn save_provider_assignment(
+    app: AppHandle,
+    role: ProviderRole,
+    selection: ProviderSelection,
+    expected_revision: Option<i64>,
+) -> Result<Settings> {
     with_core(app, false, move |core, _| {
-        core.save_provider_model(role, &model, expected_revision)
+        core.save_provider_assignment(role, &selection, expected_revision)
     })
     .await
 }
 
 #[tauri::command]
-async fn list_provider_models(
+async fn list_api_connection_models(
     app: AppHandle,
-    role: ProviderRole,
+    id: String,
     expected_revision: i64,
 ) -> Result<Vec<providers::ProviderModel>> {
+    let lookup_id = id.clone();
     let config = with_core(app.clone(), false, move |core, _| {
-        require_connection(&core.settings()?, role)
+        core.api_connection(&lookup_id)
     })
     .await?;
     if config.revision != expected_revision {
         return Err(plan_changed());
     }
     let models =
-        blocking(move || providers::list_models(&providers::load_connection(&config)?)).await?;
+        blocking(move || providers::list_models(&providers::load_connection(&config.config())?))
+            .await?;
     with_core(app, false, move |core, _| {
-        if require_connection(&core.settings()?, role)?.revision != expected_revision {
+        if core.api_connection(&id)?.revision != expected_revision {
             return Err(plan_changed());
         }
         Ok(models)
@@ -369,6 +405,81 @@ async fn stt_install(app: AppHandle) -> Result<stt::Status> {
         })
     })
     .await
+}
+
+#[tauri::command]
+async fn choose_model_folder(app: AppHandle) -> Result<Option<String>> {
+    blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Choose a folder to scan for local models")
+            .blocking_pick_folder()
+            .map(|folder| {
+                folder
+                    .into_path()
+                    .map_err(|_| AppError::new("model_folder", "Choose a local folder."))?
+                    .into_os_string()
+                    .into_string()
+                    .map_err(|_| {
+                        AppError::new("model_folder", "Choose a folder with a Unicode path.")
+                    })
+            })
+            .transpose()
+    })
+    .await
+}
+
+#[tauri::command]
+async fn scan_local_models(
+    app: AppHandle,
+    folder: Option<String>,
+) -> Result<model_library::ModelScan> {
+    let folders = match folder {
+        Some(folder) => vec![std::path::PathBuf::from(folder)],
+        None => model_library::common_folders(
+            &app.path()
+                .home_dir()
+                .map_err(|_| AppError::new("model_folder", "The home folder is unavailable."))?,
+            &stt_root(&app)?,
+        ),
+    };
+    blocking(move || Ok(model_library::scan(folders))).await
+}
+
+#[tauri::command]
+async fn import_local_model(app: AppHandle, path: String) -> Result<model_library::ImportedModel> {
+    let root = stt_root(&app)?;
+    blocking(move || model_library::import_model(&root, Path::new(&path))).await
+}
+
+#[tauri::command]
+async fn search_hf_models(query: String) -> Result<Vec<model_library::HubModel>> {
+    blocking(move || model_library::search(&query)).await
+}
+
+#[tauri::command]
+async fn list_hf_files(repo_id: String) -> Result<Vec<model_library::HubFile>> {
+    blocking(move || model_library::list_files(&repo_id)).await
+}
+
+#[tauri::command]
+async fn download_hf_model(
+    app: AppHandle,
+    file: model_library::HubFile,
+) -> Result<model_library::DownloadedModel> {
+    let root = stt_root(&app)?;
+    let emitter = app.clone();
+    blocking(move || {
+        model_library::download(&root, file, |progress| {
+            let _ = emitter.emit("model_library_progress", progress);
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn cancel_model_download() -> Result<()> {
+    model_library::cancel_download()
 }
 
 fn plan_changed() -> AppError {
@@ -1000,13 +1111,15 @@ pub fn run() {
             start_recording, pause_recording, resume_recording, stop_recording,
             save_notes, get_settings, save_settings,
             choose_vault_folder, export_meeting, close_application, list_audio_devices,
-            provider_key_status, save_provider_connection, save_provider_model, list_provider_models,
+            provider_key_status, save_api_connection, delete_api_connection, api_connection_key_status, save_provider_assignment, list_api_connection_models,
             save_stt_mode, plan_transcription, plan_question,
             stt_status, stt_install, transcribe_meeting, generate_summary,
             create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
             plan_summary, list_summaries, ask_meeting,
             rename_meeting, save_export_options, recover_audio,
             cancel_transcription, save_stt_settings, audio_position,
+            choose_model_folder, scan_local_models, import_local_model,
+            search_hf_models, list_hf_files, download_hf_model, cancel_model_download,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");
