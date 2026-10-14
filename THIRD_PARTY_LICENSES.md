@@ -54,6 +54,6 @@ No speech engine or model weights are embedded by the application build. They do
 
 [just](https://github.com/casey/just) is CC0-1.0 and installed separately. Other system/build tools and optional agent skills are development tooling, not bundled application features. Agent-skill licenses belong to their installed packages and are outside this application dependency inventory.
 
-Merge Gateway is an optional hosted service, governed by its and the selected model provider's terms. It is not a bundled software license.
+User-selected OpenAI-compatible services are governed by their provider terms, not a bundled software license. The reqwest multipart feature additionally resolves `mime_guess` 2.0.5 under MIT and `unicase` 2.10.0 under MIT OR Apache-2.0. This feature update is not a complete transitive release audit.
 
 The fictional meeting fixture and app icon were authored for this project under its MIT license. Meetily was reviewed as a reference; its source was not copied. Diarization and LLM weights are neither bundled nor downloaded by the current app.

@@ -386,3 +386,82 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Request:** Wire the Mac capture gate after an authorized cpal tap probe.
 
 **Outcome:** Apple Silicon on macOS 14.2 or newer can start a preview recording. The output track uses cpal's existing process tap only when the selected output has no input. Duplex outputs are refused. A TCC preflight must report a grant for microphone and system audio before streams open; a missing grant fails the start instead of writing silence. Permission denial was not revoked or tested. Transcription is unchanged and still Windows-only. No meeting was recorded as part of this change.
+
+## Follow-up: launch and unreachable page
+
+**Request:** Run the app, then investigate its "can't reach this page" error.
+
+**Outcome:** The earlier release executable opened but loaded the development URL without a server. Confirmed `ERR_CONNECTION_REFUSED` in its native window. Changed `just build` to use `corepack pnpm tauri build --no-bundle -- --locked`, which enables Tauri's production asset protocol, and updated development/status documentation. The rebuild reached native compilation but was blocked by missing Windows SDK headers and libraries, including `kernel32.lib`, even after loading the installed Visual Studio C++ environment. Temporary Rust paths were used only in the shell, not saved in project configuration.
+
+**Verification:** The frontend production build passed. Started a local Vite preview server for `dist/` on `127.0.0.1:1420` and relaunched the existing native executable. Its saved library and notes editor loaded, with Saved and Not recording visible. Left that server and app running. The pause-shortcut warning remains. A rebuilt standalone launch, full test suites, recording, and cloud requests were not checked.
+
+## Follow-up: personal API keys, speech models, and demo removal plan
+
+**Request:** Plan Settings entry for personal LLM API keys instead of Merge-specific setup, speech-model dropdowns, and removal of mock-related application features. The user confirmed arbitrary OpenAI-compatible base URL/key/model connections and both local and cloud STT.
+
+**Outcome:** Added `docs/provider-settings-plan.md` and linked it from the documentation index. Traced the existing Settings, consent, keychain, STT, transcript/search persistence, export, and simulation/fixture paths. Compared independent role settings against saved reusable provider profiles; selected independent LLM/cloud-STT connections. Planned transient password entry with Rust-owned keychain/HTTP, model discovery with custom IDs, consented cloud audio, timed/untimed transcripts, additive migrations, and removal of production demo creation while preserving historical data and test-only fixtures. Independent review findings about credential recovery, timing validation, and transcript callers were incorporated.
+
+**Checks and limits:** Checked plan/index Markdown formatting and diff whitespace. Application code and behavior were not changed by this planning request. No recording, content submission, or application test suite was run. Provider compatibility needs per-provider validation; native execution checks remain blocked by the missing Windows SDK reported above.
+
+## Follow-up: implement personal provider settings and remove demo creation
+
+**Request:** Implement the agreed plan, then continue the ongoing implementation.
+
+**Outcome:** Replaced Merge-specific/environment import with independent HTTPS LLM/cloud-STT connections, masked transient Settings key entry to the OS keychain, model discovery/custom IDs, and configuration/content-bound consent. Kept local Whisper as default and preserved its downloaded model selection. Added bounded frozen PCM WAV cloud transcription with separate tracks, pause-aware timing, timed/untimed results, progress/cancellation, and atomic transcript/provenance publication. Added schema v10/v11 migrations preserving notes, historical sources, foreign keys, and FTS triggers. Removed production sample/simulation creators, public commands, UI prompts and unused styles; test fixtures and legacy provenance remain. Updated current guides, privacy/consent, architecture, dependency/license inventory and agent guidance. Preserved unrelated `.claude/` files and earlier changes; no commit or push.
+
+**Checks:** Restored the missing Windows SDK and ran the full `just check` set successfully: typecheck, lint, formatting, 88 frontend tests, frontend build, Rust formatting, Clippy with warnings denied, 67 Rust tests and debug build; the single hardware test stayed ignored. Synthetic SQLite upgrades at v0/v2/v5/v9 passed. `just build` produced the standalone release. Closed the previous app through Save and quit, stopped the temporary preview server, and launched the new executable. Native workspace loaded from bundled assets with preserved library, Saved, and Not recording. Settings displayed independent providers and local/cloud mode; switched to cloud to inspect its fields, then restored Local Whisper with the previous small model. Left the updated app running.
+
+**Limits:** No real API key was saved or content submitted to a provider, and no recording/hardware gate was run. Native keychain save/replace/remove fault behavior, live provider/model compatibility/quality/billing, macOS capture, and hardware qualification remain open. The existing pause-shortcut warning remains. Temporary Rust paths were used only after checking they exist; project configuration does not hard-code them.
+
+## Follow-up: smaller provider help text
+
+**Request:** Make the OpenAI-compatible API-base explanation smaller.
+
+**Outcome:** Reused the existing `panel-description` typography for that paragraph in provider Settings. Frontend formatting, typecheck/build, and whitespace checks passed. Full test suites were not rerun for this class-only change.
+# Settings and live processing request
+
+The user requested Cloud API and Local settings tabs. Cloud connections should expose provider, URL, key, and speech/text model selection. Local settings should find existing model files and support Hugging Face search/downloads, with external local model servers available without a bundled LLM engine. The user also requested transcripts while recording and automatic summary processing when the meeting ends. These are recorded in `docs/local-model-settings-design.md`; live transcription and automatic summaries are requirements, not completed features. Cloud processing still needs explicit session consent before automatic submission.
+
+## Follow-up: overlooked chats and work audit
+
+**Request:** Check whether OpenMeet work or older chats were left behind while the new implementation proceeds.
+
+**Outcome:** The other visible OpenMeet chat finished its documentation PR, now merged. All four listed repository PRs are merged; GitHub returned no open issues, and the archived-chat listing was empty. Found unpublished provider/build/local-server work in the primary checkout, main's Windows Clippy failures, and an existing cleanup commit that did not reach main, leaving four agent-worktree gitlinks tracked. Preserved all checkouts, including one reporting 15 modified paths with no ordinary content diff. Recorded evidence and open qualification gates in `docs/unfinished-work-audit.md`. The settings design review selected reusable connections with independent speech/text assignments so cloud/local configurations survive switching. No thread was messaged, archived, deleted, or restarted; no commit, push, recording, or provider-content request occurred.
+
+## Follow-up: REA setup
+
+**Request:** Run npx rea-agents@latest setup.
+
+**Outcome:** Installed REA 6.4.0 for Codex, registered its MCP server in the personal Codex configuration with a backup, and installed the shared reverse-engineer-anything skill. Verified the registration, backup, skill file, and successful capabilities command. Restart Codex to load REA. Other agents were not configured. App tests and hardware checks were not run for this tooling setup.
+
+## Follow-up: compare OpenMeet with Granola and Otter
+
+**Request:** Reverse engineer both products and compare their core meeting workflows with the existing OpenMeet implementation.
+
+**Outcome:** Added `docs/granola-otter-comparison.md` with source-backed implementation status, current official competitor references, missing features, qualification gaps, and a suggested implementation order. REA statically analyzed selected publicly served web bundles from both products, with hashes/manifests and exported Evidence retained outside the repository in a task-specific temporary directory. Analysis is partial and does not establish desktop internals or runtime behavior. Confirmed live transcription and automatic post-stop processing are absent, while existing playback/search/summary templates and user-managed local compatible providers must not be counted as missing. No application code changed, recording started, private account accessed, or meeting content uploaded. App tests, provider calls, and hardware qualification were not run for this investigation.
+
+## Follow-up: implementation checklist
+
+**Request:** Create a checklist of the remaining implementation work.
+
+**Outcome:** Added `docs/implementation-checklist.md` and linked it from the documentation index and comparison. Separated qualification of existing features from missing settings, live processing, notes/speakers, meeting memory, platform/release work, and optional later-phase features. Included completion conditions and preserved consent, pause privacy, data safety, and explicit hardware authorization. No implementation or hardware/provider checks were performed for this documentation change.
+
+## Follow-up: publish checklist as GitHub issues
+
+**Request:** Create repository issues for the implementation checklist.
+
+**Outcome:** Created and read back 40 work issues in `rahuloruganti/OpenMeet`, numbered #7–#46, plus tracker #6. Kept 32 core/qualification tasks separate from 8 deferred options, included acceptance criteria and validation constraints, and linked every local checklist item to its issue. The connector could not access the repository; the authenticated GitHub CLI completed publication. Recorded issue markers and a local publication ledger for duplicate-safe reruns. Existing closed issue #1 was preserved. No commit, push, recording, upload of meeting content, or application implementation occurred.
+
+## Follow-up: start Phase 1 foundation verification
+
+**Request:** Start checklist Phase 1. The user separately authorized the named short Windows audio test, excluded the 60-minute test, and completed guarded app shutdowns when native automation could not close the window.
+
+**Outcome:** Fixed optional discovery blocking saved-note startup, stale startup key/engine responses, draft replacement during processing/track refresh, stale audio-health notices, and unbounded audio-worker control waits. Retained session/writer ownership after stop timeout so recovery and new sessions cannot race a late writer. Added synthetic regression tests for these cases, pause/stop marker samples, and atomic SQLite publication retry. Full `just check` passed with 98 frontend tests and 74 Rust tests, with two native tests ignored in the routine suite. Separately selected short hardware and synthetic Windows keychain tests each passed once. A standalone build with a separate qualification identifier/database verified native note creation, autosave, guarded quit, and restart persistence using fictional text. The helper blocked export/shortcut UI completion; the user closed the final qualification window. Ctrl+Shift+Space conflicts with an existing Windows registration; F9/F10 alternatives were available in an immediately released probe, without changing user settings. Results and open gates are in `docs/phase-1-foundation-verification.md`. No 60-minute capture, live provider submission, commit, push, or issue closure occurred. Phase 1 remains incomplete pending its full hardware, provider, and native UI gates.
+
+## Follow-up: prepare the foundation pull request
+
+**Request:** Open a PR. The user selected inclusion of the provider/settings prerequisites together with the Phase 1 fixes.
+
+**Outcome:** Prepared `codex/phase-one-foundation` from current `origin/main` in an isolated managed worktree. Integrated the preserved provider/settings implementation, schema upgrades, local model catalog, consent safeguards, build correction, comparison/checklist, and Phase 1 fixes. Preserved main's macOS capture preview and speech-engine path and both log histories. Fixed platform guards causing Windows Clippy warnings. Excluded local audit artifacts, credentials, recordings, databases, build output, and agent worktrees. The primary checkout was preserved. Full hardware/provider qualification and remaining Phase 1 gates stay open.
+
+**Checks:** The integrated branch passed frontend typecheck, lint, formatting, 98 tests and production build, then Rust formatting, Clippy with warnings denied, 77 tests and native debug build. Two native tests remained ignored. The first integration Clippy attempt exposed an unused platform import; its corrected Rust checks passed. The three additional Rust tests are main's existing macOS gate tests. No hardware recording or provider-content submission was repeated for PR preparation.

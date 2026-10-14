@@ -66,11 +66,17 @@ pub struct Meeting {
     pub capture_error: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SegmentTiming {
+    Timed { start_ms: i64, end_ms: i64 },
+    Untimed,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Segment {
     pub speaker: String,
-    pub start_ms: i64,
-    pub end_ms: i64,
+    pub timing: SegmentTiming,
     pub text: String,
 }
 
@@ -85,6 +91,66 @@ pub struct MeetingDetail {
     pub summary_model: Option<String>,
     pub tracks: Vec<crate::audio::Track>,
     pub summary_template: Option<String>,
+    pub transcript_provider: Option<String>,
+    pub transcript_model: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderRole {
+    Llm,
+    CloudStt,
+}
+
+impl ProviderRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Llm => "llm",
+            Self::CloudStt => "cloud_stt",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProviderConfig {
+    pub base_url: String,
+    pub model: Option<String>,
+    pub revision: i64,
+    #[serde(skip_serializing)]
+    pub credential_account: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SttMode {
+    Local,
+    Cloud,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyStatus {
+    Present,
+    Missing,
+    Unavailable,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum KeyChange {
+    Keep,
+    Replace { key: String },
+    Remove,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProcessingPlan {
+    pub fingerprint: String,
+    pub base_url: String,
+    pub model: String,
+    pub requests: usize,
+    pub audio_bytes: u64,
+    pub tracks: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -93,12 +159,23 @@ pub struct Settings {
     pub pause_shortcut: String,
     pub microphone_id: Option<String>,
     pub output_id: Option<String>,
-    pub merge_model: Option<String>,
+    pub llm: Option<ProviderConfig>,
+    pub cloud_stt: Option<ProviderConfig>,
+    pub stt_mode: SttMode,
     pub stt_language: String,
     pub stt_prompt: String,
     pub stt_model: String,
     pub stop_shortcut: Option<String>,
     pub export: ExportOptions,
+}
+
+impl Settings {
+    pub fn connection(&self, role: ProviderRole) -> Option<&ProviderConfig> {
+        match role {
+            ProviderRole::Llm => self.llm.as_ref(),
+            ProviderRole::CloudStt => self.cloud_stt.as_ref(),
+        }
+    }
 }
 
 /// One stored summary; `template` is the versioned template id (`general-v1`, …).
@@ -163,5 +240,42 @@ mod tests {
                 "error": null, "recording_offset_ms": 1500
             })
         );
+    }
+
+    #[test]
+    fn segment_timing_and_key_status_have_explicit_wire_variants() {
+        let timed = Segment {
+            speaker: "You".into(),
+            text: "Test words".into(),
+            timing: SegmentTiming::Timed {
+                start_ms: 2,
+                end_ms: 10,
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(timed).unwrap(),
+            serde_json::json!({
+                "speaker": "You", "text": "Test words", "timing": {"kind": "timed", "start_ms": 2, "end_ms": 10}
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(SegmentTiming::Untimed).unwrap(),
+            serde_json::json!({"kind": "untimed"})
+        );
+        assert_eq!(
+            serde_json::to_value(KeyStatus::Unavailable).unwrap(),
+            "unavailable"
+        );
+        assert_eq!(
+            serde_json::to_value(ProviderRole::CloudStt).unwrap(),
+            "cloud_stt"
+        );
+        assert!(matches!(
+            serde_json::from_value::<KeyChange>(
+                serde_json::json!({"kind": "replace", "key": "test-only"})
+            )
+            .unwrap(),
+            KeyChange::Replace { .. }
+        ));
     }
 }

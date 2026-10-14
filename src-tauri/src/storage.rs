@@ -1,11 +1,12 @@
 use crate::{audio, domain::*};
 use rusqlite::{params, Connection, OptionalExtension};
+#[cfg(test)]
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 9;
+const LATEST_SCHEMA: i64 = 11;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -51,6 +52,16 @@ impl Core {
             (
                 9,
                 include_str!("../migrations/009_export_options.sql"),
+                false,
+            ),
+            (
+                10,
+                include_str!("../migrations/010_provider_settings.sql"),
+                false,
+            ),
+            (
+                11,
+                include_str!("../migrations/011_cloud_transcripts.sql"),
                 false,
             ),
         ];
@@ -118,6 +129,7 @@ impl Core {
         validate_title(title)
     }
 
+    #[cfg(test)]
     pub fn start(&mut self, title: &str) -> Result<RecordingState> {
         let title = self.begin(title)?;
         let id = Uuid::new_v4().to_string();
@@ -219,7 +231,17 @@ impl Core {
             result?;
             Ok(self.recording_state())
         } else {
-            self.transition(CaptureStatus::Recording, CaptureStatus::Paused, "paused")
+            #[cfg(test)]
+            {
+                self.transition(CaptureStatus::Recording, CaptureStatus::Paused, "paused")
+            }
+            #[cfg(not(test))]
+            {
+                Err(AppError::new(
+                    "invalid_state",
+                    "The audio capture session is unavailable.",
+                ))
+            }
         }
     }
 
@@ -242,10 +264,21 @@ impl Core {
             }
             Ok(self.recording_state())
         } else {
-            self.transition(CaptureStatus::Paused, CaptureStatus::Recording, "recording")
+            #[cfg(test)]
+            {
+                self.transition(CaptureStatus::Paused, CaptureStatus::Recording, "recording")
+            }
+            #[cfg(not(test))]
+            {
+                Err(AppError::new(
+                    "invalid_state",
+                    "The audio capture session is unavailable.",
+                ))
+            }
         }
     }
 
+    #[cfg(test)]
     fn transition(
         &mut self,
         expected: CaptureStatus,
@@ -273,6 +306,16 @@ impl Core {
             self.recording.revision += 1;
             self.capture_report = Some(match audio.stop() {
                 Ok(report) => report,
+                Err(error) if error.code == "audio_worker_busy" => {
+                    self.audio = Some(audio);
+                    self.recording.status = CaptureStatus::Paused;
+                    self.recording.error = Some(error.message.clone());
+                    self.db.execute(
+                        "UPDATE meetings SET status = 'paused', capture_error = ?1 WHERE id = ?2",
+                        params![error.message, self.recording.meeting_id],
+                    )?;
+                    return Err(error);
+                }
                 Err(error) => audio::Report {
                     tracks: audio.tracks.clone(),
                     error: Some(error.message),
@@ -301,6 +344,7 @@ impl Core {
             tx.commit()?;
             self.capture_report = None;
         }
+        #[cfg(test)]
         if matches!(
             self.recording.status,
             CaptureStatus::Recording | CaptureStatus::Paused
@@ -339,13 +383,18 @@ impl Core {
             [id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let mut query = self.db.prepare("SELECT speaker, start_ms, end_ms, text FROM segments WHERE meeting_id = ?1 ORDER BY start_ms, id")?;
+        let mut query = self.db.prepare("SELECT speaker, start_ms, end_ms, text FROM segments WHERE meeting_id = ?1 ORDER BY start_ms IS NULL, start_ms, id")?;
         let segments = query
             .query_map([id], |row| {
                 Ok(Segment {
                     speaker: row.get(0)?,
-                    start_ms: row.get(1)?,
-                    end_ms: row.get(2)?,
+                    timing: match row.get::<_, Option<i64>>(1)? {
+                        Some(start_ms) => SegmentTiming::Timed {
+                            start_ms,
+                            end_ms: row.get(2)?,
+                        },
+                        None => SegmentTiming::Untimed,
+                    },
                     text: row.get(3)?,
                 })
             })?
@@ -377,6 +426,15 @@ impl Core {
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
+        let (transcript_provider, transcript_model) = self
+            .db
+            .query_row(
+                "SELECT provider, model FROM meeting_transcriptions WHERE meeting_id = ?1",
+                [id],
+                |row| Ok((Some(row.get(0)?), row.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((None, None));
         Ok(MeetingDetail {
             meeting,
             user_markdown,
@@ -387,22 +445,43 @@ impl Core {
             summary_model,
             tracks,
             summary_template,
+            transcript_provider,
+            transcript_model,
         })
     }
 
-    /// Replaces only previously generated (whisper) segments; fixtures and notes are untouched.
-    pub fn replace_transcript(&mut self, id: &str, segments: &[Segment]) -> Result<()> {
+    /// Transcript and provenance publish together; failures preserve the previous run and notes.
+    pub fn replace_transcript(
+        &mut self,
+        id: &str,
+        segments: &[Segment],
+        provider: &str,
+        model: &str,
+    ) -> Result<()> {
         let tx = self.db.transaction()?;
         tx.execute(
-            "DELETE FROM segments WHERE meeting_id = ?1 AND source = 'whisper'",
+            "DELETE FROM segments WHERE meeting_id = ?1 AND source IN ('whisper', 'cloud_stt')",
             [id],
         )?;
+        let source = if provider == "whisper" {
+            "whisper"
+        } else {
+            "cloud_stt"
+        };
         for segment in segments {
+            let (start_ms, end_ms) = match segment.timing {
+                SegmentTiming::Timed { start_ms, end_ms } => (Some(start_ms), Some(end_ms)),
+                SegmentTiming::Untimed => (None, None),
+            };
             tx.execute(
-                "INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES (?1, ?2, ?3, ?4, ?5, 'whisper', 'final')",
-                params![id, segment.speaker, segment.start_ms, segment.end_ms, segment.text],
+                "INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'final')",
+                params![id, segment.speaker, start_ms, end_ms, segment.text, source],
             )?;
         }
+        tx.execute(
+            "INSERT INTO meeting_transcriptions(meeting_id, provider, model) VALUES (?1, ?2, ?3) ON CONFLICT(meeting_id) DO UPDATE SET provider = excluded.provider, model = excluded.model",
+            params![id, provider, model],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -460,8 +539,17 @@ impl Core {
     }
 
     pub fn settings(&self) -> Result<Settings> {
+        let connection = |role: ProviderRole| {
+            self.db.query_row(
+                "SELECT base_url, model, revision, credential_account FROM provider_connections WHERE role = ?1",
+                [role.as_str()],
+                provider_row,
+            ).optional()
+        };
+        let llm = connection(ProviderRole::Llm)?;
+        let cloud_stt = connection(ProviderRole::CloudStt)?;
         Ok(self.db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, merge_model, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -469,7 +557,12 @@ impl Core {
                     pause_shortcut: row.get(1)?,
                     microphone_id: row.get(2)?,
                     output_id: row.get(3)?,
-                    merge_model: row.get(4)?,
+                    llm,
+                    cloud_stt,
+                    stt_mode: match row.get::<_, String>(4)?.as_str() {
+                        "cloud" => SttMode::Cloud,
+                        _ => SttMode::Local,
+                    },
                     export: ExportOptions {
                         transcript: row.get(5)?,
                         summary: row.get(6)?,
@@ -488,15 +581,85 @@ impl Core {
         )?)
     }
 
-    pub fn save_merge_model(&mut self, model: &str, available: &[String]) -> Result<Settings> {
-        if model.is_empty() || model.len() > 256 || !available.iter().any(|name| name == model) {
-            return Err(AppError::new(
-                "merge_model_unavailable",
-                "Choose an available Merge model. Refresh the Merge model list and try again.",
-            ));
+    pub fn save_provider_connection(
+        &mut self,
+        role: ProviderRole,
+        base_url: &str,
+        credential_account: Option<&str>,
+        expected_revision: Option<i64>,
+    ) -> Result<Settings> {
+        let mut settings = self.settings()?;
+        let tx = self.db.transaction()?;
+        let current = tx.query_row(
+            "SELECT base_url, model, revision, credential_account FROM provider_connections WHERE role = ?1",
+            [role.as_str()],
+            provider_row,
+        ).optional()?;
+        if current.as_ref().map(|config| config.revision) != expected_revision {
+            return Err(provider_conflict());
         }
-        self.db
-            .execute("UPDATE settings SET merge_model = ?1 WHERE id = 1", [model])?;
+        let revision = expected_revision
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(provider_conflict)?;
+        let model = current
+            .as_ref()
+            .filter(|config| config.base_url == base_url)
+            .and_then(|config| config.model.as_deref());
+        if let Some(previous) = &current {
+            if previous.base_url != base_url
+                && previous.credential_account.is_some()
+                && previous.credential_account.as_deref() == credential_account
+            {
+                return Err(AppError::new(
+                    "provider_key_required",
+                    "Enter a new API key when changing the provider URL.",
+                ));
+            }
+        }
+        tx.execute(
+            "INSERT INTO provider_connections(role, base_url, model, credential_account, revision) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(role) DO UPDATE SET base_url = excluded.base_url, model = excluded.model, credential_account = excluded.credential_account, revision = excluded.revision",
+            params![role.as_str(), base_url, model, credential_account, revision],
+        )?;
+        let config = Some(ProviderConfig {
+            base_url: base_url.to_string(),
+            model: model.map(str::to_string),
+            revision,
+            credential_account: credential_account.map(str::to_string),
+        });
+        tx.commit()?;
+        match role {
+            ProviderRole::Llm => settings.llm = config,
+            ProviderRole::CloudStt => settings.cloud_stt = config,
+        }
+        Ok(settings)
+    }
+
+    pub fn save_provider_model(
+        &mut self,
+        role: ProviderRole,
+        model: &str,
+        expected_revision: i64,
+    ) -> Result<Settings> {
+        crate::providers::validate_model(model)?;
+        let changed = self.db.execute(
+            "UPDATE provider_connections SET model = ?1, revision = revision + 1 WHERE role = ?2 AND revision = ?3 AND revision < ?4",
+            params![model, role.as_str(), expected_revision, i64::MAX],
+        )?;
+        if changed != 1 {
+            return Err(provider_conflict());
+        }
+        self.settings()
+    }
+
+    pub fn save_stt_mode(&mut self, mode: SttMode) -> Result<Settings> {
+        self.db.execute(
+            "UPDATE settings SET stt_mode = ?1 WHERE id = 1",
+            [match mode {
+                SttMode::Local => "local",
+                SttMode::Cloud => "cloud",
+            }],
+        )?;
         self.settings()
     }
 
@@ -539,13 +702,21 @@ impl Core {
         self.settings()
     }
 
+    #[cfg(test)]
     pub fn create_fixture(&mut self) -> Result<String> {
         #[derive(Deserialize)]
         struct Fixture {
             title: String,
             notes: String,
             summary: String,
-            segments: Vec<Segment>,
+            segments: Vec<FixtureSegment>,
+        }
+        #[derive(Deserialize)]
+        struct FixtureSegment {
+            speaker: String,
+            start_ms: i64,
+            end_ms: i64,
+            text: String,
         }
         let fixture: Fixture =
             serde_json::from_str(include_str!("../../fixtures/sample-meeting.json"))
@@ -808,6 +979,19 @@ impl Core {
     }
 }
 
+fn provider_conflict() -> AppError {
+    AppError::new("provider_conflict", "Provider settings changed elsewhere. Reload Settings and try again; nothing was overwritten.")
+}
+
+fn provider_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConfig> {
+    Ok(ProviderConfig {
+        base_url: row.get(0)?,
+        model: row.get(1)?,
+        revision: row.get(2)?,
+        credential_account: row.get(3)?,
+    })
+}
+
 fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
     Ok(Meeting {
         id: row.get(0)?,
@@ -854,6 +1038,129 @@ mod tests {
             .meeting
             .ended_at
             .is_some());
+    }
+
+    #[test]
+    fn failed_capture_publication_keeps_the_report_for_an_atomic_retry() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        let id = core.create_note("Synthetic publication check").unwrap();
+        core.save_notes(&id, "Keep these notes", 0).unwrap();
+        core.db
+            .execute(
+                "UPDATE meetings SET source = 'desktop', status = 'recording' WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        for kind in ["mic", "system"] {
+            core.db.execute("INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels) VALUES (?1, ?2, ?3, ?4, 'Synthetic', 16000, 1)", params![id, kind, format!("{kind}.wav"), format!("{kind}.timing.jsonl")]).unwrap();
+        }
+        let mut tracks = core.get_meeting(&id).unwrap().tracks;
+        for track in &mut tracks {
+            track.frames = 16000;
+            track.finalized = true;
+        }
+        core.recording = RecordingState {
+            status: CaptureStatus::Stopped,
+            meeting_id: Some(id.clone()),
+            source: Some("desktop".into()),
+            revision: 2,
+            ..RecordingState::default()
+        };
+        core.capture_report = Some(audio::Report {
+            tracks,
+            error: None,
+        });
+        core.db.execute_batch("CREATE TRIGGER fail_track_publication BEFORE UPDATE ON tracks WHEN OLD.kind = 'system' BEGIN SELECT RAISE(ABORT, 'synthetic publication failure'); END;").unwrap();
+        assert_eq!(core.stop().unwrap_err().code, "database");
+        assert!(core.capture_report.is_some());
+        let detail = core.get_meeting(&id).unwrap();
+        assert!(detail
+            .tracks
+            .iter()
+            .all(|track| track.frames == 0 && !track.finalized));
+        assert_eq!(detail.meeting.status, "recording");
+        assert_eq!(detail.user_markdown, "Keep these notes");
+        assert_eq!(
+            core.start("Must remain blocked").unwrap_err().code,
+            "already_recording"
+        );
+        core.db
+            .execute_batch("DROP TRIGGER fail_track_publication;")
+            .unwrap();
+        assert_eq!(core.stop().unwrap().status, CaptureStatus::Stopped);
+        assert!(core.capture_report.is_none());
+        drop(core);
+        let detail = Core::open(&path).unwrap().get_meeting(&id).unwrap();
+        assert!(detail
+            .tracks
+            .iter()
+            .all(|track| track.frames == 16000 && track.finalized));
+        assert_eq!(detail.meeting.status, "stopped");
+        assert!(detail.meeting.ended_at.is_some());
+        assert_eq!(detail.user_markdown, "Keep these notes");
+    }
+
+    #[test]
+    fn stop_timeout_retains_the_writer_until_late_finalization_finishes() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut core = Core::open(&folder.path().join("meetings.db")).unwrap();
+        let id = core.create_note("Synthetic stalled writer").unwrap();
+        core.db
+            .execute(
+                "UPDATE meetings SET source = 'desktop', status = 'recording' WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        let (session, release, finished) =
+            audio::pending_writer_for_test(&core.audio_root.join(&id));
+        for track in &session.tracks {
+            core.db.execute("INSERT INTO tracks(meeting_id, kind, path, timing_path, device_name, sample_rate, channels) VALUES (?1, ?2, ?3, ?4, 'Synthetic', 16000, 1)", params![id, track.kind, track.path, track.timing_path]).unwrap();
+        }
+        core.recording = RecordingState {
+            status: CaptureStatus::Recording,
+            meeting_id: Some(id.clone()),
+            source: Some("desktop".into()),
+            revision: 1,
+            ..RecordingState::default()
+        };
+        core.audio = Some(session);
+        let first_stop = core.stop();
+        let pending_state = core.recording_state();
+        let retained_worker = core.audio.is_some();
+        let premature_recovery = core.recoverable_tracks(&id).is_ok();
+        let _ = release.send(());
+        finished
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        let final_state = core.stop().unwrap();
+        assert_eq!(first_stop.unwrap_err().code, "audio_worker_busy");
+        assert!(
+            retained_worker,
+            "The pending writer must remain owned by the active session"
+        );
+        assert_eq!(pending_state.status, CaptureStatus::Paused);
+        assert!(
+            !premature_recovery,
+            "Recovery must wait for the writer to release its files"
+        );
+        assert_eq!(final_state.status, CaptureStatus::Stopped);
+        let detail = core.get_meeting(&id).unwrap();
+        assert_eq!(detail.meeting.status, "interrupted");
+        for track in detail.tracks {
+            assert!(track.finalized);
+            assert_eq!(track.frames, 4);
+            assert_eq!(
+                hound::WavReader::open(track.path)
+                    .unwrap()
+                    .samples::<f32>()
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .unwrap(),
+                [0.25; 4]
+            );
+        }
+        assert!(core.audio.is_none());
     }
 
     #[test]
@@ -933,13 +1240,21 @@ mod tests {
         let id = core.create_fixture().unwrap();
         let line = |text: &str, start: i64| Segment {
             speaker: "Others".into(),
-            start_ms: start,
-            end_ms: start + 10,
+            timing: SegmentTiming::Timed {
+                start_ms: start,
+                end_ms: start + 10,
+            },
             text: text.into(),
         };
-        core.replace_transcript(&id, &[line("first run", 0), line("second", 20)])
+        core.replace_transcript(
+            &id,
+            &[line("first run", 0), line("second", 20)],
+            "whisper",
+            "small",
+        )
+        .unwrap();
+        core.replace_transcript(&id, &[line("rerun", 5)], "whisper", "small")
             .unwrap();
-        core.replace_transcript(&id, &[line("rerun", 5)]).unwrap();
         let texts: Vec<_> = core
             .get_meeting(&id)
             .unwrap()
@@ -974,7 +1289,9 @@ mod tests {
             ..line("x", 0)
         };
         assert_eq!(
-            core.replace_transcript(&id, &[bad]).unwrap_err().code,
+            core.replace_transcript(&id, &[bad], "whisper", "small")
+                .unwrap_err()
+                .code,
             "database"
         );
         assert_eq!(core.get_meeting(&id).unwrap().segments.len(), 3);
@@ -1013,24 +1330,354 @@ mod tests {
     }
 
     #[test]
-    fn merge_model_selection_requires_an_available_model_and_survives_restart() {
+    fn independent_provider_settings_require_current_revisions_and_survive_restart() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meetings.db");
         let mut core = Core::open(&path).unwrap();
-        assert_eq!(core.settings().unwrap().merge_model, None);
-        let available = vec!["openai/gpt-5.4".to_string()];
-        for invalid in ["", "gated/model", &"m".repeat(300)] {
-            assert_eq!(
-                core.save_merge_model(invalid, &available).unwrap_err().code,
-                "merge_model_unavailable"
-            );
-        }
-        assert_eq!(core.settings().unwrap().merge_model, None);
-        core.save_merge_model("openai/gpt-5.4", &available).unwrap();
+        assert!(core.settings().unwrap().llm.is_none());
+        core.save_provider_connection(
+            ProviderRole::Llm,
+            "https://chat.example/v1",
+            Some("key-account-a"),
+            None,
+        )
+        .unwrap();
+        core.save_provider_connection(
+            ProviderRole::CloudStt,
+            "https://speech.example/v1",
+            Some("key-account-b"),
+            None,
+        )
+        .unwrap();
+        core.save_provider_model(ProviderRole::Llm, "custom/manual-model", 1)
+            .unwrap();
+        assert_eq!(
+            core.save_provider_model(ProviderRole::Llm, "stale-model", 1)
+                .unwrap_err()
+                .code,
+            "provider_conflict"
+        );
+        assert_eq!(
+            core.save_provider_connection(
+                ProviderRole::Llm,
+                "https://changed.example/v1",
+                Some("key-account-c"),
+                Some(1)
+            )
+            .unwrap_err()
+            .code,
+            "provider_conflict"
+        );
+        assert_eq!(
+            core.save_provider_connection(
+                ProviderRole::Llm,
+                "https://changed.example/v1",
+                Some("key-account-a"),
+                Some(2)
+            )
+            .unwrap_err()
+            .code,
+            "provider_key_required"
+        );
+        core.save_provider_connection(
+            ProviderRole::Llm,
+            "https://chat.example/v1",
+            Some("key-account-c"),
+            Some(2),
+        )
+        .unwrap();
+        assert_eq!(
+            core.settings().unwrap().llm.unwrap().model.as_deref(),
+            Some("custom/manual-model")
+        );
+        core.save_provider_model(ProviderRole::CloudStt, "speech-custom", 1)
+            .unwrap();
+        core.save_stt_mode(SttMode::Cloud).unwrap();
         drop(core);
-        let core = Core::open(&path).unwrap();
+        let mut core = Core::open(&path).unwrap();
         let settings = core.settings().unwrap();
-        assert_eq!(settings.merge_model.as_deref(), Some("openai/gpt-5.4"));
+        let llm = settings.llm.unwrap();
+        assert_eq!(llm.base_url, "https://chat.example/v1");
+        assert_eq!(llm.model.as_deref(), Some("custom/manual-model"));
+        assert_eq!(llm.revision, 3);
+        assert_eq!(llm.credential_account.as_deref(), Some("key-account-c"));
+        let speech = settings.cloud_stt.unwrap();
+        assert_eq!(speech.base_url, "https://speech.example/v1");
+        assert_eq!(speech.model.as_deref(), Some("speech-custom"));
+        assert_eq!(speech.revision, 2);
+        assert_eq!(settings.stt_mode, SttMode::Cloud);
+        assert_eq!(settings.stt_model, "small");
+        core.save_provider_connection(
+            ProviderRole::Llm,
+            "https://changed.example/v1",
+            Some("key-account-d"),
+            Some(3),
+        )
+        .unwrap();
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.llm.unwrap().model, None);
+        assert_eq!(
+            settings.cloud_stt.unwrap().model.as_deref(),
+            Some("speech-custom")
+        );
+        let serialized = serde_json::to_string(&core.settings().unwrap()).unwrap();
+        assert!(!serialized.contains("credential_account"));
+        assert!(!serialized.contains("key-account"));
+        assert!(!serialized.contains("merge_model"));
+    }
+
+    #[test]
+    fn cloud_and_local_transcripts_replace_atomically_with_provenance_and_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        let id = core.create_fixture().unwrap();
+        core.save_notes(&id, "Preserved private notes", 0).unwrap();
+        let timed = Segment {
+            speaker: "Others".into(),
+            timing: SegmentTiming::Timed {
+                start_ms: 10,
+                end_ms: 20,
+            },
+            text: "Coconut local".into(),
+        };
+        core.replace_transcript(&id, std::slice::from_ref(&timed), "whisper", "base")
+            .unwrap();
+        let cloud = vec![
+            Segment {
+                speaker: "You".into(),
+                timing: SegmentTiming::Untimed,
+                text: "Dragonfruit first".into(),
+            },
+            Segment {
+                speaker: "You".into(),
+                timing: SegmentTiming::Untimed,
+                text: "Dragonfruit second".into(),
+            },
+            Segment {
+                speaker: "Others".into(),
+                timing: SegmentTiming::Untimed,
+                text: "Lychee remote".into(),
+            },
+        ];
+        core.replace_transcript(&id, &cloud, "https://speech.example/v1", "speech-model")
+            .unwrap();
+        assert!(core.search_meetings("Coconut").unwrap().is_empty());
+        assert_eq!(core.search_meetings("Dragonfruit").unwrap().len(), 1);
+        let detail = core.get_meeting(&id).unwrap();
+        assert_eq!(detail.segments.len(), 5, "legacy fixture rows remain");
+        assert_eq!(&detail.segments[2..], &cloud);
+        assert_eq!(
+            detail.transcript_provider.as_deref(),
+            Some("https://speech.example/v1")
+        );
+        assert_eq!(detail.transcript_model.as_deref(), Some("speech-model"));
+        assert_eq!(detail.user_markdown, "Preserved private notes");
+        assert_eq!(detail.notes_revision, 1);
+        assert_eq!(detail.summary_provider.as_deref(), Some("fixture"));
+        let bad = Segment {
+            timing: SegmentTiming::Timed {
+                start_ms: 30,
+                end_ms: 20,
+            },
+            ..timed.clone()
+        };
+        assert!(core
+            .replace_transcript(&id, &[bad], "whisper", "small")
+            .is_err());
+        let after = core.get_meeting(&id).unwrap();
+        assert_eq!(after.segments, detail.segments);
+        assert_eq!(after.transcript_model, detail.transcript_model);
+        assert_eq!(core.search_meetings("Dragonfruit").unwrap().len(), 1);
+        drop(core);
+        let mut core = Core::open(&path).unwrap();
+        assert_eq!(core.get_meeting(&id).unwrap().segments, detail.segments);
+        core.replace_transcript(&id, &[timed], "whisper", "base")
+            .unwrap();
+        assert!(core.search_meetings("Dragonfruit").unwrap().is_empty());
+        assert_eq!(core.search_meetings("Coconut").unwrap().len(), 1);
+        let detail = core.get_meeting(&id).unwrap();
+        assert_eq!(detail.transcript_provider.as_deref(), Some("whisper"));
+        assert_eq!(detail.transcript_model.as_deref(), Some("base"));
+        core.replace_transcript(&id, &[], "https://speech.example/v1", "silent-model")
+            .unwrap();
+        assert_eq!(core.get_meeting(&id).unwrap().segments.len(), 2);
+        assert_eq!(
+            core.get_meeting(&id).unwrap().transcript_model.as_deref(),
+            Some("silent-model")
+        );
+        assert!(core.search_meetings("Coconut").unwrap().is_empty());
+        core.delete_meeting(&id).unwrap();
+        assert_eq!(
+            core.db
+                .query_row("SELECT COUNT(*) FROM meeting_transcriptions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert!(core.search_meetings("checklist").unwrap().is_empty());
+    }
+
+    #[test]
+    fn segment_database_rejects_half_null_and_invalid_timing_pairs() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Timing boundary").unwrap();
+        for (start, end) in [
+            (None, Some(1)),
+            (Some(0), None),
+            (Some(-1), Some(2)),
+            (Some(3), Some(2)),
+        ] {
+            assert!(core.db.execute(
+                "INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES (?1, 'You', ?2, ?3, 'Invalid', 'cloud_stt', 'final')",
+                params![id, start, end],
+            ).is_err());
+        }
+        core.db.execute("INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES (?1, 'You', NULL, NULL, 'Untimed', 'cloud_stt', 'final')", [&id]).unwrap();
+        assert_eq!(
+            core.get_meeting(&id).unwrap().segments[0].timing,
+            SegmentTiming::Untimed
+        );
+    }
+
+    #[test]
+    fn provider_migrations_preserve_populated_v9_database_and_fts_triggers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = Connection::open(&path).unwrap();
+            for script in [
+                include_str!("../migrations/001_foundation.sql"),
+                include_str!("../migrations/002_capture.sql"),
+                include_str!("../migrations/003_local_model.sql"),
+                include_str!("../migrations/004_merge_model.sql"),
+                include_str!("../migrations/005_transcripts.sql"),
+                include_str!("../migrations/006_note_meetings.sql"),
+                include_str!("../migrations/007_search.sql"),
+                include_str!("../migrations/008_stt_settings.sql"),
+                include_str!("../migrations/009_export_options.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("PRAGMA foreign_keys = ON;
+                INSERT INTO meetings(id,title,started_at,source,status) VALUES ('legacy','Legacy fixture','2026-10-10','fixture','stopped'), ('recorded','Recorded','2026-10-10','desktop','stopped');
+                INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('legacy','Edited fixture notes',7), ('recorded','Kept notes',4);
+                INSERT INTO segments(id,meeting_id,speaker,start_ms,end_ms,text,source,pass) VALUES (42,'recorded','You',100,200,'Persimmon original','whisper','final'), (43,'legacy','Others',0,100,'Fictional checklist','fixture','final');
+                INSERT INTO summaries(meeting_id,template_hash,model,provider,markdown) VALUES ('recorded','general-v1','old-model','merge','Kept summary');
+                INSERT INTO tracks(meeting_id,kind,path,timing_path,device_name,sample_rate,channels,frames,finalized) VALUES ('recorded','mic','mic.wav','mic.jsonl','Mic',16000,1,16000,1);
+                UPDATE settings SET merge_model='legacy/model', stt_model='base', stt_language='de', stt_prompt='Okta', stop_shortcut='Alt+S';").unwrap();
+            db.execute(
+                "UPDATE tracks SET path = ?1, timing_path = ?2 WHERE meeting_id = 'recorded'",
+                params![
+                    dir.path().join("missing-mic.wav").to_str().unwrap(),
+                    dir.path().join("missing-mic.jsonl").to_str().unwrap()
+                ],
+            )
+            .unwrap();
+        }
+        let mut core = Core::open(&path).unwrap();
+        let detail = core.get_meeting("recorded").unwrap();
+        assert_eq!(detail.user_markdown, "Kept notes");
+        assert_eq!(detail.notes_revision, 4);
+        assert_eq!(
+            detail.segments[0].timing,
+            SegmentTiming::Timed {
+                start_ms: 100,
+                end_ms: 200
+            }
+        );
+        assert_eq!(detail.transcript_provider.as_deref(), Some("whisper"));
+        assert_eq!(detail.transcript_model, None, "old model was not recorded");
+        assert_eq!(detail.summary.as_deref(), Some("Kept summary"));
+        assert_eq!(detail.summary_provider.as_deref(), Some("merge"));
+        assert_eq!(
+            detail.tracks[0].path,
+            dir.path().join("missing-mic.wav").to_str().unwrap()
+        );
+        assert_eq!(
+            core.db
+                .query_row(
+                    "SELECT id FROM segments WHERE text='Persimmon original'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            42
+        );
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.llm, None);
+        assert_eq!(settings.cloud_stt, None);
+        assert_eq!(settings.stt_mode, SttMode::Local);
+        assert_eq!(
+            (
+                settings.stt_model.as_str(),
+                settings.stt_language.as_str(),
+                settings.stt_prompt.as_str()
+            ),
+            ("base", "de", "Okta")
+        );
+        assert_eq!(settings.stop_shortcut.as_deref(), Some("Alt+S"));
+        assert_eq!(
+            core.db
+                .query_row("SELECT merge_model FROM settings", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "legacy/model"
+        );
+        let legacy = core.get_meeting("legacy").unwrap();
+        assert_eq!(legacy.meeting.source, "fixture");
+        assert_eq!(
+            (legacy.user_markdown.as_str(), legacy.notes_revision),
+            ("Edited fixture notes", 7)
+        );
+        assert_eq!(core.search_meetings("Persimmon").unwrap().len(), 1);
+        core.db
+            .execute(
+                "UPDATE segments SET text='Rambutan updated' WHERE id=42",
+                [],
+            )
+            .unwrap();
+        assert!(core.search_meetings("Persimmon").unwrap().is_empty());
+        assert_eq!(core.search_meetings("Rambutan").unwrap().len(), 1);
+        core.replace_transcript(
+            "recorded",
+            &[Segment {
+                speaker: "You".into(),
+                timing: SegmentTiming::Untimed,
+                text: "Tamarind cloud".into(),
+            }],
+            "https://speech.example/v1",
+            "cloud-model",
+        )
+        .unwrap();
+        assert!(core.search_meetings("Rambutan").unwrap().is_empty());
+        assert_eq!(core.search_meetings("Tamarind").unwrap().len(), 1);
+        assert_eq!(
+            core.db
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        drop(core);
+        let mut core = Core::open(&path).unwrap();
+        assert_eq!(
+            core.get_meeting("recorded")
+                .unwrap()
+                .transcript_model
+                .as_deref(),
+            Some("cloud-model")
+        );
+        core.delete_meeting("recorded").unwrap();
+        assert!(core.search_meetings("Tamarind").unwrap().is_empty());
+        assert_eq!(core.get_meeting("legacy").unwrap().notes_revision, 7);
+        assert_eq!(
+            core.db
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            LATEST_SCHEMA
+        );
     }
 
     #[test]
@@ -1060,7 +1707,7 @@ mod tests {
         assert_eq!(settings.vault_folder.as_deref(), Some("saved-folder"));
         assert_eq!(settings.microphone_id.as_deref(), Some("mic"));
         assert_eq!(settings.output_id.as_deref(), Some("out"));
-        assert_eq!(settings.merge_model, None);
+        assert_eq!(settings.llm, None);
         assert_eq!(
             core.db
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
@@ -1256,18 +1903,26 @@ mod tests {
         assert_eq!(found(&core, "man"), ours("notes"), "prefix match");
         let line = |text: &str| Segment {
             speaker: "You".into(),
-            start_ms: 0,
-            end_ms: 1,
+            timing: SegmentTiming::Timed {
+                start_ms: 0,
+                end_ms: 1,
+            },
             text: text.into(),
         };
-        core.replace_transcript(&note, &[line("papaya talk"), line("papaya talk")])
-            .unwrap();
+        core.replace_transcript(
+            &note,
+            &[line("papaya talk"), line("papaya talk")],
+            "whisper",
+            "small",
+        )
+        .unwrap();
         assert_eq!(
             found(&core, "papaya"),
             ours("transcript"),
             "one hit per kind"
         );
-        core.replace_transcript(&note, &[line("guava")]).unwrap();
+        core.replace_transcript(&note, &[line("guava")], "whisper", "small")
+            .unwrap();
         assert!(found(&core, "papaya").is_empty());
         assert_eq!(found(&core, "guava"), ours("transcript"));
         core.save_summary(&note, "merge", "m", "lychee summary", "general-v1")
@@ -1598,7 +2253,14 @@ mod tests {
         assert_eq!(fix.segments.len(), 1);
         let settings = core.settings().unwrap();
         assert_eq!(settings.vault_folder.as_deref(), Some("saved-folder"));
-        assert_eq!(settings.merge_model.as_deref(), Some("openai/gpt-y"));
+        assert_eq!(settings.llm, None);
+        assert_eq!(
+            core.db
+                .query_row("SELECT merge_model FROM settings", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "openai/gpt-y"
+        );
         assert!(settings.export.transcript && settings.export.summary);
         assert_eq!(settings.export.filename, FilenamePattern::Title);
         let version: i64 = core
@@ -1664,7 +2326,14 @@ mod tests {
         assert_eq!(detail.tracks[0].frames, 4800);
         let settings = core.settings().unwrap();
         assert_eq!(settings.pause_shortcut, "Alt+P");
-        assert_eq!(settings.merge_model.as_deref(), Some("openai/gpt-5.4"));
+        assert_eq!(settings.llm, None);
+        assert_eq!(
+            core.db
+                .query_row("SELECT merge_model FROM settings", [], |row| row
+                    .get::<_, String>(0))
+                .unwrap(),
+            "openai/gpt-5.4"
+        );
         assert_eq!(settings.stt_language, "auto");
         assert_eq!(settings.stt_prompt, "");
         assert_eq!(settings.stt_model, "small");

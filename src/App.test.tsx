@@ -25,23 +25,23 @@ vi.mock("./lib/api", async (original) => {
       listMeetings: vi.fn(),
       getMeeting: vi.fn(),
       getRecordingState: vi.fn(),
-      start: vi.fn(),
       pause: vi.fn(),
       resume: vi.fn(),
       stop: vi.fn(),
-      createFixture: vi.fn(),
       saveNotes: vi.fn(),
       getSettings: vi.fn(),
-      mergeKeyStatus: vi.fn(),
+      providerKeyStatus: vi.fn(),
+      saveProviderConnection: vi.fn(),
+      listProviderModels: vi.fn(),
+      saveProviderModel: vi.fn(),
+      saveSttMode: vi.fn(),
+      planTranscription: vi.fn(),
+      planQuestion: vi.fn(),
       sttStatus: vi.fn(),
       sttInstall: vi.fn(),
       transcribeMeeting: vi.fn(),
       generateSummary: vi.fn(),
       onSttProgress: vi.fn(),
-      importMergeKey: vi.fn(),
-      deleteMergeKey: vi.fn(),
-      listMergeModels: vi.fn(),
-      saveMergeModel: vi.fn(),
       getStartupWarning: vi.fn(),
       listDevices: vi.fn(),
       startCapture: vi.fn(),
@@ -91,6 +91,17 @@ const sample: MeetingDetail = {
   segments: [],
   tracks: [],
   summary_template: "fixture",
+  transcript_provider: null,
+  transcript_model: null,
+};
+
+const textPlan = {
+  fingerprint: "text-consent",
+  base_url: "https://provider.example/v1",
+  model: "test-chat",
+  requests: 1,
+  audio_bytes: 0,
+  tracks: [],
 };
 
 const initialSettings: Settings = {
@@ -98,7 +109,9 @@ const initialSettings: Settings = {
   pause_shortcut: "CommandOrControl+Shift+Space",
   microphone_id: null,
   output_id: null,
-  merge_model: null,
+  llm: null,
+  cloud_stt: null,
+  stt_mode: "local",
   export: { transcript: true, summary: true, filename: "title" },
   stt_language: "auto",
   stt_prompt: "",
@@ -159,12 +172,13 @@ beforeEach(() => {
   });
   vi.mocked(api.getStartupWarning).mockResolvedValue(null);
   vi.mocked(api.saveNotes).mockResolvedValue(1);
-  vi.mocked(api.mergeKeyStatus).mockResolvedValue(false);
+  vi.mocked(api.providerKeyStatus).mockResolvedValue("missing");
   vi.mocked(api.sttStatus).mockResolvedValue(notInstalled);
   vi.mocked(api.audioUsage).mockResolvedValue(0);
   vi.mocked(api.searchMeetings).mockResolvedValue([]);
   vi.mocked(api.listSummaries).mockResolvedValue([]);
-  vi.mocked(api.planSummary).mockResolvedValue(1);
+  vi.mocked(api.planSummary).mockResolvedValue(textPlan);
+  vi.mocked(api.planQuestion).mockResolvedValue(textPlan);
   for (const method of [
     api.onRecordingState,
     api.onMeetingUpdated,
@@ -247,6 +261,93 @@ describe("desktop foundation", () => {
     expect(document.activeElement).toBe(quit);
     await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
     expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+  });
+
+  it.each(["devices", "keychain", "speech"])(
+    "opens saved notes while %s discovery is still pending",
+    async (pending) => {
+      if (pending === "devices")
+        vi.mocked(api.listDevices).mockReturnValue(new Promise(() => {}));
+      else if (pending === "keychain")
+        vi.mocked(api.providerKeyStatus).mockReturnValue(new Promise(() => {}));
+      else vi.mocked(api.sttStatus).mockReturnValue(new Promise(() => {}));
+      await ready();
+      await userEvent.type(
+        screen.getByRole("textbox", { name: /My notes/ }),
+        " Still editable",
+      );
+      expect(
+        screen.getByDisplayValue("Original notes Still editable"),
+      ).toBeTruthy();
+    },
+  );
+
+  it("opens saved notes when audio-device discovery fails", async () => {
+    vi.mocked(api.listDevices).mockRejectedValue(
+      new Error("Device discovery failed"),
+    );
+    await ready();
+    expect(await screen.findByText(/Device discovery failed/)).toBeTruthy();
+    expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
+  });
+
+  it("ignores startup key status that arrives after a replacement key was saved", async () => {
+    let deliver: (status: "missing") => void = () => {};
+    vi.mocked(api.providerKeyStatus)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+      )
+      .mockResolvedValue("present");
+    vi.mocked(api.saveProviderConnection).mockResolvedValue({
+      ...initialSettings,
+      llm: { base_url: textPlan.base_url, model: null, revision: 1 },
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.type(
+      screen.getByLabelText("Summary API base URL"),
+      textPlan.base_url,
+    );
+    await userEvent.type(
+      screen.getByLabelText("Summary API key"),
+      "synthetic-new-key",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save summary connection" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Refresh summary models" }),
+      ).toHaveProperty("disabled", false),
+    );
+    await act(async () => deliver("missing"));
+    expect(
+      screen.getByRole("button", { name: "Refresh summary models" }),
+    ).toHaveProperty("disabled", false);
+  });
+
+  it("ignores startup engine status after transcription settings refresh it", async () => {
+    let deliver: (status: typeof notInstalled) => void = () => {};
+    vi.mocked(api.sttStatus)
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+      )
+      .mockResolvedValue(installed);
+    vi.mocked(api.saveSttSettings).mockResolvedValue(initialSettings);
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save transcription settings" }),
+    );
+    await screen.findByRole("button", { name: "Speech engine installed" });
+    await act(async () => deliver(notInstalled));
+    expect(
+      screen.getByRole("button", { name: "Speech engine installed" }),
+    ).toBeTruthy();
   });
 
   it("does not enable capture or silently replace an unavailable saved microphone", async () => {
@@ -400,8 +501,11 @@ describe("desktop foundation", () => {
         .getAttribute("aria-modal"),
     ).toBe("false");
     expect(screen.getByText("No API key saved")).toBeTruthy();
-    expect(screen.queryByLabelText(/API key/)).toBeNull();
-    expect(api.listMergeModels).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Summary API key")).toHaveProperty(
+      "value",
+      "",
+    );
+    expect(api.listProviderModels).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     await screen.findByText(/Notes not saved: Disk full/);
     expect(api.stop).toHaveBeenCalledOnce();
@@ -431,7 +535,9 @@ describe("desktop foundation", () => {
       screen.getByRole("button", { name: "Close panel" }),
     );
     expect(api.startCapture).not.toHaveBeenCalled();
-    expect(api.start).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Start simulation" }),
+    ).toBeNull();
     await userEvent.click(screen.getByRole("checkbox"));
     expect(
       (
@@ -508,7 +614,7 @@ describe("desktop foundation", () => {
     expect(screen.getByDisplayValue("Still editing my notes")).toBeTruthy();
   });
 
-  it("labels simulation clearly and requires acknowledgement before starting", async () => {
+  it("preserves historical sample labels and requires acknowledgement before recording", async () => {
     await ready();
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
@@ -587,7 +693,6 @@ describe("desktop foundation", () => {
     );
     expect(screen.getByText("Recording: stopped")).toBeTruthy();
     expect(screen.getByDisplayValue("Keep this unsaved draft")).toBeTruthy();
-    expect(api.getMeeting).toHaveBeenCalledOnce();
     vi.mocked(api.saveNotes).mockResolvedValue(1);
     await userEvent.click(
       screen.getByRole("button", { name: "Save notes now" }),
@@ -827,88 +932,77 @@ describe("desktop foundation", () => {
     expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
   });
 
-  it("imports the key backend-side, lists Merge models only on request, and saves an available one", async () => {
-    vi.mocked(api.importMergeKey).mockResolvedValue(true);
-    vi.mocked(api.listMergeModels).mockResolvedValue([
-      {
-        model: "openai/gpt-5.4",
-        display_name: "GPT 5.4",
-        available: true,
-        unavailable_reason: null,
-      },
-      {
-        model: "x/gated",
-        display_name: null,
-        available: false,
-        unavailable_reason: "vendor_access_required",
-      },
-    ]);
-    vi.mocked(api.saveMergeModel).mockResolvedValue({
+  it("saves a transient key, refreshes models only on request, and saves a model without catalog restrictions", async () => {
+    const connected: Settings = {
       ...initialSettings,
-      merge_model: "openai/gpt-5.4",
+      llm: { base_url: textPlan.base_url, model: null, revision: 1 },
+    };
+    vi.mocked(api.saveProviderConnection).mockResolvedValue(connected);
+    vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
+    vi.mocked(api.listProviderModels).mockResolvedValue([{ id: "chat-model" }]);
+    vi.mocked(api.saveProviderModel).mockResolvedValue({
+      ...connected,
+      llm: { base_url: textPlan.base_url, model: "custom-model", revision: 2 },
     });
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(api.listMergeModels).not.toHaveBeenCalled();
-    expect(
-      (
-        screen.getByRole("button", {
-          name: "Connect / refresh Merge models",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
+    expect(api.listProviderModels).not.toHaveBeenCalled();
+    await userEvent.type(
+      screen.getByLabelText("Summary API base URL"),
+      textPlan.base_url,
+    );
+    const key = screen.getByLabelText("Summary API key");
+    await userEvent.type(key, "fictional-test-key");
     await userEvent.click(
-      screen.getByRole("button", { name: "Import key from environment" }),
+      screen.getByRole("button", { name: "Save summary connection" }),
     );
-    await screen.findByText("API key saved in the OS keychain");
-    // The import command takes no key argument: the webview never holds it.
-    expect(api.importMergeKey).toHaveBeenCalledWith();
+    await waitFor(() =>
+      expect(api.saveProviderConnection).toHaveBeenCalledWith(
+        "llm",
+        textPlan.base_url,
+        { kind: "replace", key: "fictional-test-key" },
+        null,
+      ),
+    );
+    expect(key).toHaveProperty("value", "");
+    expect(api.generateSummary).not.toHaveBeenCalled();
     await userEvent.click(
-      screen.getByRole("button", { name: "Connect / refresh Merge models" }),
+      screen.getByRole("button", { name: "Refresh summary models" }),
     );
-    await screen.findByRole("option", { name: "GPT 5.4" });
-    expect(
-      (
-        screen.getByRole("option", {
-          name: "x/gated (unavailable: vendor_access_required)",
-        }) as HTMLOptionElement
-      ).disabled,
-    ).toBe(true);
-    const save = screen.getByRole("button", {
-      name: "Save Merge model",
-    }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    await userEvent.selectOptions(
-      screen.getByLabelText("Merge model"),
-      "openai/gpt-5.4",
+    await screen.findByRole("option", { name: "chat-model" });
+    expect(api.listProviderModels).toHaveBeenCalledWith("llm", 1);
+    await userEvent.type(
+      screen.getByLabelText("Summary custom model ID"),
+      "custom-model",
     );
-    await userEvent.click(save);
-    await screen.findByText("Saved Merge model: openai/gpt-5.4");
-    expect(api.saveMergeModel).toHaveBeenCalledWith("openai/gpt-5.4");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save summary model" }),
+    );
+    await waitFor(() =>
+      expect(api.saveProviderModel).toHaveBeenCalledWith(
+        "llm",
+        "custom-model",
+        1,
+      ),
+    );
+    expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
   });
 
-  it("shows Merge failures, keeps the saved model, and does not block startup on a keychain error", async () => {
-    vi.mocked(api.mergeKeyStatus).mockRejectedValue(new Error("keychain"));
-    vi.mocked(api.getSettings).mockResolvedValue({
+  it("keeps saved model IDs after failed discovery and tolerates an unavailable keychain", async () => {
+    vi.mocked(api.providerKeyStatus).mockRejectedValue(new Error("keychain"));
+    const connected: Settings = {
       ...initialSettings,
-      merge_model: "saved/model",
-    });
-    vi.mocked(api.importMergeKey).mockResolvedValue(true);
-    vi.mocked(api.listMergeModels).mockRejectedValue(
-      new Error("Merge rejected the API key."),
-    );
+      llm: { base_url: textPlan.base_url, model: "saved/model", revision: 1 },
+    };
+    vi.mocked(api.getSettings).mockResolvedValue(connected);
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByText("API key status unavailable")).toBeTruthy();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Import key from environment" }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Connect / refresh Merge models" }),
-    );
-    await screen.findByText(/Merge rejected the API key/);
-    expect(screen.getByText("Saved Merge model: saved/model")).toBeTruthy();
-    expect(api.saveMergeModel).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Refresh summary models" }),
+    ).toHaveProperty("disabled", true);
+    expect(screen.getByText(/Saved model: saved\/model/)).toBeTruthy();
+    expect(api.saveProviderModel).not.toHaveBeenCalled();
   });
 
   it("surfaces audio gaps without stopping or hiding the recording controls", async () => {
@@ -959,6 +1053,47 @@ describe("desktop foundation", () => {
         .disabled,
     ).toBe(false);
     expect(screen.queryByText(/stopped responding/)).toBeNull();
+  });
+
+  it("clears obsolete audio health after stop and before a new meeting", async () => {
+    await ready();
+    const publishState = vi.mocked(api.onRecordingState).mock.calls[0][0];
+    const publishHealth = vi.mocked(api.onAudioHealth).mock.calls[0][0];
+    act(() =>
+      publishState({
+        revision: 1,
+        status: "recording",
+        meeting_id: "first",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: 0,
+      }),
+    );
+    act(() => publishHealth({ error: "Previous device failure", tracks: [] }));
+    expect(screen.getByText("Audio: Previous device failure")).toBeTruthy();
+    act(() =>
+      publishState({
+        revision: 2,
+        status: "stopped",
+        meeting_id: "first",
+        source: "desktop",
+        error: "Previous device failure",
+        recording_offset_ms: null,
+      }),
+    );
+    expect(screen.queryByText("Audio: Previous device failure")).toBeNull();
+    expect(screen.getByText("Capture: Previous device failure")).toBeTruthy();
+    act(() =>
+      publishState({
+        revision: 3,
+        status: "recording",
+        meeting_id: "second",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: 0,
+      }),
+    );
+    expect(screen.queryByText(/Previous device failure/)).toBeNull();
   });
 
   it("downloads the speech engine only on request and reports verified status", async () => {
@@ -1029,8 +1164,7 @@ describe("desktop foundation", () => {
         segments: [
           {
             speaker: "Others",
-            start_ms: 1000,
-            end_ms: 2000,
+            timing: { kind: "timed", start_ms: 1000, end_ms: 2000 },
             text: "Hello from the call",
           },
         ],
@@ -1043,9 +1177,116 @@ describe("desktop foundation", () => {
       screen.getByRole("button", { name: "Transcribe audio" }),
     );
     expect(await screen.findByText(/Hello from the call/)).toBeTruthy();
-    expect(api.transcribeMeeting).toHaveBeenCalledWith("sample");
+    expect(api.transcribeMeeting).toHaveBeenCalledWith("sample", null);
+    expect(api.planTranscription).not.toHaveBeenCalled();
     expect(
       screen.getByRole("button", { name: "Re-transcribe audio" }),
+    ).toBeTruthy();
+  });
+
+  it("refreshes finalized tracks after a tray stop without replacing a draft", async () => {
+    const live: MeetingDetail = {
+      ...sample,
+      meeting: { ...sample.meeting, source: "desktop", status: "recording" },
+      tracks: [
+        {
+          kind: "mic",
+          path: "mic.wav",
+          device_name: "Synthetic",
+          sample_rate: 16000,
+          frames: 0,
+          dropped_frames: 0,
+          finalized: false,
+          size_bytes: null,
+        },
+      ],
+    };
+    vi.mocked(api.sttStatus).mockResolvedValue(installed);
+    vi.mocked(api.getRecordingState).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "desktop",
+      error: null,
+      recording_offset_ms: 0,
+    });
+    vi.mocked(api.getMeeting)
+      .mockResolvedValueOnce(live)
+      .mockResolvedValue({
+        ...live,
+        meeting: { ...live.meeting, status: "stopped" },
+        tracks: live.tracks.map((track) => ({
+          ...track,
+          finalized: true,
+          frames: 16000,
+        })),
+      });
+    await ready();
+    fireEvent.change(screen.getByDisplayValue("Original notes"), {
+      target: { value: "Draft kept through tray stop" },
+    });
+    act(() =>
+      vi.mocked(api.onRecordingState).mock.calls[0][0]({
+        revision: 2,
+        status: "stopped",
+        meeting_id: "sample",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: null,
+      }),
+    );
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Transcribe audio" }),
+      ).toHaveProperty("disabled", false),
+    );
+    expect(
+      screen.getByDisplayValue("Draft kept through tray stop"),
+    ).toBeTruthy();
+  });
+
+  it("keeps edits made while refreshed processing results are loading", async () => {
+    const recorded: MeetingDetail = {
+      ...sample,
+      meeting: { ...sample.meeting, source: "desktop" },
+      tracks: [
+        {
+          kind: "mic",
+          path: "mic.wav",
+          device_name: "Synthetic",
+          sample_rate: 16000,
+          frames: 16000,
+          dropped_frames: 0,
+          finalized: true,
+          size_bytes: null,
+        },
+      ],
+    };
+    let deliver: (detail: MeetingDetail) => void = () => {};
+    vi.mocked(api.sttStatus).mockResolvedValue(installed);
+    vi.mocked(api.getMeeting)
+      .mockResolvedValueOnce(recorded)
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            deliver = resolve;
+          }),
+      );
+    vi.mocked(api.transcribeMeeting).mockResolvedValue(undefined);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Transcribe audio" }),
+    );
+    await waitFor(() => expect(api.getMeeting).toHaveBeenCalledTimes(2));
+    await userEvent.click(screen.getByRole("tab", { name: "My notes" }));
+    fireEvent.change(screen.getByDisplayValue("Original notes"), {
+      target: { value: "Typed while results were loading" },
+    });
+    await act(async () => deliver(recorded));
+    expect(
+      screen.getByDisplayValue("Typed while results were loading"),
     ).toBeTruthy();
   });
 
@@ -1080,12 +1321,12 @@ describe("desktop foundation", () => {
     ).toBeTruthy();
   });
 
-  it("asks for explicit confirmation before sending text to Merge, then shows provenance", async () => {
+  it("asks for explicit confirmation before sending text to the selected provider, then shows provenance", async () => {
     const model = "anthropic/claude-haiku-5-5";
-    vi.mocked(api.mergeKeyStatus).mockResolvedValue(true);
+    vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
     vi.mocked(api.getSettings).mockResolvedValue({
       ...initialSettings,
-      merge_model: model,
+      llm: { base_url: textPlan.base_url, model, revision: 1 },
     });
     vi.mocked(api.getMeeting)
       .mockResolvedValueOnce({
@@ -1106,7 +1347,7 @@ describe("desktop foundation", () => {
     const enhance = screen.getByRole("button", { name: "Enhance notes" });
     await userEvent.click(enhance);
     expect(screen.getByText(/Not sent: audio recordings/)).toBeTruthy();
-    expect(screen.getAllByText(model).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(textPlan.model).length).toBeGreaterThan(0);
     expect(api.generateSummary).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByText(/Not sent: audio recordings/)).toBeNull();
@@ -1120,25 +1361,24 @@ describe("desktop foundation", () => {
     await screen.findByText(`Summary · generated by ${model} via merge`);
     expect(api.generateSummary).toHaveBeenCalledWith(
       "sample",
-      true,
       "general-v1",
-      1,
+      textPlan.fingerprint,
     );
     expect(screen.getByText(/A real summary\./)).toBeTruthy();
     expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
   });
 
-  const mergeReady = () => {
-    vi.mocked(api.mergeKeyStatus).mockResolvedValue(true);
+  const providerReady = () => {
+    vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
     vi.mocked(api.getSettings).mockResolvedValue({
       ...initialSettings,
-      merge_model: "openai/gpt-x",
+      llm: { base_url: textPlan.base_url, model: "openai/gpt-x", revision: 1 },
     });
   };
 
   it("names the template and request count before a long summary is sent", async () => {
-    mergeReady();
-    vi.mocked(api.planSummary).mockResolvedValue(4);
+    providerReady();
+    vi.mocked(api.planSummary).mockResolvedValue({ ...textPlan, requests: 4 });
     vi.mocked(api.generateSummary).mockResolvedValue(undefined);
     await ready();
     await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
@@ -1159,15 +1399,14 @@ describe("desktop foundation", () => {
     await waitFor(() =>
       expect(api.generateSummary).toHaveBeenCalledWith(
         "sample",
-        true,
         "standup-v1",
-        4,
+        textPlan.fingerprint,
       ),
     );
   });
 
   it("shows a refused plan as an error and opens no consent card", async () => {
-    mergeReady();
+    providerReady();
     vi.mocked(api.planSummary).mockRejectedValue({
       code: "summary_too_long",
       message: "This meeting would need 12 summary requests; the limit is 9.",
@@ -1254,7 +1493,7 @@ describe("desktop foundation", () => {
   });
 
   it("asks a question only after per-question consent and does not store the answer", async () => {
-    mergeReady();
+    providerReady();
     vi.mocked(api.askMeeting).mockResolvedValue(
       "The **budget** is 40k [1:05].",
     );
@@ -1279,7 +1518,7 @@ describe("desktop foundation", () => {
     expect(api.askMeeting).toHaveBeenCalledWith(
       "sample",
       "What is the budget?",
-      true,
+      textPlan.fingerprint,
     );
     expect((await screen.findByText("budget")).tagName).toBe("STRONG");
     expect(api.generateSummary).not.toHaveBeenCalled();
@@ -1330,7 +1569,9 @@ describe("notes-first polish", () => {
     render(<App />);
     await screen.findByText("Start your first note");
     expect(api.startCapture).not.toHaveBeenCalled();
-    expect(api.start).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Start simulation" }),
+    ).toBeNull();
   });
 
   it("offers a disabled Enhance notes slot that explains why", async () => {
@@ -1341,7 +1582,7 @@ describe("notes-first polish", () => {
     }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(
-      screen.getByText(/Import a Merge API key in Settings first/),
+      screen.getByText(/Save a summary API key in Settings first/),
     ).toBeTruthy();
     expect(screen.getByText("A fictional summary.")).toBeTruthy();
   });
@@ -1557,7 +1798,9 @@ describe("meeting library", () => {
     await userEvent.click(screen.getByRole("button", { name: "New note" }));
     await screen.findByRole("heading", { name: "Untitled note" });
     expect(api.createNote).toHaveBeenCalledWith("Untitled note");
-    expect(api.start).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Start simulation" }),
+    ).toBeNull();
     expect(api.startCapture).not.toHaveBeenCalled();
     expect(
       screen.getByText("Note", { selector: ".source-badge" }),
@@ -1659,7 +1902,11 @@ describe("transcript and audio", () => {
     summary_provider: null,
     summary_model: null,
     segments: [
-      { speaker: "Others", start_ms: 8250, end_ms: 9000, text: "After pause" },
+      {
+        speaker: "Others",
+        timing: { kind: "timed", start_ms: 8250, end_ms: 9000 },
+        text: "After pause",
+      },
     ],
     tracks: [
       {
@@ -1824,6 +2071,11 @@ describe("transcript and audio", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Re-transcribe audio" }),
     );
+    expect(
+      screen
+        .getByRole("button", { name: "Cancel transcription" })
+        .getAttribute("disabled"),
+    ).toBe("");
     act(() => progress({ stage: "transcribing", track: "mic", percent: 40 }));
     expect(
       await screen.findByText(/Transcribing You \(microphone\): 40%/),
@@ -1888,5 +2140,167 @@ describe("transcript and audio", () => {
       "Alt+Shift+S",
     );
     expect(screen.getByText(/no shortcut to start recording/)).toBeTruthy();
+  });
+});
+
+describe("provider workflows", () => {
+  const recorded: MeetingDetail = {
+    ...sample,
+    meeting: { ...sample.meeting, source: "desktop" },
+    summary: null,
+    tracks: [
+      {
+        kind: "mic",
+        path: "mic.wav",
+        device_name: "Mic",
+        sample_rate: 16000,
+        frames: 16000,
+        dropped_frames: 0,
+        finalized: true,
+        size_bytes: 32044,
+      },
+    ],
+  };
+  const cloudSettings: Settings = {
+    ...initialSettings,
+    llm: {
+      base_url: "https://chat.example/v1",
+      model: "chat-model",
+      revision: 4,
+    },
+    cloud_stt: {
+      base_url: "https://speech.example/v1",
+      model: "speech-model",
+      revision: 2,
+    },
+    stt_mode: "cloud",
+  };
+  const audioPlan = {
+    fingerprint: "audio-consent",
+    base_url: "https://speech.example/v1",
+    model: "speech-model",
+    requests: 1,
+    audio_bytes: 32044,
+    tracks: ["mic"],
+  };
+
+  it("requires explicit audio confirmation in cloud mode without requiring local downloads", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(cloudSettings);
+    vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
+    vi.mocked(api.getMeeting).mockResolvedValue(recorded);
+    vi.mocked(api.planTranscription).mockResolvedValue(audioPlan);
+    vi.mocked(api.transcribeMeeting).mockResolvedValue(undefined);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Transcribe audio" }),
+    );
+    const card = await screen.findByRole("group", {
+      name: "Confirm audio upload",
+    });
+    expect(card.textContent).toContain("https://speech.example/v1");
+    expect(card.textContent).toContain("speech-model");
+    expect(card.textContent).toContain("in-flight request may finish remotely");
+    expect(api.transcribeMeeting).not.toHaveBeenCalled();
+    expect(api.sttInstall).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(api.transcribeMeeting).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Transcribe audio" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Upload and transcribe audio",
+      }),
+    );
+    await waitFor(() =>
+      expect(api.transcribeMeeting).toHaveBeenCalledWith(
+        "sample",
+        "audio-consent",
+      ),
+    );
+    expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
+  });
+
+  it("invalidates a reviewed summary after notes change and rejects a late plan for old text", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(cloudSettings);
+    vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Enhance notes" }),
+    );
+    await screen.findByRole("group", { name: "Confirm sending" });
+    await userEvent.click(screen.getByRole("tab", { name: "My notes" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
+      target: { value: "Changed notes" },
+    });
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(screen.queryByRole("group", { name: "Confirm sending" })).toBeNull();
+    expect(api.generateSummary).not.toHaveBeenCalled();
+    let finish: (plan: typeof textPlan) => void = () => {};
+    vi.mocked(api.planSummary).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Enhance notes" }),
+    );
+    await waitFor(() => expect(api.planSummary).toHaveBeenCalledTimes(2));
+    fireEvent.change(
+      screen.getByLabelText(/My notes/, { selector: "textarea" }),
+      {
+        target: { value: "Changed again while planning" },
+      },
+    );
+    await act(async () => finish(textPlan));
+    expect(screen.queryByRole("group", { name: "Confirm sending" })).toBeNull();
+    expect(api.generateSummary).not.toHaveBeenCalled();
+  });
+
+  it("renders untimed cloud text without fabricated timestamps or seek controls", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...recorded,
+      transcript_provider: "https://speech.example/v1",
+      transcript_model: "speech-model",
+      segments: [
+        {
+          speaker: "You",
+          timing: { kind: "untimed" },
+          text: "A text-only transcript.",
+        },
+      ],
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(screen.getByText("Untimed")).toBeTruthy();
+    expect(screen.getByText(/A text-only transcript/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Play You from/ })).toBeNull();
+    expect(screen.queryByText("0.0s")).toBeNull();
+    expect(
+      screen.getByText(
+        /Generated with https:\/\/speech.example\/v1 \/ speech-model/,
+      ),
+    ).toBeTruthy();
+    expect(api.audioPosition).not.toHaveBeenCalled();
+  });
+
+  it("removes sample and simulation creation while retaining historical labels", async () => {
+    await ready();
+    expect(
+      screen.queryByRole("button", { name: "Load fictional sample" }),
+    ).toBeNull();
+    expect(screen.getAllByText("Fictional sample").length).toBeGreaterThan(0);
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
+    );
+    expect(screen.queryByText("Try a simulation instead")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Start simulation" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Start recording" }),
+    ).toHaveProperty("disabled", true);
   });
 });

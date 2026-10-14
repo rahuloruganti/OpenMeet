@@ -20,7 +20,6 @@ type Props = {
   onNewRecording: (trigger: HTMLButtonElement) => void;
   onSettings: (trigger: HTMLButtonElement) => void;
   onOpenMeeting: (id: string) => void;
-  onLoadSample: () => void;
   onNewNote: () => void;
   /** Full-text matches in notes, transcripts and summaries for the current search. */
   hits: SearchHit[];
@@ -161,13 +160,6 @@ export function MeetingSidebar(props: Props) {
       <div className="sidebar-bottom">
         <button onClick={(event) => props.onSettings(event.currentTarget)}>
           Settings
-        </button>
-        <button
-          className="sample-button"
-          disabled={disabled}
-          onClick={props.onLoadSample}
-        >
-          Load fictional sample
         </button>
         <p className="local-storage-note">
           Notes stored on this device

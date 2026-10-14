@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api,
+  isLocalBase,
   type MeetingDetail,
+  type ProcessingPlan,
+  type Settings,
   type SummaryTemplate,
   type SummaryVersion,
 } from "../lib/api";
@@ -48,18 +51,20 @@ type Props = {
   speechReady: boolean;
   /** Why summary generation is unavailable, or null when it can run. */
   enhanceBlocked: string | null;
-  mergeModel: string;
+  sttMode: Settings["stt_mode"];
+  connectionRevision: string;
   onTab: (tab: ContentTab) => void;
   onNotes: (text: string) => void;
   onSaveNow: () => void;
   onExport: () => void;
-  onTranscribe: () => void;
-  onGenerate: (template: SummaryTemplate, requests: number) => void;
+  onPlanTranscription: () => Promise<ProcessingPlan | null>;
+  onTranscribe: (confirmation: string | null) => void;
+  onGenerate: (template: SummaryTemplate, confirmation: string) => void;
   /** Stored summaries, newest first. */
   versions: SummaryVersion[];
-  /** Resolves to the number of requests a summary would send, or null on failure. */
-  onPlanSummary: () => Promise<number | null>;
-  onAsk: (question: string) => void;
+  onPlanSummary: (template: SummaryTemplate) => Promise<ProcessingPlan | null>;
+  onPlanQuestion: (question: string) => Promise<ProcessingPlan | null>;
+  onAsk: (question: string, confirmation: string) => void;
   answer: Answer | null;
   /** The selected meeting is being recorded right now, so it cannot be deleted. */
   recordingThis: boolean;
@@ -80,13 +85,16 @@ type Props = {
 
 export function MeetingWorkspace(props: Props) {
   const { selected, tab, disabled, job, versions } = props;
-  // Number of requests shown in the open consent card, or null when closed.
-  const [confirming, setConfirming] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState<ProcessingPlan | null>(null);
+  const [confirmingAudio, setConfirmingAudio] = useState<ProcessingPlan | null>(
+    null,
+  );
   const [template, setTemplate] = useState<SummaryTemplate>("general-v1");
   const [versionId, setVersionId] = useState<number | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [question, setQuestion] = useState("");
-  const [asking, setAsking] = useState(false);
+  const [asking, setAsking] = useState<ProcessingPlan | null>(null);
+  const planVersion = useRef(0);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [jumpHint, setJumpHint] = useState("");
   const [playbackError, setPlaybackError] = useState("");
@@ -98,7 +106,7 @@ export function MeetingWorkspace(props: Props) {
   const [typed, setTyped] = useState("");
   useEffect(() => {
     setConfirming(null);
-    setAsking(false);
+    setAsking(null);
     setQuestion("");
     setDeleting(null);
     setTyped("");
@@ -107,6 +115,28 @@ export function MeetingWorkspace(props: Props) {
     setPlaybackError("");
     if (actions.current) actions.current.open = false;
   }, [meetingId]);
+  useEffect(() => {
+    planVersion.current += 1;
+    setConfirming(null);
+    setAsking(null);
+    setConfirmingAudio(null);
+  }, [
+    meetingId,
+    props.notes,
+    selected?.segments,
+    props.connectionRevision,
+    props.sttMode,
+    template,
+    question,
+  ]);
+  const reviewPlan = async (
+    load: () => Promise<ProcessingPlan | null>,
+    show: (plan: ProcessingPlan | null) => void,
+  ) => {
+    const version = planVersion.current;
+    const plan = await load();
+    if (version === planVersion.current) show(plan);
+  };
   useEffect(() => {
     if (tab !== "transcript" || props.hidden)
       Object.values(players.current).forEach((player) => player?.pause());
@@ -128,8 +158,8 @@ export function MeetingWorkspace(props: Props) {
             <>
               <h2>Start your first note</h2>
               <p>
-                Choose New note or New recording in the sidebar, or load the
-                fictional sample to look around. Your notes stay on this device.
+                Choose New note or New recording in the sidebar. Your notes stay
+                on this device.
               </p>
             </>
           ) : (
@@ -503,9 +533,10 @@ export function MeetingWorkspace(props: Props) {
                 disabled={blocked}
                 aria-describedby="enhance-hint"
                 onClick={() =>
-                  void props.onPlanSummary().then((requests) => {
-                    if (requests !== null) setConfirming(requests);
-                  })
+                  void reviewPlan(
+                    () => props.onPlanSummary(template),
+                    setConfirming,
+                  )
                 }
               >
                 {job === "summary" ? "Generating…" : "Enhance notes"}
@@ -524,26 +555,30 @@ export function MeetingWorkspace(props: Props) {
               aria-label="Confirm sending"
             >
               <p>
-                <strong>Send to Merge Gateway to generate a summary?</strong>
+                <strong>
+                  Send text to your selected provider to generate a summary?
+                </strong>
               </p>
               <ul>
                 <li>
-                  Model: <code>{props.mergeModel}</code> via
-                  api-gateway.merge.dev
+                  Model: <code>{confirming.model}</code> via{" "}
+                  <code>{confirming.base_url}</code>
                 </li>
                 <li>Template: {templateLabel(template)}</li>
                 <li>Sent: {contentScope}.</li>
                 <li>
                   Requests:{" "}
-                  {confirming === 1
+                  {confirming.requests === 1
                     ? "1 request."
-                    : `${confirming} requests (the transcript in ${confirming - 1} parts, then one pass combining them with your notes).`}
+                    : `${confirming.requests} requests (the transcript in ${confirming.requests - 1} parts, then one pass combining them with your notes).`}
                 </li>
                 <li>Not sent: audio recordings.</li>
                 <li>
-                  The text leaves this device and is handled under Merge and the
-                  model provider's terms. A new summary is saved beside any
-                  earlier one; your notes are never changed.
+                  {isLocalBase(confirming.base_url)
+                    ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
+                    : "The text leaves this device and is handled under your provider's terms."}{" "}
+                  A new summary is saved beside any earlier one; your notes are
+                  never changed.
                 </li>
               </ul>
               <div className="panel-actions">
@@ -552,7 +587,7 @@ export function MeetingWorkspace(props: Props) {
                   disabled={disabled || job !== null}
                   onClick={() => {
                     setConfirming(null);
-                    props.onGenerate(template, confirming);
+                    props.onGenerate(template, confirming.fingerprint);
                   }}
                 >
                   Send and generate summary
@@ -612,7 +647,11 @@ export function MeetingWorkspace(props: Props) {
             className="ask-meeting"
             onSubmit={(event) => {
               event.preventDefault();
-              if (question.trim()) setAsking(true);
+              if (question.trim())
+                void reviewPlan(
+                  () => props.onPlanQuestion(question.trim()),
+                  setAsking,
+                );
             }}
           >
             <label htmlFor="ask-question">Ask this meeting</label>
@@ -624,7 +663,7 @@ export function MeetingWorkspace(props: Props) {
               placeholder="What did we decide about the launch date?"
               onChange={(event) => {
                 setQuestion(event.target.value);
-                setAsking(false);
+                setAsking(null);
               }}
             />
             <div className="panel-actions">
@@ -640,22 +679,23 @@ export function MeetingWorkspace(props: Props) {
               aria-label="Confirm sending question"
             >
               <p>
-                <strong>Send this question to Merge Gateway?</strong>
+                <strong>Send this question to your selected provider?</strong>
               </p>
               <ul>
                 <li>
-                  Model: <code>{props.mergeModel}</code> via
-                  api-gateway.merge.dev
+                  Model: <code>{asking.model}</code> via{" "}
+                  <code>{asking.base_url}</code>
                 </li>
                 <li>
-                  Sent in 1 request: your question, {contentScope} of this
-                  meeting only.
+                  Sent in {asking.requests} request(s): your question,{" "}
+                  {contentScope} of this meeting only.
                 </li>
                 <li>Not sent: audio recordings or other meetings.</li>
                 <li>
-                  The text leaves this device and is handled under Merge and the
-                  model provider's terms. The answer is shown here and not
-                  saved.
+                  {isLocalBase(asking.base_url)
+                    ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
+                    : "The text leaves this device and is handled under your provider's terms."}{" "}
+                  The answer is shown here and not saved.
                 </li>
               </ul>
               <div className="panel-actions">
@@ -663,13 +703,13 @@ export function MeetingWorkspace(props: Props) {
                   className="primary"
                   disabled={disabled || job !== null}
                   onClick={() => {
-                    setAsking(false);
-                    props.onAsk(question.trim());
+                    setAsking(null);
+                    props.onAsk(question.trim(), asking.fingerprint);
                   }}
                 >
                   Send question
                 </button>
-                <button onClick={() => setAsking(false)}>Cancel</button>
+                <button onClick={() => setAsking(null)}>Cancel</button>
               </div>
             </div>
           )}
@@ -758,58 +798,144 @@ export function MeetingWorkspace(props: Props) {
               <button
                 className="primary"
                 disabled={disabled || job !== null || !props.speechReady}
-                onClick={props.onTranscribe}
+                onClick={() => {
+                  if (props.sttMode === "cloud")
+                    void reviewPlan(
+                      props.onPlanTranscription,
+                      setConfirmingAudio,
+                    );
+                  else props.onTranscribe(null);
+                }}
               >
                 {job === "transcribe"
-                  ? "Transcribing locally…"
+                  ? props.sttMode === "cloud"
+                    ? "Transcribing with cloud provider…"
+                    : "Transcribing locally…"
                   : hasTranscript
                     ? "Re-transcribe audio"
                     : "Transcribe audio"}
               </button>
               {!props.speechReady && (
                 <span className="muted">
-                  Download the speech engine in Settings first.
+                  {props.sttMode === "cloud"
+                    ? "Save a cloud speech connection and model in Settings first."
+                    : "Download the speech engine in Settings first."}
                 </span>
               )}
               {job === "transcribe" && (
                 <>
-                  <button onClick={props.onCancelTranscribe}>
+                  <button
+                    disabled={
+                      Object.keys(props.transcribeProgress).length === 0
+                    }
+                    onClick={props.onCancelTranscribe}
+                  >
                     Cancel transcription
                   </button>
                   <span className="muted" role="status">
-                    This runs on your computer and can take about as long as the
-                    recording. Cancelling keeps the previous transcript.
+                    {props.sttMode === "cloud"
+                      ? "Cancelling stops further uploads and keeps the previous transcript. An in-flight request may finish remotely and still be billed."
+                      : "This runs on your computer and can take about as long as the recording. Cancelling keeps the previous transcript."}
                   </span>
                 </>
               )}
             </div>
           )}
+          {confirmingAudio && transcribable && (
+            <div
+              className="consent-card"
+              role="group"
+              aria-label="Confirm audio upload"
+            >
+              <p>
+                <strong>Upload recorded audio for transcription?</strong>
+              </p>
+              <ul>
+                <li>
+                  Destination: <code>{confirmingAudio.base_url}</code>
+                </li>
+                <li>
+                  Model: <code>{confirmingAudio.model}</code>
+                </li>
+                <li>
+                  Tracks: {confirmingAudio.tracks.join(", ")}. Audio:{" "}
+                  {formatBytes(confirmingAudio.audio_bytes)}. Requests:{" "}
+                  {confirmingAudio.requests}.
+                </li>
+                <li>
+                  {isLocalBase(confirmingAudio.base_url)
+                    ? "Audio is sent to your local server. Its configuration determines whether it forwards requests."
+                    : "Microphone and system audio leave this device. Your provider handles retention and billing."}
+                </li>
+                <li>
+                  Cancelling prevents further uploads. Audio already received
+                  cannot be recalled, and an in-flight request may finish
+                  remotely.
+                </li>
+                <li>
+                  A successful run replaces the generated transcript. Notes and
+                  original audio are kept.
+                </li>
+              </ul>
+              <div className="panel-actions">
+                <button
+                  className="primary"
+                  disabled={disabled || job !== null}
+                  onClick={() => {
+                    setConfirmingAudio(null);
+                    props.onTranscribe(confirmingAudio.fingerprint);
+                  }}
+                >
+                  Upload and transcribe audio
+                </button>
+                <button onClick={() => setConfirmingAudio(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
           {job === "transcribe" &&
             Object.entries(props.transcribeProgress).map(([kind, percent]) => (
               <label className="audio-player" key={kind}>
-                Transcribing {trackLabels[kind] ?? kind}: {percent}%
+                {kind === "preparing"
+                  ? "Preparing audio…"
+                  : `Transcribing ${trackLabels[kind] ?? kind}: ${percent}%`}
                 <progress max={100} value={percent} />
               </label>
             ))}
           {hasTranscript && meeting.source === "desktop" && (
             <p className="muted">
-              Generated locally with Whisper. “You” is your microphone, “Others”
-              is system audio. Check names and numbers before relying on it.
+              {selected.transcript_provider === "whisper"
+                ? "Generated locally with Whisper."
+                : `Generated with ${selected.transcript_provider ?? "an earlier transcription engine"}${selected.transcript_model ? ` / ${selected.transcript_model}` : ""}.`}{" "}
+              “You” is your microphone, “Others” is system audio. Check names
+              and numbers before relying on it.
+            </p>
+          )}
+          {selected.segments.some(
+            (segment) => segment.timing.kind === "untimed",
+          ) && (
+            <p className="muted">
+              Untimed text has no playback links. Track/chunk order does not
+              establish the order of utterances across tracks.
             </p>
           )}
           {selected.segments.map((segment, index) => {
             const kind = segment.speaker === "You" ? "mic" : "system";
-            const time = `${(segment.start_ms / 1000).toFixed(1)}s`;
+            const timing = segment.timing;
+            const time =
+              timing.kind === "timed"
+                ? `${(timing.start_ms / 1000).toFixed(1)}s`
+                : "Untimed";
             return (
               <p className="transcript-segment" key={index}>
                 <strong>{segment.speaker}</strong>{" "}
-                {playable.some((track) => track.kind === kind) ? (
+                {timing.kind === "timed" &&
+                playable.some((track) => track.kind === kind) ? (
                   <button
                     className="seek-button"
                     aria-label={`Play ${segment.speaker} from ${time}`}
                     onClick={() =>
                       void props
-                        .onSeek(kind, segment.start_ms)
+                        .onSeek(kind, timing.start_ms)
                         .then((fileMs) => {
                           if (fileMs !== null) play(kind, fileMs);
                         })

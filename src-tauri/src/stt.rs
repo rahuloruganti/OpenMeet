@@ -5,7 +5,7 @@
 //! gates every track so silence is not "transcribed" into hallucinated text.
 use crate::{
     audio::Track,
-    domain::{AppError, Result, Segment, Settings},
+    domain::{AppError, Result, Segment, SegmentTiming, Settings},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,41 +37,7 @@ const ENGINE: Artifact = Artifact {
     sha256: "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb",
     size: 8_928_640,
 };
-// Multilingual models. Size and SHA-256 are Hugging Face's LFS metadata for ggerganov/whisper.cpp
-// (API tree listing and the X-Linked-Size/ETag headers agree); "small" also matches the README SHA-1.
-static MODELS: [(&str, Artifact); 3] = [
-    (
-        "base",
-        Artifact {
-            name: "model",
-            file: "ggml-base.bin",
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-            sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
-            size: 147_951_465,
-        },
-    ),
-    (
-        "small",
-        Artifact {
-            name: "model",
-            file: "ggml-small.bin",
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
-            sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-            size: 487_601_967,
-        },
-    ),
-    (
-        "large-v3-turbo",
-        Artifact {
-            name: "model",
-            file: "ggml-large-v3-turbo.bin",
-            url:
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-            sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
-            size: 1_624_555_275,
-        },
-    ),
-];
+include!("stt_models.rs");
 /// Whisper language codes offered in Settings; anything else is rejected before it reaches `-l`.
 pub const LANGUAGES: [&str; 35] = [
     "auto", "ar", "ca", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hr", "hu",
@@ -463,8 +429,10 @@ fn parse_output(json: &[u8], speaker: &str, rate: u32, index: &[Block]) -> Resul
         let end = session_ms(index, rate, item.offsets.to.max(item.offsets.from));
         segments.push(Segment {
             speaker: speaker.to_string(),
-            start_ms: start,
-            end_ms: end.max(start),
+            timing: SegmentTiming::Timed {
+                start_ms: start,
+                end_ms: end.max(start),
+            },
             text: text.to_string(),
         });
     }
@@ -475,6 +443,48 @@ fn parse_output(json: &[u8], speaker: &str, rate: u32, index: &[Block]) -> Resul
 static BUSY: Mutex<()> = Mutex::new(());
 // Set by `cancel`; the run loop that owns the child process sees it and kills the engine.
 static CANCEL: AtomicBool = AtomicBool::new(false);
+static FINALIZE: Mutex<()> = Mutex::new(());
+static COMMITTED: AtomicBool = AtomicBool::new(false);
+
+/// One owner across local/cloud work, including publication of the complete result.
+pub fn run<T>(operation: impl FnOnce(&AtomicBool) -> Result<T>) -> Result<T> {
+    let gate = FINALIZE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = match BUSY.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            return Err(stt_error(
+                "A transcription is already running. Wait for it to finish.",
+            ))
+        }
+    };
+    CANCEL.store(false, Ordering::SeqCst);
+    COMMITTED.store(false, Ordering::SeqCst);
+    drop(gate);
+    operation(&CANCEL)
+}
+
+/// Cancellation and final publication share a gate, so an acknowledged cancel cannot commit later.
+pub fn finish<T>(cancel: &AtomicBool, publish: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _gate = FINALIZE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cancel.load(Ordering::SeqCst) {
+        return Err(cancelled());
+    }
+    let result = publish()?;
+    COMMITTED.store(true, Ordering::SeqCst);
+    Ok(result)
+}
+
+fn cancelled() -> AppError {
+    AppError::new(
+        "stt_cancelled",
+        "Transcription was cancelled. The previous transcript was kept.",
+    )
+}
 
 /// Parses whisper-cli `-pp` lines such as `whisper_print_progress_callback: progress =  45%`.
 fn parse_progress(line: &str) -> Option<u8> {
@@ -604,23 +614,13 @@ fn run_engine(
     )
 }
 
-/// Runs one engine process per track under the BUSY guard. Nothing is returned on failure
+/// Runs one engine process per track inside the transcription run. Nothing is returned on failure
 /// or cancellation, so callers never replace an existing transcript with partial output.
 fn run_tracks(
     tracks: &[Track],
     mut command_for: impl FnMut(&Track, &Path) -> Result<Command>,
     mut report: impl FnMut(&str, u8),
 ) -> Result<Vec<Segment>> {
-    let _guard = match BUSY.try_lock() {
-        Ok(guard) => guard,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => {
-            return Err(stt_error(
-                "A transcription is already running. Wait for it to finish.",
-            ))
-        }
-    };
-    CANCEL.store(false, Ordering::SeqCst);
     let mut segments = Vec::new();
     for track in tracks {
         let scratch = tempfile::tempdir()?;
@@ -634,9 +634,16 @@ fn run_tracks(
             |percent| report(&track.kind, percent),
         )?);
     }
+    let times = |segment: &Segment| match segment.timing {
+        SegmentTiming::Timed { start_ms, end_ms } => (start_ms, end_ms),
+        SegmentTiming::Untimed => (i64::MAX, i64::MAX),
+    };
     segments.sort_by(|a, b| {
-        (a.start_ms, &a.speaker, a.end_ms).cmp(&(b.start_ms, &b.speaker, b.end_ms))
+        (times(a).0, &a.speaker, times(a).1).cmp(&(times(b).0, &b.speaker, times(b).1))
     });
+    if CANCEL.load(Ordering::SeqCst) {
+        return Err(cancelled());
+    }
     Ok(segments)
 }
 
@@ -661,6 +668,12 @@ pub fn transcribe(
 
 /// Asks the running transcription (if any) to stop. Returns whether one was running.
 pub fn cancel() -> bool {
+    let _gate = FINALIZE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if COMMITTED.load(Ordering::SeqCst) {
+        return false;
+    }
     match BUSY.try_lock() {
         Err(TryLockError::WouldBlock) => {
             CANCEL.store(true, Ordering::SeqCst);
@@ -712,7 +725,13 @@ mod tests {
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].text, "Hello there.");
         assert_eq!(segments[0].speaker, "Others");
-        assert_eq!((segments[1].start_ms, segments[1].end_ms), (3000, 3500));
+        assert_eq!(
+            segments[1].timing,
+            SegmentTiming::Timed {
+                start_ms: 3000,
+                end_ms: 3500
+            }
+        );
         assert_eq!(
             parse_output(b"not json", "You", 16000, &[])
                 .unwrap_err()
@@ -891,10 +910,10 @@ mod tests {
         let small = status(dir.path(), "small");
         assert!(!small.model);
         let installed: Vec<_> = small.models.iter().map(|m| (m.id, m.installed)).collect();
-        assert_eq!(
-            installed,
-            [("base", true), ("small", false), ("large-v3-turbo", false)]
-        );
+        assert_eq!(installed.len(), 33);
+        assert!(installed.contains(&("base", true)));
+        assert!(installed.contains(&("small", false)));
+        assert!(installed.contains(&("tiny-q5_1", false)));
         assert!(status(dir.path(), "base").model);
         assert!(!status(dir.path(), "huge").model);
         assert!(small.languages.contains(&"auto"));
@@ -966,11 +985,13 @@ mod tests {
         };
 
         let mut seen = Vec::new();
-        let segments = run_tracks(
-            std::slice::from_ref(&track),
-            fake("fast"),
-            |kind, percent| seen.push((kind.to_string(), percent)),
-        )
+        let segments = run(|_| {
+            run_tracks(
+                std::slice::from_ref(&track),
+                fake("fast"),
+                |kind, percent| seen.push((kind.to_string(), percent)),
+            )
+        })
         .unwrap();
         assert_eq!(seen, [("mic".to_string(), 10), ("mic".to_string(), 100)]);
         assert_eq!(segments.len(), 1);
@@ -986,18 +1007,24 @@ mod tests {
             &id,
             &[Segment {
                 speaker: "Others".into(),
-                start_ms: 0,
-                end_ms: 10,
+                timing: SegmentTiming::Timed {
+                    start_ms: 0,
+                    end_ms: 10,
+                },
                 text: "Earlier run".into(),
             }],
+            "whisper",
+            "small",
         )
         .unwrap();
         let (progress_tx, progress_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn({
             let track = track.clone();
             move || {
-                run_tracks(&[track], fake("slow"), move |_, percent| {
-                    let _ = progress_tx.send(percent);
+                run(|_| {
+                    run_tracks(&[track], fake("slow"), move |_, percent| {
+                        let _ = progress_tx.send(percent);
+                    })
                 })
             }
         });
@@ -1013,7 +1040,8 @@ mod tests {
             "the engine was killed"
         );
         // Same order as `transcribe_meeting`: the transcript is replaced only on success.
-        let saved = result.and_then(|segments| core.replace_transcript(&id, &segments));
+        let saved =
+            result.and_then(|segments| core.replace_transcript(&id, &segments, "whisper", "small"));
         assert_eq!(saved.unwrap_err().code, "stt_cancelled");
         assert!(progress_rx.try_iter().all(|percent| percent != 100));
         let texts: Vec<_> = core
@@ -1025,5 +1053,24 @@ mod tests {
             .collect();
         assert!(texts.contains(&"Earlier run".to_string()));
         assert_eq!(texts.len(), 3, "two fixture segments plus the earlier run");
+        let mut published = "previous";
+        let cancelled = run(|token| {
+            assert!(cancel());
+            finish(token, || {
+                published = "replacement";
+                Ok(())
+            })
+        });
+        assert_eq!(cancelled.unwrap_err().code, "stt_cancelled");
+        assert_eq!(published, "previous");
+        run(|token| {
+            finish(token, || {
+                published = "complete";
+                Ok(())
+            })
+        })
+        .unwrap();
+        assert_eq!(published, "complete");
+        assert!(!cancel(), "publication already completed");
     }
 }
