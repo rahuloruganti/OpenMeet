@@ -1,4 +1,4 @@
-import type { Ref } from "react";
+import { useState, type Ref } from "react";
 import type {
   ExportOptions,
   KeyStatus,
@@ -7,6 +7,7 @@ import type {
   SttDownloadProgress,
   SttStatus,
 } from "../lib/api";
+import { ModelLibrary } from "./ModelLibrary";
 import { ProviderSettings } from "./ProviderSettings";
 
 export type SttDraft = Pick<
@@ -15,6 +16,7 @@ export type SttDraft = Pick<
 >;
 
 const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
+const settingsTabs = ["cloud", "local", "general"] as const;
 const languageName = (code: string) => {
   if (code === "auto") return "Detect automatically";
   try {
@@ -33,6 +35,7 @@ type Props = {
   sttProgress: SttDownloadProgress | null;
   installing: boolean;
   onInstallStt: () => void;
+  onCancelStt: () => void;
   keyStatus: Record<ProviderRole, KeyStatus>;
   onSettings: (settings: Settings) => void;
   onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
@@ -47,10 +50,12 @@ type Props = {
   sttDraft: SttDraft;
   onStt: (change: Partial<SttDraft>) => void;
   onSaveStt: () => void;
+  onImported: () => Promise<void>;
 };
 
 export function SettingsPanel(props: Props) {
   const { settings, disabled } = props;
+  const [tab, setTab] = useState<"cloud" | "local" | "general">("local");
   return (
     <section
       className="workspace-panel settings"
@@ -66,46 +71,98 @@ export function SettingsPanel(props: Props) {
         </button>
       </div>
       <p className="panel-description">Make OpenMeet work the way you do.</p>
-      <div className="settings-grid">
-        <section
-          className="settings-section"
-          aria-label="Transcription settings"
+      <label>
+        Transcription mode
+        <select
+          value={settings?.stt_mode ?? "local"}
+          disabled={disabled}
+          onChange={(event) =>
+            props.onSttMode(event.target.value === "cloud" ? "cloud" : "local")
+          }
         >
-          <h3>Speech to text</h3>
-          <label>
-            Transcription mode
-            <select
-              value={settings?.stt_mode ?? "local"}
-              disabled={disabled}
-              onChange={(event) =>
-                props.onSttMode(
-                  event.target.value === "cloud" ? "cloud" : "local",
-                )
-              }
-            >
-              <option value="local">Local Whisper</option>
-              <option value="cloud">Cloud API</option>
-            </select>
-          </label>
-          {settings?.stt_mode === "cloud" ? (
+          <option value="local">Local Whisper</option>
+          <option value="cloud">API connection</option>
+        </select>
+      </label>
+      <div
+        role="tablist"
+        aria-label="Settings sections"
+        className="settings-tabs"
+      >
+        {settingsTabs.map((value, index) => (
+          <button
+            key={value}
+            id={`settings-tab-${value}`}
+            role="tab"
+            aria-selected={tab === value}
+            aria-controls={`settings-${value}`}
+            tabIndex={tab === value ? 0 : -1}
+            onClick={() => setTab(value)}
+            onKeyDown={(event) => {
+              if (event.ctrlKey || event.altKey || event.metaKey) return;
+              const nextIndex =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? settingsTabs.length - 1
+                    : event.key === "ArrowRight"
+                      ? (index + 1) % settingsTabs.length
+                      : event.key === "ArrowLeft"
+                        ? (index + settingsTabs.length - 1) %
+                          settingsTabs.length
+                        : null;
+              if (nextIndex === null) return;
+              const next = settingsTabs[nextIndex];
+              if (!next) return;
+              event.preventDefault();
+              setTab(next);
+              document.getElementById(`settings-tab-${next}`)?.focus();
+            }}
+          >
+            {value === "cloud"
+              ? "Cloud API"
+              : value === "local"
+                ? "Local"
+                : "General"}
+          </button>
+        ))}
+      </div>
+      <div
+        id="settings-cloud"
+        role="tabpanel"
+        aria-labelledby="settings-tab-cloud"
+        hidden={tab !== "cloud"}
+      >
+        {settings && (
+          <ProviderSettings
+            settings={settings}
+            local={false}
+            active={tab === "cloud"}
+            disabled={disabled}
+            onSaved={props.onSettings}
+            onKeyStatus={props.onKeyStatus}
+          />
+        )}
+        <p className="muted">
+          Cloud speech uploads audio only after separate confirmation. Summaries
+          and questions send text after separate confirmation.
+        </p>
+      </div>
+      <div
+        id="settings-local"
+        role="tabpanel"
+        aria-labelledby="settings-tab-local"
+        hidden={tab !== "local"}
+        className="settings-grid"
+      >
+        <div className="settings-column">
+          <section
+            className="settings-section"
+            aria-label="Transcription settings"
+          >
+            <h3>Speech to text</h3>
             <>
-              <p className="muted">
-                Audio is uploaded to your selected provider after confirmation.
-                Local model downloads are not required. Some models return text
-                without timestamps.
-              </p>
-              <ProviderSettings
-                role="cloud_stt"
-                config={settings.cloud_stt}
-                keyStatus={props.keyStatus.cloud_stt}
-                disabled={disabled}
-                onSaved={props.onSettings}
-                onKeyStatus={props.onKeyStatus}
-              />
-            </>
-          ) : (
-            <>
-              <p className="muted">Audio stays on this device.</p>
+              <p className="muted">Local Whisper keeps audio on this device.</p>
               <p>
                 <strong>
                   {!props.stt
@@ -148,75 +205,89 @@ export function SettingsPanel(props: Props) {
                 </select>
               </label>
             </>
-          )}
-          <label>
-            Spoken language
-            <select
-              value={props.sttDraft.stt_language}
-              disabled={disabled}
-              onChange={(event) =>
-                props.onStt({ stt_language: event.target.value })
-              }
-            >
-              {(props.stt?.languages ?? [props.sttDraft.stt_language]).map(
-                (code) => (
-                  <option key={code} value={code}>
-                    {languageName(code)}
-                  </option>
-                ),
-              )}
-            </select>
-          </label>
-          <label>
-            Vocabulary hint (names, jargon; optional)
-            <input
-              value={props.sttDraft.stt_prompt}
-              disabled={disabled}
-              maxLength={500}
-              placeholder="e.g. Priya, Okta, Kubernetes"
-              onChange={(event) =>
-                props.onStt({ stt_prompt: event.target.value })
-              }
-            />
-          </label>
-          <button disabled={disabled} onClick={props.onSaveStt}>
-            Save transcription settings
-          </button>
-          {settings?.stt_mode !== "cloud" && (
-            <>
-              {props.sttProgress && (
-                <p role="status">
-                  Downloading {props.sttProgress.stage}:{" "}
-                  {mb(props.sttProgress.downloaded)} /{" "}
-                  {mb(props.sttProgress.total)} MB
-                </p>
-              )}
-              <button
-                disabled={
-                  disabled ||
-                  props.installing ||
-                  !props.stt?.supported ||
-                  props.stt.installed
+            <label>
+              Spoken language
+              <select
+                value={props.sttDraft.stt_language}
+                disabled={disabled}
+                onChange={(event) =>
+                  props.onStt({ stt_language: event.target.value })
                 }
-                onClick={props.onInstallStt}
               >
-                {props.stt?.installed
-                  ? "Speech engine installed"
-                  : `Download speech engine and models (≈ ${mb(props.stt?.missing_bytes ?? 0)} MB)`}
-              </button>
-            </>
-          )}
-        </section>
-        <section className="settings-section" aria-label="Summary settings">
+                {(props.stt?.languages ?? [props.sttDraft.stt_language]).map(
+                  (code) => (
+                    <option key={code} value={code}>
+                      {languageName(code)}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+            <label>
+              Vocabulary hint (names, jargon; optional)
+              <input
+                value={props.sttDraft.stt_prompt}
+                disabled={disabled}
+                maxLength={500}
+                placeholder="e.g. Priya, Okta, Kubernetes"
+                onChange={(event) =>
+                  props.onStt({ stt_prompt: event.target.value })
+                }
+              />
+            </label>
+            <button disabled={disabled} onClick={props.onSaveStt}>
+              Save transcription settings
+            </button>
+            {settings?.stt_mode !== "cloud" && (
+              <>
+                {props.sttProgress && (
+                  <p role="status">
+                    Downloading {props.sttProgress.stage}:{" "}
+                    {mb(props.sttProgress.downloaded)} /{" "}
+                    {mb(props.sttProgress.total)} MB
+                  </p>
+                )}
+                {props.installing && (
+                  <button onClick={props.onCancelStt}>
+                    Cancel speech download
+                  </button>
+                )}
+                <button
+                  disabled={
+                    disabled ||
+                    props.installing ||
+                    !props.stt?.supported ||
+                    props.stt.installed
+                  }
+                  onClick={props.onInstallStt}
+                >
+                  {props.stt?.installed
+                    ? "Speech engine installed"
+                    : `Download speech engine and models (≈ ${mb(props.stt?.missing_bytes ?? 0)} MB)`}
+                </button>
+              </>
+            )}
+          </section>
+          <ModelLibrary disabled={disabled} onImported={props.onImported} />
+        </div>
+        {settings && (
           <ProviderSettings
-            role="llm"
-            config={settings?.llm ?? null}
-            keyStatus={props.keyStatus.llm}
+            settings={settings}
+            local
+            active={tab === "local"}
             disabled={disabled}
             onSaved={props.onSettings}
             onKeyStatus={props.onKeyStatus}
           />
-        </section>
+        )}
+      </div>
+      <div
+        id="settings-general"
+        role="tabpanel"
+        aria-labelledby="settings-tab-general"
+        hidden={tab !== "general"}
+        className="settings-grid"
+      >
         <section
           className="settings-section"
           aria-label="Storage and export settings"
@@ -304,7 +375,10 @@ export function SettingsPanel(props: Props) {
                 onChange={(event) =>
                   props.onExportOptions({
                     ...settings.export,
-                    filename: event.target.value as ExportOptions["filename"],
+                    filename:
+                      event.target.value === "date_title"
+                        ? "date_title"
+                        : "title",
                   })
                 }
               >

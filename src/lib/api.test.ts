@@ -11,29 +11,39 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 
-it("sends revision-bound provider settings with the agreed IPC argument casing", async () => {
-  await api.saveProviderConnection(
-    "cloud_stt",
-    "https://speech.example/v1",
-    { kind: "replace", key: "synthetic-key" },
-    4,
-  );
-  expect(invoke).toHaveBeenLastCalledWith("save_provider_connection", {
-    role: "cloud_stt",
+it("sends saved connection and independent assignment revision arguments", async () => {
+  const args = {
+    id: "profile",
+    name: "Speech",
     baseUrl: "https://speech.example/v1",
-    keyChange: { kind: "replace", key: "synthetic-key" },
+    keyChange: { kind: "replace", key: "synthetic-key" } as const,
     expectedRevision: 4,
-  });
-  await api.listProviderModels("cloud_stt", 5);
-  expect(invoke).toHaveBeenLastCalledWith("list_provider_models", {
-    role: "cloud_stt",
+  };
+  await api.saveApiConnection(args);
+  expect(invoke).toHaveBeenLastCalledWith("save_api_connection", args);
+  await api.listApiConnectionModels("profile", 5);
+  expect(invoke).toHaveBeenLastCalledWith("list_api_connection_models", {
+    id: "profile",
     expectedRevision: 5,
   });
-  await api.saveProviderModel("llm", "custom-chat", 2);
-  expect(invoke).toHaveBeenLastCalledWith("save_provider_model", {
-    role: "llm",
+  const selection = {
+    kind: "assigned",
+    connection_id: "profile",
     model: "custom-chat",
+  } as const;
+  await api.saveProviderAssignment("llm", selection, 2);
+  expect(invoke).toHaveBeenLastCalledWith("save_provider_assignment", {
+    role: "llm",
+    selection,
     expectedRevision: 2,
+  });
+  await api.scanLocalModels(null);
+  expect(invoke).toHaveBeenLastCalledWith("scan_local_models", {
+    folder: null,
+  });
+  await api.listHfFiles("public/model");
+  expect(invoke).toHaveBeenLastCalledWith("list_hf_files", {
+    repoId: "public/model",
   });
 });
 

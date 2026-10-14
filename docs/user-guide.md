@@ -44,7 +44,7 @@ The code excludes paused audio, but real-device pause privacy, device failures, 
 
 ## Transcribe and play audio
 
-1. Open **Settings → Speech to text** and choose **Local Whisper**.
+1. Open **Settings → Local → Speech to text** and choose **Local Whisper**.
 2. Choose a speech model, language, and optional vocabulary hint. Click **Save transcription settings**.
 3. Click **Download speech engine and models** if the selected model is missing.
 4. Stop the recording, open its **Transcript** tab, and click **Transcribe audio**.
@@ -56,9 +56,15 @@ The engine and models download only on an explicit action. The selected model ru
 
 The Transcript tab provides one player for each playable track. Select a transcript timestamp to seek the corresponding track. Timestamp links inserted in notes can jump to audio; system-track seeking is approximate. Leaving the Transcript tab or opening settings pauses playback. Missing or incomplete files produce a visible error.
 
-For cloud STT, choose **Cloud API** and configure its independent HTTPS base URL, masked API key, and model. Refresh lists available IDs; use a custom ID if discovery is unsupported. Save the model. Local engine downloads are not needed for cloud mode. Language/vocabulary settings remain available, but a provider may reject unsupported options visibly.
+For API transcription, choose **API connection** as the transcription mode. Create a named connection under **Cloud API** or **Local**, then select it and a model under the **Speech API** assignment and save. Local loopback HTTP permits optional keys; remote APIs require HTTPS and a key. Explicit refresh lists model IDs; custom IDs also work. Local engine downloads are not needed for cloud mode. Language/vocabulary settings remain available, but a provider may reject unsupported options visibly.
 
 **Transcribe audio** in cloud mode first shows an audio-upload confirmation with destination, model, tracks, bytes, and request count. Cancelling the review sends nothing. Cancelling an active run prevents further chunks and preserves the old transcript, but audio already uploaded cannot be recalled and in-flight work may still be billed. JSON results without timing are explicitly untimed and grouped by track; their text supports search, summaries, and export, without timestamp links.
+
+## Find and download local models
+
+Open **Settings → Local**. Scan common folders or choose a folder explicitly. The scan reports examined folders and truncation; it reads file headers within limits of 4,096 entries, six levels, and 200 files. Discovery alone does not verify or activate a model. Import matching Whisper catalog candidates to verify their full hash and copy them into managed storage; the source remains untouched. Select and save the Whisper model separately.
+
+Search Hugging Face explicitly to see up to 20 public results. Review the repository, revision, size, and license before downloading a supported file. Downloads verify the pinned size and SHA-256 and preserve existing files. Cancel stops transfer and prevents publication at the cancellation boundary. Complete single-file GGUF models require a separately managed compatible server; downloading does not launch one. Private/gated repositories and split models are unsupported.
 
 ## Generate summaries and ask questions
 
@@ -81,7 +87,7 @@ Use the version picker to read earlier summaries. **Copy summary** and **Copy ac
 2. On the first export, choose a destination folder. Cancel to leave the destination unset.
 3. Read the notification for the saved file path.
 
-Files are written under the destination's `Meetings` directory. **Settings → Markdown export** controls transcript inclusion, summary inclusion, and title or date-and-title filenames. The date prefix uses the stored UTC start date.
+Files are written under the destination's `Meetings` directory. **Settings → General → Markdown export** controls transcript inclusion, summary inclusion, and title or date-and-title filenames. The date prefix uses the stored UTC start date.
 
 Exports contain source metadata, user notes, and the selected sections. They do not include audio. An identical existing snapshot is reused. A differing file produces a new snapshot instead of overwriting external edits. Renaming a meeting does not rename older exports. Exported files are not synchronized back into the database.
 

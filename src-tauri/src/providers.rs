@@ -1,5 +1,5 @@
 //! Provider configuration validation, frozen credentials and bounded HTTP requests.
-use crate::domain::{AppError, KeyStatus, ProviderConfig, ProviderRole, Result};
+use crate::domain::{AppError, KeyStatus, ProviderConfig, Result};
 use reqwest::{blocking::Client, redirect::Policy, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, io::Read, time::Duration};
@@ -143,7 +143,7 @@ pub fn key_status(account: Option<&str>) -> KeyStatus {
     }
 }
 
-pub fn store_key(role: ProviderRole, key: &str) -> Result<String> {
+pub fn store_key(key: &str) -> Result<String> {
     let key = key.trim();
     if !valid_key(key) {
         return Err(AppError::new(
@@ -151,7 +151,7 @@ pub fn store_key(role: ProviderRole, key: &str) -> Result<String> {
             "Enter a valid API key without whitespace, at most 4096 bytes.",
         ));
     }
-    let account = format!("{}-{}", role.as_str(), uuid::Uuid::new_v4());
+    let account = format!("connection-{}", uuid::Uuid::new_v4());
     entry(&account)?.set_password(key).map_err(keychain_error)?;
     Ok(account)
 }
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     #[ignore = "uses native credential storage with a new synthetic entry only"]
     fn windows_keychain_round_trip_uses_only_new_synthetic_credentials() {
-        let account = store_key(ProviderRole::Llm, "openmeet-synthetic-key-one").unwrap();
+        let account = store_key("openmeet-synthetic-key-one").unwrap();
         let result = std::panic::catch_unwind(|| {
             assert_eq!(key_status(Some(&account)), KeyStatus::Present);
             let config = ProviderConfig {

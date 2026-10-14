@@ -8,10 +8,9 @@ use crate::{
     domain::{AppError, Result, Segment, SegmentTiming, Settings},
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -131,6 +130,23 @@ fn model(id: &str) -> Result<&'static Artifact> {
         .ok_or_else(|| AppError::new("stt_settings", "Choose one of the listed speech models."))
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ModelFile {
+    pub id: &'static str,
+    pub file: &'static str,
+    pub size: u64,
+    pub sha256: &'static str,
+}
+
+pub(crate) fn model_files() -> impl Iterator<Item = ModelFile> {
+    MODELS.iter().map(|(id, artifact)| ModelFile {
+        id,
+        file: artifact.file,
+        size: artifact.size,
+        sha256: artifact.sha256,
+    })
+}
+
 /// Checks transcription settings before they are stored or passed to the engine.
 pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
     if !LANGUAGES.contains(&language) {
@@ -182,10 +198,6 @@ pub fn status(root: &Path, model_id: &str) -> Status {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 fn stt_error(message: impl Into<String>) -> AppError {
     AppError::new("stt", message)
 }
@@ -194,13 +206,9 @@ fn download(
     client: &reqwest::blocking::Client,
     artifact: &Artifact,
     destination: &Path,
-    mut progress: impl FnMut(u64),
+    progress: impl FnMut(u64),
 ) -> Result<()> {
-    let part = destination.with_extension("part");
-    let fail = |message: &str| {
-        let _ = fs::remove_file(&part);
-        stt_error(message.to_string())
-    };
+    let fail = |message: &str| stt_error(message.to_string());
     let mut response = client.get(artifact.url).send().map_err(|_| {
         fail("Could not reach the download server. Check your connection and try again.")
     })?;
@@ -210,37 +218,13 @@ fn download(
             response.status()
         )));
     }
-    let mut file = File::create(&part)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; 64 * 1024];
-    let mut done = 0_u64;
-    loop {
-        let read = response
-            .read(&mut buffer)
-            .map_err(|_| fail("The download was interrupted. Partial data was discarded."))?;
-        if read == 0 {
-            break;
-        }
-        done += read as u64;
-        if done > artifact.size {
-            return Err(fail(
-                "The download was larger than expected and was discarded.",
-            ));
-        }
-        hasher.update(&buffer[..read]);
-        file.write_all(&buffer[..read])
-            .map_err(|_| fail("Could not write the download. Check free disk space."))?;
-        progress(done);
-    }
-    file.flush()?;
-    drop(file);
-    if done != artifact.size || hex(&hasher.finalize()) != artifact.sha256 {
-        return Err(fail(
-            "The download failed its checksum and was discarded. Nothing was installed.",
-        ));
-    }
-    fs::rename(&part, destination)?;
-    Ok(())
+    crate::model_library::copy_verified(
+        &mut response,
+        destination,
+        artifact.size,
+        artifact.sha256,
+        progress,
+    )
 }
 
 fn wanted_engine_file(name: &str) -> bool {
@@ -290,6 +274,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
             "Local speech-to-text needs Windows x64, or Apple Silicon with the local whisper.cpp b5454 build.",
         ));
     }
+    let _operation = crate::model_library::ArtifactOperation::begin()?;
     let client = reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
@@ -299,7 +284,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
             }
         }))
         .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(3600))
+        .timeout(crate::model_library::TRANSFER_TIMEOUT)
         .build()
         .map_err(|_| stt_error("Could not prepare the download client."))?;
     fs::create_dir_all(models_dir(root))?;
@@ -310,6 +295,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
         (before.model, selected),
     ];
     for (present, artifact) in pending {
+        crate::model_library::check_cancel()?;
         if present {
             continue;
         }
@@ -333,6 +319,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
             })
         })?;
         if is_engine {
+            crate::model_library::check_cancel()?;
             let extracted = extract_engine(&destination, &engine_dir(root));
             let _ = fs::remove_file(&destination);
             extracted?;
@@ -686,6 +673,7 @@ pub fn cancel() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     fn block(frame_offset: i64, frames: i64, capture_start_us: i64) -> Block {
         Block {

@@ -120,6 +120,50 @@ pub struct ProviderConfig {
     pub credential_account: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SavedConnection {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub revision: i64,
+    #[serde(skip_serializing)]
+    pub credential_account: Option<String>,
+}
+
+impl SavedConnection {
+    pub fn config(&self) -> ProviderConfig {
+        ProviderConfig {
+            base_url: self.base_url.clone(),
+            model: None,
+            revision: self.revision,
+            credential_account: self.credential_account.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProviderAssignment {
+    pub connection_id: String,
+    pub model: String,
+    pub revision: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ProviderAssignments {
+    pub llm: Option<ProviderAssignment>,
+    pub cloud_stt: Option<ProviderAssignment>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProviderSelection {
+    Unassigned,
+    Assigned {
+        connection_id: String,
+        model: String,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SttMode {
@@ -159,6 +203,8 @@ pub struct Settings {
     pub pause_shortcut: String,
     pub microphone_id: Option<String>,
     pub output_id: Option<String>,
+    pub saved_connections: Vec<SavedConnection>,
+    pub provider_assignments: ProviderAssignments,
     pub llm: Option<ProviderConfig>,
     pub cloud_stt: Option<ProviderConfig>,
     pub stt_mode: SttMode,

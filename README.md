@@ -78,11 +78,11 @@ Sample and simulation creation has been removed. Existing historical samples rem
 
 Notes, recording, and local transcription work without a cloud key. Summaries and **Ask this meeting** use your provider's OpenAI-compatible chat API.
 
-1. Open **Settings → Summaries and questions**.
-2. Enter the provider's HTTPS API base URL, including its API path, and paste your API key into the masked field. Save the connection.
-3. Refresh models and choose one from the dropdown, or enter a custom model ID if discovery is unavailable. Save the model.
+1. Open **Settings → Cloud API** (or **Local** for your local server).
+2. Name the connection, enter its API base URL including the API path, and paste its key into the masked field. Save the connection. Local loopback HTTP supports optional keys.
+3. Under the summary assignment, select the saved connection and a discovered or custom model ID. Save the assignment. Refresh models explicitly when needed.
 
-Keys pass briefly through the password field and IPC to Rust, then live in the OS keychain. They are not read back into Settings. Changing the URL requires entering a key for that destination. The LLM and cloud-speech connections are independent. Saving settings makes no content request; refreshing models sends credentials only. Environment-key import has been removed.
+Keys pass briefly through the password field and IPC to Rust, then live in the OS keychain. They are not read back into Settings. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; refreshing models sends credentials only. Environment-key import has been removed.
 
 Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. Review the destination, model, content, and request count before confirming. These calls send notes and transcript text only. Questions have their own confirmation, and earlier summaries remain available in the version picker.
 

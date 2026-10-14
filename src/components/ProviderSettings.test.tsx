@@ -3,28 +3,39 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, type ProviderModel, type Settings } from "../lib/api";
 import { ProviderSettings } from "./ProviderSettings";
-
-vi.mock("../lib/api", async (original) => {
-  const actual = await original<typeof import("../lib/api")>();
-  return {
-    ...actual,
-    api: {
-      getSettings: vi.fn(),
-      providerKeyStatus: vi.fn(),
-      saveProviderConnection: vi.fn(),
-      listProviderModels: vi.fn(),
-      saveProviderModel: vi.fn(),
-    },
-  };
-});
-
-const config = {
+vi.mock("../lib/api", async (original) => ({
+  ...(await original<typeof import("../lib/api")>()),
+  api: {
+    getSettings: vi.fn(),
+    apiConnectionKeyStatus: vi.fn(),
+    providerKeyStatus: vi.fn(),
+    saveApiConnection: vi.fn(),
+    listApiConnectionModels: vi.fn(),
+    saveProviderAssignment: vi.fn(),
+    deleteApiConnection: vi.fn(),
+  },
+}));
+const connection = {
+  id: "remote",
+  name: "Remote",
   base_url: "https://provider.example/v1",
-  model: "saved-model",
   revision: 1,
 };
 const settings: Settings = {
-  llm: config,
+  saved_connections: [
+    connection,
+    {
+      id: "local",
+      name: "Local",
+      base_url: "http://127.0.0.1:1234/v1",
+      revision: 1,
+    },
+  ],
+  provider_assignments: {
+    llm: { connection_id: "remote", model: "saved-model", revision: 1 },
+    cloud_stt: null,
+  },
+  llm: { base_url: connection.base_url, model: "saved-model", revision: 1 },
   cloud_stt: null,
   stt_mode: "local",
   stt_model: "small",
@@ -38,156 +49,212 @@ const settings: Settings = {
   export: { transcript: true, summary: true, filename: "title" },
 };
 const props = () => ({
-  role: "llm" as const,
-  config,
-  keyStatus: "present" as const,
+  settings,
+  local: false,
+  active: true,
   disabled: false,
   onSaved: vi.fn(),
   onKeyStatus: vi.fn(),
 });
-
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.getSettings).mockResolvedValue(settings);
+  vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("present");
   vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
+  vi.mocked(api.saveProviderAssignment).mockResolvedValue(settings);
 });
-
-it("discovers models from a saved local server without requiring a key", async () => {
-  vi.mocked(api.listProviderModels).mockResolvedValue([{ id: "local-model" }]);
-  render(
-    <ProviderSettings
-      {...props()}
-      keyStatus="missing"
-      config={{ ...config, base_url: "http://127.0.0.1:1234/v1" }}
-    />,
+it("does not discover automatically and supports local discovery without a key", async () => {
+  vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("missing");
+  vi.mocked(api.listApiConnectionModels).mockResolvedValue([
+    { id: "local-model" },
+  ]);
+  render(<ProviderSettings {...props()} local />);
+  expect(api.listApiConnectionModels).not.toHaveBeenCalled();
+  await userEvent.selectOptions(
+    screen.getByLabelText("Saved connection"),
+    "local",
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Refresh summary models" }),
-  );
-  await screen.findByRole("option", { name: "local-model" });
-  expect(api.listProviderModels).toHaveBeenCalledWith("llm", 1);
-  expect(screen.getByText("Local server. API key optional.")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  await screen.findByText("local-model");
+  expect(api.listApiConnectionModels).toHaveBeenCalledWith("local", 1);
 });
-
-it("clears the password on a failed save and reloads settings after partial publication", async () => {
+it("clears passwords immediately on failed save and reloads partial publications", async () => {
   const input = props();
-  const newer = { ...settings, llm: { ...config, revision: 2 } };
-  vi.mocked(api.getSettings).mockResolvedValue(newer);
-  vi.mocked(api.saveProviderConnection).mockRejectedValue({
-    code: "provider_cleanup",
-    message: "Previous credential cleanup failed.",
-  });
+  vi.mocked(api.saveApiConnection).mockRejectedValue(
+    new Error("Previous credential cleanup failed."),
+  );
   render(<ProviderSettings {...input} />);
-  const key = screen.getByLabelText("Summary API key");
+  await userEvent.selectOptions(
+    screen.getByLabelText("Saved connection"),
+    "remote",
+  );
+  const key = screen.getByLabelText("API key");
   await userEvent.type(key, "synthetic-secret");
   await userEvent.click(
-    screen.getByRole("button", { name: "Save summary connection" }),
+    screen.getByRole("button", { name: "Save connection" }),
   );
   expect(key).toHaveProperty("value", "");
   await screen.findByRole("alert");
-  await waitFor(() => expect(input.onSaved).toHaveBeenCalledWith(newer));
-  expect(api.saveProviderConnection).toHaveBeenCalledWith(
-    "llm",
-    config.base_url,
-    { kind: "replace", key: "synthetic-secret" },
-    1,
-  );
-  expect(screen.getByRole("alert").textContent).not.toContain(
-    "synthetic-secret",
-  );
+  await waitFor(() => expect(input.onSaved).toHaveBeenCalledWith(settings));
+  expect(api.saveApiConnection).toHaveBeenCalledWith({
+    id: "remote",
+    name: "Remote",
+    baseUrl: connection.base_url,
+    keyChange: { kind: "replace", key: "synthetic-secret" },
+    expectedRevision: 1,
+  });
 });
-
-it("clears a detached password element when Settings closes without saving", async () => {
-  const view = render(<ProviderSettings {...props()} />);
-  const key = screen.getByLabelText("Summary API key");
-  await userEvent.type(key, "unsaved-synthetic-secret");
+it("preserves nonsecret drafts but clears keys when a tab hides and on unmount", async () => {
+  const input = props();
+  const view = render(<ProviderSettings {...input} />);
+  await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
+  const key = screen.getByLabelText("API key");
+  await userEvent.type(key, "secret");
+  view.rerender(<ProviderSettings {...input} active={false} />);
+  expect(key).toHaveProperty("value", "");
+  expect(screen.getByLabelText("Connection name")).toHaveProperty(
+    "value",
+    "Draft",
+  );
+  view.rerender(<ProviderSettings {...input} active />);
+  await userEvent.type(key, "secret-again");
   view.unmount();
   expect(key).toHaveProperty("value", "");
-  expect(api.saveProviderConnection).not.toHaveBeenCalled();
 });
-
-it("keeps the saved model and custom-ID path when discovery is unsupported", async () => {
-  vi.mocked(api.listProviderModels).mockRejectedValue(
-    new Error("Model discovery is unavailable."),
+it("saves each task independently even when they share a connection", async () => {
+  render(<ProviderSettings {...props()} />);
+  await userEvent.clear(screen.getByLabelText("Summary model ID"));
+  await userEvent.type(
+    screen.getByLabelText("Summary model ID"),
+    "chat-custom",
+  );
+  await userEvent.selectOptions(
+    screen.getByLabelText("Speech API connection"),
+    "remote",
+  );
+  await userEvent.type(
+    screen.getByLabelText("Speech API model ID"),
+    "speech-custom",
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Save speech api assignment" }),
+  );
+  expect(api.saveProviderAssignment).toHaveBeenLastCalledWith(
+    "cloud_stt",
+    { kind: "assigned", connection_id: "remote", model: "speech-custom" },
+    null,
+  );
+  expect(screen.getByLabelText("Summary model ID")).toHaveProperty(
+    "value",
+    "chat-custom",
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Save summary assignment" }),
+  );
+  expect(api.saveProviderAssignment).toHaveBeenLastCalledWith(
+    "llm",
+    { kind: "assigned", connection_id: "remote", model: "chat-custom" },
+    1,
+  );
+});
+it("retains manual assignments after failed discovery and blocks an unsaved destination", async () => {
+  vi.mocked(api.listApiConnectionModels).mockRejectedValue(
+    new Error("Discovery unavailable"),
   );
   render(<ProviderSettings {...props()} />);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Refresh summary models" }),
+  await userEvent.selectOptions(
+    screen.getByLabelText("Saved connection"),
+    "remote",
   );
-  await screen.findByText("Model discovery is unavailable.");
-  expect(screen.getByLabelText("Summary model")).toHaveProperty(
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Refresh models" }),
+    ).toHaveProperty("disabled", false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  await screen.findByText("Discovery unavailable");
+  expect(screen.getByLabelText("Summary model ID")).toHaveProperty(
     "value",
     "saved-model",
   );
-  await userEvent.selectOptions(screen.getByLabelText("Summary model"), "");
-  await userEvent.clear(screen.getByLabelText("Summary custom model ID"));
-  await userEvent.type(
-    screen.getByLabelText("Summary custom model ID"),
-    "unlisted-model",
+  await userEvent.type(screen.getByLabelText("API base URL"), "/other");
+  expect(screen.getByRole("button", { name: "Refresh models" })).toHaveProperty(
+    "disabled",
+    true,
   );
-  vi.mocked(api.saveProviderModel).mockResolvedValue(settings);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Save summary model" }),
-  );
-  expect(api.saveProviderModel).toHaveBeenCalledWith(
-    "llm",
-    "unlisted-model",
-    1,
-  );
+  expect(
+    screen.getByRole("button", { name: "Delete connection" }),
+  ).toHaveProperty("disabled", true);
 });
-
-it("discards model discovery returned for an old connection revision", async () => {
-  let finish: (models: ProviderModel[]) => void = () => {};
-  vi.mocked(api.listProviderModels).mockReturnValue(
+it("discards discovery from an older connection revision", async () => {
+  let finish: (value: ProviderModel[]) => void = () => {};
+  vi.mocked(api.listApiConnectionModels).mockReturnValue(
     new Promise((resolve) => {
       finish = resolve;
     }),
   );
   const input = props();
   const view = render(<ProviderSettings {...input} />);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Refresh summary models" }),
+  await userEvent.selectOptions(
+    screen.getByLabelText("Saved connection"),
+    "remote",
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Refresh models" }),
+    ).toHaveProperty("disabled", false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  view.rerender(
+    <ProviderSettings
+      {...input}
+      settings={{
+        ...settings,
+        saved_connections: [{ ...connection, revision: 2 }],
+      }}
+    />,
+  );
+  await act(async () => finish([{ id: "old-model" }]));
+  expect(screen.queryByText("old-model")).toBeNull();
+});
+
+it("clears transient keys and retains assignment drafts after revision-only updates", async () => {
+  const input = props();
+  const view = render(<ProviderSettings {...input} />);
+  await userEvent.selectOptions(
+    screen.getByLabelText("Saved connection"),
+    "remote",
+  );
+  await userEvent.type(
+    screen.getByLabelText("API key"),
+    "synthetic-unsaved-key",
+  );
+  await userEvent.clear(screen.getByLabelText("Summary model ID"));
+  await userEvent.type(
+    screen.getByLabelText("Summary model ID"),
+    "keep-this-draft",
   );
   view.rerender(
     <ProviderSettings
       {...input}
-      config={{ ...config, base_url: "https://new.example/v1", revision: 2 }}
+      settings={{
+        ...settings,
+        saved_connections: [{ ...connection, revision: 2 }],
+        provider_assignments: {
+          ...settings.provider_assignments,
+          llm: { connection_id: "remote", model: "saved-model", revision: 2 },
+        },
+        llm: {
+          base_url: connection.base_url,
+          model: "saved-model",
+          revision: 2,
+        },
+      }}
     />,
   );
-  await act(async () => finish([{ id: "old-provider-model" }]));
-  expect(
-    screen.queryByRole("option", { name: "old-provider-model" }),
-  ).toBeNull();
-  expect(screen.getByLabelText("Summary API base URL")).toHaveProperty(
+  expect(screen.getByLabelText("API key")).toHaveProperty("value", "");
+  expect(screen.getByLabelText("Summary model ID")).toHaveProperty(
     "value",
-    "https://new.example/v1",
+    "keep-this-draft",
   );
-});
-
-it("uses the cloud speech slot independently and blocks discovery for an unsaved URL", async () => {
-  render(<ProviderSettings {...props()} role="cloud_stt" />);
-  await userEvent.clear(screen.getByLabelText("Cloud speech API base URL"));
-  await userEvent.type(
-    screen.getByLabelText("Cloud speech API base URL"),
-    "https://other.example/v1",
-  );
-  expect(
-    screen.getByRole("button", { name: "Refresh cloud speech models" }),
-  ).toHaveProperty("disabled", true);
-  expect(
-    screen.getByRole("button", { name: "Remove cloud speech key" }),
-  ).toHaveProperty("disabled", true);
-  const key = screen.getByLabelText("Cloud speech API key");
-  await userEvent.type(key, "speech-synthetic-key");
-  vi.mocked(api.saveProviderConnection).mockResolvedValue(settings);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Save cloud speech connection" }),
-  );
-  expect(api.saveProviderConnection).toHaveBeenCalledWith(
-    "cloud_stt",
-    "https://other.example/v1",
-    { kind: "replace", key: "speech-synthetic-key" },
-    1,
-  );
-  expect(key).toHaveProperty("value", "");
 });

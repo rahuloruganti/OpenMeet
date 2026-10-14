@@ -822,12 +822,18 @@ export function App() {
             keyStatus={keyStatus}
             onKeyStatus={updateKeyStatus}
             onSettings={setSettings}
+            onImported={async () => updateStt(await api.sttStatus())}
             onSttMode={(mode) =>
               void run(async () => setSettings(await api.saveSttMode(mode)))
             }
             stt={stt}
             sttProgress={sttProgress}
-            installing={job !== null}
+            installing={job === "install"}
+            onCancelStt={() =>
+              void api
+                .cancelModelDownload()
+                .catch((failure: unknown) => setError(errorMessage(failure)))
+            }
             onInstallStt={() =>
               void runJob("install", async () => {
                 updateStt(await api.sttInstall());
