@@ -5,6 +5,7 @@ User prompts in conversation order, with brief context and outcomes. The expande
 ## 1. Create the implementation plan
 
 **Prompt:**
+
 > @"Open-source meeting notetaker development plan and tool inventory.md" read this and create a plan to implement phase 1
 
 **Context:** The folder contained the source planning document but no application code or Git repository.
@@ -14,9 +15,11 @@ User prompts in conversation order, with brief context and outcomes. The expande
 ## 2. Replace the weekly schedule with phases
 
 **Prompt:**
+
 > review the plan and remove week wise plan to phase wise
 
 **Outcome:** Reorganized the plan into gate-driven subphases:
+
 - **1A:** Foundation
 - **1B:** Two-track capture
 - **1C:** Model management, VAD, and transcription
@@ -28,6 +31,7 @@ Also clarified dependencies, consent reminders, and paused-audio privacy.
 ## 3. Install Ponytail skills
 
 **Prompt:**
+
 > https://github.com/dietrichgebert/ponytail install these skills
 
 **Outcome:** Reviewed and installed six project-local skills under `.pi/skills/ponytail-bundle/`: `ponytail`, `ponytail-review`, `ponytail-audit`, `ponytail-debt`, `ponytail-gain`, and `ponytail-help`. No hooks or always-on extension were installed. Source revision and usage are recorded in that folder's `INSTALLATION.md`.
@@ -43,11 +47,13 @@ Also clarified dependencies, consent reminders, and paused-audio privacy.
 ## 5. Implement the plan
 
 **Prompt:**
+
 > @docs/phase-1-implementation-plan.md implement it
 
 **Context:** Node was available, but Rust and the native Windows build prerequisites were initially missing from PATH. The plan's platform and hardware gates had not passed.
 
 **Outcome:** Implemented Phase 1A foundation code:
+
 - Tauri/React shell and Rust-owned SQLite storage.
 - Explicitly labeled simulated recording, pause/resume, stop, tray controls, and configurable shortcut.
 - Fictional sample meeting, transcript, and hand-written summary.
@@ -60,6 +66,7 @@ Frontend checks and 11 tests passed. A temporary Rust toolchain enabled dependen
 ## 6. Retest microphone and audio
 
 **Prompt:**
+
 > test mic and audio part again
 
 **Outcome:** All 11 existing tests passed again. The native simulation-state test remained blocked by the linker. Windows reported a `Remote Audio` endpoint and running audio services; no separate microphone endpoint appeared in the device listing.
@@ -69,6 +76,7 @@ Frontend checks and 11 tests passed. A temporary Rust toolchain enabled dependen
 ## 7. Summarize progress
 
 **Prompt:**
+
 > ok give me summary
 
 **Outcome:** Summarized the completed foundation, passing frontend checks, native compilation blocker, and remaining capture/transcription/summary work. Identified installing native prerequisites as the next step.
@@ -76,7 +84,9 @@ Frontend checks and 11 tests passed. A temporary Rust toolchain enabled dependen
 ## 8. Install native Windows build prerequisites
 
 **Prompt:**
+
 > hows to fix
+>
 > - Native compilation is blocked by missing Visual Studio C++ Build Tools and Windows SDK. this can we install this
 
 **Outcome:** Checked Windows Package Manager and available disk space, then installed Visual Studio Build Tools 2022 version 17.14.41 with the C++ workload and recommended components through `winget`. The installation completed successfully.
@@ -84,6 +94,7 @@ Frontend checks and 11 tests passed. A temporary Rust toolchain enabled dependen
 ## 9. Explain why the tools are needed
 
 **Prompt:**
+
 > why is this needed
 
 **Outcome:** Explained that Tauri's Rust backend and native dependencies need the MSVC compiler/linker and Windows SDK to produce a Windows executable. These are development prerequisites, not a requirement for users to install the full Visual Studio editor to run the finished app.
@@ -91,11 +102,13 @@ Frontend checks and 11 tests passed. A temporary Rust toolchain enabled dependen
 ## 10. Verify the installation
 
 **Prompt:**
+
 > ok
 
 **Context:** Followed the explanation that installation had succeeded but native compilation still needed retesting.
 
 **Outcome:** Confirmed MSVC and Windows SDK `10.0.26100.0`, then successfully ran:
+
 - Windows native build.
 - All **7 Rust tests**.
 - Clippy with `--all-targets -- -D warnings`.
@@ -105,6 +118,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## 11. Create this log
 
 **Prompt:**
+
 > create a log.md file to my prompts and a bit of context
 
 **Outcome:** Created this file to preserve the prompt history and brief implementation context.
@@ -124,6 +138,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: execution plan for issue #1
 
 **Prompt:**
+
 > create a plan to excute
 
 **Context:** Windows capture code now exists, but real-device validation is blocked by a missing microphone. GitHub issue #1 tracks the remaining MVP work. Inspection of the failed CI run confirmed ringbuf advisory RUSTSEC-2026-0293 and a Windows formatting failure; source inspection also identified the recording payload mismatch and Stop awaiting note saving.
@@ -133,6 +148,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: start building and continue
 
 **Prompts:**
+
 > ok start building
 > continue
 > continuy
@@ -146,11 +162,13 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: open the Windows preview
 
 **Prompt:**
+
 > runn the windows local version i want to seee it
 
 **Outcome:** Launched the Windows debug executable. Its window responded, but the debug build uses the configured Vite development URL rather than serving bundled assets.
 
 **Reported problem:**
+
 > 127.0.0.1 refused to connect. ERR_CONNECTION_REFUSED
 
 **Resolution:** Started `corepack pnpm dev` locally on `127.0.0.1:1420`, verified HTTP 200, and restarted only the app instance launched above. The replacement window is responding. For future development launches use `corepack pnpm tauri dev`, which starts the frontend automatically. No recording was initiated; interactive rendering and audio capture were not independently verified.
@@ -158,6 +176,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: request a voice-model and LLM test
 
 **Prompt:**
+
 > i want to do a realtime test with voice model and llm connected
 
 **Preflight:** Windows now lists headset endpoints and reports one active capture endpoint in its audio registry. This differs from the previous Remote Audio-only environment, but does not prove cpal selection, audible capture, or pause privacy. Ollama was not found on PATH and did not respond at `127.0.0.1:11434`. The app still has no Whisper or LLM integration.
@@ -167,9 +186,11 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: local-only LLM model selection
 
 **Prompt:**
+
 > i dont waht to use llm api and select model in the ui
 
 **Clarification:** Asked whether this meant no cloud LLM API/key and a dropdown for a local model. The user confirmed:
+
 > yes
 
 **Outcome:** Added an explicit Ollama installed-model refresh and UI dropdown, saving the choice with additive schema-v3 migration. Only loopback model-list GET requests are made; proxies and redirects are disabled, requests are bounded, and remote/cloud-marked models are excluded. Save revalidates availability outside the recording/storage mutex. Missing saved models remain visible without automatic replacement.
@@ -183,6 +204,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: Granola-style UI and an API-backed model
 
 **Prompt:**
+
 > i want you to copy granola interface and ui and use frontier model with api create .env file will put key
 
 **Outcome:** Created an empty, Git-ignored root `.env` with generic provider/model/key placeholders; verified that it is ignored and untracked. No existing environment file was overwritten, key inspected, or API request made. Asked which provider/model to use and requested a reference screenshot for the desired interface. The intended UI uses OpenMeet branding, not copied proprietary code/assets.
@@ -192,7 +214,8 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: Merge Gateway selected
 
 **Prompt:**
-> i want api llm  i going to use merge gatway
+
+> i want api llm i going to use merge gatway
 
 **Clarification:** The user identified `merge.dev` and requested a documentation search. The model is not chosen.
 
@@ -203,6 +226,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: view UI and plan the Granola-inspired redesign
 
 **Prompts:**
+
 > ok i want to see thw ui now
 > i want to see the granola style redesign if it not built create a plan to build it
 
@@ -215,6 +239,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: implement the notes-first redesign
 
 **Prompt:**
+
 > implement
 
 **Outcome:** Implemented the original notes-first workspace in `src/App.tsx` and `src/styles.css`: searchable/collapsible meeting sidebar, mounted keyboard-accessible notes/summary/transcript tabs, source/save labels, guarded active-meeting navigation, secondary track details, consent-aware setup, nonmodal settings, and persistent pause/stop controls. Missing saved devices remain selected/unavailable rather than being silently substituted. Added regression coverage in `src/App.test.tsx`, including panel/quit focus, failed-draft retention, and consent reset. Created the self-contained memory-only fictional preview at `docs/prototypes/openmeet-workspace.html`. Merge is visibly not connected; no key field, connection test, or fake AI output was added.
@@ -226,6 +251,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: finish the notes-first redesign (steps 1–3)
 
 **Prompt:**
+
 > yes start with 1,2 and 3
 
 **Outcome:** Split `src/App.tsx` into `MeetingSidebar`, `MeetingWorkspace`, `RecordingControls`, `SetupPanel`, and `SettingsPanel` under `src/components/` (state and guards stay in `App`). Added day grouping (`src/lib/group-meetings.ts`), a "Start your first note" empty state, a disabled "Enhance notes" slot in Summary, and a slimmer recording bar. Tests were written first and failed for the expected reasons.
@@ -237,6 +263,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: build the Merge Gateway integration (Batch 4)
 
 **Prompt:**
+
 > build it first i will provide api key for merge and what else do you need from me
 > https://api-gateway.merge.dev/v1 url for merge
 
@@ -251,6 +278,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: first real recording attempts failed; non-fatal xrun treated as fatal
 
 **Prompts:** the user ran the in-app test recording twice and pasted the red errors:
+
 > Capture: An audio device stopped responding. Both tracks paused ...
 > ... (microphone: A buffer underrun or overrun occurred.) ...
 
@@ -267,6 +295,7 @@ The native compilation blocker is resolved. Updated `docs/implementation-status.
 ## Follow-up: set up speech-to-text and LLM summaries
 
 **Prompt:**
+
 > setup stt and llm for transcript and summary
 
 **Findings before building:** no cmake/libclang on the machine, so in-process whisper bindings were not an option; the schema locked `segments.source` to `'fixture'`. Verified the whisper.cpp b5454 Windows x64 build and the Whisper small / Silero VAD models by checksum (engine SHA-256 from GitHub's asset digest; model SHA-1 from the whisper.cpp README and SHA-256 from Hugging Face's LFS digest). Manual run on the user's recordings: the system track transcribed correctly (about 20 s for 38 s of audio on this CPU); the mic tracks hallucinated symbols without VAD and produced no segments with VAD at 0.5 and 0.3, even after peak-normalizing, so they contain no detectable speech.
@@ -331,7 +360,6 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 
 **Findings:** Reviewed recent commits through 9497fd0, command bindings, migrations, backend feature implementations, feature plan and implementation status. The committed feature batch includes notes-only meetings, FTS5 search, guarded deletion, summary history/templates/copy, chunked summaries, meeting Q&A, rendered Markdown, rename, level meters, stop shortcut, playback/seek, timestamped notes, STT settings/progress/cancel, export options and interrupted-audio recovery; schema v9. Tracked files had no pending changes before this note; .claude/ and two older plan files were untracked. implementation-status.md still contains contradictory older claims (missing STT/summaries, no deletion UI, old test counts). Latest recorded full checks: 71 frontend and 57 Rust tests; not rerun during inspection. Native and hardware qualification remain open.
 
-
 ## Native startup smoke check
 
 **Request:** Run the application and see if it works.
@@ -339,7 +367,6 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Outcome:** Started the local Vite server and existing native debug executable. Initial Computer Use launch stayed blank and later had no targetable window; a terminal diagnostic launch subsequently loaded the workspace and existing SQLite meeting library. Verified opening/closing Settings, switching to a stopped meeting, and opening Summary and Transcript tabs. Settings displayed the installed speech engine; both audio players loaded approximately 38-second durations. Startup reported pause-shortcut registration unavailable. Left the app running for the user.
 
 **Checks and limits:** Frontend typecheck passed. No recording, playback, transcription, cloud call, deletion, recovery, export, or note edit was performed. Full automated suites were not rerun. Startup inconsistency and shortcut registration remain unresolved; this smoke check is not end-to-end or hardware qualification.
-
 
 ## Follow-up: pull request
 
@@ -418,6 +445,7 @@ Deleted untracked `src-tauri/src/ollama.rs` and `docs/prototypes/openmeet-worksp
 **Request:** Make the OpenAI-compatible API-base explanation smaller.
 
 **Outcome:** Reused the existing `panel-description` typography for that paragraph in provider Settings. Frontend formatting, typecheck/build, and whitespace checks passed. Full test suites were not rerun for this class-only change.
+
 # Settings and live processing request
 
 The user requested Cloud API and Local settings tabs. Cloud connections should expose provider, URL, key, and speech/text model selection. Local settings should find existing model files and support Hugging Face search/downloads, with external local model servers available without a bundled LLM engine. The user also requested transcripts while recording and automatic summary processing when the meeting ends. These are recorded in `docs/local-model-settings-design.md`; live transcription and automatic summaries are requirements, not completed features. Cloud processing still needs explicit session consent before automatic submission.
@@ -471,3 +499,15 @@ The user requested Cloud API and Local settings tabs. Cloud connections should e
 User accepted work on the next settings/model phase. Implemented reusable API connections, schema-v12 migration, independent task assignments, Cloud API/Local/General tabs, bounded local discovery, verified catalog import, and explicit public Hugging Face downloads. Routine checks passed: 104 frontend tests, 87 Rust tests, two native tests ignored. An isolated empty qualification profile confirmed tabs, draft preservation, navigation, and folder-picker opening; completing folder selection was blocked by the Windows helper. User confirmed Save and quit afterward. No recording, real credential, provider-content request, or real model payload download was used in this phase. Live transcription and automatic processing remain deferred. Work remains uncommitted; see docs/phase-2-settings-verification.md.
 
 User requested pull requests connected to the related issues. Prepared one Phase 2 PR for the coupled settings, migration, and model-library changes, linking #14–#18 and tracker #6 without automatic closure because native/provider acceptance gates remain open. Existing local check results and limitations are recorded in docs/phase-2-settings-verification.md.
+
+## Foundation qualification follow-up
+
+User approved the plan for unresolved issues #7–#13 and separately authorized a short local microphone/system recording test up to 30 seconds. The named short hardware test passed once, without establishing audible quality or pause privacy. Isolated native note autosave, switching, restart, and export-picker cancellation had partial success. Export completion and shortcut checks remain incomplete after helper geometry errors and qualification-window disappearance. Synthetic failure injection reproduced a track incorrectly marked finalized after a timing-write error. Fixed the writer to retain failures through finalization, added failure/flush and delayed-packet regressions, and passed the full checks with 104 frontend tests and 90 Rust tests, two native tests ignored. No 60-minute run, live provider submission, primary-profile modification, commit, or push was performed. See docs/foundation-qualification-follow-up.md.
+
+User confirmed the qualification app had closed by itself. Investigated under process monitoring without changing the primary profile. Corrected a coordinate retry to use the full dialog screenshot instead of a tiny overlay image. Native export, preservation of an external Markdown edit, deliberately refused note saves, blocked switching/quit, successful retry, code-0 guarded exit, and exact restart persistence passed. Closed #11 and updated tracker #6. A fictional hand-written summary passed native clipboard copy/paste. Alternative shortcuts saved and survived a warning-free cold start, and the minimum window size remained usable. Earlier unexpected exits were not reproduced during monitored retries; #13 remains open. No new recording or provider request was made in this follow-up.
+
+User asked to continue other work while setting aside the unexpected-closing investigation. Reproduced and fixed local processing that ignored damaged timing indexes, pre-pause segment endpoints extending into resumed audio, and recovery retries blocked by an earlier copy retained after failed SQLite publication. Reused strict timing validation across local/cloud/seek paths. Added synthetic capture-to-loopback-upload checks that inspect every prepared WAV sample and preserve the pause gap. Original files, retained copies, and prior transcripts are preserved. No new hardware recording or external provider upload was performed. Provider base URL/model details were requested before preparing any live qualification action. See docs/foundation-qualification-follow-up.md.
+
+The combined pause/recovery changes passed the full local check suite with 105 frontend tests and 97 Rust tests; two native tests remained ignored. Added progress evidence to issues #8 and #9 while leaving their remaining hardware gates open. Changes remain local and uncommitted.
+
+User deferred live provider qualification and requested closure of solved issues. GitHub review confirmed #11, #14–#17, and #38 were already closed; remaining issues retain unmet acceptance criteria. User then requested committing the pending foundation fixes and creating a PR. The PR links #8 and #9 without automatic closure and records the remaining hardware gates and deferred #12/#13 work.

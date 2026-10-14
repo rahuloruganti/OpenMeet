@@ -40,7 +40,7 @@ There is no telemetry, automatic cloud processing, or updater. Development mode 
 
 Explicit local scans read bounded directory entries and model headers; candidate import reads and hashes the selected file. Scan results are not uploaded. Hugging Face search sends the entered query, and listing files sends the selected repository ID. Generic GGUF downloads retain repository license metadata in a local manifest and require an external server.
 
-Model installation checks pinned sizes and SHA-256 hashes. Downloads occur only on an explicit action. Changing a selected model retains existing downloads. Local transcription runs whisper.cpp as a subprocess, with paths and settings passed locally. Output text is parsed from temporary JSON, not emitted to the app's console. Cancelling or failing transcription keeps the previous transcript.
+Model installation checks pinned sizes and SHA-256 hashes. Downloads occur only on an explicit action. Changing a selected model retains existing downloads. Local transcription runs whisper.cpp as a subprocess, with paths and settings passed locally. Output text is parsed from temporary JSON, not emitted to the app's console. Cancelling or failing transcription keeps the previous transcript. Local transcription, cloud preparation, and mapped timestamp seeking reject missing or damaged recording timing. No transcript is published from that failed run, and original audio/index files are preserved.
 
 ## Credentials and cloud consent
 

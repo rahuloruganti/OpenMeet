@@ -1,15 +1,16 @@
 //! Bounded cloud transcription of frozen WAV chunks, with honest optional timestamps.
 use crate::{
     audio::Track,
+    audio_timing::{self, Block, CLOCK_TOLERANCE_US},
     domain::{AppError, Result, Segment, SegmentTiming},
     providers::{check_status, client, read_capped, Connection},
 };
 use reqwest::blocking::multipart::{Form, Part};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
-    io::{BufRead, BufReader, Read},
+    io::{BufReader, Read},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -17,19 +18,8 @@ use std::{
 
 const MAX_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_REQUESTS: usize = 200;
-const MAX_INDEX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
 const WAV_HEADER_BYTES: u64 = 44;
-const CLOCK_TOLERANCE_US: u64 = 2000;
-
-#[derive(Clone, Deserialize, Serialize)]
-struct Block {
-    frame_offset: u64,
-    frames: u64,
-    capture_start_us: u64,
-    #[serde(default)]
-    generation: Option<u64>,
-}
 
 struct Chunk {
     path: PathBuf,
@@ -76,75 +66,6 @@ fn cancelled(cancel: &AtomicBool) -> Result<()> {
 }
 fn audio_error(_: impl std::fmt::Display) -> AppError {
     error("Recorded audio could not be read or prepared. Originals and the previous transcript are unchanged.")
-}
-
-fn read_index(track: &Track, cancel: &AtomicBool) -> Result<Vec<Block>> {
-    let file = File::open(&track.timing_path).map_err(audio_error)?;
-    if file.metadata().map_err(audio_error)?.len() > MAX_INDEX_BYTES {
-        return Err(error(
-            "The audio timing index exceeds the supported size. Nothing was sent.",
-        ));
-    }
-    let mut reader = BufReader::new(file);
-    let mut blocks: Vec<Block> = Vec::new();
-    let mut offset = 0_u64;
-    loop {
-        if blocks.len().is_multiple_of(4096) {
-            cancelled(cancel)?;
-        }
-        let mut line = Vec::new();
-        reader
-            .by_ref()
-            .take(1025)
-            .read_until(b'\n', &mut line)
-            .map_err(audio_error)?;
-        if line.is_empty() {
-            break;
-        }
-        if line.len() > 1024 {
-            return Err(error(
-                "The audio timing index is malformed. Nothing was sent.",
-            ));
-        }
-        let block: Block = serde_json::from_slice(&line)
-            .map_err(|_| error("The audio timing index is malformed. Nothing was sent."))?;
-        let end_us = block
-            .capture_start_us
-            .checked_add(
-                block
-                    .frames
-                    .checked_mul(1_000_000)
-                    .ok_or_else(|| error("Invalid audio timing range."))?
-                    / u64::from(track.sample_rate),
-            )
-            .ok_or_else(|| error("Invalid audio timing range."))?;
-        if block.frame_offset != offset || block.frames == 0 || end_us / 1000 > i64::MAX as u64 {
-            return Err(error(
-                "The audio timing index does not match the recording. Nothing was sent.",
-            ));
-        }
-        if let Some(previous) = blocks.last() {
-            let previous_end = previous.capture_start_us
-                + previous.frames * 1_000_000 / u64::from(track.sample_rate);
-            if block.capture_start_us < previous.capture_start_us
-                || block.capture_start_us.saturating_add(CLOCK_TOLERANCE_US) < previous_end
-            {
-                return Err(error(
-                    "Audio timestamps overlap or move backwards. Nothing was sent.",
-                ));
-            }
-        }
-        offset = offset
-            .checked_add(block.frames)
-            .ok_or_else(|| error("Invalid audio frame count."))?;
-        blocks.push(block);
-    }
-    if blocks.is_empty() || offset != track.frames as u64 {
-        return Err(error(
-            "The audio timing index is incomplete. Nothing was sent.",
-        ));
-    }
-    Ok(blocks)
 }
 
 fn chunk_ranges(index: &[Block], rate: u32, channels: u16, cap: u64) -> Vec<(u64, u64)> {
@@ -301,7 +222,7 @@ fn prepare_cancellable(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Resul
                 "The WAV format does not match the recording metadata. Nothing was sent.",
             ));
         }
-        let index = read_index(track, cancel)?;
+        let index = audio_timing::read(track, || cancelled(cancel))?;
         fingerprint.update(serde_json::to_vec(&index).map_err(|_| audio_error("index"))?);
         let ranges = chunk_ranges(&index, track.sample_rate, track.channels, cap);
         requests += ranges.len();
@@ -552,10 +473,10 @@ pub fn transcribe(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::{
-        io::Write,
+        io::{BufRead, Write},
         net::TcpListener,
         sync::{Arc, Mutex},
         thread,
@@ -593,9 +514,11 @@ mod tests {
         }
     }
 
-    type ReceivedRequests = Arc<Mutex<Vec<Vec<u8>>>>;
+    pub(crate) type ReceivedRequests = Arc<Mutex<Vec<Vec<u8>>>>;
 
-    fn serve(responses: Vec<String>) -> (Connection, thread::JoinHandle<()>, ReceivedRequests) {
+    pub(crate) fn serve(
+        responses: Vec<String>,
+    ) -> (Connection, thread::JoinHandle<()>, ReceivedRequests) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let connection = Connection::for_test(
             &format!("http://{}/custom/v1", listener.local_addr().unwrap()),

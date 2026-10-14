@@ -5,6 +5,7 @@
 //! gates every track so silence is not "transcribed" into hallucinated text.
 use crate::{
     audio::Track,
+    audio_timing::{self, Block},
     domain::{AppError, Result, Segment, SegmentTiming, Settings},
 };
 use serde::{Deserialize, Serialize};
@@ -329,60 +330,49 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
     Ok(status(root, model_id))
 }
 
-#[derive(Deserialize)]
-struct Block {
-    frame_offset: i64,
-    frames: i64,
-    capture_start_us: i64,
-}
-
-fn read_index(path: &Path) -> Vec<Block> {
-    // Malformed trailing lines (a partial file after a crash) are skipped, not fatal.
-    fs::read_to_string(path)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
-}
-
 /// Maps a position in the WAV to the session timeline, honouring pause gaps.
-fn session_ms(index: &[Block], rate: u32, audio_ms: i64) -> i64 {
+fn session_ms(index: &[Block], rate: u32, audio_ms: i64, end: bool) -> i64 {
     if index.is_empty() || rate == 0 {
         return audio_ms;
     }
-    let rate = i64::from(rate);
-    let frame = audio_ms * rate / 1000;
+    let frame = u128::from(audio_ms.max(0) as u64) * u128::from(rate) / 1000;
     let at = index
-        .partition_point(|block| block.frame_offset <= frame)
+        .partition_point(|block| {
+            if end {
+                u128::from(block.frame_offset) < frame
+            } else {
+                u128::from(block.frame_offset) <= frame
+            }
+        })
         .saturating_sub(1);
     let block = &index[at];
-    let within = (frame - block.frame_offset).clamp(0, block.frames);
-    (block.capture_start_us + within * 1_000_000 / rate) / 1000
+    let within = frame
+        .saturating_sub(u128::from(block.frame_offset))
+        .min(u128::from(block.frames));
+    ((u128::from(block.capture_start_us) + within * 1_000_000 / u128::from(rate)) / 1000)
+        .min(i64::MAX as u128) as i64
 }
 
-/// Inverse of `session_ms`: maps a session-time position to a position in the WAV.
 /// A time inside a pause gap lands on the first frame recorded after it.
 fn file_ms(index: &[Block], rate: u32, session_ms: i64) -> i64 {
     if index.is_empty() || rate == 0 {
         return session_ms.max(0);
     }
-    let rate = i64::from(rate);
-    let session_us = session_ms.saturating_mul(1000);
-    let at = index.partition_point(|block| block.capture_start_us <= session_us);
+    let session_us = u128::from(session_ms.max(0) as u64) * 1000;
+    let at = index.partition_point(|block| u128::from(block.capture_start_us) <= session_us);
     let Some(block) = at.checked_sub(1).map(|at| &index[at]) else {
         return 0;
     };
-    let within = ((session_us - block.capture_start_us) * rate / 1_000_000).clamp(0, block.frames);
-    (block.frame_offset + within) * 1000 / rate
+    let within = ((session_us - u128::from(block.capture_start_us)) * u128::from(rate) / 1_000_000)
+        .min(u128::from(block.frames));
+    ((u128::from(block.frame_offset) + within) * 1000 / u128::from(rate)).min(i64::MAX as u128)
+        as i64
 }
 
-/// Where a transcript time (session time) is in this track's WAV, for playback seeking.
-pub fn track_file_ms(track: &Track, session_ms: i64) -> i64 {
-    file_ms(
-        &read_index(Path::new(&track.timing_path)),
-        track.sample_rate,
-        session_ms,
-    )
+/// Reject missing or damaged pause timing instead of inventing a seek position.
+pub fn track_file_ms(track: &Track, session_ms: i64) -> Result<i64> {
+    let index = audio_timing::read(track, || Ok(()))?;
+    Ok(file_ms(&index, track.sample_rate, session_ms))
 }
 
 #[derive(Deserialize)]
@@ -412,8 +402,8 @@ fn parse_output(json: &[u8], speaker: &str, rate: u32, index: &[Block]) -> Resul
         if text.is_empty() || marker {
             continue;
         }
-        let start = session_ms(index, rate, item.offsets.from.max(0));
-        let end = session_ms(index, rate, item.offsets.to.max(item.offsets.from));
+        let start = session_ms(index, rate, item.offsets.from.max(0), false);
+        let end = session_ms(index, rate, item.offsets.to.max(item.offsets.from), true);
         segments.push(Segment {
             speaker: speaker.to_string(),
             timing: SegmentTiming::Timed {
@@ -519,6 +509,7 @@ fn engine_command(
 fn run_engine(
     mut command: Command,
     track: &Track,
+    index: &[Block],
     scratch: &Path,
     output_base: &Path,
     mut report: impl FnMut(u8),
@@ -593,12 +584,7 @@ fn run_engine(
     let json = fs::read(output_base.with_extension("json"))
         .map_err(|_| stt_error("The speech engine produced no output."))?;
     let speaker = if track.kind == "mic" { "You" } else { "Others" };
-    parse_output(
-        &json,
-        speaker,
-        track.sample_rate,
-        &read_index(Path::new(&track.timing_path)),
-    )
+    parse_output(&json, speaker, track.sample_rate, index)
 }
 
 /// Runs one engine process per track inside the transcription run. Nothing is returned on failure
@@ -610,12 +596,20 @@ fn run_tracks(
 ) -> Result<Vec<Segment>> {
     let mut segments = Vec::new();
     for track in tracks {
+        let index = audio_timing::read(track, || {
+            if CANCEL.load(Ordering::SeqCst) {
+                Err(cancelled())
+            } else {
+                Ok(())
+            }
+        })?;
         let scratch = tempfile::tempdir()?;
         let output_base = scratch.path().join("out");
         let command = command_for(track, &output_base)?;
         segments.extend(run_engine(
             command,
             track,
+            &index,
             scratch.path(),
             &output_base,
             |percent| report(&track.kind, percent),
@@ -675,12 +669,98 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    fn block(frame_offset: i64, frames: i64, capture_start_us: i64) -> Block {
+    static ENGINE_TESTS: Mutex<()> = Mutex::new(());
+
+    fn block(frame_offset: u64, frames: u64, capture_start_us: u64) -> Block {
         Block {
             frame_offset,
             frames,
             capture_start_us,
+            generation: None,
         }
+    }
+
+    #[test]
+    fn missing_timing_is_rejected_before_creating_a_local_engine_command() {
+        let _test = ENGINE_TESTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let track = Track {
+            kind: "mic".into(),
+            path: dir.path().join("unused.wav").to_string_lossy().into(),
+            timing_path: dir.path().join("missing.jsonl").to_string_lossy().into(),
+            device_name: "Synthetic".into(),
+            sample_rate: 16000,
+            channels: 1,
+            frames: 16000,
+            dropped_frames: 0,
+            finalized: true,
+            size_bytes: None,
+        };
+        let result = run(|_| {
+            run_tracks(
+                &[track],
+                |_, _| panic!("Invalid timing reached engine setup"),
+                |_, _| {},
+            )
+        });
+        assert_eq!(result.unwrap_err().code, "audio_timing");
+    }
+
+    #[test]
+    fn a_segment_ending_at_a_pause_does_not_extend_into_the_resumed_audio() {
+        let index = [block(0, 16000, 1_000_000), block(16000, 16000, 8_000_000)];
+        let output = parse_output(
+            br#"{"transcription":[{"offsets":{"from":0,"to":1000},"text":"Before pause"},{"offsets":{"from":1000,"to":1500},"text":"After resume"}]}"#,
+            "You", 16000, &index,
+        ).unwrap();
+        assert_eq!(
+            output[0].timing,
+            SegmentTiming::Timed {
+                start_ms: 1000,
+                end_ms: 2000
+            }
+        );
+        assert_eq!(
+            output[1].timing,
+            SegmentTiming::Timed {
+                start_ms: 8000,
+                end_ms: 8500
+            }
+        );
+    }
+
+    #[test]
+    fn seeking_rejects_damaged_timing_and_clamps_extreme_requested_times() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("timing.jsonl");
+        let track = Track {
+            kind: "mic".into(),
+            path: "unused.wav".into(),
+            timing_path: path.to_string_lossy().into(),
+            device_name: "Synthetic".into(),
+            sample_rate: 16000,
+            channels: 1,
+            frames: 32000,
+            dropped_frames: 0,
+            finalized: true,
+            size_bytes: None,
+        };
+        assert_eq!(
+            track_file_ms(&track, 8250).unwrap_err().code,
+            "audio_timing"
+        );
+        fs::write(&path, "{\"frame_offset\":0,\"frames\":16000,\"capture_start_us\":1000000}\n{\"frame_offset\":16000,\"frames\":16000,\"capture_start_us\":8000000}\n").unwrap();
+        assert_eq!(track_file_ms(&track, 8250).unwrap(), 1250);
+        assert_eq!(track_file_ms(&track, 5000).unwrap(), 1000);
+        assert_eq!(track_file_ms(&track, i64::MAX).unwrap(), 2000);
+        assert_eq!(track_file_ms(&track, i64::MIN).unwrap(), 0);
+        fs::write(&path, "{partial").unwrap();
+        assert_eq!(
+            track_file_ms(&track, 8250).unwrap_err().code,
+            "audio_timing"
+        );
     }
 
     #[test]
@@ -691,13 +771,13 @@ mod tests {
             block(16000, 16000, 2_000_000),
             block(32000, 16000, 8_000_000), // resumed after a pause
         ];
-        assert_eq!(session_ms(&index, 16000, 0), 1000);
-        assert_eq!(session_ms(&index, 16000, 750), 1750);
-        assert_eq!(session_ms(&index, 16000, 1000), 2000);
-        assert_eq!(session_ms(&index, 16000, 2250), 8250);
+        assert_eq!(session_ms(&index, 16000, 0, false), 1000);
+        assert_eq!(session_ms(&index, 16000, 750, false), 1750);
+        assert_eq!(session_ms(&index, 16000, 1000, false), 2000);
+        assert_eq!(session_ms(&index, 16000, 2250, false), 8250);
         // Past the final block clamps to its end instead of extrapolating.
-        assert_eq!(session_ms(&index, 16000, 99_000), 9000);
-        assert_eq!(session_ms(&[], 16000, 1234), 1234);
+        assert_eq!(session_ms(&index, 16000, 99_000, false), 9000);
+        assert_eq!(session_ms(&[], 16000, 1234, false), 1234);
     }
 
     #[test]
@@ -811,7 +891,7 @@ mod tests {
         assert_eq!(file_ms(&index, 16000, 99_000), 3000);
         for audio in [0, 250, 1000, 1999, 2000, 2600, 3000] {
             assert_eq!(
-                file_ms(&index, 16000, session_ms(&index, 16000, audio)),
+                file_ms(&index, 16000, session_ms(&index, 16000, audio, false)),
                 audio
             );
         }
@@ -919,6 +999,9 @@ mod tests {
 
     #[test]
     fn fake_engine_reports_progress_and_cancel_keeps_the_previous_transcript() {
+        let _test = ENGINE_TESTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let json =
             r#"{"transcription":[{"offsets":{"from":0,"to":500},"text":" Fictional words"}]}"#;
@@ -962,7 +1045,7 @@ mod tests {
         let track = Track {
             kind: "mic".into(),
             path: "mic.wav".into(),
-            timing_path: dir.path().join("missing.jsonl").to_string_lossy().into(),
+            timing_path: dir.path().join("timing.jsonl").to_string_lossy().into(),
             device_name: "Synthetic".into(),
             sample_rate: 16000,
             channels: 1,
@@ -971,6 +1054,12 @@ mod tests {
             finalized: true,
             size_bytes: None,
         };
+
+        fs::write(
+            &track.timing_path,
+            "{\"frame_offset\":0,\"frames\":16000,\"capture_start_us\":0}\n",
+        )
+        .unwrap();
 
         let mut seen = Vec::new();
         let segments = run(|_| {

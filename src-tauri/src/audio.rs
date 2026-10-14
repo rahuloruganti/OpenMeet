@@ -391,6 +391,7 @@ struct TrackWriter {
     track: Track,
     wav: hound::WavWriter<BufWriter<File>>,
     timing: BufWriter<File>,
+    failed: bool,
 }
 impl TrackWriter {
     fn new(folder: &Path, kind: &str, input: &Input) -> Result<Self> {
@@ -429,6 +430,7 @@ impl TrackWriter {
         Ok(Self {
             wav,
             timing,
+            failed: false,
             track: Track {
                 kind: kind.into(),
                 path: path.to_string_lossy().into_owned(),
@@ -444,32 +446,40 @@ impl TrackWriter {
         })
     }
     fn write(&mut self, block: &Block) -> Result<()> {
-        // Classic WAV has a 4 GiB size limit. Stop before overflowing the header.
-        if u64::from(self.wav.len()) + block.len as u64 > (u64::from(u32::MAX) - 4096) / 4 {
-            return Err(audio_error("WAV size limit reached"));
-        }
-        for sample in &block.samples[..block.len] {
-            self.wav.write_sample(*sample).map_err(audio_error)?;
-        }
-        let frames = block.len as u64 / u64::from(self.track.channels);
-        writeln!(
-            self.timing,
-            "{{\"frame_offset\":{},\"frames\":{},\"capture_start_us\":{},\"generation\":{}}}",
-            self.track.frames, frames, block.start_us, block.generation
-        )?;
-        self.track.frames += frames as i64;
-        Ok(())
+        let result = (|| {
+            // Classic WAV has a 4 GiB size limit. Stop before overflowing the header.
+            if u64::from(self.wav.len()) + block.len as u64 > (u64::from(u32::MAX) - 4096) / 4 {
+                return Err(audio_error("WAV size limit reached"));
+            }
+            for sample in &block.samples[..block.len] {
+                self.wav.write_sample(*sample).map_err(audio_error)?;
+            }
+            let frames = block.len as u64 / u64::from(self.track.channels);
+            writeln!(
+                self.timing,
+                "{{\"frame_offset\":{},\"frames\":{},\"capture_start_us\":{},\"generation\":{}}}",
+                self.track.frames, frames, block.start_us, block.generation
+            )?;
+            self.track.frames += frames as i64;
+            Ok(())
+        })();
+        self.failed |= result.is_err();
+        result
     }
     fn checkpoint(&mut self) -> Result<()> {
-        self.wav.flush().map_err(audio_error)?;
-        self.timing.flush()?;
-        Ok(())
+        let result = (|| {
+            self.wav.flush().map_err(audio_error)?;
+            self.timing.flush()?;
+            Ok(())
+        })();
+        self.failed |= result.is_err();
+        result
     }
     fn finish(mut self, dropped: u64) -> Track {
         self.track.dropped_frames = dropped.min(i64::MAX as u64) as i64;
         let timing_ok = self.timing.flush().is_ok();
         let wav_ok = self.wav.finalize().is_ok();
-        self.track.finalized = timing_ok && wav_ok;
+        self.track.finalized = !self.failed && timing_ok && wav_ok;
         self.track
     }
 }
@@ -1105,6 +1115,242 @@ mod tests {
         shared.recording.store(true, Ordering::SeqCst);
         assert!(!accepted(&old, &shared));
     }
+    #[test]
+    fn delayed_pre_pause_packets_never_reach_either_wav_after_resume() {
+        for (index, kind) in ["mic", "system"].into_iter().enumerate() {
+            let shared = Shared::new();
+            let folder = tempfile::tempdir().unwrap();
+            let mut writer =
+                TrackWriter::create(folder.path(), kind, "Synthetic".into(), 16000, 1).unwrap();
+            let (mut producer, mut consumer) = HeapRb::new(4).split();
+            shared.recording.store(true, Ordering::SeqCst);
+            push_samples(&[0.25_f32; 4], 0, 1, 16000, &shared, index, &mut producer);
+            drain(index, &mut consumer, &mut writer, &shared);
+            push_samples(&[0.75_f32; 4], 250, 1, 16000, &shared, index, &mut producer);
+            let pending = consumer.try_pop().unwrap();
+            let (release, waiting) = mpsc::channel();
+            // Hold an old-generation packet at the callback's queue-publication boundary.
+            let callback = thread::spawn(move || {
+                waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+                assert!(producer.try_push(pending).is_ok());
+                producer
+            });
+            shared.mute();
+            shared.generation.fetch_add(1, Ordering::SeqCst);
+            shared.recording.store(true, Ordering::SeqCst);
+            release.send(()).unwrap();
+            let mut producer = callback.join().unwrap();
+            push_samples(
+                &[0.5_f32; 4],
+                1_000_000,
+                1,
+                16000,
+                &shared,
+                index,
+                &mut producer,
+            );
+            drain(index, &mut consumer, &mut writer, &shared);
+            let track = writer.finish(0);
+            assert!(track.finalized);
+            assert_eq!(track.frames, 8);
+            let samples = hound::WavReader::open(&track.path)
+                .unwrap()
+                .samples::<f32>()
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(samples, [0.25, 0.25, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5]);
+            let timing = fs::read_to_string(&track.timing_path).unwrap();
+            let offsets: Vec<_> = timing
+                .lines()
+                .map(|line| {
+                    serde_json::from_str::<serde_json::Value>(line).unwrap()["capture_start_us"]
+                        .as_u64()
+                        .unwrap()
+                })
+                .collect();
+            assert_eq!(offsets, [0, 1_000_000]);
+        }
+    }
+
+    #[test]
+    fn timing_write_failure_keeps_the_track_incomplete_and_preserves_artifacts() {
+        let shared = Shared::new();
+        let folder = tempfile::tempdir().unwrap();
+        let mut writer =
+            TrackWriter::create(folder.path(), "mic", "Synthetic".into(), 16000, 1).unwrap();
+        let (mut producer, mut consumer) = HeapRb::new(4).split();
+        shared.recording.store(true, Ordering::SeqCst);
+        push_samples(&[0.25_f32; 4], 0, 1, 16000, &shared, 0, &mut producer);
+        drain(0, &mut consumer, &mut writer, &shared);
+        writer.checkpoint().unwrap();
+        let original_timing = fs::read(&writer.track.timing_path).unwrap();
+        writer.timing = BufWriter::with_capacity(0, File::open(&writer.track.timing_path).unwrap());
+        push_samples(&[0.75_f32; 4], 250, 1, 16000, &shared, 0, &mut producer);
+        drain(0, &mut consumer, &mut writer, &shared);
+        assert!(!shared.recording.load(Ordering::SeqCst));
+        assert!(shared.error().unwrap().contains("disk write"));
+        assert_eq!(shared.counters[0].frames.load(Ordering::Relaxed), 4);
+        let track = writer.finish(0);
+        assert!(
+            !track.finalized,
+            "A missing timing entry must not become a successful track at stop"
+        );
+        assert_eq!(fs::read(&track.timing_path).unwrap(), original_timing);
+        let samples = hound::WavReader::open(&track.path)
+            .unwrap()
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(samples, [0.25, 0.25, 0.25, 0.25, 0.75, 0.75, 0.75, 0.75]);
+    }
+
+    #[test]
+    fn a_later_successful_flush_does_not_hide_an_earlier_checkpoint_failure() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut writer =
+            TrackWriter::create(folder.path(), "system", "Synthetic".into(), 16000, 1).unwrap();
+        writer.timing = BufWriter::new(File::open(&writer.track.timing_path).unwrap());
+        let shared = Shared::new();
+        let (mut producer, mut consumer) = HeapRb::new(4).split();
+        shared.recording.store(true, Ordering::SeqCst);
+        push_samples(&[0.5_f32; 4], 0, 1, 16000, &shared, 1, &mut producer);
+        drain(1, &mut consumer, &mut writer, &shared);
+        assert!(writer.checkpoint().is_err());
+        writer.timing = BufWriter::new(
+            OpenOptions::new()
+                .append(true)
+                .open(&writer.track.timing_path)
+                .unwrap(),
+        );
+        writer.checkpoint().unwrap();
+        let track = writer.finish(0);
+        assert!(!track.finalized);
+        assert_eq!(track.frames, 4);
+        assert_eq!(fs::read(&track.timing_path).unwrap(), b"");
+        let samples = hound::WavReader::open(&track.path)
+            .unwrap()
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(samples, [0.5; 4]);
+    }
+
+    #[test]
+    fn paused_marker_samples_never_reach_prepared_cloud_uploads() {
+        use crate::{cloud_stt, domain::SegmentTiming};
+        let shared = Shared::new();
+        let folder = tempfile::tempdir().unwrap();
+        let mut writers: Vec<_> = ["mic", "system"]
+            .into_iter()
+            .map(|kind| {
+                TrackWriter::create(folder.path(), kind, "Synthetic".into(), 16000, 1).unwrap()
+            })
+            .collect();
+        let mut queues: Vec<_> = (0..2).map(|_| HeapRb::new(QUEUE_BLOCKS).split()).collect();
+        shared.recording.store(true, Ordering::SeqCst);
+        for (index, value) in [0.25_f32, -0.25].into_iter().enumerate() {
+            push_samples(
+                &vec![value; 16000],
+                0,
+                1,
+                16000,
+                &shared,
+                index,
+                &mut queues[index].0,
+            );
+            drain(index, &mut queues[index].1, &mut writers[index], &shared);
+            push_samples(
+                &[0.75_f32; 4],
+                1_000_000,
+                1,
+                16000,
+                &shared,
+                index,
+                &mut queues[index].0,
+            );
+        }
+        shared.mute();
+        for index in 0..2 {
+            push_samples(
+                &[0.9_f32; 4],
+                2_000_000,
+                1,
+                16000,
+                &shared,
+                index,
+                &mut queues[index].0,
+            );
+            drain(index, &mut queues[index].1, &mut writers[index], &shared);
+        }
+        shared.generation.fetch_add(1, Ordering::SeqCst);
+        shared.recording.store(true, Ordering::SeqCst);
+        for (index, value) in [0.5_f32, -0.5].into_iter().enumerate() {
+            push_samples(
+                &vec![value; 16000],
+                8_000_000,
+                1,
+                16000,
+                &shared,
+                index,
+                &mut queues[index].0,
+            );
+            drain(index, &mut queues[index].1, &mut writers[index], &shared);
+        }
+        let tracks: Vec<_> = writers.into_iter().map(|writer| writer.finish(0)).collect();
+        assert!(tracks
+            .iter()
+            .all(|track| track.finalized && track.frames == 32000));
+        let plan = cloud_stt::plan(&tracks).unwrap();
+        assert_eq!(plan.requests, 4);
+        let response = r#"{"text":"Fictional marker","segments":[{"text":"Fictional marker","start":0.0,"end":1.0}]}"#.to_string();
+        let (connection, server, requests) = cloud_stt::tests::serve(vec![response; 4]);
+        let segments = cloud_stt::transcribe(
+            &connection,
+            &tracks,
+            "auto",
+            "",
+            &plan,
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        server.join().unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        for (request, expected) in requests.iter().zip([8192_i16, 16384, -8192, -16384]) {
+            let start = request
+                .windows(4)
+                .position(|bytes| bytes == b"RIFF")
+                .unwrap();
+            let reader = hound::WavReader::new(std::io::Cursor::new(&request[start..])).unwrap();
+            assert_eq!(reader.spec().sample_rate, 16000);
+            assert_eq!(reader.spec().channels, 1);
+            let samples: Vec<i16> = reader
+                .into_samples()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap();
+            assert_eq!(samples, vec![expected; 16000]);
+        }
+        let times: Vec<_> = segments
+            .iter()
+            .map(|segment| {
+                let SegmentTiming::Timed { start_ms, end_ms } = segment.timing else {
+                    panic!("Synthetic timed response lost its timing");
+                };
+                (segment.speaker.as_str(), start_ms, end_ms)
+            })
+            .collect();
+        assert_eq!(
+            times,
+            [
+                ("Others", 0, 1000),
+                ("You", 0, 1000),
+                ("Others", 8000, 9000),
+                ("You", 8000, 9000)
+            ]
+        );
+    }
+
     #[test]
     fn queue_overflow_disarms_both_tracks() {
         let shared = Shared::new();

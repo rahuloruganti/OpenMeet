@@ -93,7 +93,7 @@ Exports contain source metadata, user notes, and the selected sections. They do 
 
 ## Recover or delete data
 
-An interrupted desktop recording may offer **Recover audio**. Recovery writes repaired WAV copies beside the original partial files, preserving the originals. It needs additional disk space and cannot recreate missing audio.
+An interrupted desktop recording may offer **Recover audio**. Recovery writes repaired WAV copies beside the original partial files, preserving the originals. It needs additional disk space and cannot recreate missing audio. Each attempt uses a fresh filename so a database failure can be retried without overwriting a retained copy. Failed attempts can therefore use additional space. A playable recovered WAV does not establish valid pause timing: local/cloud transcription and transcript timestamp seeking refuse missing or damaged timing indexes instead of guessing.
 
 Open the meeting's **•••** menu for **Delete audio** or **Delete meeting**. Both require the meeting title as confirmation and refuse an active recording. Delete audio retains notes, transcripts, and summaries. Delete meeting removes the local meeting and its associated data. Exported snapshots remain unchanged. There is no undo or secure erasure guarantee.
 

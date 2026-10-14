@@ -22,6 +22,7 @@ Read `docs/phase-1-implementation-plan.md` and `docs/implementation-status.md` b
 | `src-tauri/src/lib.rs` | Tauri commands, events, tray, shortcuts, lifecycle |
 | `src-tauri/src/domain.rs` | Shared backend types and errors |
 | `src-tauri/src/storage.rs` | SQLite, recording lifecycle, capture integration |
+| `src-tauri/src/audio_timing.rs` | Bounded timing-index validation shared by local STT, cloud preparation, and mapped seeking |
 | `src-tauri/src/audio.rs` | Device discovery, native capture, bounded queues, WAV writers |
 | `src-tauri/src/model_library.rs` | Bounded model scans, verified imports, public Hugging Face metadata/downloads |
 | `src-tauri/src/providers.rs` | Independent provider validation, keychain credentials, model discovery, bounded HTTP |

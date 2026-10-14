@@ -73,6 +73,8 @@ Control acknowledgements and real-device timing remain stabilization work. Synth
 
 Local transcription runs the downloaded Windows x64 CPU build of whisper.cpp with the selected model, Silero VAD, language, and vocabulary hint. Cloud mode independently selects a compatible endpoint/key/model and uploads frozen PCM16 WAV chunks after confirmation. Chunk boundaries respect pause generations and timing discontinuities. Both modes preserve `You` and `Others` track labels.
 
+The `audio_timing` module validates bounded timing indexes for local transcription, cloud preparation, and mapped seeking. Local processing rejects incomplete timing before engine setup. Segment starts and ends map to opposite sides of a pause boundary, so a pre-pause segment does not extend through the gap. Damaged indexes produce visible errors instead of file-time guesses.
+
 The transcription run guard covers preparation, processing, and publication. Cancellation and final publication share a gate. A successful transaction replaces prior local/cloud generated segments and stores provider/model provenance, including successful empty results. Failure/cancellation preserves the previous transcript and notes. Valid timestamps map through the original timing index. JSON text without timestamps is explicitly untimed, grouped by track, and has no seek link or fabricated time citation.
 
 ## Provider requests
@@ -103,7 +105,7 @@ The Rust `model_library` module owns bounded scans, verified catalog imports, pu
 
 `Core::open` enables WAL and applies numbered migrations using `PRAGMA user_version`. Table rebuilds that need foreign keys disabled perform a foreign-key check before committing. Migration 011 preserves segment IDs and restores FTS triggers while adding cloud/untimed entries. Migration 012 copies existing provider profiles and credential references into saved connections and assignments without reading secrets. Populated upgrade tests cover notes, transcripts, search, and foreign keys. Existing user databases are upgraded without resetting them. Legacy `local_model`/`merge_model` columns remain unused.
 
-Search triggers maintain the FTS5 index as notes, segments, titles, and summaries change. Audio and models are separate files, not database blobs. See [privacy](privacy.md) for paths and backup boundaries.
+Search triggers maintain the FTS5 index as notes, segments, titles, and summaries change. Recovery attempts publish to fresh recovered-copy filenames so a failed database update does not block retry or overwrite an earlier copy. Audio and models are separate files, not database blobs. See [privacy](privacy.md) for paths and backup boundaries.
 
 ## IPC and permissions
 
