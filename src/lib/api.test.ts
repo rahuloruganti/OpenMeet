@@ -91,7 +91,40 @@ it("exposes real recording only and omits the retired simulation argument", asyn
     title: "Meeting",
     consent: true,
     devices: { microphoneId: "mic", outputId: "out" },
+    processingConfirmation: null,
   });
   expect(Object.keys(api)).not.toContain("start");
   expect(Object.keys(api)).not.toContain("createFixture");
+});
+
+it("keeps session consent separate from recording permission and manual action consent", async () => {
+  await api.prepareSessionProcessing({
+    kind: "final",
+    live: true,
+    summary: "standup-v1",
+  });
+  expect(invoke).toHaveBeenLastCalledWith("prepare_session_processing", {
+    request: { kind: "final", live: true, summary: "standup-v1" },
+  });
+  await api.startCapture(
+    "Meeting",
+    true,
+    { microphoneId: "mic", outputId: "out" },
+    "reviewed-session",
+  );
+  expect(invoke).toHaveBeenLastCalledWith("start_recording", {
+    title: "Meeting",
+    consent: true,
+    devices: { microphoneId: "mic", outputId: "out" },
+    processingConfirmation: "reviewed-session",
+  });
+  await api.cancelSessionProcessing("meeting", 3);
+  expect(invoke).toHaveBeenLastCalledWith("cancel_session_processing", {
+    id: "meeting",
+    expectedRevision: 3,
+  });
+  await api.getSessionProcessing("meeting");
+  expect(invoke).toHaveBeenLastCalledWith("get_session_processing", {
+    id: "meeting",
+  });
 });

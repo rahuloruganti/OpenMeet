@@ -23,6 +23,56 @@ export type RecordingState = {
   /** Audio written so far (paused time excluded); null without real capture. */
   recording_offset_ms: number | null;
 };
+export type SessionProcessingRequest =
+  | { kind: "live_only" }
+  | {
+      kind: "final";
+      live: boolean;
+      summary: SummaryTemplate | null;
+    };
+export type SessionDestination =
+  | { kind: "local_whisper"; model: string }
+  | {
+      kind: "compatible_api";
+      base_url: string;
+      model: string;
+      connection_id: string;
+      connection_revision: number;
+      assignment_revision: number;
+    };
+export type SessionProcessingPlan = {
+  id: string;
+  fingerprint: string;
+  configuration_revision: number;
+  review_expires_at: number;
+  scope:
+    | { kind: "live_only"; speech: SessionDestination }
+    | {
+        kind: "final";
+        live: boolean;
+        speech: SessionDestination;
+        summary: {
+          destination: SessionDestination;
+          template: SummaryTemplate;
+        } | null;
+      };
+  language: string;
+  tracks: [string, string];
+  limits: {
+    duration_seconds: number;
+    upload_bytes: number;
+    requests: number;
+    text_characters: number;
+  };
+};
+export type SessionProcessingSnapshot = {
+  meeting_id: string;
+  revision: number;
+  state: "prepared" | "consent_required" | "cancelled" | "interrupted";
+  plan: SessionProcessingPlan;
+  started_at: number;
+  authorized_until: number;
+};
 export type Meeting = {
   id: string;
   title: string;
@@ -200,12 +250,29 @@ export const api = {
     title: string,
     consent: boolean,
     devices: { microphoneId: string; outputId: string },
+    processingConfirmation: string | null = null,
   ) =>
     invoke<RecordingState>("start_recording", {
       title,
       consent,
       devices,
+      processingConfirmation,
     }),
+  prepareSessionProcessing: (request: SessionProcessingRequest) =>
+    invoke<SessionProcessingPlan>("prepare_session_processing", { request }),
+  getSessionProcessing: (id: string) =>
+    invoke<SessionProcessingSnapshot | null>("get_session_processing", { id }),
+  cancelSessionProcessing: (id: string, expectedRevision: number) =>
+    invoke<SessionProcessingSnapshot>("cancel_session_processing", {
+      id,
+      expectedRevision,
+    }),
+  onSessionProcessingChanged: (
+    callback: (snapshot: SessionProcessingSnapshot) => void,
+  ) =>
+    listen<SessionProcessingSnapshot>("session_processing_changed", (event) =>
+      callback(event.payload),
+    ),
   listDevices: () => invoke<AudioDevices>("list_audio_devices"),
   pause: () => invoke<RecordingState>("pause_recording"),
   resume: () => invoke<RecordingState>("resume_recording"),

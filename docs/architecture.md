@@ -79,6 +79,12 @@ The transcription run guard covers preparation, processing, and publication. Can
 
 ## Provider requests
 
+The Phase 3 `session_processing` module adds backend-only preparation for future session consent. A review specifies live-only or final transcription, optional live text and summary, independent destinations, two-track scope, and declared limits. Its fingerprint identifies a single in-memory review that expires after five minutes. Recording start can consume that review and attach its plan in the same SQLite transaction as the new recording. Participant consent remains separate. The normal UI starts recording without a session plan.
+
+Schema 13 stores attached plans and revisioned prepared, consent-required, cancelled, or interrupted state. Speech settings and provider edits advance a configuration revision and invalidate prepared consent, including edit-and-revert and credential replacement. Invalidation conservatively includes changes to unselected saved connections and their names. Unchanged speech settings and shortcut/export changes do not invalidate it. Startup marks prepared records interrupted once, and snapshot reads require renewed consent after the one-hour authorization window or a backwards clock jump before the stored start. Cancellation is idempotent and leaves recording and saved content alone.
+
+This increment does not dispatch jobs, enforce upload/request/text budgets against actual requests, or expose processing choices in the UI. The existing manual actions and guards remain authoritative. Payload freezing, a shared processing owner, a live worker, automatic final processing, and their UI remain Phase 3 work. See [the execution plan](phase-3-execution-plan.md).
+
 Reusable saved connections supply independent summary/question and speech task assignments. Each assignment keeps its own model ID and revision; changing a shared connection invalidates consent for every role using it. Assigned connections cannot be deleted. Rust appends `models`, `chat/completions`, or `audio/transcriptions` to a validated user-supplied HTTPS API base, preserving its path prefix. Redirects are disabled. Credentials and response bodies do not enter diagnostics. Local servers may use loopback HTTP with an optional key. Remote endpoints require HTTPS and a destination-bound key.
 
 Settings submits a transient password input through IPC to the OS keychain. Read responses contain key status only. Saving connection/model settings makes no network request; explicit refresh fetches generic `data[].id` model lists. Custom IDs work without discovery or catalog membership. A model list proves neither chat nor audio capability. Legacy Merge configuration is not automatically activated or converted.
@@ -89,19 +95,21 @@ The Rust `model_library` module owns bounded scans, verified catalog imports, pu
 
 ## Storage and migrations
 
-| Table                    | Contents                                                                              |
-| ------------------------ | ------------------------------------------------------------------------------------- |
-| `meetings`               | Title, source, timestamps, persisted status, and capture error.                       |
-| `notes`                  | User Markdown and optimistic revision.                                                |
-| `tracks`                 | Paths, audio format, frame counts, dropped frames, and finalization.                  |
-| `segments`               | Track label, paired nullable times, text, source, and final pass.                     |
-| `summaries`              | Retained versions with provider, model, and template ID.                              |
-| `settings`               | Devices, shortcuts, local model/language/vocabulary, speech mode, and export choices. |
-| `saved_connections` | Named nonsecret endpoint/revision and OS-keychain account reference. |
-| `provider_assignments` | Independent task connection/model selection and monotonic revision. |
-| `meeting_transcriptions` | Last successful provider/model provenance per meeting.                                |
-| `search`                 | FTS5 copies of titles, notes, transcript text, and summaries.                         |
-| `capture_events`         | Historical schema table; current capture no longer writes lifecycle events here.      |
+| Table                      | Contents                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------- |
+| `meetings`                 | Title, source, timestamps, persisted status, and capture error.                       |
+| `notes`                    | User Markdown and optimistic revision.                                                |
+| `tracks`                   | Paths, audio format, frame counts, dropped frames, and finalization.                  |
+| `segments`                 | Track label, paired nullable times, text, source, and final pass.                     |
+| `summaries`                | Retained versions with provider, model, and template ID.                              |
+| `settings`                 | Devices, shortcuts, local model/language/vocabulary, speech mode, and export choices. |
+| `saved_connections`        | Named nonsecret endpoint/revision and OS-keychain account reference.                  |
+| `provider_assignments`     | Independent task connection/model selection and monotonic revision.                   |
+| `processing_configuration` | Revision invalidating session reviews after speech/provider edits.                    |
+| `processing_sessions`      | Recording-bound consent plan, deadlines, state, and revision.                         |
+| `meeting_transcriptions`   | Last successful provider/model provenance per meeting.                                |
+| `search`                   | FTS5 copies of titles, notes, transcript text, and summaries.                         |
+| `capture_events`           | Historical schema table; current capture no longer writes lifecycle events here.      |
 
 `Core::open` enables WAL and applies numbered migrations using `PRAGMA user_version`. Table rebuilds that need foreign keys disabled perform a foreign-key check before committing. Migration 011 preserves segment IDs and restores FTS triggers while adding cloud/untimed entries. Migration 012 copies existing provider profiles and credential references into saved connections and assignments without reading secrets. Populated upgrade tests cover notes, transcripts, search, and foreign keys. Existing user databases are upgraded without resetting them. Legacy `local_model`/`merge_model` columns remain unused.
 

@@ -7,6 +7,7 @@ mod export;
 mod llm;
 mod model_library;
 mod providers;
+mod session_processing;
 mod storage;
 mod stt;
 
@@ -177,9 +178,10 @@ async fn start_recording(
     title: String,
     consent: bool,
     devices: audio::CaptureOptions,
+    processing_confirmation: Option<String>,
 ) -> Result<RecordingState> {
     with_core(app, true, move |core, _| {
-        core.start_desktop(&title, devices, consent)
+        core.start_desktop(&title, devices, consent, processing_confirmation.as_deref())
     })
     .await
 }
@@ -189,6 +191,39 @@ async fn list_audio_devices() -> Result<audio::Devices> {
     tauri::async_runtime::spawn_blocking(audio::devices)
         .await
         .map_err(|_| AppError::new("audio", "Device discovery failed."))?
+}
+
+#[tauri::command]
+async fn prepare_session_processing(
+    app: AppHandle,
+    request: session_processing::Request,
+) -> Result<session_processing::Plan> {
+    with_core(app, false, move |core, _| {
+        core.prepare_session_processing(request)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_session_processing(
+    app: AppHandle,
+    id: String,
+) -> Result<Option<session_processing::Snapshot>> {
+    with_core(app, false, move |core, _| core.session_processing(&id)).await
+}
+
+#[tauri::command]
+async fn cancel_session_processing(
+    app: AppHandle,
+    id: String,
+    expected_revision: i64,
+) -> Result<session_processing::Snapshot> {
+    with_core(app, false, move |core, app| {
+        let snapshot = core.cancel_session_processing(&id, expected_revision)?;
+        let _ = app.emit("session_processing_changed", &snapshot);
+        Ok(snapshot)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1110,6 +1145,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_meetings, get_meeting, get_recording_state, get_startup_warning,
             start_recording, pause_recording, resume_recording, stop_recording,
+            prepare_session_processing, get_session_processing, cancel_session_processing,
             save_notes, get_settings, save_settings,
             choose_vault_folder, export_meeting, close_application, list_audio_devices,
             provider_key_status, save_api_connection, delete_api_connection, api_connection_key_status, save_provider_assignment, list_api_connection_models,
