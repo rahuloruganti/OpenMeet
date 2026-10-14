@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 12;
+const LATEST_SCHEMA: i64 = 13;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -14,6 +14,7 @@ pub struct Core {
     audio_root: PathBuf,
     audio: Option<audio::Session>,
     capture_report: Option<audio::Report>,
+    pub(crate) pending_processing: Option<crate::session_processing::Plan>,
 }
 
 impl Core {
@@ -69,6 +70,11 @@ impl Core {
                 include_str!("../migrations/012_saved_connections.sql"),
                 false,
             ),
+            (
+                13,
+                include_str!("../migrations/013_session_processing.sql"),
+                false,
+            ),
         ];
         for (number, script, rebuilds_referenced) in additive {
             if version >= number {
@@ -101,12 +107,17 @@ impl Core {
             "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')",
             [],
         )?;
+        db.execute(
+            "UPDATE processing_sessions SET state='interrupted',revision=revision+1 WHERE state='prepared'",
+            [],
+        )?;
         Ok(Self {
             db,
             recording: RecordingState::default(),
             audio_root: path.parent().unwrap_or(Path::new(".")).join("audio"),
             audio: None,
             capture_report: None,
+            pending_processing: None,
         })
     }
 
@@ -161,6 +172,7 @@ impl Core {
         title: &str,
         options: audio::CaptureOptions,
         consent: bool,
+        processing_confirmation: Option<&str>,
     ) -> Result<RecordingState> {
         if !consent {
             return Err(AppError::new(
@@ -169,6 +181,7 @@ impl Core {
             ));
         }
         let title = self.begin(title)?;
+        let processing = self.confirmed_session_processing(processing_confirmation)?;
         if options.microphone_id.is_empty() || options.output_id.is_empty() {
             return Err(AppError::new(
                 "audio_devices",
@@ -188,7 +201,11 @@ impl Core {
             "UPDATE settings SET microphone_id = ?1, output_id = ?2 WHERE id = 1",
             params![options.microphone_id, options.output_id],
         )?;
+        if let Some(plan) = &processing {
+            crate::session_processing::attach(&tx, plan, &id)?;
+        }
         tx.commit()?;
+        self.pending_processing = None;
         self.audio = Some(session);
         self.recording = RecordingState {
             revision: self.recording.revision + 1,
@@ -1102,6 +1119,27 @@ fn validate_title(title: &str) -> Result<&str> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_v11_database(path: &Path) -> Connection {
+    let db = Connection::open(path).unwrap();
+    for script in [
+        include_str!("../migrations/001_foundation.sql"),
+        include_str!("../migrations/002_capture.sql"),
+        include_str!("../migrations/003_local_model.sql"),
+        include_str!("../migrations/004_merge_model.sql"),
+        include_str!("../migrations/005_transcripts.sql"),
+        include_str!("../migrations/006_note_meetings.sql"),
+        include_str!("../migrations/007_search.sql"),
+        include_str!("../migrations/008_stt_settings.sql"),
+        include_str!("../migrations/009_export_options.sql"),
+        include_str!("../migrations/010_provider_settings.sql"),
+        include_str!("../migrations/011_cloud_transcripts.sql"),
+    ] {
+        db.execute_batch(script).unwrap();
+    }
+    db
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1257,7 +1295,7 @@ mod tests {
             output_id: "out".into(),
         };
         assert_eq!(
-            core.start_desktop("Denied", options.clone(), false)
+            core.start_desktop("Denied", options.clone(), false, None)
                 .unwrap_err()
                 .code,
             "consent_required"
@@ -1273,7 +1311,7 @@ mod tests {
             },
         ] {
             assert_eq!(
-                core.start_desktop("Missing device", options, true)
+                core.start_desktop("Missing device", options, true, None)
                     .unwrap_err()
                     .code,
                 "audio_devices"
@@ -1617,19 +1655,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meetings.db");
         {
-            let core = Core::open(&path).unwrap();
-            core.db
-                .execute_batch("DROP TABLE provider_assignments; DROP TABLE saved_connections;")
-                .unwrap();
-            core.db
-                .execute_batch(
-                    include_str!("../migrations/010_provider_settings.sql")
-                        .split("ALTER TABLE")
-                        .next()
-                        .unwrap(),
-                )
-                .unwrap();
-            core.db.execute_batch("INSERT INTO provider_connections VALUES ('llm','https://chat.example/v1','chat','existing-account-a',7),('cloud_stt','https://speech.example/v1',NULL,'existing-account-b',4); UPDATE settings SET merge_model='dormant',stt_model='base'; PRAGMA user_version=11;").unwrap();
+            let db = test_v11_database(&path);
+            db.execute_batch("INSERT INTO provider_connections VALUES ('llm','https://chat.example/v1','chat','existing-account-a',7),('cloud_stt','https://speech.example/v1',NULL,'existing-account-b',4); UPDATE settings SET merge_model='dormant',stt_model='base';").unwrap();
         }
         let core = Core::open(&path).unwrap();
         let settings = core.settings().unwrap();

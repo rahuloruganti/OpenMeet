@@ -26,6 +26,7 @@ Read `docs/phase-1-implementation-plan.md` and `docs/implementation-status.md` b
 | `src-tauri/src/audio.rs` | Device discovery, native capture, bounded queues, WAV writers |
 | `src-tauri/src/model_library.rs` | Bounded model scans, verified imports, public Hugging Face metadata/downloads |
 | `src-tauri/src/providers.rs` | Independent provider validation, keychain credentials, model discovery, bounded HTTP |
+| `src-tauri/src/session_processing.rs` | Backend session-consent preparation, recording attachment, cancellation, and restart state; no automatic dispatch yet |
 | `src-tauri/src/llm.rs` | Summary/question prompts and bounded text requests |
 | `src-tauri/src/cloud_stt.rs` | Frozen bounded WAV uploads, timing validation, timed/untimed transcription |
 | `src-tauri/src/export.rs` | Markdown rendering and non-overwriting snapshot export |

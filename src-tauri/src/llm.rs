@@ -3,7 +3,7 @@ use crate::{
     domain::{AppError, Result},
     providers::{authorize, check_status, client, read_capped, Connection},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Largest single request body (notes + transcript text) sent in one call.
@@ -24,7 +24,7 @@ In the transcript, 'You' is the local microphone and 'Others' is captured system
 
 /// Summary templates. The serde names are the versioned ids stored in
 /// `summaries.template_hash`; unknown names fail deserialization at the command boundary.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub enum Template {
     #[serde(rename = "general-v1")]
     General,

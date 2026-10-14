@@ -2,7 +2,13 @@
 
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v12 is implemented, with reusable API connections and independent task assignments. This is a preview with open qualification gates, not a complete MVP.
+OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v13 adds backend session-consent records to the reusable API connections and independent task assignments. This is a preview with open qualification gates, not a complete MVP.
+
+## Phase 3 implementation started
+
+The first local increment prepares revision-bound session reviews, attaches consent atomically to a new recording, and supports snapshots, cancellation, expiry, and interruption on restart. It provides typed Tauri commands and an additive schema-v13 migration. Recording permission remains separate. Review generation does not access audio devices, read keys, or call providers.
+
+Live inference, processing controls, automatic final transcription/summaries, per-request budget enforcement, and the shared processing-job owner are not implemented in this increment. Existing manual commands retain their safeguards. Issues #19 through #25 remain open. See [the execution plan](phase-3-execution-plan.md) and [the first-increment verification](phase-3-consent-verification.md).
 
 No platform has passed the full two-track capture gate. An earlier Windows attempt was blocked by a missing microphone. A later authorized two-second smoke test was recorded as passing in [log.md](../log.md), but it did not establish audible-content quality, pause privacy, device-failure behavior, or long-run drift. No recording was made during the recent UI and installation work.
 
@@ -18,7 +24,7 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | Capture                 | Windows selected microphone and output loopback, separate WAVs, timing JSONL, bounded queues, pause/resume/stop, tray controls, level meters, and configurable shortcuts.  |
 | Local transcription     | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
 | Playback                | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
-| Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision-bound consent.                         |
+| Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision-bound consent.          |
 | Cloud transcription     | Explicit audio confirmation, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
 | Summaries and questions | Configured chat API, three templates, history/copy, bounded chunked summaries, and per-meeting questions.                                                                  |
 | Export                  | Folder picker, source-aware Markdown, optional transcript/summary, filename preferences, and non-overwriting snapshots.                                                    |

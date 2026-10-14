@@ -24,6 +24,10 @@ Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries
 
 ## Plans and evidence
 
+[The Phase 3 execution plan](phase-3-execution-plan.md) sequences session consent, live transcription, final processing, recovery, and qualification for issues #19 through #25.
+
+[Phase 3 consent verification](phase-3-consent-verification.md) records the first backend increment, executed checks, and remaining work before automatic processing can be enabled.
+
 [The implementation checklist](implementation-checklist.md) separates missing features from qualification work and lists the suggested delivery order. [The Granola/Otter comparison](granola-otter-comparison.md) records its source and product evidence.
 
 [Phase 2 settings verification](phase-2-settings-verification.md) records saved connections, model discovery/downloads, executed checks, and partial native qualification for issues #14–#18.
