@@ -28,6 +28,8 @@ Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries
 
 [Phase 2 settings verification](phase-2-settings-verification.md) records saved connections, model discovery/downloads, executed checks, and partial native qualification for issues #14–#18.
 
+[The foundation qualification follow-up](foundation-qualification-follow-up.md) records the subsequent timing-write recovery fix and partial checks for #7–#13.
+
 [Phase 1 foundation verification](phase-1-foundation-verification.md) records the current fixes, executed tests, and open hardware/provider/native UI gates for issues #7–#13.
 
 [Implementation status](implementation-status.md) records implemented behavior, executed checks, and open gates. [The feature plan](feature-plan.md) tracks milestone acceptance criteria. [The phase plan](phase-1-implementation-plan.md) and [original development plan](../Open-source%20meeting%20notetaker%20development%20plan%20and%20tool%20inventory.md) contain proposed designs, including dependencies that were never added.

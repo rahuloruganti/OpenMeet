@@ -67,6 +67,10 @@ Previous work recorded cargo-deny checks, a local engine spot check, and broader
 
 On 2026-10-13, launching the earlier release executable reproduced `ERR_CONNECTION_REFUSED` at the development URL. The release recipe used plain Cargo without Tauri's production asset protocol. `just build` now invokes the Tauri CLI, but the rebuild was blocked by missing Windows SDK headers and libraries on this machine. The existing executable was relaunched with a local Vite preview server serving `dist/`; its saved library and notes workspace loaded. This verifies the temporary server-backed launch, not a rebuilt standalone executable. The pause-shortcut warning remains.
 
+## Foundation qualification follow-up
+
+[The follow-up report](foundation-qualification-follow-up.md) records a timing-write failure that could mark an incomplete track finalized, the correction and regression tests, an authorized short two-file capture, and partial native note/export checks. Further fixes reject damaged local timing, correct segment endpoints at pause boundaries, and allow recovery retries after failed SQLite publication while retaining all copies. Final full local checks passed with 105 frontend tests and 97 Rust tests, with two native tests ignored. Hardware privacy, failure scenarios, drift, complete shortcut/playback qualification, and providers remain open. Subsequent native note/export checks passed, closing #11. The earlier self-closing windows remain an unresolved report under #13; monitored retries have not reproduced it.
+
 ## Open work
 
 The October 14 [Phase 1 foundation verification](phase-1-foundation-verification.md) records startup, draft-refresh, audio-health, and capture-worker fixes. `just check` passed with 98 frontend tests and 74 Rust tests, with two native tests ignored by the routine suite. Separately selected short hardware and synthetic Windows keychain tests each passed once. These results do not complete hardware, native UI, or provider qualification.

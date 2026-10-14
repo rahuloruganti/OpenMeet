@@ -16,7 +16,7 @@ Work has started. See [Phase 1 verification results](phase-1-foundation-verifica
 - [ ] Verify pause privacy across queued callbacks, in-flight work, and resume boundaries. Paused audio must not be saved, transcribed, or uploaded. ([#8](https://github.com/rahuloruganti/OpenMeet/issues/8))
 - [ ] Verify device loss/switching, sleep/wake, disk-full/overflow failures, interrupted recording, and recovery without losing original artifacts. ([#9](https://github.com/rahuloruganti/OpenMeet/issues/9))
 - [ ] Complete an authorized 60-minute capture with measured relative track drift below 100 ms. ([#10](https://github.com/rahuloruganti/OpenMeet/issues/10))
-- [ ] Verify notes survive switching, export, quit, restart, and save failures. Preserve external Markdown edits and cancelled export behavior. ([#11](https://github.com/rahuloruganti/OpenMeet/issues/11))
+- [x] Verify notes survive switching, export, quit, restart, and save failures. Preserve external Markdown edits and cancelled export behavior. ([#11](https://github.com/rahuloruganti/OpenMeet/issues/11))
 - [ ] Verify real provider compatibility and native keychain save/replace/remove behavior, cancellation, and long-meeting coverage with explicitly authorized test content. ([#12](https://github.com/rahuloruganti/OpenMeet/issues/12))
 - [ ] Resolve the pause-shortcut warning and verify native cold starts, playback/clipboard permissions, keyboard access, minimum window size, and visible failures. ([#13](https://github.com/rahuloruganti/OpenMeet/issues/13))
 
@@ -24,10 +24,10 @@ Work has started. See [Phase 1 verification results](phase-1-foundation-verifica
 
 Follow the existing [chosen settings design](local-model-settings-design.md#chosen-settings-design). Generic cloud and local compatible-server connections already exist.
 
-- [ ] Add separate Cloud API and Local settings tabs with reusable saved connections and independent speech/text assignments. Switching tabs or providers must preserve saved configurations. ([#14](https://github.com/rahuloruganti/OpenMeet/issues/14))
-- [ ] Migrate existing provider references, credentials, selected Whisper model, notes, and transcript provenance without resetting data. ([#15](https://github.com/rahuloruganti/OpenMeet/issues/15))
-- [ ] Discover model files in bounded common-folder and user-selected-folder scans. Show examined locations, format, compatibility, and whether an external server is required. ([#16](https://github.com/rahuloruganti/OpenMeet/issues/16))
-- [ ] Add explicit Hugging Face search and verified downloads for supported public single-file models. Show size/license, pin revision and hash, and preserve existing files. ([#17](https://github.com/rahuloruganti/OpenMeet/issues/17))
+- [x] Add separate Cloud API and Local settings tabs with reusable saved connections and independent speech/text assignments. Switching tabs or providers must preserve saved configurations. ([#14](https://github.com/rahuloruganti/OpenMeet/issues/14))
+- [x] Migrate existing provider references, credentials, selected Whisper model, notes, and transcript provenance without resetting data. ([#15](https://github.com/rahuloruganti/OpenMeet/issues/15))
+- [x] Discover model files in bounded common-folder and user-selected-folder scans. Show examined locations, format, compatibility, and whether an external server is required. ([#16](https://github.com/rahuloruganti/OpenMeet/issues/16))
+- [x] Add explicit Hugging Face search and verified downloads for supported public single-file models. Show size/license, pin revision and hash, and preserve existing files. ([#17](https://github.com/rahuloruganti/OpenMeet/issues/17))
 - [ ] Verify connection/model discovery, unavailable servers, failed downloads, cancellation, and configuration persistence. A discovered model file must not be shown as a ready inference server. ([#18](https://github.com/rahuloruganti/OpenMeet/issues/18))
 
 ## 3. Deliver the live-to-finished meeting workflow
@@ -62,7 +62,7 @@ This is the highest-priority missing product behavior after the foundation check
 
 - [ ] Complete and qualify the macOS capture and local transcription preview if macOS remains a supported target. Verify permissions and real two-track capture independently on macOS. ([#36](https://github.com/rahuloruganti/OpenMeet/issues/36))
 - [ ] Complete installer packaging, install/upgrade/uninstall checks, release-license review, and signing/notarization requirements for each release target. ([#37](https://github.com/rahuloruganti/OpenMeet/issues/37))
-- [ ] Recheck fresh-checkout builds and current CI on supported platforms. Record executed results and keep hardware/provider gates open until actually passed. ([#38](https://github.com/rahuloruganti/OpenMeet/issues/38))
+- [x] Recheck fresh-checkout builds and current CI on supported platforms. Record executed results and keep hardware/provider gates open until actually passed. ([#38](https://github.com/rahuloruganti/OpenMeet/issues/38))
 
 ## Later-phase options
 
@@ -83,4 +83,4 @@ Do not rebuild SQLite persistence, protected note autosave, separate Windows aud
 
 Their presence does not close the qualification checks above. Use [implementation status](implementation-status.md) for executed evidence and [the comparison report](granola-otter-comparison.md) for source locations and competitor references.
 
-Phase 2 settings and model-library code is implemented locally; native qualification remains partial. See [executed checks and remaining gates](phase-2-settings-verification.md). Issue checkboxes remain open pending their acceptance gates.
+Phase 2 settings and model-library code is merged in PR #48; native qualification remains partial. See [executed checks and remaining gates](phase-2-settings-verification.md). Feature issues #14–#17 are closed as implemented; qualification issue #18 remains open. The [foundation follow-up](foundation-qualification-follow-up.md) records completed native note/export checks for #11 and remaining qualification work.

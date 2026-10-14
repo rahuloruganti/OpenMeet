@@ -873,7 +873,7 @@ impl Core {
             }
             files.push(file);
         }
-        // Recovery leaves the original partial WAV unreferenced beside its `.recovered.wav` copy,
+        // Recovery leaves the original partial WAV unreferenced beside its recovered copy,
         // so also take every other regular file directly in the folder (links are left alone).
         if let Some(folder) = &folder {
             for entry in std::fs::read_dir(folder)? {
@@ -971,7 +971,8 @@ impl Core {
                     "A track path is outside the OpenMeet audio folder. Nothing was changed.",
                 ));
             }
-            let copy = original.with_file_name(format!("{}.recovered.wav", track.kind));
+            let copy =
+                original.with_file_name(format!("{}.recovered-{}.wav", track.kind, Uuid::new_v4()));
             tracks.push((track.kind, original, copy));
         }
         if tracks.is_empty() {
@@ -2441,9 +2442,27 @@ mod tests {
         let tracks = core.recoverable_tracks("rec").unwrap();
         assert_eq!(tracks.len(), 1, "finalized tracks are left alone");
         let (kind, original, copy) = &tracks[0];
-        assert_eq!(copy, &folder.join("mic.recovered.wav"));
+        assert_eq!(copy.parent(), Some(folder.as_path()));
+        assert_ne!(copy, original);
         let frames = audio::repair_wav(original, copy).unwrap();
         assert_eq!(frames, 999);
+        core.db.execute_batch("CREATE TRIGGER refuse_recovery BEFORE UPDATE ON tracks BEGIN SELECT RAISE(ABORT, 'Synthetic recovery publication failure'); END;").unwrap();
+        assert!(core.mark_recovered("rec", kind, copy, frames).is_err());
+        core.db
+            .execute_batch("DROP TRIGGER refuse_recovery;")
+            .unwrap();
+        let unpublished_copy = copy.clone();
+        let retry = core.recoverable_tracks("rec").unwrap();
+        let (kind, original, copy) = &retry[0];
+        assert_ne!(
+            copy, &unpublished_copy,
+            "A retry must not collide with the copy retained after a failed database publication"
+        );
+        let frames = audio::repair_wav(original, copy).unwrap();
+        assert_eq!(
+            std::fs::read(copy).unwrap(),
+            std::fs::read(&unpublished_copy).unwrap()
+        );
         core.mark_recovered("rec", kind, copy, frames).unwrap();
         let detail = core.get_meeting("rec").unwrap();
         let track = detail.tracks.iter().find(|t| t.kind == "mic").unwrap();

@@ -45,3 +45,7 @@ The PR branch combines these fixes with the existing provider/settings prerequis
 Windows-only builds now exclude the macOS permission helpers and probe-tone helper outside their relevant platform or tests, fixing dead-code warnings under Clippy. The merged branch is checked separately from the earlier 74-test Rust baseline. Native capture and keychain tests remain ignored in routine checks; their earlier explicit results are not rerun or promoted to full qualification.
 
 On the combined branch, frontend typecheck, lint, formatting, 98 tests and production build passed. Rust formatting, Clippy with warnings denied, 77 tests and native debug build passed; two native tests stayed ignored. The three additional passing tests come from main's existing macOS capture gate. Local logs are `.audit/phase-1/pr-integration-checks.log` and `.audit/phase-1/pr-rust-checks.log` in the primary workspace. The first integration Clippy run exposed an unused platform import; the corrected Rust checks passed. macOS execution and remote CI are not implied by these Windows results.
+
+## Subsequent qualification work
+
+[The foundation follow-up](foundation-qualification-follow-up.md) records a later authorized short capture, native note switching/restart and export cancellation, delayed audio-packet coverage, and a reproduced/fixed timing-write finalization error. These results add evidence without closing the hardware/provider/native gates above.

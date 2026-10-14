@@ -1876,6 +1876,29 @@ describe("transcript and audio", () => {
     ).toBe(0);
   });
 
+  it("shows rejected timing and never plays a guessed timestamp", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue(recorded);
+    vi.mocked(api.audioPosition).mockRejectedValue({
+      code: "audio_timing",
+      message:
+        "The audio timing index is incomplete. Originals and previous transcripts are unchanged.",
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Play Others from 8.3s" }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "The audio timing index is incomplete. Originals and previous transcripts are unchanged.",
+    );
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+    const player = screen.getByLabelText("Others (system audio)");
+    expect(player).toBeInstanceOf(HTMLAudioElement);
+    if (!(player instanceof HTMLAudioElement))
+      throw new Error("Expected an audio player");
+    expect(player.currentTime).toBe(0);
+  });
+
   it("reports a playback failure and pauses audio when leaving the transcript", async () => {
     vi.mocked(api.getMeeting).mockResolvedValue(recorded);
     vi.mocked(api.audioPosition).mockResolvedValue(2250);

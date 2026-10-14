@@ -1,4 +1,5 @@
 pub mod audio;
+mod audio_timing;
 mod capture_gate;
 mod cloud_stt;
 mod domain;
@@ -1048,7 +1049,7 @@ async fn audio_position(app: AppHandle, id: String, kind: String, session_ms: i6
         .into_iter()
         .find(|track| track.kind == kind)
         .ok_or_else(|| AppError::new("not_found", "That audio track does not exist."))?;
-    blocking(move || Ok(stt::track_file_ms(&track, session_ms))).await
+    blocking(move || stt::track_file_ms(&track, session_ms)).await
 }
 
 pub fn run() {
