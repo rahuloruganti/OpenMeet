@@ -16,7 +16,6 @@ type Props = {
   onOutput: (value: string) => void;
   onClose: () => void;
   onStartCapture: () => void;
-  onStartSimulation: () => void;
 };
 
 export function SetupPanel(props: Props) {
@@ -142,18 +141,6 @@ export function SetupPanel(props: Props) {
           Start recording
         </button>
       </div>
-      <details className="help-details simulation-details">
-        <summary>Try a simulation instead</summary>
-        <p className="muted">
-          Explore the recording controls without capturing audio.
-        </p>
-        <button
-          disabled={disabled || active || !props.title.trim()}
-          onClick={props.onStartSimulation}
-        >
-          Start simulation
-        </button>
-      </details>
     </section>
   );
 }

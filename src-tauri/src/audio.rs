@@ -28,6 +28,9 @@ const OVERFLOW: u32 = 2;
 const IO_ERROR: u32 = 4;
 const SUSPENDED: u32 = 8;
 const TIMESTAMP: u32 = 16;
+const WORKER_ERROR: u32 = 32;
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
+const STOP_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AudioDevice {
@@ -113,6 +116,7 @@ pub fn devices() -> Result<Devices> {
 struct Shared {
     start: Instant,
     recording: AtomicBool,
+    stopping: AtomicBool,
     generation: AtomicU64,
     fault: AtomicU32,
     // First device error text (never audio content); set outside the data callback.
@@ -133,6 +137,7 @@ impl Shared {
         Self {
             start: Instant::now(),
             recording: AtomicBool::new(false),
+            stopping: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             fault: AtomicU32::new(0),
             detail: Mutex::new(None),
@@ -184,6 +189,7 @@ impl Shared {
             bits if bits & OVERFLOW != 0 => Some("Audio queue overflowed. Both tracks paused; stop and start a new recording.".into()),
             bits if bits & SUSPENDED != 0 => Some("Capture was interrupted by sleep or a scheduling gap. Stop and start a new recording.".into()),
             bits if bits & TIMESTAMP != 0 => Some("A device reported timestamps that moved backwards, so capture timing cannot be trusted. Both tracks paused; stop and start a new recording.".into()),
+            bits if bits & WORKER_ERROR != 0 => Some("The audio capture worker stopped responding. Capture is disabled; partial files are retained for recovery.".into()),
             _ => {
                 let detail = self.detail.lock().ok().and_then(|d| d.clone());
                 Some(match detail {
@@ -219,10 +225,10 @@ fn push_samples<T>(
     shared.counters[index]
         .last_callback
         .store(shared.elapsed_us(), Ordering::Relaxed);
-    if !shared.recording.load(Ordering::SeqCst) {
+    let generation = shared.generation.load(Ordering::SeqCst);
+    if !shared.recording.load(Ordering::SeqCst) || shared.stopping.load(Ordering::SeqCst) {
         return;
     }
-    let generation = shared.generation.load(Ordering::SeqCst);
     let chunk_size = BLOCK_SAMPLES / channels * channels;
     let mut peak = 0_f32;
     for (chunk_index, chunk) in data.chunks(chunk_size).enumerate() {
@@ -242,7 +248,10 @@ fn push_samples<T>(
             };
             peak = peak.max(out.abs());
         }
-        if !shared.recording.load(Ordering::SeqCst) {
+        if !shared.recording.load(Ordering::SeqCst)
+            || shared.stopping.load(Ordering::SeqCst)
+            || generation != shared.generation.load(Ordering::SeqCst)
+        {
             return;
         }
         if producer.try_push(block).is_err() {
@@ -506,21 +515,26 @@ impl Session {
     }
     pub fn pause(&self) -> Result<()> {
         self.shared.mute(); // Immediately revoke queued/in-flight callbacks before waiting for disk work.
-        let (tx, rx) = mpsc::channel();
-        self.commands
-            .send(Command::Pause(tx))
-            .map_err(audio_error)?;
-        rx.recv().map_err(audio_error)?
+        self.request(Command::Pause)
     }
     pub fn resume(&self) -> Result<()> {
         if let Some(error) = self.shared.error() {
             return Err(audio_error(error));
         }
+        self.request(Command::Resume)
+    }
+    fn request(&self, command: fn(mpsc::Sender<Result<()>>) -> Command) -> Result<()> {
         let (tx, rx) = mpsc::channel();
         self.commands
-            .send(Command::Resume(tx))
-            .map_err(audio_error)?;
-        rx.recv().map_err(audio_error)?
+            .send(command(tx))
+            .map_err(|error| self.worker_error(error))?;
+        rx.recv_timeout(CONTROL_TIMEOUT)
+            .map_err(|error| self.worker_error(error))?
+    }
+    fn worker_error(&self, reason: impl std::fmt::Display) -> AppError {
+        self.shared.fail(WORKER_ERROR);
+        let _ = self.commands.send(Command::Stop);
+        audio_error(format!("Capture worker did not respond ({reason}). Capture is disabled; partial files are retained for recovery."))
     }
     pub fn offset_ms(&self) -> i64 {
         self.shared
@@ -554,14 +568,26 @@ impl Session {
         }
     }
     pub fn stop(&mut self) -> Result<Report> {
+        // Close callbacks immediately while still allowing the worker to drain pre-stop packets.
+        self.shared.stopping.store(true, Ordering::SeqCst);
         let _ = self.commands.send(Command::Stop);
         let handle = self
             .thread
             .take()
             .ok_or_else(|| audio_error("Capture has already stopped"))?;
+        let deadline = Instant::now() + STOP_TIMEOUT;
+        while !handle.is_finished() {
+            if Instant::now() >= deadline {
+                self.thread = Some(handle);
+                let error =
+                    self.worker_error("stop timed out; retry Stop after the worker responds");
+                return Err(AppError::new("audio_worker_busy", error.message));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
         handle
             .join()
-            .map_err(|_| audio_error("Capture worker failed; partial files are retained"))
+            .map_err(|_| self.worker_error("worker panicked"))
     }
 }
 impl Drop for Session {
@@ -569,6 +595,55 @@ impl Drop for Session {
         self.shared.mute();
         let _ = self.commands.send(Command::Stop);
     }
+}
+
+#[cfg(test)]
+pub(crate) fn pending_writer_for_test(
+    folder: &Path,
+) -> (Session, mpsc::Sender<()>, mpsc::Receiver<()>) {
+    fs::create_dir_all(folder).unwrap();
+    let shared = Arc::new(Shared::new());
+    shared.recording.store(true, Ordering::SeqCst);
+    let mut writers: Vec<_> = ["mic", "system"]
+        .into_iter()
+        .map(|kind| TrackWriter::create(folder, kind, "Synthetic".into(), 16000, 1).unwrap())
+        .collect();
+    let tracks = writers.iter().map(|writer| writer.track.clone()).collect();
+    let (commands, command_rx) = mpsc::channel();
+    let (release, waiting) = mpsc::channel();
+    let (finished, finished_rx) = mpsc::channel();
+    let worker_shared = shared.clone();
+    let worker = thread::spawn(move || {
+        let _ = waiting.recv();
+        drop(command_rx);
+        // Represents a disk write already in progress before the stop request.
+        for writer in &mut writers {
+            writer
+                .write(&Block {
+                    samples: [0.25; BLOCK_SAMPLES],
+                    len: 4,
+                    start_us: 0,
+                    generation: 0,
+                })
+                .unwrap();
+        }
+        let report = Report {
+            tracks: writers.into_iter().map(|writer| writer.finish(0)).collect(),
+            error: worker_shared.error(),
+        };
+        let _ = finished.send(());
+        report
+    });
+    (
+        Session {
+            shared,
+            commands,
+            thread: Some(worker),
+            tracks,
+        },
+        release,
+        finished_rx,
+    )
 }
 
 fn accepted(block: &Block, shared: &Shared) -> bool {
@@ -795,11 +870,71 @@ pub fn repair_wav(original: &Path, copy: &Path) -> Result<i64> {
 mod tests {
     use super::*;
 
+    fn assert_unresponsive_worker_returns(
+        action: fn(&mut Session) -> Result<()>,
+        deadline: Duration,
+    ) {
+        let shared = Arc::new(Shared::new());
+        shared.recording.store(true, Ordering::SeqCst);
+        let (commands, command_rx) = mpsc::channel();
+        let (release, waiting) = mpsc::channel();
+        let (finished, worker_finished) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = waiting.recv();
+            drop(command_rx);
+            let _ = finished.send(());
+            Report {
+                tracks: vec![],
+                error: None,
+            }
+        });
+        let mut session = Session {
+            shared: shared.clone(),
+            commands,
+            thread: Some(worker),
+            tracks: vec![],
+        };
+        let (reply, result_rx) = mpsc::channel();
+        let caller = thread::spawn(move || {
+            let _ = reply.send(action(&mut session));
+        });
+        let result = result_rx.recv_timeout(deadline);
+        // Release the synthetic worker before asserting so a failing test cannot leak it.
+        let _ = release.send(());
+        caller.join().unwrap();
+        worker_finished
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        let error = result
+            .expect("A stalled worker must not block recording controls")
+            .unwrap_err();
+        assert!(error.message.contains("worker"), "{}", error.message);
+        assert!(!shared.recording.load(Ordering::SeqCst));
+        assert!(shared.error().is_some());
+    }
+
+    #[test]
+    fn unresponsive_worker_does_not_block_pause() {
+        assert_unresponsive_worker_returns(|session| session.pause(), Duration::from_secs(6));
+    }
+
+    #[test]
+    fn unresponsive_worker_does_not_block_resume() {
+        assert_unresponsive_worker_returns(|session| session.resume(), Duration::from_secs(6));
+    }
+
+    #[test]
+    fn unresponsive_worker_does_not_block_stop() {
+        assert_unresponsive_worker_returns(
+            |session| session.stop().map(|_| ()),
+            Duration::from_secs(21),
+        );
+    }
+
     #[test]
     fn frontend_device_payload_preserves_both_ids() {
         let request = serde_json::json!({
             "title": "Untitled meeting",
-            "simulation": false,
             "consent": true,
             "devices": { "microphoneId": "mic", "outputId": "out" }
         });
@@ -875,6 +1010,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn write_probe_tone(path: &std::path::Path) {
         let spec = hound::WavSpec {
             channels: 1,
@@ -987,6 +1123,28 @@ mod tests {
         assert!(shared.error().unwrap().contains("overflowed"));
         assert_eq!(shared.counters[0].dropped.load(Ordering::Relaxed), 1024);
     }
+
+    #[test]
+    fn stop_rejects_new_callbacks_but_preserves_already_captured_samples() {
+        let shared = Shared::new();
+        shared.recording.store(true, Ordering::SeqCst);
+        let folder = tempfile::tempdir().unwrap();
+        let mut writer =
+            TrackWriter::create(folder.path(), "mic", "Synthetic".into(), 16000, 1).unwrap();
+        let (mut producer, mut consumer) = HeapRb::new(4).split();
+        push_samples(&[0.25_f32; 4], 0, 1, 16000, &shared, 0, &mut producer);
+        shared.stopping.store(true, Ordering::SeqCst);
+        push_samples(&[0.75_f32; 4], 250, 1, 16000, &shared, 0, &mut producer);
+        drain(0, &mut consumer, &mut writer, &shared);
+        let track = writer.finish(0);
+        assert!(track.finalized);
+        let samples = hound::WavReader::open(&track.path)
+            .unwrap()
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(samples, [0.25; 4]);
+    }
     #[test]
     fn converts_samples_without_losing_frame_timing() {
         let shared = Shared::new();
@@ -1075,10 +1233,26 @@ mod tests {
         push_samples(&second, 0, 1, 16000, &shared, 0, &mut producer);
         drain(0, &mut consumer, &mut writer, &shared);
         assert_eq!(shared.offset_ms(16000), 1000);
-        // A packet in flight when the user pauses, then audio arriving while paused.
-        push_samples(&second, 1_000_000, 1, 16000, &shared, 0, &mut producer);
+        // A packet queued when the user pauses, then audio arriving while paused.
+        push_samples(
+            &[0.75_f32; 16000],
+            1_000_000,
+            1,
+            16000,
+            &shared,
+            0,
+            &mut producer,
+        );
         shared.mute();
-        push_samples(&second, 2_000_000, 1, 16000, &shared, 0, &mut producer);
+        push_samples(
+            &[0.9_f32; 16000],
+            2_000_000,
+            1,
+            16000,
+            &shared,
+            0,
+            &mut producer,
+        );
         drain(0, &mut consumer, &mut writer, &shared);
         assert_eq!(
             shared.offset_ms(16000),
@@ -1089,7 +1263,7 @@ mod tests {
         shared.generation.fetch_add(1, Ordering::SeqCst);
         shared.recording.store(true, Ordering::SeqCst);
         push_samples(
-            &second[..8000],
+            &[0.5_f32; 8000],
             12_000_000,
             1,
             16000,
@@ -1104,6 +1278,20 @@ mod tests {
             shared.offset_ms(0),
             24_000_000,
             "a zero rate cannot divide by zero"
+        );
+        let track = writer.finish(0);
+        assert!(track.finalized);
+        let samples = hound::WavReader::open(&track.path)
+            .unwrap()
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        let expected: Vec<_> = std::iter::repeat_n(0.25, 16000)
+            .chain(std::iter::repeat_n(0.5, 8000))
+            .collect();
+        assert_eq!(
+            samples, expected,
+            "queued or paused marker samples must never reach the WAV"
         );
     }
 }

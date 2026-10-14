@@ -1,12 +1,15 @@
 pub mod audio;
 mod capture_gate;
+mod cloud_stt;
 mod domain;
 mod export;
-mod merge;
+mod llm;
+mod providers;
 mod storage;
 mod stt;
 
 use domain::*;
+use sha2::{Digest, Sha256};
 use std::{
     path::Path,
     sync::{
@@ -25,6 +28,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct AppState {
     core: Mutex<Core>,
+    provider_writes: Mutex<()>,
     startup_warning: Option<String>,
     allow_exit: AtomicBool,
 }
@@ -55,13 +59,9 @@ where
 
 fn publish(app: &AppHandle, state: &RecordingState) {
     if let Some(tray) = app.tray_by_id("recorder") {
-        let label = match (&state.status, state.source.as_deref()) {
-            (CaptureStatus::Recording, Some("desktop")) => {
-                "OpenMeet — RECORDING microphone + system audio"
-            }
-            (CaptureStatus::Paused, Some("desktop")) => "OpenMeet — audio PAUSED",
-            (CaptureStatus::Recording, _) => "OpenMeet — SIMULATION (no audio)",
-            (CaptureStatus::Paused, _) => "OpenMeet — simulation paused",
+        let label = match &state.status {
+            CaptureStatus::Recording => "OpenMeet — RECORDING microphone + system audio",
+            CaptureStatus::Paused => "OpenMeet — audio PAUSED",
             _ => "OpenMeet — capture preview, idle",
         };
         let _ = tray.set_tooltip(Some(label));
@@ -173,22 +173,11 @@ fn get_startup_warning(state: tauri::State<'_, AppState>) -> Option<String> {
 async fn start_recording(
     app: AppHandle,
     title: String,
-    simulation: bool,
     consent: bool,
-    devices: Option<audio::CaptureOptions>,
+    devices: audio::CaptureOptions,
 ) -> Result<RecordingState> {
     with_core(app, true, move |core, _| {
-        if simulation {
-            core.start(&title)
-        } else {
-            core.start_desktop(
-                &title,
-                devices.ok_or_else(|| {
-                    AppError::new("audio_devices", "Choose microphone and system output.")
-                })?,
-                consent,
-            )
-        }
+        core.start_desktop(&title, devices, consent)
     })
     .await
 }
@@ -229,48 +218,125 @@ async fn save_notes(
 }
 
 #[tauri::command]
-async fn create_fixture_meeting(app: AppHandle) -> Result<String> {
-    with_core(app, true, |core, _| core.create_fixture()).await
-}
-
-#[tauri::command]
 async fn get_settings(app: AppHandle) -> Result<Settings> {
     with_core(app, false, |core, _| core.settings()).await
 }
 
-#[tauri::command]
-async fn merge_key_status() -> Result<bool> {
-    blocking(merge::key_present).await
+fn require_connection(settings: &Settings, role: ProviderRole) -> Result<ProviderConfig> {
+    settings.connection(role).cloned().ok_or_else(|| {
+        AppError::new(
+            "provider_missing",
+            "Save a provider connection in Settings first.",
+        )
+    })
 }
 
 #[tauri::command]
-async fn import_merge_key() -> Result<bool> {
-    blocking(|| merge::import_key_from_env().map(|()| true)).await
+async fn provider_key_status(app: AppHandle, role: ProviderRole) -> Result<KeyStatus> {
+    let account = with_core(app, false, move |core, _| {
+        Ok(core
+            .settings()?
+            .connection(role)
+            .and_then(|config| config.credential_account.clone()))
+    })
+    .await?;
+    blocking(move || Ok(providers::key_status(account.as_deref()))).await
 }
 
 #[tauri::command]
-async fn delete_merge_key() -> Result<bool> {
-    blocking(|| merge::delete_key().map(|()| false)).await
+async fn save_provider_connection(
+    app: AppHandle,
+    role: ProviderRole,
+    base_url: String,
+    key_change: KeyChange,
+    expected_revision: Option<i64>,
+) -> Result<Settings> {
+    let base_url = providers::validate_base_url(&base_url)?;
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let _writer = state.provider_writes.lock().map_err(|_| AppError::new("provider", "Provider settings are unavailable."))?;
+        let previous = {
+            let core = state.core.lock().map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
+            core.settings()?.connection(role).cloned()
+        };
+        if previous.as_ref().map(|config| config.revision) != expected_revision {
+            return Err(plan_changed());
+        }
+        let old_account = previous.as_ref().and_then(|config| config.credential_account.clone());
+        let account = match key_change {
+            KeyChange::Keep => {
+                if previous.as_ref().is_some_and(|config| config.base_url != base_url) {
+                    if providers::is_local_base(&base_url) {
+                        None
+                    } else {
+                    return Err(AppError::new("provider_key", "Enter a new API key when changing the provider URL. Nothing was saved."));
+                    }
+                } else {
+                    old_account.clone()
+                }
+            }
+            KeyChange::Replace { key } => Some(providers::store_key(role, &key)?),
+            KeyChange::Remove => None,
+        };
+        let result = state.core.lock()
+            .map_err(|_| AppError::new("internal", "Settings are unavailable."))
+            .and_then(|mut core| core.save_provider_connection(role, &base_url, account.as_deref(), expected_revision));
+        if result.is_err() {
+            if account != old_account {
+                if let Some(account) = &account { let _ = providers::delete_key(account); }
+            }
+            return result;
+        }
+        if old_account != account {
+            if let Some(old_account) = &old_account {
+                providers::delete_key(old_account).map_err(|_| AppError::new("provider_cleanup", "The connection was saved, but its previous credential could not be removed from the OS keychain. Reload Settings to see the current connection."))?;
+            }
+        }
+        result
+    }).await
 }
 
 #[tauri::command]
-async fn list_merge_models() -> Result<Vec<merge::MergeModel>> {
-    blocking(merge::list_models).await
-}
-
-#[tauri::command]
-async fn save_merge_model(app: AppHandle, model: String) -> Result<Settings> {
-    // Network discovery must not hold the recording/storage mutex.
-    let available: Vec<String> = list_merge_models()
-        .await?
-        .into_iter()
-        .filter(|candidate| candidate.available)
-        .map(|candidate| candidate.model)
-        .collect();
+async fn save_provider_model(
+    app: AppHandle,
+    role: ProviderRole,
+    model: String,
+    expected_revision: i64,
+) -> Result<Settings> {
+    providers::validate_model(&model)?;
     with_core(app, false, move |core, _| {
-        core.save_merge_model(&model, &available)
+        core.save_provider_model(role, &model, expected_revision)
     })
     .await
+}
+
+#[tauri::command]
+async fn list_provider_models(
+    app: AppHandle,
+    role: ProviderRole,
+    expected_revision: i64,
+) -> Result<Vec<providers::ProviderModel>> {
+    let config = with_core(app.clone(), false, move |core, _| {
+        require_connection(&core.settings()?, role)
+    })
+    .await?;
+    if config.revision != expected_revision {
+        return Err(plan_changed());
+    }
+    let models =
+        blocking(move || providers::list_models(&providers::load_connection(&config)?)).await?;
+    with_core(app, false, move |core, _| {
+        if require_connection(&core.settings()?, role)?.revision != expected_revision {
+            return Err(plan_changed());
+        }
+        Ok(models)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_stt_mode(app: AppHandle, mode: SttMode) -> Result<Settings> {
+    with_core(app, false, move |core, _| core.save_stt_mode(mode)).await
 }
 
 fn stt_root(app: &AppHandle) -> Result<std::path::PathBuf> {
@@ -305,26 +371,83 @@ async fn stt_install(app: AppHandle) -> Result<stt::Status> {
     .await
 }
 
-#[tauri::command]
-async fn transcribe_meeting(app: AppHandle, id: String) -> Result<()> {
-    let root = stt_root(&app)?;
-    let (detail, settings) = {
-        let id = id.clone();
-        with_core(app.clone(), false, move |core, _| {
-            Ok((core.get_meeting(&id)?, core.settings()?))
+fn plan_changed() -> AppError {
+    AppError::new("processing_plan_changed", "The meeting or provider settings changed. Review and confirm again. Nothing new was sent or saved.")
+}
+
+fn processing_plan(
+    config: &ProviderConfig,
+    payload: &impl serde::Serialize,
+    requests: usize,
+    audio_bytes: u64,
+    tracks: Vec<String>,
+) -> Result<ProcessingPlan> {
+    let model = config.model.as_deref().ok_or_else(|| {
+        AppError::new(
+            "provider_model",
+            "Choose and save a model in Settings first.",
+        )
+    })?;
+    let input = serde_json::to_vec(&(config, payload, requests, audio_bytes, &tracks))
+        .map_err(|_| AppError::new("processing_plan", "The request could not be prepared."))?;
+    Ok(ProcessingPlan {
+        fingerprint: Sha256::digest(input)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        base_url: config.base_url.clone(),
+        model: model.to_string(),
+        requests,
+        audio_bytes,
+        tracks,
+    })
+}
+
+fn confirm(plan: &ProcessingPlan, confirmation: Option<&str>) -> Result<()> {
+    match confirmation {
+        None => Err(AppError::new(
+            "consent_required",
+            "Review and confirm the destination and content before sending.",
+        )),
+        Some(value) if value != plan.fingerprint => Err(plan_changed()),
+        Some(_) => Ok(()),
+    }
+}
+
+fn transcript_lines(segments: &[Segment]) -> Vec<String> {
+    segments
+        .iter()
+        .map(|segment| match &segment.timing {
+            SegmentTiming::Timed { start_ms, .. } => format!(
+                "[{}:{:02}] {}: {}",
+                start_ms / 60_000,
+                start_ms / 1000 % 60,
+                segment.speaker,
+                segment.text
+            ),
+            SegmentTiming::Untimed => format!("{}: {}", segment.speaker, segment.text),
         })
-        .await?
-    };
+        .collect()
+}
+
+fn finalized_tracks(detail: &MeetingDetail) -> Result<Vec<audio::Track>> {
     if matches!(detail.meeting.status.as_str(), "recording" | "paused") {
         return Err(AppError::new(
             "stt",
             "Stop the recording before transcribing it.",
         ));
     }
-    let tracks: Vec<audio::Track> = detail
+    if detail.tracks.iter().any(|track| !track.finalized) {
+        return Err(AppError::new(
+            "stt",
+            "This recording has incomplete audio. Recover it before transcription.",
+        ));
+    }
+    let tracks: Vec<_> = detail
         .tracks
-        .into_iter()
-        .filter(|track| track.finalized && track.frames > 0)
+        .iter()
+        .filter(|track| track.frames > 0)
+        .cloned()
         .collect();
     if tracks.is_empty() {
         return Err(AppError::new(
@@ -332,100 +455,246 @@ async fn transcribe_meeting(app: AppHandle, id: String) -> Result<()> {
             "This meeting has no finalized audio tracks to transcribe.",
         ));
     }
-    let emitter = app.clone();
-    // A failed or cancelled run returns early here, so the previous transcript is kept.
-    let segments = blocking(move || {
-        stt::transcribe(&root, &tracks, &settings, |track, percent| {
-            let progress = stt::TranscribeProgress {
-                stage: "transcribing",
-                track: track.to_string(),
-                percent,
-            };
-            let _ = emitter.emit("stt_progress", progress);
+    Ok(tracks)
+}
+
+fn audio_plan(
+    config: &ProviderConfig,
+    id: &str,
+    settings: &Settings,
+    plan: &cloud_stt::CloudPlan,
+) -> Result<ProcessingPlan> {
+    processing_plan(
+        config,
+        &(
+            "transcribe",
+            id,
+            &settings.stt_language,
+            &settings.stt_prompt,
+            plan.fingerprint(),
+        ),
+        plan.requests,
+        plan.bytes,
+        plan.tracks.clone(),
+    )
+}
+
+fn same_stt_settings(current: &Settings, snapshot: &Settings) -> bool {
+    current.stt_mode == snapshot.stt_mode
+        && current.stt_language == snapshot.stt_language
+        && current.stt_prompt == snapshot.stt_prompt
+        && match snapshot.stt_mode {
+            SttMode::Local => current.stt_model == snapshot.stt_model,
+            SttMode::Cloud => current.cloud_stt == snapshot.cloud_stt,
+        }
+}
+
+#[tauri::command]
+async fn plan_transcription(app: AppHandle, id: String) -> Result<ProcessingPlan> {
+    let (settings, tracks) = {
+        let id = id.clone();
+        with_core(app, false, move |core, _| {
+            Ok((core.settings()?, finalized_tracks(&core.get_meeting(&id)?)?))
         })
-    })
-    .await?;
-    with_core(app, true, move |core, _| {
-        core.replace_transcript(&id, &segments)
+        .await?
+    };
+    if settings.stt_mode != SttMode::Cloud {
+        return Err(plan_changed());
+    }
+    let config = require_connection(&settings, ProviderRole::CloudStt)?;
+    blocking(move || audio_plan(&config, &id, &settings, &cloud_stt::plan(&tracks)?)).await
+}
+
+#[tauri::command]
+async fn transcribe_meeting(
+    app: AppHandle,
+    id: String,
+    confirmation: Option<String>,
+) -> Result<()> {
+    let root = stt_root(&app)?;
+    blocking(move || {
+        stt::run(|cancel| {
+            let report = |track: &str, percent: u8| {
+                let _ = app.emit(
+                    "stt_progress",
+                    stt::TranscribeProgress {
+                        stage: "transcribing",
+                        track: track.to_string(),
+                        percent,
+                    },
+                );
+            };
+            report("preparing", 0);
+            let (settings, tracks) = {
+                let state = app.state::<AppState>();
+                let core = state
+                    .core
+                    .lock()
+                    .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
+                (core.settings()?, finalized_tracks(&core.get_meeting(&id)?)?)
+            };
+            let (segments, provider, model) = match settings.stt_mode {
+                SttMode::Local => {
+                    if confirmation.is_some() {
+                        return Err(plan_changed());
+                    }
+                    (
+                        stt::transcribe(&root, &tracks, &settings, report)?,
+                        "whisper".to_string(),
+                        settings.stt_model.clone(),
+                    )
+                }
+                SttMode::Cloud => {
+                    let config = require_connection(&settings, ProviderRole::CloudStt)?;
+                    let prepared = cloud_stt::plan_cancellable(&tracks, cancel)?;
+                    confirm(
+                        &audio_plan(&config, &id, &settings, &prepared)?,
+                        confirmation.as_deref(),
+                    )?;
+                    {
+                        let state = app.state::<AppState>();
+                        let core = state
+                            .core
+                            .lock()
+                            .map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
+                        if !same_stt_settings(&core.settings()?, &settings) {
+                            return Err(plan_changed());
+                        }
+                    }
+                    let remote = providers::load_connection(&config)?;
+                    let model = remote.model()?.to_string();
+                    let segments = cloud_stt::transcribe(
+                        &remote,
+                        &tracks,
+                        &settings.stt_language,
+                        &settings.stt_prompt,
+                        &prepared,
+                        cancel,
+                        report,
+                    )?;
+                    (segments, remote.base_url().to_string(), model)
+                }
+            };
+            stt::finish(cancel, || {
+                let state = app.state::<AppState>();
+                let mut core = state
+                    .core
+                    .lock()
+                    .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
+                let current = core.settings()?;
+                if !same_stt_settings(&current, &settings) {
+                    return Err(plan_changed());
+                }
+                core.replace_transcript(&id, &segments, &provider, &model)?;
+                publish(&app, &core.recording_state());
+                Ok(())
+            })
+        })
     })
     .await
 }
 
-/// The saved model, notes and one transcript line per segment of meeting `id` only.
-async fn meeting_text(app: &AppHandle, id: &str) -> Result<(Option<String>, String, Vec<String>)> {
+async fn text_snapshot(
+    app: &AppHandle,
+    id: &str,
+) -> Result<(MeetingDetail, ProviderConfig, Vec<String>)> {
     let id = id.to_string();
-    let (detail, settings) = with_core(app.clone(), false, move |core, _| {
-        Ok((core.get_meeting(&id)?, core.settings()?))
+    with_core(app.clone(), false, move |core, _| {
+        let detail = core.get_meeting(&id)?;
+        let lines = transcript_lines(&detail.segments);
+        if detail.user_markdown.trim().is_empty() && lines.is_empty() {
+            return Err(AppError::new(
+                "summary_empty",
+                "There are no notes or transcript to send. Nothing was sent.",
+            ));
+        }
+        let config = require_connection(&core.settings()?, ProviderRole::Llm)?;
+        Ok((detail, config, lines))
     })
-    .await?;
-    let lines: Vec<String> = detail
-        .segments
-        .iter()
-        .map(|segment| {
-            format!(
-                "[{}:{:02}] {}: {}",
-                segment.start_ms / 60_000,
-                segment.start_ms / 1000 % 60,
-                segment.speaker,
-                segment.text
-            )
-        })
-        .collect();
-    if detail.user_markdown.trim().is_empty() && lines.is_empty() {
-        return Err(AppError::new(
-            "summary_empty",
-            "There are no notes or transcript to send. Nothing was sent.",
-        ));
-    }
-    Ok((settings.merge_model, detail.user_markdown, lines))
+    .await
 }
 
-fn require_model(model: Option<String>) -> Result<String> {
-    model.ok_or_else(|| {
-        AppError::new(
-            "merge_model_missing",
-            "Choose a Merge model in Settings first.",
-        )
-    })
+fn text_plan(
+    config: &ProviderConfig,
+    detail: &MeetingDetail,
+    lines: &[String],
+    action: &str,
+    option: &str,
+    requests: usize,
+) -> Result<ProcessingPlan> {
+    processing_plan(
+        config,
+        &(
+            action,
+            &detail.meeting.id,
+            detail.notes_revision,
+            &detail.user_markdown,
+            lines,
+            option,
+        ),
+        requests,
+        0,
+        Vec::new(),
+    )
 }
 
-/// Sends notes + transcript TEXT (never audio) to Merge. Requires explicit consent each call,
-/// and `requests` must match the count shown in that consent (see `plan_summary`).
+#[tauri::command]
+async fn plan_summary(
+    app: AppHandle,
+    id: String,
+    template: llm::Template,
+) -> Result<ProcessingPlan> {
+    let (detail, config, lines) = text_snapshot(&app, &id).await?;
+    text_plan(
+        &config,
+        &detail,
+        &lines,
+        "summary",
+        template.id(),
+        llm::summary_requests(&detail.user_markdown, &lines)?,
+    )
+}
+
 #[tauri::command]
 async fn generate_summary(
     app: AppHandle,
     id: String,
-    consent: bool,
-    template: merge::Template,
-    requests: usize,
+    template: llm::Template,
+    confirmation: String,
 ) -> Result<()> {
-    if !consent {
-        return Err(AppError::new(
-            "consent_required",
-            "Confirm what will be sent before generating a summary.",
-        ));
-    }
-    let (model, notes, lines) = meeting_text(&app, &id).await?;
-    let model = require_model(model)?;
-    if merge::summary_requests(&notes, &lines)? != requests {
-        return Err(AppError::new(
-            "summary_plan_changed",
-            "The meeting changed since you confirmed, so the number of requests differs. Nothing was sent; review and confirm again.",
-        ));
-    }
-    let used_model = model.clone();
-    let markdown = blocking(move || merge::summarize(&model, template, &notes, &lines)).await?;
+    let (detail, config, lines) = text_snapshot(&app, &id).await?;
+    let plan = text_plan(
+        &config,
+        &detail,
+        &lines,
+        "summary",
+        template.id(),
+        llm::summary_requests(&detail.user_markdown, &lines)?,
+    )?;
+    confirm(&plan, Some(&confirmation))?;
+    let snapshot_config = config.clone();
+    let notes = detail.user_markdown.clone();
+    let snapshot_lines = lines.clone();
+    let markdown = blocking(move || {
+        llm::summarize(
+            &providers::load_connection(&snapshot_config)?,
+            template,
+            &notes,
+            &snapshot_lines,
+        )
+    })
+    .await?;
     with_core(app, true, move |core, _| {
-        core.save_summary(&id, "merge", &used_model, &markdown, template.id())
+        let current = core.get_meeting(&id)?;
+        if core.settings()?.connection(ProviderRole::Llm) != Some(&config)
+            || current.notes_revision != detail.notes_revision
+            || transcript_lines(&current.segments) != lines
+        {
+            return Err(plan_changed());
+        }
+        core.save_summary(&id, &plan.base_url, &plan.model, &markdown, template.id())
     })
     .await
-}
-
-/// How many Merge requests a summary would send; sends nothing.
-#[tauri::command]
-async fn plan_summary(app: AppHandle, id: String) -> Result<usize> {
-    let (_, notes, lines) = meeting_text(&app, &id).await?;
-    merge::summary_requests(&notes, &lines)
 }
 
 #[tauri::command]
@@ -433,24 +702,35 @@ async fn list_summaries(app: AppHandle, id: String) -> Result<Vec<SummaryVersion
     with_core(app, false, move |core, _| core.list_summaries(&id)).await
 }
 
-/// Sends one question with this meeting's notes + transcript TEXT to Merge after
-/// explicit consent. The answer is returned only; nothing is stored.
+#[tauri::command]
+async fn plan_question(app: AppHandle, id: String, question: String) -> Result<ProcessingPlan> {
+    let (detail, config, lines) = text_snapshot(&app, &id).await?;
+    llm::validate_question(&detail.user_markdown, &lines, &question)?;
+    text_plan(&config, &detail, &lines, "question", &question, 1)
+}
+
 #[tauri::command]
 async fn ask_meeting(
     app: AppHandle,
     id: String,
     question: String,
-    consent: bool,
+    confirmation: String,
 ) -> Result<String> {
-    if !consent {
-        return Err(AppError::new(
-            "consent_required",
-            "Confirm what will be sent before asking. Nothing was sent.",
-        ));
-    }
-    let (model, notes, lines) = meeting_text(&app, &id).await?;
-    let model = require_model(model)?;
-    blocking(move || merge::ask(consent, &model, &notes, &lines, &question)).await
+    let (detail, config, lines) = text_snapshot(&app, &id).await?;
+    llm::validate_question(&detail.user_markdown, &lines, &question)?;
+    confirm(
+        &text_plan(&config, &detail, &lines, "question", &question, 1)?,
+        Some(&confirmation),
+    )?;
+    blocking(move || {
+        llm::ask(
+            &providers::load_connection(&config)?,
+            &detail.user_markdown,
+            &lines,
+            &question,
+        )
+    })
+    .await
 }
 
 /// Runs blocking network, disk, or subprocess work off the async runtime.
@@ -675,7 +955,7 @@ pub fn run() {
             let pause_failed = app.global_shortcut().register(settings.pause_shortcut.as_str()).is_err();
             let stop_failed = settings.stop_shortcut.as_deref().is_some_and(|stop| app.global_shortcut().register(stop).is_err());
             let startup_warning = (pause_failed || stop_failed).then(|| format!("{} shortcut unavailable. Use the on-screen controls and choose another shortcut in Settings.", if pause_failed { "Pause" } else { "Stop" }));
-            app.manage(AppState { core: Mutex::new(core), startup_warning, allow_exit: AtomicBool::new(false) });
+            app.manage(AppState { core: Mutex::new(core), provider_writes: Mutex::new(()), startup_warning, allow_exit: AtomicBool::new(false) });
             let show = MenuItem::with_id(app, "show", "Open OpenMeet", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause", "Pause / resume recording", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Stop recording", true, None::<&str>)?;
@@ -718,10 +998,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_meetings, get_meeting, get_recording_state, get_startup_warning,
             start_recording, pause_recording, resume_recording, stop_recording,
-            save_notes, create_fixture_meeting, get_settings, save_settings,
+            save_notes, get_settings, save_settings,
             choose_vault_folder, export_meeting, close_application, list_audio_devices,
-            merge_key_status, import_merge_key, delete_merge_key, list_merge_models,
-            save_merge_model,
+            provider_key_status, save_provider_connection, save_provider_model, list_provider_models,
+            save_stt_mode, plan_transcription, plan_question,
             stt_status, stt_install, transcribe_meeting, generate_summary,
             create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
             plan_summary, list_summaries, ask_meeting,
@@ -745,6 +1025,99 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consent_binds_destination_model_revision_and_content() {
+        let mut config = ProviderConfig {
+            base_url: "https://provider.example/v1".into(),
+            model: Some("model-a".into()),
+            revision: 1,
+            credential_account: Some("private-reference".into()),
+        };
+        let plan = processing_plan(&config, &("summary", "original notes"), 1, 0, vec![]).unwrap();
+        assert_eq!(
+            (plan.base_url.as_str(), plan.model.as_str(), plan.requests),
+            ("https://provider.example/v1", "model-a", 1)
+        );
+        assert_eq!(confirm(&plan, None).unwrap_err().code, "consent_required");
+        confirm(&plan, Some(&plan.fingerprint)).unwrap();
+        for change in ["destination", "model", "credential", "content"] {
+            let mut changed_config = config.clone();
+            let mut notes = "original notes";
+            match change {
+                "destination" => changed_config.base_url = "https://different.example/v1".into(),
+                "model" => changed_config.model = Some("model-b".into()),
+                "credential" => changed_config.revision += 1,
+                _ => notes = "updated notes",
+            }
+            let changed =
+                processing_plan(&changed_config, &("summary", notes), 1, 0, vec![]).unwrap();
+            assert_eq!(
+                confirm(&changed, Some(&plan.fingerprint)).unwrap_err().code,
+                "processing_plan_changed"
+            );
+        }
+        config.model = None;
+        assert_eq!(
+            processing_plan(&config, &"content", 1, 0, vec![])
+                .unwrap_err()
+                .code,
+            "provider_model"
+        );
+    }
+
+    #[test]
+    fn untimed_transcript_text_has_no_invented_time_citations() {
+        let entries = [
+            Segment {
+                speaker: "You".into(),
+                text: "Timed words".into(),
+                timing: SegmentTiming::Timed {
+                    start_ms: 61_000,
+                    end_ms: 62_000,
+                },
+            },
+            Segment {
+                speaker: "Others".into(),
+                text: "Untimed words".into(),
+                timing: SegmentTiming::Untimed,
+            },
+        ];
+        assert_eq!(
+            transcript_lines(&entries),
+            ["[1:01] You: Timed words", "Others: Untimed words"]
+        );
+    }
+
+    #[test]
+    fn cloud_upload_checks_mode_language_vocabulary_and_connection_before_sending() {
+        let core = Core::open(Path::new(":memory:")).unwrap();
+        let mut snapshot = core.settings().unwrap();
+        snapshot.stt_mode = SttMode::Cloud;
+        snapshot.cloud_stt = Some(ProviderConfig {
+            base_url: "https://speech.example/v1".into(),
+            model: Some("speech-model".into()),
+            revision: 1,
+            credential_account: Some("test-reference".into()),
+        });
+        assert!(same_stt_settings(&snapshot, &snapshot));
+        for change in ["mode", "language", "vocabulary", "connection"] {
+            let mut current = snapshot.clone();
+            match change {
+                "mode" => current.stt_mode = SttMode::Local,
+                "language" => current.stt_language = "de".into(),
+                "vocabulary" => current.stt_prompt = "changed".into(),
+                _ => current.cloud_stt.as_mut().unwrap().revision += 1,
+            }
+            assert!(!same_stt_settings(&current, &snapshot), "{change}");
+        }
+        let mut current = snapshot.clone();
+        current.stt_model = "base".into();
+        assert!(
+            same_stt_settings(&current, &snapshot),
+            "inactive local model does not reroute cloud audio"
+        );
+    }
 
     #[test]
     fn stop_shortcut_is_optional_and_must_differ_from_pause() {

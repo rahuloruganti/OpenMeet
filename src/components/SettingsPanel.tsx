@@ -1,11 +1,13 @@
 import type { Ref } from "react";
 import type {
   ExportOptions,
-  MergeModel,
+  KeyStatus,
+  ProviderRole,
   Settings,
   SttDownloadProgress,
   SttStatus,
 } from "../lib/api";
+import { ProviderSettings } from "./ProviderSettings";
 
 export type SttDraft = Pick<
   Settings,
@@ -31,14 +33,10 @@ type Props = {
   sttProgress: SttDownloadProgress | null;
   installing: boolean;
   onInstallStt: () => void;
-  mergeKey: boolean | null;
-  mergeModel: string;
-  mergeModels: MergeModel[] | null;
-  onMergeModel: (value: string) => void;
-  onImportKey: () => void;
-  onDeleteKey: () => void;
-  onRefreshMerge: () => void;
-  onSaveMerge: () => void;
+  keyStatus: Record<ProviderRole, KeyStatus>;
+  onSettings: (settings: Settings) => void;
+  onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
+  onSttMode: (mode: Settings["stt_mode"]) => void;
   onShortcut: (value: string) => void;
   onClose: () => void;
   onChooseFolder: () => void;
@@ -53,8 +51,6 @@ type Props = {
 
 export function SettingsPanel(props: Props) {
   const { settings, disabled } = props;
-  const { mergeKey, mergeModel, mergeModels } = props;
-  const mergeSelectable = mergeModels?.find((m) => m.model === mergeModel);
   return (
     <section
       className="workspace-panel settings"
@@ -75,47 +71,84 @@ export function SettingsPanel(props: Props) {
           className="settings-section"
           aria-label="Transcription settings"
         >
-          <h3>Speech to text (local)</h3>
-          <p>
-            <strong>
-              {!props.stt
-                ? "Status unavailable"
-                : !props.stt.supported
-                  ? "Not supported on this platform yet"
-                  : props.stt.installed
-                    ? "Installed and verified"
-                    : "Not installed"}
-            </strong>
-          </p>
-          <p className="muted">
-            Transcribe on your computer with Whisper. Audio stays here. Windows
-            uses the published engine. This Mac uses a local whisper.cpp build.
-          </p>
-          <details className="help-details">
-            <summary>About model downloads</summary>
-            <p>
-              Whisper and Silero models come from huggingface.co; the engine
-              comes from github.com. Downloads are checked against pinned
-              SHA-256 checksums. Switching models keeps existing downloads.
-            </p>
-          </details>
+          <h3>Speech to text</h3>
           <label>
-            Speech model
+            Transcription mode
             <select
-              value={props.sttDraft.stt_model}
+              value={settings?.stt_mode ?? "local"}
               disabled={disabled}
               onChange={(event) =>
-                props.onStt({ stt_model: event.target.value })
+                props.onSttMode(
+                  event.target.value === "cloud" ? "cloud" : "local",
+                )
               }
             >
-              {props.stt?.models.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.id} ({mb(item.size)} MB
-                  {item.installed ? ", downloaded" : ""})
-                </option>
-              ))}
+              <option value="local">Local Whisper</option>
+              <option value="cloud">Cloud API</option>
             </select>
           </label>
+          {settings?.stt_mode === "cloud" ? (
+            <>
+              <p className="muted">
+                Audio is uploaded to your selected provider after confirmation.
+                Local model downloads are not required. Some models return text
+                without timestamps.
+              </p>
+              <ProviderSettings
+                role="cloud_stt"
+                config={settings.cloud_stt}
+                keyStatus={props.keyStatus.cloud_stt}
+                disabled={disabled}
+                onSaved={props.onSettings}
+                onKeyStatus={props.onKeyStatus}
+              />
+            </>
+          ) : (
+            <>
+              <p className="muted">Audio stays on this device.</p>
+              <p>
+                <strong>
+                  {!props.stt
+                    ? "Status unavailable"
+                    : !props.stt.supported
+                      ? "Not supported on this platform yet"
+                      : props.stt.installed
+                        ? "Installed and verified"
+                        : "Not installed"}
+                </strong>
+              </p>
+              <p className="muted">
+                Transcribe on your computer with Whisper. Audio stays here.
+                Windows uses the published engine. Apple Silicon requires the
+                separately pinned local whisper.cpp build.
+              </p>
+              <details className="help-details">
+                <summary>About model downloads</summary>
+                <p>
+                  Whisper and Silero models come from huggingface.co; the engine
+                  comes from github.com. Downloads are checked against pinned
+                  SHA-256 checksums. Switching models keeps existing downloads.
+                </p>
+              </details>
+              <label>
+                Speech model
+                <select
+                  value={props.sttDraft.stt_model}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    props.onStt({ stt_model: event.target.value })
+                  }
+                >
+                  {props.stt?.models.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.id} ({mb(item.size)} MB
+                      {item.installed ? ", downloaded" : ""})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
           <label>
             Spoken language
             <select
@@ -125,11 +158,13 @@ export function SettingsPanel(props: Props) {
                 props.onStt({ stt_language: event.target.value })
               }
             >
-              {props.stt?.languages.map((code) => (
-                <option key={code} value={code}>
-                  {languageName(code)}
-                </option>
-              ))}
+              {(props.stt?.languages ?? [props.sttDraft.stt_language]).map(
+                (code) => (
+                  <option key={code} value={code}>
+                    {languageName(code)}
+                  </option>
+                ),
+              )}
             </select>
           </label>
           <label>
@@ -144,115 +179,43 @@ export function SettingsPanel(props: Props) {
               }
             />
           </label>
-          <button disabled={disabled || !props.stt} onClick={props.onSaveStt}>
+          <button disabled={disabled} onClick={props.onSaveStt}>
             Save transcription settings
           </button>
-          {props.sttProgress && (
-            <p role="status">
-              Downloading {props.sttProgress.stage}:{" "}
-              {mb(props.sttProgress.downloaded)} / {mb(props.sttProgress.total)}{" "}
-              MB
-            </p>
+          {settings?.stt_mode !== "cloud" && (
+            <>
+              {props.sttProgress && (
+                <p role="status">
+                  Downloading {props.sttProgress.stage}:{" "}
+                  {mb(props.sttProgress.downloaded)} /{" "}
+                  {mb(props.sttProgress.total)} MB
+                </p>
+              )}
+              <button
+                disabled={
+                  disabled ||
+                  props.installing ||
+                  !props.stt?.supported ||
+                  props.stt.installed
+                }
+                onClick={props.onInstallStt}
+              >
+                {props.stt?.installed
+                  ? "Speech engine installed"
+                  : `Download speech engine and models (≈ ${mb(props.stt?.missing_bytes ?? 0)} MB)`}
+              </button>
+            </>
           )}
-          <button
-            disabled={
-              disabled ||
-              props.installing ||
-              !props.stt?.supported ||
-              props.stt.installed
-            }
-            onClick={props.onInstallStt}
-          >
-            {props.stt?.installed
-              ? "Speech engine installed"
-              : `Download speech engine and models (≈ ${mb(props.stt?.missing_bytes ?? 0)} MB)`}
-          </button>
         </section>
         <section className="settings-section" aria-label="Summary settings">
-          <h3>Merge Gateway</h3>
-          <p>
-            <strong>
-              {mergeKey === null
-                ? "API key status unavailable"
-                : mergeKey
-                  ? "API key saved in the OS keychain"
-                  : "No API key saved"}
-            </strong>
-          </p>
-          <p className="muted">
-            Summaries and meeting questions use Merge. Each send asks for your
-            confirmation. Audio is never sent.
-          </p>
-          <details className="help-details">
-            <summary>Key setup & privacy</summary>
-            <p className="muted">
-              The key is imported from the OPENMEET_LLM_API_KEY environment
-              variable by the desktop backend and stored in the OS keychain; it
-              never enters this window. Set the variable before starting
-              OpenMeet. Connecting sends only your API key to
-              api-gateway.merge.dev to list models; no meeting content is sent.
-              Notes and transcript text are sent only when you confirm a summary
-              or question for a meeting. Audio is never sent.
-            </p>
-          </details>
-          <div className="panel-actions">
-            <button disabled={disabled} onClick={props.onImportKey}>
-              Import key from environment
-            </button>
-            <button
-              disabled={disabled || !mergeKey}
-              onClick={props.onDeleteKey}
-            >
-              Remove saved key
-            </button>
-          </div>
-          <button
-            disabled={disabled || !mergeKey}
-            onClick={props.onRefreshMerge}
-          >
-            Connect / refresh Merge models
-          </button>
-          {mergeModels === null && (
-            <p className="muted">Merge models not fetched.</p>
-          )}
-          {mergeModels?.length === 0 && (
-            <p role="status">Merge returned no models for this key.</p>
-          )}
-          <label>
-            Merge model
-            <select
-              value={mergeModel}
-              disabled={disabled || !mergeModels?.length}
-              onChange={(event) => props.onMergeModel(event.target.value)}
-            >
-              <option value="">Select a Merge model</option>
-              {mergeModel && !mergeSelectable && (
-                <option value={mergeModel} disabled>
-                  {mergeModel} (
-                  {mergeModels === null ? "not checked" : "unavailable"})
-                </option>
-              )}
-              {mergeModels?.map((item) => (
-                <option
-                  key={item.model}
-                  value={item.model}
-                  disabled={!item.available}
-                >
-                  {item.display_name ?? item.model}
-                  {item.available
-                    ? ""
-                    : ` (unavailable: ${item.unavailable_reason ?? "unknown"})`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p>Saved Merge model: {settings?.merge_model ?? "Not selected"}</p>
-          <button
-            disabled={disabled || !mergeSelectable?.available}
-            onClick={props.onSaveMerge}
-          >
-            Save Merge model
-          </button>
+          <ProviderSettings
+            role="llm"
+            config={settings?.llm ?? null}
+            keyStatus={props.keyStatus.llm}
+            disabled={disabled}
+            onSaved={props.onSettings}
+            onKeyStatus={props.onKeyStatus}
+          />
         </section>
         <section
           className="settings-section"

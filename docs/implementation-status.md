@@ -2,26 +2,28 @@
 
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional Merge summaries and questions. Schema v9 is implemented. This is a preview with open qualification gates, not a complete MVP.
+OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v11 is implemented. This is a preview with open qualification gates, not a complete MVP.
 
 No platform has passed the full two-track capture gate. An earlier Windows attempt was blocked by a missing microphone. A later authorized two-second smoke test was recorded as passing in [log.md](../log.md), but it did not establish audible-content quality, pause privacy, device-failure behavior, or long-run drift. No recording was made during the recent UI and installation work.
 
-macOS capture is a preview on Apple Silicon, macOS 14.2 or newer. It is not hardware-qualified, and permission denial has not been tested. Transcription remains Windows-only. Notes, audio, transcripts, summaries, and exports remain unencrypted. Simulations and fictional samples are visibly separate from desktop recordings and notes-only entries.
+macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. Its local speech engine requires the separately pinned local whisper.cpp build. Permission denial and the integrated macOS workflow remain unqualified. Cloud STT processes finalized audio. Notes, audio, transcripts, summaries, and exports remain unencrypted. Production simulation/sample creation is removed; historical fictional records remain labeled and accessible.
 
 ## Implemented features
 
-| Area                   | Current implementation                                                                                                                                                     |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace              | Collapsible meeting library, source labels, notes/summary/transcript tabs, dedicated setup/settings panels, and persistent recording controls.                             |
-| Notes                  | Notes-only entries, rename, Markdown textarea, 400 ms serialized autosave, revision checks, save-before-switch/export/quit, and failed-draft preservation.                 |
-| Search                 | Title filtering and SQLite FTS5 matches across notes, transcript segments, and summaries.                                                                                  |
-| Capture                | Windows selected microphone and output loopback, separate WAVs, timing JSONL, bounded queues, pause/resume/stop, tray controls, level meters, and configurable shortcuts.  |
-| Local transcription    | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
-| Playback               | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
-| Merge                  | Backend keychain import, model discovery/selection, consented summaries, three templates, summary history/copy, bounded chunked summaries, and per-meeting questions.      |
-| Export                 | Folder picker, source-aware Markdown, optional transcript/summary, filename preferences, and non-overwriting snapshots.                                                    |
-| Recovery and retention | Interrupted-recording detection, repaired copies preserving originals, typed-confirmation delete audio/meeting, and disk usage.                                            |
-| Development            | Pinned toolchains and lockfiles, just recipes, automated frontend/Rust checks, and CI definitions.                                                                         |
+| Area                    | Current implementation                                                                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace               | Collapsible meeting library, source labels, notes/summary/transcript tabs, dedicated setup/settings panels, and persistent recording controls.                             |
+| Notes                   | Notes-only entries, rename, Markdown textarea, 400 ms serialized autosave, revision checks, save-before-switch/export/quit, and failed-draft preservation.                 |
+| Search                  | Title filtering and SQLite FTS5 matches across notes, transcript segments, and summaries.                                                                                  |
+| Capture                 | Windows selected microphone and output loopback, separate WAVs, timing JSONL, bounded queues, pause/resume/stop, tray controls, level meters, and configurable shortcuts.  |
+| Local transcription     | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
+| Playback                | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
+| Provider settings       | Independent HTTPS LLM/cloud-STT bases, transient masked key entry to OS keychain, optional model discovery/custom IDs, and revision-bound consent.                         |
+| Cloud transcription     | Explicit audio confirmation, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
+| Summaries and questions | Configured chat API, three templates, history/copy, bounded chunked summaries, and per-meeting questions.                                                                  |
+| Export                  | Folder picker, source-aware Markdown, optional transcript/summary, filename preferences, and non-overwriting snapshots.                                                    |
+| Recovery and retention  | Interrupted-recording detection, repaired copies preserving originals, typed-confirmation delete audio/meeting, and disk usage.                                            |
+| Development             | Pinned toolchains and lockfiles, just recipes, automated frontend/Rust checks, and CI definitions.                                                                         |
 
 Implemented does not mean qualified. See [the user guide](user-guide.md), [architecture](architecture.md), and [privacy](privacy.md) for behavior and limits.
 
@@ -31,7 +33,15 @@ The feature-plan M0–M5 implementation added summary history/templates/copy, re
 
 The subsequent UI polish added a quieter workspace, dedicated settings/setup layouts, a first-export folder flow, dismissible notices, preserved drafts while panels are open, and playback failure handling. Installation documentation and just commands were added afterward.
 
-## Latest executed local checks
+## Provider settings checks (2026-10-13)
+
+`just check` passed on Windows after restoring the missing Windows SDK. It ran frontend typecheck, lint, formatting, 88 tests and production build, then Rust formatting, Clippy with warnings denied, 67 passing tests and native debug build. The hardware test remained ignored. Additional synthetic SQLite upgrade checks covered populated v0/v2/v5/v9 databases and FTS/foreign-key preservation. Synthetic API servers do not establish live provider compatibility.
+
+`just build` produced a standalone release executable. The prior app closed through Save and quit, and the temporary Vite server was stopped. The rebuilt app loaded from `http://tauri.localhost/` with the existing library and Saved/Not recording states visible. Native Settings showed independent LLM fields, local model choices, and cloud speech fields/disclosure after switching modes. Switching back preserved the existing `small` local model. Local mode was restored, and the app was left running. The pause-shortcut warning remains. No real key was entered, content uploaded, or recording started; successful native key save/replace/remove and live provider compatibility remain unqualified.
+
+Provider settings use independent role revisions and OS-keychain references, not stored API keys. Cloud cancellation covers chunk preparation and final publication; settings changes before upload invalidate the plan. Local/cloud reruns replace generated transcript rows atomically, including untimed and empty results. Production fixture/simulation creators and their UI/IPC are absent; historical source interpretation and test fixtures remain.
+
+## Previous installation checks
 
 The installation work in this conversation ran the following on Windows against the current application code. These are executed results, not results inferred from this documentation edit.
 
@@ -51,13 +61,17 @@ Checks used Node 24.21.0, installed Visual Studio 2022 C++ tools, and an existin
 
 Previous work recorded cargo-deny checks, a local engine spot check, and broader fixture-based UI checks. Those are historical evidence in [log.md](../log.md), not new qualification results. Current remote CI has not been rechecked here.
 
+On 2026-10-13, launching the earlier release executable reproduced `ERR_CONNECTION_REFUSED` at the development URL. The release recipe used plain Cargo without Tauri's production asset protocol. `just build` now invokes the Tauri CLI, but the rebuild was blocked by missing Windows SDK headers and libraries on this machine. The existing executable was relaunched with a local Vite preview server serving `dist/`; its saved library and notes workspace loaded. This verifies the temporary server-backed launch, not a rebuilt standalone executable. The pause-shortcut warning remains.
+
 ## Open work
+
+The October 14 [Phase 1 foundation verification](phase-1-foundation-verification.md) records startup, draft-refresh, audio-health, and capture-worker fixes. `just check` passed with 98 frontend tests and 74 Rust tests, with two native tests ignored by the routine suite. Separately selected short hardware and synthetic Windows keychain tests each passed once. These results do not complete hardware, native UI, or provider qualification.
 
 ### Stabilization and native UI
 
-- Diagnose delayed or blank development startup, and verify repeated cold starts.
-- Bound capture-worker control acknowledgements and test stalled/crashed workers and SQLite failures during state changes.
-- Verify obsolete audio-health cleanup and finalized metadata refresh without replacing edited drafts.
+- Verify repeated native cold starts after removing optional discovery from the saved-notes startup dependency.
+- Qualify native failures after bounding worker control waits and testing stalled workers, late finalization, and SQLite publication failure/retry.
+- Qualify audio-health cleanup and draft-preserving finalized metadata refresh in the native app; regression tests pass.
 - Exercise note persistence across restart, first export and cancelled folder selection, history/copy, settings, recovery, and guarded deletion in the native app.
 - Verify keyboard-only operation, 720×580 minimum size, 200% zoom, error visibility, and playback failure handling in the webview.
 - Validate clipboard permissions, asset-protocol refusal outside the audio folder, global stop registration, and filesystem symlink deletion bounds on a suitable Windows machine.
@@ -73,9 +87,9 @@ Run a 60-minute two-track test with markers near both ends, recording device/dri
 
 - Qualify real-engine progress, cancellation, silence handling, accuracy, and performance across selected models/languages using licensed or consented audio.
 - Test the complete in-app record/transcribe/summarize/export path after a fresh install and restart.
-- Validate live Merge chat completions and questions with explicit content consent, including each template, long-input chunking, provider failures, and request costs.
+- Validate each configured provider/model combination with explicit content consent, including chat templates/questions, long-input chunking, audio limits, formats, failures, and request costs.
 - Preserve the last good transcript/summary on failed retries. A durable processing queue and restartable inference jobs are not implemented.
-- Any future API-key entry must keep credentials out of frontend state and logs. The current supported flow remains environment import into the OS keychain.
+- Qualify native Settings key entry, replacement/removal, OS-keychain failures, and publication/cleanup failures. The password field is transient; keys are not returned to frontend state or logs.
 
 ### Platform, privacy, and release
 

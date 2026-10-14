@@ -347,10 +347,6 @@ pre {
   background: transparent;
   text-align: left;
 }
-.sidebar-bottom .sample-button {
-  color: var(--muted);
-  font-size: 0.75rem;
-}
 .local-storage-note {
   margin: 10px 12px 0;
   color: var(--muted);
@@ -1036,11 +1032,6 @@ textarea.notes-editor {
   border: 1px solid #d3dfd8;
   border-radius: 9px;
 }
-.simulation-details {
-  margin-top: 28px;
-  border-top: 1px solid var(--divider);
-  padding-top: 12px;
-}
 .consent-card {
   margin: 12px 0 24px;
   padding: 18px;
@@ -1191,4 +1182,25 @@ textarea.notes-editor {
   .status-dot {
     border: 1px solid CanvasText;
   }
+}
+
+.provider-settings {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.provider-settings > legend {
+  padding: 0;
+  font-weight: 600;
+}
+.provider-settings > p {
+  margin-bottom: 12px;
+}
+.provider-settings > button,
+.provider-settings > .panel-actions {
+  margin-bottom: 12px;
+}
+.provider-settings code {
+  overflow-wrap: anywhere;
 }

@@ -56,27 +56,27 @@ These packages support development; they are not additional native services requ
 
 The requirement column is the manifest's version constraint. `=` pins an exact version; other requirements can resolve to compatible versions in the lockfile.
 
-| Crate                          | Requirement | Locked version | Use and selected features                                                                 |
-| ------------------------------ | ----------- | -------------- | ----------------------------------------------------------------------------------------- |
-| `tauri`                        | `=2.12.2`   | 2.12.2         | Desktop shell, IPC, tray icon, and scoped audio asset protocol.                           |
-| `tauri-build`                  | `2`         | 2.7.1          | Build dependency for Tauri configuration and resources.                                   |
-| `tauri-plugin-dialog`          | `2`         | 2.8.1          | Native export-folder picker.                                                              |
-| `tauri-plugin-global-shortcut` | `2`         | 2.4.0          | Pause/resume and optional stop shortcuts.                                                 |
-| `tauri-plugin-single-instance` | `2`         | 2.5.2          | Focus the existing app instead of opening a second backend.                               |
-| `rusqlite`                     | `=0.40.2`   | 0.40.2         | SQLite access, with `bundled` SQLite and FTS5 search.                                     |
-| `serde`                        | `1`         | 1.0.229        | Payload serialization and deserialization with `derive`.                                  |
-| `serde_json`                   | `1`         | 1.0.151        | Engine output, fixtures, timing indexes, and HTTP payloads.                               |
-| `thiserror`                    | `2`         | 2.0.21         | Backend error definitions.                                                                |
-| `uuid`                         | `1`         | 1.27.0         | Version-4 meeting IDs and export filename identity.                                       |
-| `time`                         | `0.3`       | 0.3.55         | RFC 3339 timestamps, with `formatting`.                                                   |
-| `tempfile`                     | `3`         | 3.27.0         | Temporary downloads, inference output, export publication, and tests.                     |
-| `cpal`                         | `=0.18.2`   | 0.18.2         | Native audio devices, microphone capture, Windows loopback, and the macOS process tap used when an output has no input. |
-| `ringbuf`                      | `0.5.2`     | 0.5.3          | Bounded audio sample buffers.                                                             |
-| `hound`                        | `3.5`       | 3.5.1          | WAV writing, reading, and recovery.                                                       |
-| `reqwest`                      | `=0.13.5`   | 0.13.5         | Backend downloads and Merge HTTP; defaults disabled, `blocking` and `native-tls` enabled. |
-| `keyring`                      | `4`         | 4.2.0          | API key storage through native OS credential stores.                                      |
-| `sha2`                         | `0.11`      | 0.11.0         | SHA-256 verification of downloaded artifacts.                                             |
-| `zip`                          | `9`         | 9.0.1          | Extract the speech engine; defaults disabled, `deflate` enabled.                          |
+| Crate                          | Requirement | Locked version | Use and selected features                                                                                                          |
+| ------------------------------ | ----------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `tauri`                        | `=2.12.2`   | 2.12.2         | Desktop shell, IPC, tray icon, and scoped audio asset protocol.                                                                    |
+| `tauri-build`                  | `2`         | 2.7.1          | Build dependency for Tauri configuration and resources.                                                                            |
+| `tauri-plugin-dialog`          | `2`         | 2.8.1          | Native export-folder picker.                                                                                                       |
+| `tauri-plugin-global-shortcut` | `2`         | 2.4.0          | Pause/resume and optional stop shortcuts.                                                                                          |
+| `tauri-plugin-single-instance` | `2`         | 2.5.2          | Focus the existing app instead of opening a second backend.                                                                        |
+| `rusqlite`                     | `=0.40.2`   | 0.40.2         | SQLite access, with `bundled` SQLite and FTS5 search.                                                                              |
+| `serde`                        | `1`         | 1.0.229        | Payload serialization and deserialization with `derive`.                                                                           |
+| `serde_json`                   | `1`         | 1.0.151        | Engine output, fixtures, timing indexes, and HTTP payloads.                                                                        |
+| `thiserror`                    | `2`         | 2.0.21         | Backend error definitions.                                                                                                         |
+| `uuid`                         | `1`         | 1.27.0         | Version-4 meeting IDs and export filename identity.                                                                                |
+| `time`                         | `0.3`       | 0.3.55         | RFC 3339 timestamps, with `formatting`.                                                                                            |
+| `tempfile`                     | `3`         | 3.27.0         | Temporary downloads, inference output, export publication, and tests.                                                              |
+| `cpal`                         | `=0.18.2`   | 0.18.2         | Native audio devices, microphone capture, and Windows output loopback.                                                             |
+| `ringbuf`                      | `0.5.2`     | 0.5.3          | Bounded audio sample buffers.                                                                                                      |
+| `hound`                        | `3.5`       | 3.5.1          | WAV writing, reading, and recovery.                                                                                                |
+| `reqwest`                      | `=0.13.5`   | 0.13.5         | Backend downloads/provider HTTP and multipart audio uploads; defaults disabled, `blocking`, `native-tls`, and `multipart` enabled. |
+| `keyring`                      | `4`         | 4.2.0          | API key storage through native OS credential stores.                                                                               |
+| `sha2`                         | `0.11`      | 0.11.0         | SHA-256 verification of downloaded artifacts.                                                                                      |
+| `zip`                          | `9`         | 9.0.1          | Extract the speech engine; defaults disabled, `deflate` enabled.                                                                   |
 
 Platform adapters, TLS libraries, and async runtimes also appear transitively. For example, Tauri and reqwest bring runtime dependencies even though OpenMeet does not declare a direct Tokio dependency. Do not remove a transitive crate merely because the application does not import it.
 
@@ -96,7 +96,7 @@ Installation fetches the engine, selected Whisper model, and VAD as needed. Swit
 
 ## External service
 
-Merge Gateway is the optional API service for model discovery, summaries, and questions. It is not an npm package, Rust crate, or local model. Credentials belong in the OS keychain. Meeting text is submitted only after per-action confirmation; audio is never submitted. Service costs and provider handling are external to OpenMeet. See [privacy](privacy.md#network-actions).
+Users configure independent OpenAI-compatible LLM and cloud-STT API services. No provider SDK is bundled. Credentials belong in the OS keychain; meeting text and cloud audio each require per-action confirmation. Service costs, limits, supported models/formats, and retention are external to OpenMeet. Local Whisper stays the default. See [privacy](privacy.md#network-actions).
 
 Ollama, diarization engines, bots, SharePoint, telemetry, auto-updaters, and compression libraries described in older plans are not implemented integrations.
 

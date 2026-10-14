@@ -1,9 +1,12 @@
 //! Platform gate for real capture. Windows stays as it was. macOS uses the
 //! pinned cpal process tap only for Apple Silicon on 14.2 or newer, and only
 //! for an output device that has no input of its own.
-use crate::domain::{AppError, Result};
+use crate::domain::AppError;
+#[cfg(any(target_os = "macos", test))]
+use crate::domain::Result;
 
 const TAP_FLOOR: (u32, u32) = (14, 2);
+#[cfg(any(target_os = "macos", test))]
 const PREFLIGHT_GRANTED: i32 = 0;
 
 pub fn supported() -> bool {
@@ -20,6 +23,7 @@ pub fn unsupported_reason() -> AppError {
 }
 
 /// macOS only. An output that also supports input is not a system tap.
+#[cfg(any(target_os = "macos", test))]
 pub fn reject_duplex_output(supports_input: bool) -> Result<()> {
     if supports_input {
         Err(audio_error(
@@ -52,6 +56,7 @@ pub fn os_meets_tap_floor(version: &str) -> bool {
     (major, minor) >= TAP_FLOOR
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub fn missing_permission_message(mic: i32, system: i32) -> Option<&'static str> {
     match (mic == PREFLIGHT_GRANTED, system == PREFLIGHT_GRANTED) {
         (true, true) => None,
