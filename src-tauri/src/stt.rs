@@ -14,10 +14,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex, TryLockError,
-    },
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
@@ -416,46 +413,6 @@ fn parse_output(json: &[u8], speaker: &str, rate: u32, index: &[Block]) -> Resul
     Ok(segments)
 }
 
-// Held for the whole run so only one transcription uses the CPU at a time.
-static BUSY: Mutex<()> = Mutex::new(());
-// Set by `cancel`; the run loop that owns the child process sees it and kills the engine.
-static CANCEL: AtomicBool = AtomicBool::new(false);
-static FINALIZE: Mutex<()> = Mutex::new(());
-static COMMITTED: AtomicBool = AtomicBool::new(false);
-
-/// One owner across local/cloud work, including publication of the complete result.
-pub fn run<T>(operation: impl FnOnce(&AtomicBool) -> Result<T>) -> Result<T> {
-    let gate = FINALIZE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let _guard = match BUSY.try_lock() {
-        Ok(guard) => guard,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => {
-            return Err(stt_error(
-                "A transcription is already running. Wait for it to finish.",
-            ))
-        }
-    };
-    CANCEL.store(false, Ordering::SeqCst);
-    COMMITTED.store(false, Ordering::SeqCst);
-    drop(gate);
-    operation(&CANCEL)
-}
-
-/// Cancellation and final publication share a gate, so an acknowledged cancel cannot commit later.
-pub fn finish<T>(cancel: &AtomicBool, publish: impl FnOnce() -> Result<T>) -> Result<T> {
-    let _gate = FINALIZE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if cancel.load(Ordering::SeqCst) {
-        return Err(cancelled());
-    }
-    let result = publish()?;
-    COMMITTED.store(true, Ordering::SeqCst);
-    Ok(result)
-}
-
 fn cancelled() -> AppError {
     AppError::new(
         "stt_cancelled",
@@ -512,8 +469,12 @@ fn run_engine(
     index: &[Block],
     scratch: &Path,
     output_base: &Path,
+    cancel: &AtomicBool,
     mut report: impl FnMut(u8),
 ) -> Result<Vec<Segment>> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(cancelled());
+    }
     let log_path = scratch.join("engine.log");
     command
         .stdin(Stdio::null())
@@ -548,7 +509,7 @@ fn run_engine(
         if let Some(status) = exited {
             break status;
         }
-        let stop = if CANCEL.load(Ordering::SeqCst) {
+        let stop = if cancel.load(Ordering::SeqCst) {
             Some(AppError::new(
                 "stt_cancelled",
                 "Transcription was cancelled. Nothing was saved; the previous transcript is unchanged.",
@@ -567,19 +528,11 @@ fn run_engine(
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    if cancel.load(Ordering::SeqCst) {
+        return Err(cancelled());
+    }
     if !status.success() {
-        let tail: String = fs::read_to_string(&log_path)
-            .unwrap_or_default()
-            .lines()
-            .filter(|line| parse_progress(line).is_none())
-            .rev()
-            .take(2)
-            .collect::<Vec<_>>()
-            .join(" | ");
-        return Err(stt_error(format!(
-            "The speech engine failed ({status}). {}",
-            tail.chars().take(200).collect::<String>()
-        )));
+        return Err(stt_error(format!("The speech engine failed ({status}).")));
     }
     let json = fs::read(output_base.with_extension("json"))
         .map_err(|_| stt_error("The speech engine produced no output."))?;
@@ -591,13 +544,14 @@ fn run_engine(
 /// or cancellation, so callers never replace an existing transcript with partial output.
 fn run_tracks(
     tracks: &[Track],
+    cancel: &AtomicBool,
     mut command_for: impl FnMut(&Track, &Path) -> Result<Command>,
     mut report: impl FnMut(&str, u8),
 ) -> Result<Vec<Segment>> {
     let mut segments = Vec::new();
     for track in tracks {
         let index = audio_timing::read(track, || {
-            if CANCEL.load(Ordering::SeqCst) {
+            if cancel.load(Ordering::SeqCst) {
                 Err(cancelled())
             } else {
                 Ok(())
@@ -612,6 +566,7 @@ fn run_tracks(
             &index,
             scratch.path(),
             &output_base,
+            cancel,
             |percent| report(&track.kind, percent),
         )?);
     }
@@ -622,7 +577,7 @@ fn run_tracks(
     segments.sort_by(|a, b| {
         (times(a).0, &a.speaker, times(a).1).cmp(&(times(b).0, &b.speaker, times(b).1))
     });
-    if CANCEL.load(Ordering::SeqCst) {
+    if cancel.load(Ordering::SeqCst) {
         return Err(cancelled());
     }
     Ok(segments)
@@ -633,8 +588,12 @@ pub fn transcribe(
     root: &Path,
     tracks: &[Track],
     settings: &Settings,
+    cancel: &AtomicBool,
     report: impl FnMut(&str, u8),
 ) -> Result<Vec<Segment>> {
+    if cancel.load(Ordering::SeqCst) {
+        return Err(cancelled());
+    }
     if !status(root, &settings.stt_model).installed {
         return Err(stt_error(
             "The speech engine and the selected model are not installed. Download them in Settings first.",
@@ -642,26 +601,10 @@ pub fn transcribe(
     }
     run_tracks(
         tracks,
+        cancel,
         |track, output_base| engine_command(root, settings, track, output_base),
         report,
     )
-}
-
-/// Asks the running transcription (if any) to stop. Returns whether one was running.
-pub fn cancel() -> bool {
-    let _gate = FINALIZE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if COMMITTED.load(Ordering::SeqCst) {
-        return false;
-    }
-    match BUSY.try_lock() {
-        Err(TryLockError::WouldBlock) => {
-            CANCEL.store(true, Ordering::SeqCst);
-            true
-        }
-        _ => false,
-    }
 }
 
 #[cfg(test)]
@@ -669,6 +612,7 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    use std::sync::Mutex;
     static ENGINE_TESTS: Mutex<()> = Mutex::new(());
 
     fn block(frame_offset: u64, frames: u64, capture_start_us: u64) -> Block {
@@ -698,13 +642,12 @@ mod tests {
             finalized: true,
             size_bytes: None,
         };
-        let result = run(|_| {
-            run_tracks(
-                &[track],
-                |_, _| panic!("Invalid timing reached engine setup"),
-                |_, _| {},
-            )
-        });
+        let result = run_tracks(
+            &[track],
+            &AtomicBool::new(false),
+            |_, _| panic!("Invalid timing reached engine setup"),
+            |_, _| {},
+        );
         assert_eq!(result.unwrap_err().code, "audio_timing");
     }
 
@@ -1062,13 +1005,13 @@ mod tests {
         .unwrap();
 
         let mut seen = Vec::new();
-        let segments = run(|_| {
-            run_tracks(
-                std::slice::from_ref(&track),
-                fake("fast"),
-                |kind, percent| seen.push((kind.to_string(), percent)),
-            )
-        })
+        let cancel = AtomicBool::new(false);
+        let segments = run_tracks(
+            std::slice::from_ref(&track),
+            &cancel,
+            fake("fast"),
+            |kind, percent| seen.push((kind.to_string(), percent)),
+        )
         .unwrap();
         assert_eq!(seen, [("mic".to_string(), 10), ("mic".to_string(), 100)]);
         assert_eq!(segments.len(), 1);
@@ -1076,7 +1019,6 @@ mod tests {
             (segments[0].speaker.as_str(), segments[0].text.as_str()),
             ("You", "Fictional words")
         );
-        assert!(!cancel(), "nothing is running");
 
         let mut core = crate::storage::Core::open(Path::new(":memory:")).unwrap();
         let id = core.create_fixture().unwrap();
@@ -1095,13 +1037,13 @@ mod tests {
         )
         .unwrap();
         let (progress_tx, progress_rx) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
         let worker = std::thread::spawn({
+            let cancel = cancel.clone();
             let track = track.clone();
             move || {
-                run(|_| {
-                    run_tracks(&[track], fake("slow"), move |_, percent| {
-                        let _ = progress_tx.send(percent);
-                    })
+                run_tracks(&[track], &cancel, fake("slow"), move |_, percent| {
+                    let _ = progress_tx.send(percent);
                 })
             }
         });
@@ -1110,7 +1052,7 @@ mod tests {
             10
         );
         let cancelled_at = Instant::now();
-        assert!(cancel());
+        cancel.store(true, Ordering::SeqCst);
         let result = worker.join().unwrap();
         assert!(
             cancelled_at.elapsed() < Duration::from_secs(10),
@@ -1130,24 +1072,5 @@ mod tests {
             .collect();
         assert!(texts.contains(&"Earlier run".to_string()));
         assert_eq!(texts.len(), 3, "two fixture segments plus the earlier run");
-        let mut published = "previous";
-        let cancelled = run(|token| {
-            assert!(cancel());
-            finish(token, || {
-                published = "replacement";
-                Ok(())
-            })
-        });
-        assert_eq!(cancelled.unwrap_err().code, "stt_cancelled");
-        assert_eq!(published, "previous");
-        run(|token| {
-            finish(token, || {
-                published = "complete";
-                Ok(())
-            })
-        })
-        .unwrap();
-        assert_eq!(published, "complete");
-        assert!(!cancel(), "publication already completed");
     }
 }

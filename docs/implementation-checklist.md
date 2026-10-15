@@ -32,7 +32,17 @@ Follow the existing [chosen settings design](local-model-settings-design.md#chos
 
 ## 3. Deliver the live-to-finished meeting workflow
 
-This is the highest-priority missing product behavior after the foundation checks.
+The automatic workflow implementation is now present. The acceptance items below remain unchecked until their complete evidence is recorded. Source review and synthetic tests do not establish native usability, hardware privacy, or provider compatibility. See [workflow implementation and qualification](phase-3-workflow-verification.md).
+
+| Issue | Implementation present | Acceptance still open |
+| --- | --- | --- |
+| #19 | Reviewed future-content scope, independent participant consent, revisions, limits, and exact request accounting. | Integrated native consent/invalidation workflow. |
+| #20 | Bounded accepted-sample chunks, shared owner, local/API helper reuse, and incomplete-coverage reporting. | Real-engine live compatibility, native overload/failure behavior, hardware pause privacy. |
+| #21 | Stable provisional IDs, timestamps, labels, bounded rendering, selection/reconnect guards, and draft preservation. | Full native reconnect, switching, and keyboard workflow. |
+| #22 | Atomic final transcript/provenance replacement and provisional retirement. | Combined native stop/finalization/failure workflow. |
+| #23 | Shared-stop final transcription and optional summary behind saved-note acknowledgement. | Native sequencing and explicitly authorized provider compatibility. |
+| #24 | Scoped cancellation, fresh reviewed retry, preserved completed stages, and restart interruption without replay. | Complete native cancellation/restart/failure qualification. |
+| #25 | Synthetic sample, database, owner, HTTP, and frontend tests exist. | Final integrated evidence, combined end-to-end scenario, native and separate external qualification. |
 
 - [ ] Define and test explicit session consent for live audio, final audio, and automatic text processing before enabling automatic cloud calls. Bind destination and scope, invalidate consent on relevant changes, and retain existing per-action safeguards until the replacement is verified. ([#19](https://github.com/rahuloruganti/OpenMeet/issues/19))
 - [ ] Add a bounded Rust transcription worker that processes audio during recording without blocking capture callbacks or accepting paused audio. ([#20](https://github.com/rahuloruganti/OpenMeet/issues/20))

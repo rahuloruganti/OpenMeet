@@ -4,7 +4,20 @@ use crate::{
     providers::{authorize, check_status, client, read_capped, Connection},
 };
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
+fn cancelled(cancel: &AtomicBool) -> Result<()> {
+    if cancel.load(Ordering::SeqCst) {
+        Err(AppError::new(
+            "stt_cancelled",
+            "Processing was cancelled. Previous results were kept.",
+        ))
+    } else {
+        Ok(())
+    }
+}
 
 /// Largest single request body (notes + transcript text) sent in one call.
 const MAX_SUMMARY_INPUT_CHARS: usize = 120_000;
@@ -137,6 +150,8 @@ pub fn summarize(
     template: Template,
     notes: &str,
     lines: &[String],
+    cancel: &AtomicBool,
+    before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
     let url = connection.endpoint("chat/completions")?;
     summarize_at(
@@ -147,9 +162,12 @@ pub fn summarize(
         notes,
         lines,
         Duration::from_secs(120),
+        cancel,
+        before_request,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn summarize_at(
     url: &str,
     key: &str,
@@ -158,13 +176,25 @@ fn summarize_at(
     notes: &str,
     lines: &[String],
     timeout: Duration,
+    cancel: &AtomicBool,
+    mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
+    cancelled(cancel)?;
     let chunks = plan_chunks(notes, lines)?;
     let system = system_prompt(template);
     if let [transcript] = chunks.as_slice() {
         let user =
             format!("<notes>\n{notes}\n</notes>\n\n<transcript>\n{transcript}\n</transcript>");
-        return chat(url, key, model, &system, &user, timeout);
+        return chat(
+            url,
+            key,
+            model,
+            &system,
+            &user,
+            timeout,
+            cancel,
+            &mut before_request,
+        );
     }
     let mut partials = String::new();
     for (index, chunk) in chunks.iter().enumerate() {
@@ -180,6 +210,8 @@ fn summarize_at(
             &format!("{PARTIAL_PROMPT} {RULES}"),
             &user,
             timeout,
+            cancel,
+            &mut before_request,
         )?;
         partials.push_str(&format!("<partial>\n{partial}\n</partial>\n"));
     }
@@ -197,6 +229,8 @@ fn summarize_at(
         &format!("{system} {MERGE_NOTE}"),
         &user,
         timeout,
+        cancel,
+        &mut before_request,
     )
 }
 
@@ -207,6 +241,8 @@ pub fn ask(
     notes: &str,
     lines: &[String],
     question: &str,
+    cancel: &AtomicBool,
+    before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
     let url = connection.endpoint("chat/completions")?;
     ask_at(
@@ -217,6 +253,8 @@ pub fn ask(
         lines,
         question,
         Duration::from_secs(120),
+        cancel,
+        before_request,
     )
 }
 
@@ -238,6 +276,7 @@ pub fn validate_question(notes: &str, lines: &[String], question: &str) -> Resul
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ask_at(
     url: &str,
     key: Option<&str>,
@@ -246,6 +285,8 @@ fn ask_at(
     lines: &[String],
     question: &str,
     timeout: Duration,
+    cancel: &AtomicBool,
+    mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
     let Some(key) = key else {
         return Err(AppError::new(
@@ -264,9 +305,12 @@ fn ask_at(
         &format!("{ASK_PROMPT} {RULES}"),
         &user,
         timeout,
+        cancel,
+        &mut before_request,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn chat(
     url: &str,
     key: &str,
@@ -274,6 +318,8 @@ fn chat(
     system: &str,
     user: &str,
     timeout: Duration,
+    cancel: &AtomicBool,
+    mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
     let unreachable = || {
         AppError::new(
@@ -288,11 +334,16 @@ fn chat(
             { "role": "user", "content": user },
         ],
     });
+    let body = body.to_string().into_bytes();
+    cancelled(cancel)?;
+    before_request(&body)?;
+    cancelled(cancel)?;
     let response = authorize(client(timeout).map_err(|_| unreachable())?.post(url), key)
         .header("Content-Type", "application/json")
-        .body(body.to_string())
+        .body(body)
         .send()
         .map_err(|_| unreachable())?;
+    cancelled(cancel)?;
     check_status(response.status())?;
     let reply: ChatReply = read_capped(response, MAX_SUMMARY_BYTES)
         .and_then(|raw| serde_json::from_slice(&raw).ok())
@@ -302,6 +353,7 @@ fn chat(
                 "the selected provider returned an unusable response. Nothing was saved.",
             )
         })?;
+    cancelled(cancel)?;
     reply
         .choices
         .into_iter()
@@ -409,6 +461,89 @@ mod tests {
     }
 
     #[test]
+    fn denied_and_cancelled_requests_send_nothing() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/chat", listener.local_addr().unwrap());
+        let cancel = AtomicBool::new(false);
+        let mut body = Vec::new();
+        let error = ask_at(
+            &url,
+            Some("fictional"),
+            "test",
+            "notes",
+            &[],
+            "why?",
+            Duration::from_secs(1),
+            &cancel,
+            |bytes| {
+                body = bytes.to_vec();
+                Err(AppError::new("denied", "Denied"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "denied");
+        let parsed: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed["model"], "test");
+        assert!(parsed["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("why?"));
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        let error = summarize_at(
+            &url,
+            "fictional",
+            "test",
+            Template::General,
+            "notes",
+            &[],
+            Duration::from_secs(1),
+            &cancel,
+            |_| {
+                cancel.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "stt_cancelled");
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+    #[test]
+    fn callback_checks_exact_partial_and_merge_bodies() {
+        let lines = vec!["a".repeat(70_000), "b".repeat(70_000)];
+        let (url, worker, _, bodies) = serve_with(2, |_, _| reply("fictional partial"));
+        let mut authorized = Vec::new();
+        let result = summarize_at(
+            &url,
+            "fictional",
+            "test",
+            Template::General,
+            "notes",
+            &lines,
+            Duration::from_secs(3),
+            &AtomicBool::new(false),
+            |bytes| {
+                authorized.push(String::from_utf8(bytes.to_vec()).unwrap());
+                if authorized.len() == 3 {
+                    Err(AppError::new("denied", "Budget exhausted"))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(result.unwrap_err().code, "denied");
+        worker.join().unwrap();
+        assert_eq!(&authorized[..2], bodies.lock().unwrap().as_slice());
+        assert!(authorized[2].contains("fictional partial"));
+    }
+
+    #[test]
     fn summary_request_carries_content_only_in_the_body_and_surfaces_failures() {
         let reply = r#"{"choices":[{"message":{"content":"  ## Summary\nDone.  "}}]}"#;
         let (url, worker, seen) = serve(vec![ok(reply)]);
@@ -420,6 +555,8 @@ mod tests {
             "my private note",
             &["You: hello".to_string()],
             Duration::from_secs(3),
+            &AtomicBool::new(false),
+            |_| Ok(()),
         )
         .unwrap();
         worker.join().unwrap();
@@ -450,6 +587,8 @@ mod tests {
                 "n",
                 &["t".to_string()],
                 Duration::from_secs(3),
+                &AtomicBool::new(false),
+                |_| Ok(()),
             )
             .unwrap_err();
             worker.join().unwrap();
@@ -466,6 +605,8 @@ mod tests {
             "",
             &huge,
             Duration::from_secs(1),
+            &AtomicBool::new(false),
+            |_| Ok(()),
         )
         .unwrap_err();
         assert_eq!(error.code, "summary_too_long");
@@ -506,6 +647,8 @@ mod tests {
             "notes",
             &["[0:01] You: done".to_string()],
             Duration::from_secs(3),
+            &AtomicBool::new(false),
+            |_| Ok(()),
         )
         .unwrap();
         worker.join().unwrap();
@@ -562,6 +705,8 @@ mod tests {
             "my notes",
             &lines,
             Duration::from_secs(5),
+            &AtomicBool::new(false),
+            |_| Ok(()),
         )
         .unwrap();
         worker.join().unwrap();
@@ -599,6 +744,8 @@ mod tests {
             &lines,
             "  What is the budget?  ",
             Duration::from_secs(3),
+            &AtomicBool::new(false),
+            |_| Ok(()),
         )
         .unwrap();
         worker.join().unwrap();
@@ -623,6 +770,8 @@ mod tests {
                 &lines,
                 question,
                 Duration::from_secs(1),
+                &AtomicBool::new(false),
+                |_| Ok(()),
             )
             .unwrap_err()
             .code

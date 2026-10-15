@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 13;
+const LATEST_SCHEMA: i64 = 14;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -15,6 +15,14 @@ pub struct Core {
     audio: Option<audio::Session>,
     capture_report: Option<audio::Report>,
     pub(crate) pending_processing: Option<crate::session_processing::Plan>,
+    pub(crate) processing_owner: crate::processing_control::Owner,
+    pub(crate) live_cancellation: Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    pub(crate) live_receiver: Option<(
+        String,
+        std::sync::mpsc::Receiver<crate::live_audio::Chunk>,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+    )>,
+    pub(crate) quitting: bool,
 }
 
 impl Core {
@@ -75,6 +83,11 @@ impl Core {
                 include_str!("../migrations/013_session_processing.sql"),
                 false,
             ),
+            (
+                14,
+                include_str!("../migrations/014_processing_workflow.sql"),
+                false,
+            ),
         ];
         for (number, script, rebuilds_referenced) in additive {
             if version >= number {
@@ -107,8 +120,9 @@ impl Core {
             "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')",
             [],
         )?;
+        db.execute("UPDATE processing_runs SET stage='interrupted',error='Processing was interrupted. Review before retrying.' WHERE stage IN ('live','finalizing_audio','transcribing','awaiting_notes','summarizing')", [])?;
         db.execute(
-            "UPDATE processing_sessions SET state='interrupted',revision=revision+1 WHERE state='prepared'",
+            "UPDATE processing_sessions SET state='interrupted',revision=revision+1 WHERE state='prepared' AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage='interrupted')",
             [],
         )?;
         Ok(Self {
@@ -118,6 +132,10 @@ impl Core {
             audio: None,
             capture_report: None,
             pending_processing: None,
+            processing_owner: crate::processing_control::Owner::default(),
+            live_cancellation: None,
+            live_receiver: None,
+            quitting: false,
         })
     }
 
@@ -190,7 +208,25 @@ impl Core {
         }
         let id = Uuid::new_v4().to_string();
         std::fs::create_dir_all(&self.audio_root)?;
-        let session = audio::Session::prepare(self.audio_root.join(&id), options.clone())?;
+        if processing
+            .as_ref()
+            .is_some_and(|plan| plan.meeting_id.is_some())
+        {
+            return Err(AppError::new(
+                "session_consent_changed",
+                "A retry review cannot authorize a new recording.",
+            ));
+        }
+        let live_enabled = processing.as_ref().is_some_and(|plan| match plan.scope {
+            crate::session_processing::Scope::LiveOnly { .. } => true,
+            crate::session_processing::Scope::Final { live, .. } => live,
+        });
+        let (producer, receiver, incomplete) = crate::live_audio::channel();
+        let session = audio::Session::prepare(
+            self.audio_root.join(&id),
+            options.clone(),
+            live_enabled.then_some(producer),
+        )?;
         let tx = self.db.transaction()?;
         tx.execute("INSERT INTO meetings(id, title, started_at, source, status) VALUES (?1, ?2, ?3, 'desktop', 'paused')", params![id, title, now()?])?;
         tx.execute("INSERT INTO notes(meeting_id) VALUES (?1)", [&id])?;
@@ -206,6 +242,9 @@ impl Core {
         }
         tx.commit()?;
         self.pending_processing = None;
+        if processing.is_some() {
+            self.live_receiver = Some((id.clone(), receiver, incomplete));
+        }
         self.audio = Some(session);
         self.recording = RecordingState {
             revision: self.recording.revision + 1,
@@ -268,6 +307,12 @@ impl Core {
     }
 
     pub fn resume(&mut self) -> Result<RecordingState> {
+        if self.capture_report.is_some() {
+            return Err(AppError::new(
+                "invalid_state",
+                "Audio has stopped. Retry finalization before starting another recording.",
+            ));
+        }
         if self.recording.status != CaptureStatus::Paused {
             return Err(AppError::new("invalid_state", "Recording is not paused."));
         }
@@ -323,6 +368,11 @@ impl Core {
     }
 
     pub fn stop(&mut self) -> Result<RecordingState> {
+        if let Some((id, cancel)) = &self.live_cancellation {
+            if self.recording.meeting_id.as_deref() == Some(id) {
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
         if let Some(mut audio) = self.audio.take() {
             self.recording.status = CaptureStatus::Stopped;
             self.recording.revision += 1;
@@ -345,6 +395,11 @@ impl Core {
             });
         }
         if let Some(report) = &self.capture_report {
+            // Keep Stop actionable until SQLite accepts the retained report; audio is already closed.
+            if self.recording.status != CaptureStatus::Paused {
+                self.recording.status = CaptureStatus::Paused;
+                self.recording.revision += 1;
+            }
             self.recording.error = report.error.clone();
             let tx = self.db.transaction()?;
             for track in &report.tracks {
@@ -363,8 +418,23 @@ impl Core {
                     self.recording.meeting_id
                 ],
             )?;
+            if let Some(id) = self.recording.meeting_id.as_deref() {
+                crate::session_workflow::stopped(
+                    &tx,
+                    id,
+                    report.error.is_none()
+                        && report.tracks.len() == 2
+                        && report
+                            .tracks
+                            .iter()
+                            .all(|track| track.finalized && track.frames > 0),
+                    self.quitting,
+                )?;
+            }
             tx.commit()?;
             self.capture_report = None;
+            self.recording.status = CaptureStatus::Stopped;
+            self.recording.revision += 1;
         }
         #[cfg(test)]
         if matches!(
@@ -481,29 +551,7 @@ impl Core {
         model: &str,
     ) -> Result<()> {
         let tx = self.db.transaction()?;
-        tx.execute(
-            "DELETE FROM segments WHERE meeting_id = ?1 AND source IN ('whisper', 'cloud_stt')",
-            [id],
-        )?;
-        let source = if provider == "whisper" {
-            "whisper"
-        } else {
-            "cloud_stt"
-        };
-        for segment in segments {
-            let (start_ms, end_ms) = match segment.timing {
-                SegmentTiming::Timed { start_ms, end_ms } => (Some(start_ms), Some(end_ms)),
-                SegmentTiming::Untimed => (None, None),
-            };
-            tx.execute(
-                "INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'final')",
-                params![id, segment.speaker, start_ms, end_ms, segment.text, source],
-            )?;
-        }
-        tx.execute(
-            "INSERT INTO meeting_transcriptions(meeting_id, provider, model) VALUES (?1, ?2, ?3) ON CONFLICT(meeting_id) DO UPDATE SET provider = excluded.provider, model = excluded.model",
-            params![id, provider, model],
-        )?;
+        replace_transcript_in(&tx, id, segments, provider, model)?;
         tx.commit()?;
         Ok(())
     }
@@ -1118,6 +1166,39 @@ fn validate_title(title: &str) -> Result<&str> {
     Ok(title)
 }
 
+pub(crate) fn replace_transcript_in(
+    tx: &rusqlite::Transaction<'_>,
+    id: &str,
+    segments: &[Segment],
+    provider: &str,
+    model: &str,
+) -> Result<()> {
+    tx.execute(
+        "DELETE FROM segments WHERE meeting_id = ?1 AND source IN ('whisper', 'cloud_stt')",
+        [id],
+    )?;
+    let source = if provider == "whisper" {
+        "whisper"
+    } else {
+        "cloud_stt"
+    };
+    for segment in segments {
+        let (start_ms, end_ms) = match segment.timing {
+            SegmentTiming::Timed { start_ms, end_ms } => (Some(start_ms), Some(end_ms)),
+            SegmentTiming::Untimed => (None, None),
+        };
+        tx.execute(
+                "INSERT INTO segments(meeting_id, speaker, start_ms, end_ms, text, source, pass) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'final')",
+                params![id, segment.speaker, start_ms, end_ms, segment.text, source],
+            )?;
+    }
+    tx.execute(
+            "INSERT INTO meeting_transcriptions(meeting_id, provider, model) VALUES (?1, ?2, ?3) ON CONFLICT(meeting_id) DO UPDATE SET provider = excluded.provider, model = excluded.model",
+            params![id, provider, model],
+        )?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) fn test_v11_database(path: &Path) -> Connection {
     let db = Connection::open(path).unwrap();
@@ -1164,12 +1245,76 @@ mod tests {
     }
 
     #[test]
+    fn restart_interrupts_active_processing_without_changing_completed_grants() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        let mut ids = Vec::new();
+        for completed in [true, false] {
+            let id = core.create_note("Synthetic restart check").unwrap();
+            let plan = core
+                .prepare_session_processing(crate::session_processing::Request::Final {
+                    live: false,
+                    summary: None,
+                })
+                .unwrap();
+            core.db
+                .execute(
+                    "UPDATE meetings SET source='desktop',status='paused' WHERE id=?1",
+                    [&id],
+                )
+                .unwrap();
+            let tx = core.db.transaction().unwrap();
+            crate::session_processing::attach(&tx, &plan, &id).unwrap();
+            if completed {
+                tx.execute("UPDATE processing_runs SET stage='completed',transcript_done=1 WHERE meeting_id=?1", [&id]).unwrap();
+                tx.execute("UPDATE meetings SET status='stopped' WHERE id=?1", [&id])
+                    .unwrap();
+            }
+            tx.commit().unwrap();
+            ids.push(id);
+        }
+        drop(core);
+        let core = Core::open(&path).unwrap();
+        let completed = core.session_processing(&ids[0]).unwrap().unwrap();
+        assert_eq!(completed.state, crate::session_processing::State::Prepared);
+        assert_eq!(
+            completed.workflow.unwrap().stage,
+            crate::session_workflow::Stage::Completed
+        );
+        let interrupted = core.session_processing(&ids[1]).unwrap().unwrap();
+        assert_eq!(
+            interrupted.state,
+            crate::session_processing::State::Interrupted
+        );
+        assert_eq!(
+            interrupted.workflow.unwrap().stage,
+            crate::session_workflow::Stage::Interrupted
+        );
+    }
+
+    #[test]
     fn failed_capture_publication_keeps_the_report_for_an_atomic_retry() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("meetings.db");
         let mut core = Core::open(&path).unwrap();
         let id = core.create_note("Synthetic publication check").unwrap();
         core.save_notes(&id, "Keep these notes", 0).unwrap();
+        core.db
+            .execute(
+                "UPDATE meetings SET source='desktop',status='paused' WHERE id=?1",
+                [&id],
+            )
+            .unwrap();
+        let plan = core
+            .prepare_session_processing(crate::session_processing::Request::Final {
+                live: false,
+                summary: None,
+            })
+            .unwrap();
+        let tx = core.db.transaction().unwrap();
+        crate::session_processing::attach(&tx, &plan, &id).unwrap();
+        tx.commit().unwrap();
         core.db
             .execute(
                 "UPDATE meetings SET source = 'desktop', status = 'recording' WHERE id = ?1",
@@ -1198,6 +1343,13 @@ mod tests {
         core.db.execute_batch("CREATE TRIGGER fail_track_publication BEFORE UPDATE ON tracks WHEN OLD.kind = 'system' BEGIN SELECT RAISE(ABORT, 'synthetic publication failure'); END;").unwrap();
         assert_eq!(core.stop().unwrap_err().code, "database");
         assert!(core.capture_report.is_some());
+        assert_eq!(core.recording_state().status, CaptureStatus::Paused);
+        assert!(core.recording_state().recording_offset_ms.is_none());
+        assert_eq!(core.resume().unwrap_err().code, "invalid_state");
+        assert_eq!(
+            core.processing_workflow(&id).unwrap().unwrap().stage,
+            crate::session_workflow::Stage::Live
+        );
         let detail = core.get_meeting(&id).unwrap();
         assert!(detail
             .tracks
@@ -1214,6 +1366,18 @@ mod tests {
             .unwrap();
         assert_eq!(core.stop().unwrap().status, CaptureStatus::Stopped);
         assert!(core.capture_report.is_none());
+        let scheduled = core.session_processing(&id).unwrap().unwrap();
+        assert_eq!(
+            scheduled.workflow.as_ref().unwrap().stage,
+            crate::session_workflow::Stage::FinalizingAudio
+        );
+        assert_eq!(scheduled.workflow.as_ref().unwrap().run_id, plan.id);
+        let recording_revision = core.recording_state().revision;
+        core.stop().unwrap();
+        let duplicate = core.session_processing(&id).unwrap().unwrap();
+        assert_eq!(duplicate.revision, scheduled.revision);
+        assert_eq!(duplicate.workflow.unwrap().run_id, plan.id);
+        assert_eq!(core.recording_state().revision, recording_revision);
         drop(core);
         let detail = Core::open(&path).unwrap().get_meeting(&id).unwrap();
         assert!(detail

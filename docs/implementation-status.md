@@ -2,17 +2,19 @@
 
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v13 adds backend session-consent records to the reusable API connections and independent task assignments. This is a preview with open qualification gates, not a complete MVP.
+OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the session-consent records. This is a preview with open qualification gates, not a complete MVP.
 
-## Phase 3 implementation started
+## Phase 3 workflow implemented, qualification open
 
-The first local increment prepares revision-bound session reviews, attaches consent atomically to a new recording, and supports snapshots, cancellation, expiry, and interruption on restart. It provides typed Tauri commands and an additive schema-v13 migration. Recording permission remains separate. Review generation does not access audio devices, read keys, or call providers.
+The UI defaults to recording only. Before starting an enabled workflow, users review live-only, final-only, or live plus final transcription and an optional final summary. Participant recording permission remains independent. Reviews name destinations, models, both tracks, future audio and saved-note scope, and finite processing budgets.
 
-Live inference, processing controls, automatic final transcription/summaries, per-request budget enforcement, and the shared processing-job owner are not implemented in this increment. Existing manual commands retain their safeguards. Issues #19 through #25 remain open. See [the execution plan](phase-3-execution-plan.md) and [the first-increment verification](phase-3-consent-verification.md).
+Rust now owns the accepted-sample live handoff, a shared operation owner for manual and automatic processing, durable workflow stages, cancellation, per-request accounting, atomic final transcript replacement, and saved-note acknowledgement before automatic summaries. The UI displays at most 200 provisional segments, preserves note drafts during notifications, and requires a fresh review for retry. Restart interrupts unfinished work without replaying requests. Schema-v13 grants require renewed review after migration.
+
+Implementation is present for issues #19 through #24. Their complete acceptance gates and combined qualification under #25 are not declared passed. Integrated Windows checks passed with 121 frontend tests and 125 Rust tests; two native tests remained ignored. Formatting, typecheck, lint, frontend build, all-target Clippy, Cargo build, and standalone Tauri debug build passed. See [workflow implementation and qualification](phase-3-workflow-verification.md), [the execution plan](phase-3-execution-plan.md), and [the historical consent increment](phase-3-consent-verification.md). No hardware or external provider result is inferred from the implementation.
 
 No platform has passed the full two-track capture gate. An earlier Windows attempt was blocked by a missing microphone. A later authorized two-second smoke test was recorded as passing in [log.md](../log.md), but it did not establish audible-content quality, pause privacy, device-failure behavior, or long-run drift. No recording was made during the recent UI and installation work.
 
-macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. Its local speech engine requires the separately pinned local whisper.cpp build. Permission denial and the integrated macOS workflow remain unqualified. Cloud STT processes finalized audio. Notes, audio, transcripts, summaries, and exports remain unencrypted. Production simulation/sample creation is removed; historical fictional records remain labeled and accessible.
+macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. Its local speech engine requires the separately pinned local whisper.cpp build. Permission denial and the integrated macOS workflow remain unqualified. Cloud STT processes finalized recording tracks or finalized temporary live chunks. Notes, audio, transcripts, summaries, and exports remain unencrypted. Production simulation/sample creation is removed; historical fictional records remain labeled and accessible.
 
 ## Implemented features
 
@@ -23,6 +25,7 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | Search                  | Title filtering and SQLite FTS5 matches across notes, transcript segments, and summaries.                                                                                  |
 | Capture                 | Windows selected microphone and output loopback, separate WAVs, timing JSONL, bounded queues, pause/resume/stop, tray controls, level meters, and configurable shortcuts.  |
 | Local transcription     | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
+| Automatic processing    | Reviewed session scopes, bounded live previews, final transcription, optional summary, saved-note acknowledgement, cancellation, and explicit retry.                       |
 | Playback                | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
 | Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision-bound consent.          |
 | Cloud transcription     | Explicit audio confirmation, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
@@ -35,7 +38,7 @@ Implemented does not mean qualified. See [the user guide](user-guide.md), [archi
 
 ## Phase 2 settings and model library (2026-10-14)
 
-Cloud API, Local, and General tabs, reusable connections, schema-v12 migration, bounded local model discovery, verified catalog import, and explicit public Hugging Face search/download are implemented. Routine checks passed with 104 frontend tests and 87 Rust tests; two native tests remained ignored. Native checks confirmed tabs, draft preservation, keyboard navigation, and opening the folder picker in an isolated empty profile. Completing folder selection was blocked by the Windows helper. Provider/keychain workflows and model-library end-to-end qualification remain open. See [Phase 2 verification](phase-2-settings-verification.md). Live transcription and automatic processing remain deferred.
+Cloud API, Local, and General tabs, reusable connections, schema-v12 migration, bounded local model discovery, verified catalog import, and explicit public Hugging Face search/download are implemented. Routine checks passed with 104 frontend tests and 87 Rust tests; two native tests remained ignored. Native checks confirmed tabs, draft preservation, keyboard navigation, and opening the folder picker in an isolated empty profile. Completing folder selection was blocked by the Windows helper. Provider/keychain workflows and model-library end-to-end qualification remain open. See [Phase 2 verification](phase-2-settings-verification.md). Live transcription and automatic processing were deferred in that Phase 2 increment; the Phase 3 implementation is described above.
 
 ## Feature batch (2026-10-12)
 
@@ -102,15 +105,15 @@ Run a 60-minute two-track test with markers near both ends, recording device/dri
 - Qualify real-engine progress, cancellation, silence handling, accuracy, and performance across selected models/languages using licensed or consented audio.
 - Test the complete in-app record/transcribe/summarize/export path after a fresh install and restart.
 - Validate each configured provider/model combination with explicit content consent, including chat templates/questions, long-input chunking, audio limits, formats, failures, and request costs.
-- Preserve the last good transcript/summary on failed retries. A durable processing queue and restartable inference jobs are not implemented.
+- Qualify preservation of the last good transcript/summary through failed retries in the native app. Durable workflow state and explicit reviewed retry are implemented; restart never replays inference or provider requests.
 - Qualify native Settings key entry, replacement/removal, OS-keychain failures, and publication/cleanup failures. The password field is transient; keys are not returned to frontend state or logs.
 
 ### Platform, privacy, and release
 
-- Qualify the Apple Silicon tap path: audible distinct tracks, permission denial, duplex refusal on a real device, and the same 60-minute drift gate as Windows. Minimum OS is 14.2. Transcription on macOS is still unimplemented.
+- Qualify the Apple Silicon tap path: audible distinct tracks, permission denial, duplex refusal on a real device, and the same 60-minute drift gate as Windows. Minimum OS is 14.2. The separately pinned local transcription path remains unqualified.
 - Run an egress-blocked local workflow and a separate cloud opt-in check. Complete end-to-end pause and privacy qualification.
 - Keep snapshot exports until a tested external-edit merge implementation exists.
 - Complete transitive license notices and model attribution before distribution.
 - Deliver installers, signing/notarization, and release validation. Bundling remains disabled; no updater is implemented.
 
-Compression, encryption, local LLMs, live STT, diarization, bots, automatic meeting detection, and SharePoint integration are not delivered. See [feature-plan.md](feature-plan.md) for acceptance criteria and deferred scope.
+Compression, encryption, managed local LLMs, diarization, bots, automatic meeting detection, and SharePoint integration are not delivered. See [feature-plan.md](feature-plan.md) for acceptance criteria and deferred scope.

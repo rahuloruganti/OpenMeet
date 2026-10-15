@@ -42,6 +42,7 @@ export type SessionDestination =
     };
 export type SessionProcessingPlan = {
   id: string;
+  meeting_id: string | null;
   fingerprint: string;
   configuration_revision: number;
   review_expires_at: number;
@@ -60,9 +61,10 @@ export type SessionProcessingPlan = {
   tracks: [string, string];
   limits: {
     duration_seconds: number;
+    post_stop_seconds: number;
     upload_bytes: number;
     requests: number;
-    text_characters: number;
+    text_bytes: number;
   };
 };
 export type SessionProcessingSnapshot = {
@@ -72,6 +74,31 @@ export type SessionProcessingSnapshot = {
   plan: SessionProcessingPlan;
   started_at: number;
   authorized_until: number;
+  workflow: SessionWorkflow | null;
+};
+export type SessionWorkflow = {
+  run_id: string;
+  attempt: number;
+  stage:
+    | "live"
+    | "finalizing_audio"
+    | "transcribing"
+    | "awaiting_notes"
+    | "summarizing"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted"
+    | "consent_required";
+  error: string | null;
+  live_incomplete: boolean;
+  transcript_done: boolean;
+  notes_revision: number | null;
+  notes_barrier: string | null;
+  requests_used: number;
+  upload_bytes_used: number;
+  text_bytes_used: number;
+  provisional: { id: string; chunk_id: number; segment: Segment }[];
 };
 export type Meeting = {
   id: string;
@@ -262,6 +289,25 @@ export const api = {
     invoke<SessionProcessingPlan>("prepare_session_processing", { request }),
   getSessionProcessing: (id: string) =>
     invoke<SessionProcessingSnapshot | null>("get_session_processing", { id }),
+  acknowledgeProcessingNotes: (
+    id: string,
+    runId: string,
+    notesBarrier: string,
+    expectedNotesRevision: number,
+  ) =>
+    invoke<SessionProcessingSnapshot>("acknowledge_processing_notes", {
+      id,
+      runId,
+      notesBarrier,
+      expectedNotesRevision,
+    }),
+  prepareSessionRetry: (id: string) =>
+    invoke<SessionProcessingPlan>("prepare_session_retry", { id }),
+  retrySessionProcessing: (id: string, confirmation: string) =>
+    invoke<SessionProcessingSnapshot>("retry_session_processing", {
+      id,
+      confirmation,
+    }),
   cancelSessionProcessing: (id: string, expectedRevision: number) =>
     invoke<SessionProcessingSnapshot>("cancel_session_processing", {
       id,

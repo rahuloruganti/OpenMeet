@@ -4,10 +4,16 @@ mod capture_gate;
 mod cloud_stt;
 mod domain;
 mod export;
+mod live_audio;
 mod llm;
 mod model_library;
+#[cfg(test)]
+mod phase_three_tests;
+mod processing_control;
 mod providers;
 mod session_processing;
+mod session_runtime;
+mod session_workflow;
 mod storage;
 mod stt;
 
@@ -54,6 +60,8 @@ where
         if changed || core.recording_state().revision != revision {
             publish(&app, &core.recording_state());
         }
+        drop(core);
+        session_runtime::launch_pending(&app);
         result
     })
     .await
@@ -218,12 +226,67 @@ async fn cancel_session_processing(
     id: String,
     expected_revision: i64,
 ) -> Result<session_processing::Snapshot> {
-    with_core(app, false, move |core, app| {
-        let snapshot = core.cancel_session_processing(&id, expected_revision)?;
-        let _ = app.emit("session_processing_changed", &snapshot);
-        Ok(snapshot)
+    let owner = with_core(app.clone(), false, |core, _| {
+        Ok(core.processing_owner.clone())
     })
-    .await
+    .await?;
+    let worker_app = app.clone();
+    let snapshot = blocking(move || {
+        owner.cancel_session_with(&id, || {
+            let state = worker_app.state::<AppState>();
+            let mut core = state
+                .core
+                .lock()
+                .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
+            let snapshot = core.cancel_session_processing(&id, expected_revision)?;
+            let run_id = snapshot.plan.id.clone();
+            Ok((snapshot, run_id))
+        })
+    })
+    .await?;
+    let _ = app.emit("session_processing_changed", &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+async fn acknowledge_processing_notes(
+    app: AppHandle,
+    id: String,
+    run_id: String,
+    notes_barrier: String,
+    expected_notes_revision: i64,
+) -> Result<session_processing::Snapshot> {
+    let result = with_core(app.clone(), false, move |core, _| {
+        core.acknowledge_processing_notes(&id, &run_id, &notes_barrier, expected_notes_revision)
+    })
+    .await?;
+    let _ = app.emit("session_processing_changed", &result);
+    Ok(result)
+}
+#[tauri::command]
+async fn prepare_session_retry(app: AppHandle, id: String) -> Result<session_processing::Plan> {
+    with_core(app, false, move |core, _| core.prepare_session_retry(&id)).await
+}
+#[tauri::command]
+async fn retry_session_processing(
+    app: AppHandle,
+    id: String,
+    confirmation: String,
+) -> Result<session_processing::Snapshot> {
+    let target = id.clone();
+    let result = with_core(app.clone(), false, move |core, _| {
+        core.retry_session_processing(&id, &confirmation)
+    })
+    .await?;
+    session_runtime::spawn(
+        app.clone(),
+        target,
+        result.plan.id.clone(),
+        None,
+        std::sync::Arc::new(AtomicBool::new(false)),
+    );
+    let _ = app.emit("session_processing_changed", &result);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -660,7 +723,17 @@ async fn transcribe_meeting(
 ) -> Result<()> {
     let root = stt_root(&app)?;
     blocking(move || {
-        stt::run(|cancel| {
+        let owner = {
+            let state = app.state::<AppState>();
+            let core = state
+                .core
+                .lock()
+                .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
+            core.processing_owner.clone()
+        };
+        let operation = owner.begin(&id)?;
+        let cancel = operation.cancel();
+        {
             let report = |track: &str, percent: u8| {
                 let _ = app.emit(
                     "stt_progress",
@@ -686,7 +759,7 @@ async fn transcribe_meeting(
                         return Err(plan_changed());
                     }
                     (
-                        stt::transcribe(&root, &tracks, &settings, report)?,
+                        stt::transcribe(&root, &tracks, &settings, cancel, report)?,
                         "whisper".to_string(),
                         settings.stt_model.clone(),
                     )
@@ -704,7 +777,7 @@ async fn transcribe_meeting(
                             .core
                             .lock()
                             .map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
-                        if !same_stt_settings(&core.settings()?, &settings) {
+                        if core.quitting || !same_stt_settings(&core.settings()?, &settings) {
                             return Err(plan_changed());
                         }
                     }
@@ -718,25 +791,35 @@ async fn transcribe_meeting(
                         &prepared,
                         cancel,
                         report,
+                        |_, _| {
+                            let state = app.state::<AppState>();
+                            let core = state.core.lock().map_err(|_| {
+                                AppError::new("internal", "Settings are unavailable.")
+                            })?;
+                            if core.quitting || !same_stt_settings(&core.settings()?, &settings) {
+                                return Err(plan_changed());
+                            }
+                            Ok(())
+                        },
                     )?;
                     (segments, remote.base_url().to_string(), model)
                 }
             };
-            stt::finish(cancel, || {
+            operation.finish(|| {
                 let state = app.state::<AppState>();
                 let mut core = state
                     .core
                     .lock()
                     .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
                 let current = core.settings()?;
-                if !same_stt_settings(&current, &settings) {
+                if core.quitting || !same_stt_settings(&current, &settings) {
                     return Err(plan_changed());
                 }
                 core.replace_transcript(&id, &segments, &provider, &model)?;
                 publish(&app, &core.recording_state());
                 Ok(())
             })
-        })
+        }
     })
     .await
 }
@@ -802,6 +885,24 @@ async fn plan_summary(
     )
 }
 
+fn manual_text_check(
+    core: &Core,
+    id: &str,
+    config: &ProviderConfig,
+    revision: i64,
+    lines: &[String],
+) -> Result<()> {
+    let current = core.get_meeting(id)?;
+    if core.quitting
+        || core.settings()?.connection(ProviderRole::Llm) != Some(config)
+        || current.notes_revision != revision
+        || transcript_lines(&current.segments) != lines
+    {
+        return Err(plan_changed());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn generate_summary(
     app: AppHandle,
@@ -819,27 +920,39 @@ async fn generate_summary(
         llm::summary_requests(&detail.user_markdown, &lines)?,
     )?;
     confirm(&plan, Some(&confirmation))?;
-    let snapshot_config = config.clone();
-    let notes = detail.user_markdown.clone();
-    let snapshot_lines = lines.clone();
-    let markdown = blocking(move || {
-        llm::summarize(
-            &providers::load_connection(&snapshot_config)?,
+    blocking(move || {
+        let owner = {
+            let state = app.state::<AppState>();
+            let core = state.core.lock().map_err(|_| plan_changed())?;
+            core.processing_owner.clone()
+        };
+        let operation = owner.begin(&id)?;
+        let mut sent = 0;
+        let markdown = llm::summarize(
+            &providers::load_connection(&config)?,
             template,
-            &notes,
-            &snapshot_lines,
-        )
-    })
-    .await?;
-    with_core(app, true, move |core, _| {
-        let current = core.get_meeting(&id)?;
-        if core.settings()?.connection(ProviderRole::Llm) != Some(&config)
-            || current.notes_revision != detail.notes_revision
-            || transcript_lines(&current.segments) != lines
-        {
-            return Err(plan_changed());
-        }
-        core.save_summary(&id, &plan.base_url, &plan.model, &markdown, template.id())
+            &detail.user_markdown,
+            &lines,
+            operation.cancel(),
+            |_| {
+                let state = app.state::<AppState>();
+                let core = state.core.lock().map_err(|_| plan_changed())?;
+                manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
+                sent += 1;
+                if sent > plan.requests {
+                    return Err(plan_changed());
+                }
+                Ok(())
+            },
+        )?;
+        operation.finish(|| {
+            let state = app.state::<AppState>();
+            let mut core = state.core.lock().map_err(|_| plan_changed())?;
+            manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
+            core.save_summary(&id, &plan.base_url, &plan.model, &markdown, template.id())?;
+            publish(&app, &core.recording_state());
+            Ok(())
+        })
     })
     .await
 }
@@ -870,12 +983,30 @@ async fn ask_meeting(
         Some(&confirmation),
     )?;
     blocking(move || {
-        llm::ask(
+        let owner = {
+            let state = app.state::<AppState>();
+            let core = state.core.lock().map_err(|_| plan_changed())?;
+            core.processing_owner.clone()
+        };
+        let operation = owner.begin(&id)?;
+        let answer = llm::ask(
             &providers::load_connection(&config)?,
             &detail.user_markdown,
             &lines,
             &question,
-        )
+            operation.cancel(),
+            |_| {
+                let state = app.state::<AppState>();
+                let core = state.core.lock().map_err(|_| plan_changed())?;
+                manual_text_check(&core, &id, &config, detail.notes_revision, &lines)
+            },
+        )?;
+        operation.finish(|| {
+            let state = app.state::<AppState>();
+            let core = state.core.lock().map_err(|_| plan_changed())?;
+            manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
+            Ok(answer)
+        })
     })
     .await
 }
@@ -988,7 +1119,31 @@ async fn export_meeting(app: AppHandle, id: String) -> Result<ExportResult> {
 #[tauri::command]
 async fn close_application(app: AppHandle) -> Result<()> {
     // The frontend flushes notes before invoking this command.
-    with_core(app.clone(), true, |core, _| core.stop().map(|_| ())).await?;
+    let owner = with_core(app.clone(), false, |core, _| {
+        Ok(core.processing_owner.clone())
+    })
+    .await?;
+    owner.cancel_active();
+    with_core(app.clone(), true, |core, _| {
+        core.quitting = true;
+        core.stop()?;
+        core.interrupt_processing()
+    })
+    .await?;
+    let idle = blocking(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !owner.is_idle() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        Ok(owner.is_idle())
+    })
+    .await?;
+    if !idle {
+        return Err(AppError::new(
+            "processing_busy",
+            "Processing is stopping. Notes are saved; wait briefly and choose Save and quit again.",
+        ));
+    }
     app.state::<AppState>()
         .allow_exit
         .store(true, Ordering::Release);
@@ -1035,8 +1190,9 @@ async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<S
 }
 
 #[tauri::command]
-fn cancel_transcription() -> bool {
-    stt::cancel()
+async fn cancel_transcription(app: AppHandle) -> Result<bool> {
+    let owner = with_core(app, false, |core, _| Ok(core.processing_owner.clone())).await?;
+    Ok(owner.cancel_active())
 }
 
 #[tauri::command]
@@ -1121,19 +1277,23 @@ pub fn run() {
                 })
                 .build(app)?;
             let monitor_app = app.handle().clone();
-            std::thread::spawn(move || loop {
+            std::thread::spawn(move || { let revisions=std::sync::Arc::new(Mutex::new(std::collections::HashMap::new())); loop {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 let result = tauri::async_runtime::block_on(with_core(
                     monitor_app.clone(),
                     false,
-                    |core, app| {
+                    {let revisions=revisions.clone();move |core, app| {
+                        let mut revisions=revisions.lock().unwrap_or_else(|p|p.into_inner());
                         core.poll_audio()?;
                         if let Some(health) = core.audio_health() { let _ = app.emit("audio_health", health); }
+                        let rows={ let mut query=core.db.prepare("SELECT meeting_id,revision FROM processing_sessions")?; let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?; rows.collect::<std::result::Result<Vec<_>,_>>()? };
+                        revisions.retain(|id,_|rows.iter().any(|(current,_)|current==id));
+                        for (id,revision) in rows { if revisions.get(&id)!=Some(&revision) { if let Some(snapshot)=core.session_processing(&id)? { revisions.insert(id,snapshot.revision);let _=app.emit("session_processing_changed",snapshot); } } }
                         Ok(())
-                    },
+                    }},
                 ));
                 if let Err(error) = result { let _ = monitor_app.emit("backend_error", error.message); }
-            });
+            }});
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1146,6 +1306,7 @@ pub fn run() {
             list_meetings, get_meeting, get_recording_state, get_startup_warning,
             start_recording, pause_recording, resume_recording, stop_recording,
             prepare_session_processing, get_session_processing, cancel_session_processing,
+            acknowledge_processing_notes,prepare_session_retry,retry_session_processing,
             save_notes, get_settings, save_settings,
             choose_vault_folder, export_meeting, close_application, list_audio_devices,
             provider_key_status, save_api_connection, delete_api_connection, api_connection_key_status, save_provider_assignment, list_api_connection_models,

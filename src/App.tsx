@@ -16,8 +16,11 @@ import {
   type SearchHit,
   type Settings,
   type SummaryVersion,
+  type SessionProcessingSnapshot,
+  type SessionProcessingPlan,
 } from "./lib/api";
 import { createNoteWriter } from "./lib/note-writer";
+import { formatTimestamp } from "./lib/timestamps";
 import { MeetingSidebar } from "./components/MeetingSidebar";
 import {
   MeetingWorkspace,
@@ -26,6 +29,7 @@ import {
 } from "./components/MeetingWorkspace";
 import { RecordingControls } from "./components/RecordingControls";
 import { SetupPanel } from "./components/SetupPanel";
+import { SessionReview } from "./components/SessionReview";
 import { SettingsPanel, type SttDraft } from "./components/SettingsPanel";
 
 type Writer = ReturnType<typeof createNoteWriter>;
@@ -107,12 +111,90 @@ export function App() {
   const panelTrigger = useRef<HTMLButtonElement | null>(null);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
+  const selectionRequest = useRef(0);
   const jobRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [audioBytes, setAudioBytes] = useState<number | null>(null);
   const [summaryVersions, setSummaryVersions] = useState<SummaryVersion[]>([]);
   const [answer, setAnswer] = useState<Answer | null>(null);
+  const [processing, setProcessing] =
+    useState<SessionProcessingSnapshot | null>(null);
+  const processingRevisions = useRef(new Map<string, number>());
+  const [retryPlan, setRetryPlan] = useState<SessionProcessingPlan | null>(
+    null,
+  );
+  const [retryConfirmed, setRetryConfirmed] = useState(false);
+  const [ackError, setAckError] = useState<{
+    meetingId: string;
+    message: string;
+  } | null>(null);
+  const ackAttempts = useRef(new Set<string>());
+
+  const applyProcessing = useCallback((next: SessionProcessingSnapshot) => {
+    const previous = processingRevisions.current.get(next.meeting_id);
+    if (previous !== undefined && previous > next.revision) return false;
+    processingRevisions.current.set(next.meeting_id, next.revision);
+    if (selectedIdRef.current === next.meeting_id) setProcessing(next);
+    return true;
+  }, []);
+  const acknowledgeNotes = useCallback(
+    async (snapshot: SessionProcessingSnapshot, retry = false) => {
+      const workflow = snapshot.workflow;
+      if (
+        snapshot.plan.scope.kind !== "final" ||
+        snapshot.plan.scope.summary === null ||
+        !workflow?.notes_barrier ||
+        workflow.notes_revision !== null ||
+        !["finalizing_audio", "transcribing", "awaiting_notes"].includes(
+          workflow.stage,
+        )
+      )
+        return;
+      const key = `${workflow.run_id}:${workflow.notes_barrier}`;
+      if (!retry && ackAttempts.current.has(key)) return;
+      ackAttempts.current.add(key);
+      try {
+        const matchingWriter =
+          selectedIdRef.current === snapshot.meeting_id ? writer.current : null;
+        await matchingWriter?.flush();
+        const revision = matchingWriter
+          ? matchingWriter.persistedRevision()
+          : (await api.getMeeting(snapshot.meeting_id)).notes_revision;
+        applyProcessing(
+          await api.acknowledgeProcessingNotes(
+            snapshot.meeting_id,
+            workflow.run_id,
+            workflow.notes_barrier,
+            revision,
+          ),
+        );
+        setAckError((previous) =>
+          previous?.meetingId === snapshot.meeting_id ? null : previous,
+        );
+      } catch (failure) {
+        setAckError({
+          meetingId: snapshot.meeting_id,
+          message: errorMessage(failure),
+        });
+      }
+    },
+    [applyProcessing],
+  );
+  const refreshProcessing = useCallback(
+    async (id: string) => {
+      const snapshot = await api.getSessionProcessing(id);
+      if (snapshot) {
+        if (snapshot.meeting_id === id && applyProcessing(snapshot))
+          await acknowledgeNotes(snapshot);
+      } else if (
+        selectedIdRef.current === id &&
+        !processingRevisions.current.has(id)
+      )
+        setProcessing(null);
+    },
+    [applyProcessing, acknowledgeNotes],
+  );
 
   const refreshList = useCallback(async () => {
     const request = ++listRequest.current;
@@ -129,25 +211,37 @@ export function App() {
     );
   }, []);
 
-  const openMeeting = useCallback(async (id: string) => {
-    await writer.current?.flush();
-    const detail = await api.getMeeting(id);
-    writer.current?.dispose();
-    writer.current = createNoteWriter(
-      detail.user_markdown,
-      detail.notes_revision,
-      (text, revision) => api.saveNotes(id, text, revision),
-      (status, failure) => {
-        setNotesStatus(status);
-        noteFailure.current = failure;
-        setNotesError(status === "error" ? errorMessage(failure) : "");
-      },
-    );
-    setNotes(detail.user_markdown);
-    setNotesStatus("saved");
-    selectedIdRef.current = id;
-    setSelected(detail);
-  }, []);
+  const openMeeting = useCallback(
+    async (id: string) => {
+      const request = ++selectionRequest.current;
+      await writer.current?.flush();
+      const detail = await api.getMeeting(id);
+      if (request !== selectionRequest.current) return;
+      detailRequest.current += 1;
+      writer.current?.dispose();
+      writer.current = createNoteWriter(
+        detail.user_markdown,
+        detail.notes_revision,
+        (text, revision) => api.saveNotes(id, text, revision),
+        (status, failure) => {
+          setNotesStatus(status);
+          noteFailure.current = failure;
+          setNotesError(status === "error" ? errorMessage(failure) : "");
+        },
+      );
+      setNotes(detail.user_markdown);
+      setNotesStatus("saved");
+      selectedIdRef.current = id;
+      setSelected(detail);
+      setProcessing(null);
+      setRetryPlan(null);
+      setRetryConfirmed(false);
+      void refreshProcessing(id).catch((failure: unknown) =>
+        setError(errorMessage(failure)),
+      );
+    },
+    [refreshProcessing],
+  );
 
   const refreshMeeting = useCallback(async (id: string) => {
     const request = ++detailRequest.current;
@@ -209,12 +303,14 @@ export function App() {
 
   useEffect(() => {
     const id = recording.meeting_id;
-    if (recording.status !== "stopped" || !id || selectedIdRef.current !== id)
-      return;
+    if (recording.status !== "stopped" || !id) return;
     void refreshMeeting(id).catch((failure: unknown) =>
       setError(errorMessage(failure)),
     );
-  }, [recording, refreshMeeting]);
+    void refreshProcessing(id).catch((failure: unknown) =>
+      setError(errorMessage(failure)),
+    );
+  }, [recording, refreshMeeting, refreshProcessing]);
 
   useEffect(() => {
     if (!desktop) return;
@@ -228,6 +324,17 @@ export function App() {
     void (async () => {
       // Listen before reading state so startup cannot miss tray/shortcut changes.
       await register(api.onRecordingState(updateRecording));
+      await register(
+        api.onSessionProcessingChanged((notification) => {
+          void refreshProcessing(notification.meeting_id).catch(
+            (failure: unknown) => setError(errorMessage(failure)),
+          );
+          if (selectedIdRef.current === notification.meeting_id)
+            void refreshMeeting(notification.meeting_id).catch(
+              (failure: unknown) => setError(errorMessage(failure)),
+            );
+        }),
+      );
       await register(
         api.onMeetingUpdated(() => {
           void refreshList().catch((failure: unknown) =>
@@ -313,7 +420,30 @@ export function App() {
     updateRecording,
     updateKeyStatus,
     updateStt,
+    refreshProcessing,
+    refreshMeeting,
   ]);
+  useEffect(() => {
+    if (!desktop) return;
+    const reconnect = () => {
+      const id = selectedIdRef.current;
+      if (id)
+        void refreshProcessing(id).catch((failure: unknown) =>
+          setError(errorMessage(failure)),
+        );
+      void api
+        .getRecordingState()
+        .then(updateRecording, (failure: unknown) =>
+          setError(errorMessage(failure)),
+        );
+    };
+    window.addEventListener("focus", reconnect);
+    window.addEventListener("online", reconnect);
+    return () => {
+      window.removeEventListener("focus", reconnect);
+      window.removeEventListener("online", reconnect);
+    };
+  }, [desktop, refreshProcessing, updateRecording]);
 
   useEffect(() => {
     if (job === null) {
@@ -338,6 +468,10 @@ export function App() {
   // Answers are never stored; leaving the meeting discards the shown one.
   const selectedId = selected?.meeting.id;
   useEffect(() => setAnswer(null), [selectedId]);
+  useEffect(() => {
+    setRetryPlan(null);
+    setRetryConfirmed(false);
+  }, [settings]);
 
   // Full-text matches for searches of 2+ characters; re-run when meetings change so hits stay current.
   useEffect(() => {
@@ -561,6 +695,162 @@ export function App() {
               Audio: {health.error}
             </p>
           )}
+          {panel === null &&
+            processing &&
+            processing.meeting_id === selected?.meeting.id && (
+              <section
+                className="processing-panel"
+                aria-label="Session processing"
+              >
+                <h3>Automatic processing</h3>
+                <p role="status">
+                  Stage:{" "}
+                  {(processing.workflow?.stage ?? processing.state).replaceAll(
+                    "_",
+                    " ",
+                  )}
+                </p>
+                {processing.workflow?.error && (
+                  <p role="alert">{processing.workflow.error}</p>
+                )}
+                {processing.workflow?.live_incomplete && (
+                  <p role="status">
+                    Live transcript is incomplete. Recorded audio is preserved
+                    for final transcription.
+                  </p>
+                )}
+                {processing.workflow && (
+                  <p>
+                    Used {processing.workflow.requests_used} requests,{" "}
+                    {processing.workflow.upload_bytes_used} audio bytes and{" "}
+                    {processing.workflow.text_bytes_used} UTF-8 text bytes.
+                  </p>
+                )}
+                {processing.plan.scope.kind === "final" &&
+                  processing.plan.scope.summary !== null &&
+                  processing.workflow?.notes_barrier &&
+                  processing.workflow.notes_revision === null &&
+                  [
+                    "finalizing_audio",
+                    "transcribing",
+                    "awaiting_notes",
+                  ].includes(processing.workflow.stage) && (
+                    <div>
+                      <p>
+                        Automatic summary waits for saved notes.
+                        {ackError?.meetingId === processing.meeting_id &&
+                          ` Notes acknowledgement failed: ${ackError.message}`}
+                      </p>
+                      <button
+                        disabled={busy}
+                        onClick={() => void acknowledgeNotes(processing, true)}
+                      >
+                        Save notes and continue processing
+                      </button>
+                    </div>
+                  )}
+                {![
+                  "completed",
+                  "cancelled",
+                  "interrupted",
+                  "failed",
+                  "consent_required",
+                ].includes(processing.workflow?.stage ?? processing.state) && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        applyProcessing(
+                          await api.cancelSessionProcessing(
+                            processing.meeting_id,
+                            processing.revision,
+                          ),
+                        );
+                      })
+                    }
+                  >
+                    Cancel session processing
+                  </button>
+                )}
+                {[
+                  "failed",
+                  "cancelled",
+                  "interrupted",
+                  "consent_required",
+                ].includes(processing.workflow?.stage ?? processing.state) && (
+                  <button
+                    disabled={busy || active}
+                    onClick={() =>
+                      void run(async () => {
+                        setRetryConfirmed(false);
+                        setRetryPlan(
+                          await api.prepareSessionRetry(processing.meeting_id),
+                        );
+                      })
+                    }
+                  >
+                    Review processing retry
+                  </button>
+                )}
+                {retryPlan?.meeting_id === processing.meeting_id && (
+                  <>
+                    <SessionReview
+                      plan={retryPlan}
+                      confirmed={retryConfirmed}
+                      onConfirm={setRetryConfirmed}
+                    />
+                    <button
+                      disabled={
+                        busy ||
+                        !retryConfirmed ||
+                        retryPlan.review_expires_at <= Date.now() / 1000
+                      }
+                      onClick={() =>
+                        void run(async () => {
+                          applyProcessing(
+                            await api.retrySessionProcessing(
+                              processing.meeting_id,
+                              retryPlan.fingerprint,
+                            ),
+                          );
+                          setRetryPlan(null);
+                          await refreshProcessing(processing.meeting_id);
+                        })
+                      }
+                    >
+                      Confirm processing retry
+                    </button>
+                  </>
+                )}
+                {!!processing.workflow?.provisional.length && (
+                  <section aria-label="Provisional live transcript">
+                    <h4>Provisional live transcript</h4>
+                    <p>
+                      Latest 200 segments. Excluded from search, export and
+                      summaries until final transcription.
+                    </p>
+                    {Array.from(
+                      new Map(
+                        processing.workflow.provisional.map((row) => [
+                          row.id,
+                          row,
+                        ]),
+                      ).values(),
+                    )
+                      .slice(-200)
+                      .map((row) => (
+                        <p key={row.id}>
+                          {row.segment.timing.kind === "timed"
+                            ? `${formatTimestamp(row.segment.timing.start_ms)} `
+                            : "[Untimed] "}
+                          <strong>{row.segment.speaker}:</strong>{" "}
+                          <span>{row.segment.text}</span>
+                        </p>
+                      ))}
+                  </section>
+                )}
+              </section>
+            )}
         </div>
 
         {panel === "setup" && (
@@ -573,18 +863,24 @@ export function App() {
             output={output}
             disabled={disabled}
             active={active}
+            configurationRevision={JSON.stringify(settings)}
             onTitle={setTitle}
             onConsent={setConsent}
             onMicrophone={setMicrophone}
             onOutput={setOutput}
             onClose={() => setPanel(null)}
-            onStartCapture={() =>
+            onStartCapture={(confirmation) =>
               void run(async () => {
                 await writer.current?.flush();
-                const state = await api.startCapture(title, consent, {
-                  microphoneId: microphone,
-                  outputId: output,
-                });
+                const state = await api.startCapture(
+                  title,
+                  consent,
+                  {
+                    microphoneId: microphone,
+                    outputId: output,
+                  },
+                  confirmation,
+                );
                 updateRecording(state);
                 setPanel(null);
                 if (state.meeting_id) await openMeeting(state.meeting_id);
@@ -914,7 +1210,9 @@ export function App() {
               // Stopping is independent of saving; failed drafts remain in the writer.
               await Promise.all([
                 refreshList(),
-                writer.current?.flush().catch(() => {}),
+                recording.meeting_id
+                  ? refreshProcessing(recording.meeting_id)
+                  : Promise.resolve(),
               ]);
             })
           }
@@ -930,6 +1228,7 @@ export function App() {
             <h2 id="close-title">Save and quit?</h2>
             <p>
               Your notes will be saved first. Any active recording will stop.
+              Background processing will be cancelled.
             </p>
             <button
               autoFocus

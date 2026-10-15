@@ -1,5 +1,7 @@
 # Phase 3 consent foundation
 
+> Historical report for the schema-v13 consent foundation. The integrated schema-v14 runtime and UI supersede its unfinished-work statements. See [workflow implementation and qualification](phase-3-workflow-verification.md).
+
 ## Implemented boundary
 
 This increment starts issues #19 and #24 without enabling live or automatic processing. It builds on commit `3cb42ef` from merged PR #49 and was developed on `codex/phase-three-session-consent`.
