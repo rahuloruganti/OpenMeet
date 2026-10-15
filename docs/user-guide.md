@@ -32,7 +32,7 @@ Capture remains a preview. On Apple Silicon macOS 14.2 or newer, choose an outpu
 
 1. Click **New recording** and enter a title.
 2. Choose the microphone and system-output device you intend to capture.
-3. Leave **Automatic processing** on **Recording only**, or review the processing choices below.
+3. Choose the default **Automatic processing** under Settings → General (**Recording only** by default). The New recording panel shows it and still requires a reviewed, confirmed plan before any processing starts.
 4. Acknowledge participant recording consent, then click **Start recording**.
 5. Use the microphone and system meters to check for incoming signals.
 6. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.

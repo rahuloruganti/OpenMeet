@@ -9,6 +9,22 @@ import type {
 } from "../lib/api";
 import { ModelLibrary } from "./ModelLibrary";
 import { ProviderSettings } from "./ProviderSettings";
+import type { ProcessingChoice } from "../lib/processing";
+
+/** Engines other apps (such as Handy) offer that OpenMeet cannot run yet. Listed, never selectable. */
+const otherEngines = [
+  "Parakeet V2",
+  "Parakeet V3",
+  "Moonshine Base",
+  "Moonshine V2 Tiny (streaming)",
+  "Moonshine V2 Small (streaming)",
+  "Moonshine V2 Medium (streaming)",
+  "SenseVoice (int8)",
+  "GigaAM v3",
+  "Canary 180M Flash",
+  "Canary 1B v2",
+  "Cohere (int8)",
+];
 
 export type SttDraft = Pick<
   Settings,
@@ -51,11 +67,15 @@ type Props = {
   onStt: (change: Partial<SttDraft>) => void;
   onSaveStt: () => void;
   onImported: () => Promise<void>;
+  processing: ProcessingChoice;
+  onProcessing: (choice: ProcessingChoice) => void;
 };
 
 export function SettingsPanel(props: Props) {
   const { settings, disabled } = props;
   const [tab, setTab] = useState<"cloud" | "local" | "general">("local");
+  // Catalog models a scan found on disk but that are not imported yet.
+  const [found, setFound] = useState<string[]>([]);
   return (
     <section
       className="workspace-panel settings"
@@ -188,7 +208,7 @@ export function SettingsPanel(props: Props) {
                 </p>
               </details>
               <label>
-                Speech model
+                Available speech models
                 <select
                   value={props.sttDraft.stt_model}
                   disabled={disabled}
@@ -196,12 +216,26 @@ export function SettingsPanel(props: Props) {
                     props.onStt({ stt_model: event.target.value })
                   }
                 >
-                  {props.stt?.models.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.id} ({mb(item.size)} MB
-                      {item.installed ? ", downloaded" : ""})
-                    </option>
-                  ))}
+                  <optgroup label="Whisper (verified catalog)">
+                    {props.stt?.models.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.id} ({mb(item.size)} MB
+                        {item.installed
+                          ? ", downloaded"
+                          : found.includes(item.id)
+                            ? ", found on this computer"
+                            : ""}
+                        )
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Other engines (not supported yet)">
+                    {otherEngines.map((name) => (
+                      <option key={name} value={"unsupported:" + name} disabled>
+                        {name}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
               </label>
             </>
@@ -268,7 +302,11 @@ export function SettingsPanel(props: Props) {
               </>
             )}
           </section>
-          <ModelLibrary disabled={disabled} onImported={props.onImported} />
+          <ModelLibrary
+            disabled={disabled}
+            onImported={props.onImported}
+            onFound={setFound}
+          />
         </div>
         {settings && (
           <ProviderSettings
@@ -288,6 +326,65 @@ export function SettingsPanel(props: Props) {
         hidden={tab !== "general"}
         className="settings-grid"
       >
+        <section
+          className="settings-section"
+          aria-label="Automatic processing settings"
+        >
+          <h3>Automatic processing</h3>
+          <label>
+            Automatic processing
+            <select
+              value={props.processing.mode}
+              disabled={disabled}
+              onChange={(event) =>
+                props.onProcessing({
+                  mode: event.target.value as ProcessingChoice["mode"],
+                  summary:
+                    event.target.value === "final" ||
+                    event.target.value === "both"
+                      ? props.processing.summary
+                      : null,
+                })
+              }
+            >
+              <option value="recording">Recording only</option>
+              <option value="live">Live transcription only</option>
+              <option value="final">Final transcription after stop</option>
+              <option value="both">Live and final transcription</option>
+            </select>
+          </label>
+          {(props.processing.mode === "final" ||
+            props.processing.mode === "both") && (
+            <label>
+              Automatic summary
+              <select
+                value={props.processing.summary ?? ""}
+                disabled={disabled}
+                onChange={(event) =>
+                  props.onProcessing({
+                    ...props.processing,
+                    summary:
+                      event.target.value === "general-v1" ||
+                      event.target.value === "standup-v1" ||
+                      event.target.value === "one-to-one-v1"
+                        ? event.target.value
+                        : null,
+                  })
+                }
+              >
+                <option value="">No automatic summary</option>
+                <option value="general-v1">General</option>
+                <option value="standup-v1">Stand-up</option>
+                <option value="one-to-one-v1">One-to-one</option>
+              </select>
+            </label>
+          )}
+          <p className="muted">
+            This is only your default. Every recording still shows a review of
+            what will be processed and where it goes, and needs your
+            confirmation before it starts.
+          </p>
+        </section>
         <section
           className="settings-section"
           aria-label="Storage and export settings"
