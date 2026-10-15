@@ -32,15 +32,38 @@ Capture remains a preview. On Apple Silicon macOS 14.2 or newer, choose an outpu
 
 1. Click **New recording** and enter a title.
 2. Choose the microphone and system-output device you intend to capture.
-3. Acknowledge consent, then click **Start recording**.
-4. Use the microphone and system meters to check for incoming signals.
-5. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.
+3. Leave **Automatic processing** on **Recording only**, or review the processing choices below.
+4. Acknowledge participant recording consent, then click **Start recording**.
+5. Use the microphone and system meters to check for incoming signals.
+6. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.
 
 Saved device choices are not silently replaced when a device is unavailable. A missing device or capture failure must be resolved before trying again. A silent output can produce no loopback frames; the two track files can therefore have different lengths.
 
 In **My notes**, **Insert timestamp** adds the current backend recording offset. **Ctrl+Shift+T** performs the same action while the editor has focus. Settings provide a pause/resume shortcut and an optional stop shortcut. There is no global start shortcut. If registration fails, use the on-screen controls and choose another shortcut.
 
 The code excludes paused audio, but real-device pause privacy, device failures, and long-run timing remain unqualified. A meter signal or two WAV files does not establish a successful recording.
+
+## Choose automatic processing
+
+1. In **New recording**, choose **Live transcription only**, **Final transcription after stop**, or **Live and final transcription**.
+2. For either final option, optionally choose an **Automatic summary** template.
+3. Click **Review processing**. Check the speech and summary destinations, models, tracks, language, and limits.
+4. Acknowledge the processing scope, destinations, and limits. This covers future recorded audio and, when a summary is enabled, saved notes and the final transcript.
+5. Acknowledge participant recording consent independently, then start recording. Changing the scope or relevant settings requires another review.
+
+Local Whisper stays on this device. An API speech destination receives audio. An API summary destination receives saved notes and final transcript text. Live plus final transcription uses separate requests and can incur separate charges. Review preparation makes no provider request and does not install a missing model.
+
+The review currently allows up to 3,600 seconds of recording, 14,400 seconds of processing after stop, 256 MiB of uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. The screen shows the authoritative limits. Exceeding a processing limit does not stop recording or authorize more requests. Recordings beyond the reviewed duration are refused for automatic processing and retry under that plan.
+
+Live text is provisional. The latest 200 segments appear with track labels and incomplete-coverage warnings. Provisional text is excluded from search, summaries, and exports. If the live queue fills or a processing operation cannot run, capture continues and the preview can have gaps. Accepted audio captured before a pause may finish processing while paused. Paused audio is excluded by the implementation; hardware privacy remains unqualified.
+
+Stop finalizes audio through the shared UI, tray, or shortcut path. Final transcription replaces the saved transcript atomically and removes provisional text only after success. A live-only session retains its provisional preview without creating a final transcript or summary.
+
+An automatic summary waits for the capture meeting's saved notes. A failed save keeps your draft and displays **Save notes and continue processing**. Retry that action after resolving the save failure. Changes to notes or the transcript during summary generation prevent publication of a stale summary and preserve previous output.
+
+Use **Cancel session processing** to stop further work without stopping capture or deleting output. Submitted content cannot be recalled, and a remote request may still be billed. **Review processing retry** requires a new confirmation for the existing stopped recording, with fresh limits and a processing deadline. Retry keeps a successfully completed transcript and can continue with the summary. It starts no recording. A stopped live-only preview cannot restart; use manual final transcription instead.
+
+**Save and quit** first saves notes, then stops capture and interrupts unfinished processing. Restart displays interrupted work and makes no automatic retry. Recover incomplete recording files before retrying final processing. Native, hardware, and real-provider qualification remain open; see [workflow evidence](phase-3-workflow-verification.md).
 
 ## Transcribe and play audio
 

@@ -127,4 +127,20 @@ it("keeps session consent separate from recording permission and manual action c
   expect(invoke).toHaveBeenLastCalledWith("get_session_processing", {
     id: "meeting",
   });
+  await api.acknowledgeProcessingNotes("meeting", "run", "barrier", 7);
+  expect(invoke).toHaveBeenLastCalledWith("acknowledge_processing_notes", {
+    id: "meeting",
+    runId: "run",
+    notesBarrier: "barrier",
+    expectedNotesRevision: 7,
+  });
+  await api.prepareSessionRetry("meeting");
+  expect(invoke).toHaveBeenLastCalledWith("prepare_session_retry", {
+    id: "meeting",
+  });
+  await api.retrySessionProcessing("meeting", "fresh-consent");
+  expect(invoke).toHaveBeenLastCalledWith("retry_session_processing", {
+    id: "meeting",
+    confirmation: "fresh-consent",
+  });
 });

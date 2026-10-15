@@ -43,6 +43,7 @@ export function createNoteWriter(
       }, 400);
     },
     flush,
+    persistedRevision: () => revision,
     isDirty: () => desired !== persisted,
     dispose: () => clearTimeout(timer),
   };

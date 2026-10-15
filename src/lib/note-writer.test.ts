@@ -38,6 +38,7 @@ describe("note writer", () => {
     writer.update("new");
     await expect(writer.flush()).rejects.toThrow("disk full");
     expect(writer.isDirty()).toBe(true);
+    expect(writer.persistedRevision()).toBe(7);
     expect(status).toHaveBeenCalledWith("error", expect.any(Error));
     await writer.flush();
     expect(save.mock.calls).toEqual([
@@ -45,6 +46,7 @@ describe("note writer", () => {
       ["new", 7],
     ]);
     expect(writer.isDirty()).toBe(false);
+    expect(writer.persistedRevision()).toBe(8);
     writer.dispose();
   });
 

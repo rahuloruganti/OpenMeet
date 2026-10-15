@@ -392,6 +392,7 @@ struct TrackWriter {
     wav: hound::WavWriter<BufWriter<File>>,
     timing: BufWriter<File>,
     failed: bool,
+    live: Option<crate::live_audio::Accumulator>,
 }
 impl TrackWriter {
     fn new(folder: &Path, kind: &str, input: &Input) -> Result<Self> {
@@ -431,6 +432,7 @@ impl TrackWriter {
             wav,
             timing,
             failed: false,
+            live: None,
             track: Track {
                 kind: kind.into(),
                 path: path.to_string_lossy().into_owned(),
@@ -461,6 +463,13 @@ impl TrackWriter {
                 self.track.frames, frames, block.start_us, block.generation
             )?;
             self.track.frames += frames as i64;
+            if let Some(live) = &mut self.live {
+                live.accept(
+                    &block.samples[..block.len],
+                    block.generation,
+                    block.start_us,
+                );
+            }
             Ok(())
         })();
         self.failed |= result.is_err();
@@ -476,6 +485,9 @@ impl TrackWriter {
         result
     }
     fn finish(mut self, dropped: u64) -> Track {
+        if let Some(live) = &mut self.live {
+            live.flush();
+        }
         self.track.dropped_frames = dropped.min(i64::MAX as u64) as i64;
         let timing_ok = self.timing.flush().is_ok();
         let wav_ok = self.wav.finalize().is_ok();
@@ -496,14 +508,18 @@ pub struct Session {
     pub tracks: Vec<Track>,
 }
 impl Session {
-    pub fn prepare(folder: PathBuf, options: CaptureOptions) -> Result<Self> {
+    pub fn prepare(
+        folder: PathBuf,
+        options: CaptureOptions,
+        live: Option<crate::live_audio::Producer>,
+    ) -> Result<Self> {
         let shared = Arc::new(Shared::new());
         let worker_shared = shared.clone();
         let (commands, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
         let handle = thread::Builder::new()
             .name("openmeet-audio".into())
-            .spawn(move || worker(folder, options, worker_shared, rx, ready_tx))?;
+            .spawn(move || worker(folder, options, worker_shared, rx, ready_tx, live))?;
         match ready_rx.recv_timeout(Duration::from_secs(20)) {
             Ok(Ok(tracks)) => Ok(Self {
                 shared,
@@ -656,6 +672,86 @@ pub(crate) fn pending_writer_for_test(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn synthetic_pause_recording_for_test(
+    folder: &Path,
+) -> (Vec<Track>, Vec<crate::live_audio::Chunk>) {
+    fs::create_dir_all(folder).unwrap();
+    let shared = Shared::new();
+    let (live, receiver, incomplete) = crate::live_audio::channel();
+    let mut writers: Vec<_> = ["mic", "system"]
+        .into_iter()
+        .map(|kind| {
+            let mut writer =
+                TrackWriter::create(folder, kind, "Synthetic".into(), 16000, 1).unwrap();
+            writer.live = Some(crate::live_audio::Accumulator::new(
+                live.clone(),
+                &writer.track,
+            ));
+            writer
+        })
+        .collect();
+    let mut queues: Vec<_> = (0..2).map(|_| HeapRb::new(4).split()).collect();
+    let mut chunks = Vec::new();
+    shared.recording.store(true, Ordering::SeqCst);
+    for (index, signal) in [0.25_f32, -0.25].into_iter().enumerate() {
+        push_samples(
+            &[signal; 1600],
+            0,
+            1,
+            16000,
+            &shared,
+            index,
+            &mut queues[index].0,
+        );
+        drain(index, &mut queues[index].1, &mut writers[index], &shared);
+        writers[index].live.as_mut().unwrap().flush();
+        chunks.extend(receiver.try_iter());
+        push_samples(
+            &[0.9_f32; 1600],
+            200_000,
+            1,
+            16000,
+            &shared,
+            index,
+            &mut queues[index].0,
+        );
+    }
+    shared.mute();
+    for (index, (producer, _)) in queues.iter_mut().enumerate() {
+        push_samples(
+            &[0.9_f32; 1600],
+            4_000_000,
+            1,
+            16000,
+            &shared,
+            index,
+            producer,
+        );
+    }
+    shared.generation.fetch_add(1, Ordering::SeqCst);
+    shared.recording.store(true, Ordering::SeqCst);
+    for (index, signal) in [0.5_f32, -0.5].into_iter().enumerate() {
+        push_samples(
+            &[signal; 1600],
+            8_000_000,
+            1,
+            16000,
+            &shared,
+            index,
+            &mut queues[index].0,
+        );
+        drain(index, &mut queues[index].1, &mut writers[index], &shared);
+        writers[index].live.as_mut().unwrap().flush();
+        chunks.extend(receiver.try_iter());
+    }
+    shared.mute();
+    let tracks = writers.into_iter().map(|writer| writer.finish(0)).collect();
+    chunks.extend(receiver.try_iter());
+    assert!(!incomplete.load(Ordering::SeqCst));
+    (tracks, chunks)
+}
+
 fn accepted(block: &Block, shared: &Shared) -> bool {
     shared.recording.load(Ordering::SeqCst)
         && shared.fault.load(Ordering::SeqCst) == 0
@@ -683,6 +779,7 @@ fn worker(
     shared: Arc<Shared>,
     commands: mpsc::Receiver<Command>,
     ready: mpsc::Sender<Result<Vec<Track>>>,
+    live: Option<crate::live_audio::Producer>,
 ) -> Report {
     let initialized = (|| -> Result<([Input; 2], Vec<TrackWriter>, LiveStreams)> {
         let selected = inputs(&options)?;
@@ -705,6 +802,14 @@ fn worker(
             };
         }
     };
+    if let Some(producer) = live {
+        for writer in &mut writers {
+            writer.live = Some(crate::live_audio::Accumulator::new(
+                producer.clone(),
+                &writer.track,
+            ));
+        }
+    }
     let _ = ready.send(Ok(writers.iter().map(|w| w.track.clone()).collect()));
     let mut checkpoint = Instant::now();
     let mut last_tick = SystemTime::now();
@@ -713,6 +818,11 @@ fn worker(
         match commands.try_recv() {
             Ok(Command::Stop) | Err(mpsc::TryRecvError::Disconnected) => stopping = true,
             Ok(Command::Pause(reply)) => {
+                for writer in &mut writers {
+                    if let Some(live) = &mut writer.live {
+                        live.flush();
+                    }
+                }
                 streams.clear(); // Drop native streams and their queued packets; no paused buffers survive resume.
                 let result = writers.iter_mut().try_for_each(TrackWriter::checkpoint);
                 if result.is_err() {
@@ -979,7 +1089,7 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let tone = folder.path().join("tone.wav");
         write_probe_tone(&tone);
-        let mut session = Session::prepare(folder.path().join("capture"), options)
+        let mut session = Session::prepare(folder.path().join("capture"), options, None)
             .expect("prepare should pass the permission and duplex gates");
         session.resume().expect("resume");
         let mut play = std::process::Command::new("afplay")
@@ -1061,7 +1171,7 @@ mod tests {
         };
         eprintln!("devices: {devices:?}\nselected: {options:?}");
         let folder = tempfile::tempdir().unwrap();
-        let mut session = Session::prepare(folder.path().join("capture"), options).unwrap();
+        let mut session = Session::prepare(folder.path().join("capture"), options, None).unwrap();
         // prepare() opens muted streams; the app's start() resumes immediately.
         session.resume().unwrap();
         thread::sleep(Duration::from_secs(1));
@@ -1170,6 +1280,127 @@ mod tests {
                 .collect();
             assert_eq!(offsets, [0, 1_000_000]);
         }
+    }
+
+    #[test]
+    fn synthetic_pause_recording_exposes_real_finalized_tracks_and_four_accepted_chunks() {
+        let folder = tempfile::tempdir().unwrap();
+        let (tracks, chunks) = synthetic_pause_recording_for_test(folder.path());
+        assert_eq!(chunks.len(), 4);
+        assert_eq!(tracks.len(), 2);
+        for (index, (kind, before, after)) in [("mic", 0.25, 0.5), ("system", -0.25, -0.5)]
+            .into_iter()
+            .enumerate()
+        {
+            let track = &tracks[index];
+            assert!(track.finalized);
+            assert_eq!((track.kind.as_str(), track.frames), (kind, 3200));
+            let samples = hound::WavReader::open(&track.path)
+                .unwrap()
+                .samples::<f32>()
+                .map(|value| value.unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(samples, [vec![before; 1600], vec![after; 1600]].concat());
+            let timing = crate::audio_timing::read(track, || Ok(())).unwrap();
+            assert_eq!(
+                timing
+                    .iter()
+                    .map(|block| (block.frame_offset, block.frames, block.capture_start_us))
+                    .collect::<Vec<_>>(),
+                [(0, 1600, 0), (1600, 1600, 8_000_000)]
+            );
+            assert_eq!(chunks[index].kind, kind);
+            assert_eq!(chunks[index].samples, vec![before; 1600]);
+            assert_eq!(chunks[index + 2].samples, vec![after; 1600]);
+            assert_eq!(chunks[index + 2].timing[0].capture_start_us, 8_000_000);
+            assert_ne!(chunks[index].generation, chunks[index + 2].generation);
+            let materialized = chunks[index + 2].materialize().unwrap();
+            let samples = hound::WavReader::open(&materialized.track.path)
+                .unwrap()
+                .samples::<f32>()
+                .map(|value| value.unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(samples, vec![after; 1600]);
+        }
+    }
+
+    #[test]
+    fn live_chunks_materialize_only_accepted_samples_and_overflow_does_not_damage_recording() {
+        let shared = Shared::new();
+        let folder = tempfile::tempdir().unwrap();
+        let mut writer =
+            TrackWriter::create(folder.path(), "mic", "Synthetic".into(), 16000, 1).unwrap();
+        let (live, receiver, incomplete) = crate::live_audio::channel();
+        writer.live = Some(crate::live_audio::Accumulator::new(live, &writer.track));
+        let (mut producer, mut consumer) = HeapRb::new(4).split();
+        shared.recording.store(true, Ordering::SeqCst);
+        push_samples(
+            &[0.25_f32; 4],
+            1_000_000,
+            1,
+            16000,
+            &shared,
+            0,
+            &mut producer,
+        );
+        drain(0, &mut consumer, &mut writer, &shared);
+        writer.live.as_mut().unwrap().flush();
+        push_samples(
+            &[0.75_f32; 4],
+            1_000_250,
+            1,
+            16000,
+            &shared,
+            0,
+            &mut producer,
+        );
+        shared.mute();
+        shared.generation.fetch_add(1, Ordering::SeqCst);
+        shared.recording.store(true, Ordering::SeqCst);
+        drain(0, &mut consumer, &mut writer, &shared);
+        for index in 0..4 {
+            push_samples(
+                &[0.5_f32; 4],
+                2_000_000 + index * 250,
+                1,
+                16000,
+                &shared,
+                0,
+                &mut producer,
+            );
+            drain(0, &mut consumer, &mut writer, &shared);
+            writer.live.as_mut().unwrap().flush();
+        }
+        let track = writer.finish(0);
+        assert!(track.finalized);
+        let recorded = hound::WavReader::open(&track.path)
+            .unwrap()
+            .samples::<f32>()
+            .map(|v| v.unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(recorded, [vec![0.25; 4], vec![0.5; 16]].concat());
+        assert!(incomplete.load(Ordering::SeqCst));
+        let chunks: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(chunks.len(), 3);
+        let materialized = chunks[0].materialize().unwrap();
+        let samples = hound::WavReader::open(&materialized.track.path)
+            .unwrap()
+            .samples::<f32>()
+            .map(|v| v.unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(samples, [0.25; 4]);
+        let timing = crate::audio_timing::read(&materialized.track, || Ok(())).unwrap();
+        assert_eq!(
+            (
+                timing[0].frame_offset,
+                timing[0].frames,
+                timing[0].capture_start_us
+            ),
+            (0, 4, 1_000_000)
+        );
+        assert_eq!(chunks[1].samples, [0.5; 4]);
+        assert_eq!(chunks[1].timing[0].capture_start_us, 2_000_000);
+        assert_ne!(chunks[0].generation, chunks[1].generation);
     }
 
     #[test]
@@ -1312,6 +1543,7 @@ mod tests {
             &plan,
             &AtomicBool::new(false),
             |_, _| {},
+            |_, _| Ok(()),
         )
         .unwrap();
         server.join().unwrap();

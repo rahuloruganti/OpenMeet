@@ -25,6 +25,10 @@ type Props = {
 export function RecordingControls(props: Props) {
   const { recording, active, health } = props;
   const controlsDisabled = !props.ready || props.controlBusy || !active;
+  const finalizationPending =
+    recording.status === "paused" &&
+    recording.source === "desktop" &&
+    recording.recording_offset_ms === null;
   const capturing =
     recording.status === "recording" && recording.source === "desktop";
   // When each track's signal went silent; only counted while actually recording.
@@ -58,7 +62,9 @@ export function RecordingControls(props: Props) {
         <span className={`recording-state ${recording.status}`} role="status">
           {recording.source === null
             ? "Not recording"
-            : `${recording.source === "desktop" ? "Recording" : "Simulation"}: ${recording.status}`}
+            : finalizationPending
+              ? "Audio stopped; finalization pending"
+              : `${recording.source === "desktop" ? "Recording" : "Simulation"}: ${recording.status}`}
         </span>
       </div>
       {capturing && health && (
@@ -97,7 +103,10 @@ export function RecordingControls(props: Props) {
             Open active meeting
           </button>
         )}
-        <button disabled={controlsDisabled} onClick={props.onToggle}>
+        <button
+          disabled={controlsDisabled || finalizationPending}
+          onClick={props.onToggle}
+        >
           {recording.status === "paused" ? "Resume" : "Pause"}
         </button>
         <button
@@ -105,7 +114,7 @@ export function RecordingControls(props: Props) {
           disabled={controlsDisabled}
           onClick={props.onStop}
         >
-          Stop
+          {finalizationPending ? "Retry finalization" : "Stop"}
         </button>
       </div>
     </section>

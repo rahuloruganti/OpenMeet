@@ -1,4 +1,4 @@
-//! Session consent preparation only. No inference or provider dispatch is enabled here.
+//! Frozen session consent preparation and durable authorization snapshots.
 use crate::{
     domain::{AppError, ProviderRole, Result, Settings, SttMode},
     llm::Template,
@@ -57,15 +57,20 @@ pub enum Scope {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Limits {
     pub duration_seconds: u32,
+    #[serde(default)]
+    pub post_stop_seconds: u32,
     pub upload_bytes: u64,
     pub requests: u32,
-    pub text_characters: u32,
+    #[serde(alias = "text_characters")]
+    pub text_bytes: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Plan {
     pub id: String,
     pub fingerprint: String,
+    #[serde(default)]
+    pub meeting_id: Option<String>,
     pub configuration_revision: i64,
     pub review_expires_at: i64,
     pub scope: Scope,
@@ -91,6 +96,7 @@ pub struct Snapshot {
     pub plan: Plan,
     pub started_at: i64,
     pub authorized_until: i64,
+    pub workflow: Option<crate::session_workflow::Workflow>,
 }
 
 fn changed() -> AppError {
@@ -107,7 +113,7 @@ fn invalid_record() -> AppError {
     )
 }
 
-fn clock() -> Result<i64> {
+pub(crate) fn clock() -> Result<i64> {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
@@ -174,6 +180,7 @@ impl Core {
         let mut plan = Plan {
             id: Uuid::new_v4().to_string(),
             fingerprint: String::new(),
+            meeting_id: None,
             configuration_revision: self.processing_configuration_revision()?,
             review_expires_at: now.checked_add(300).ok_or_else(changed)?,
             scope,
@@ -181,16 +188,13 @@ impl Core {
             tracks: ["mic".into(), "system".into()],
             limits: Limits {
                 duration_seconds: 3600,
+                post_stop_seconds: 14_400,
                 upload_bytes: 256 * 1024 * 1024,
                 requests: 1000,
-                text_characters: 800_000,
+                text_bytes: 800_000,
             },
         };
-        let bytes = serde_json::to_vec(&plan).map_err(|_| invalid_record())?;
-        plan.fingerprint = Sha256::digest(bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        seal(&mut plan)?;
         self.pending_processing = Some(plan.clone());
         Ok(plan)
     }
@@ -233,7 +237,7 @@ impl Core {
         self.get_meeting(meeting_id)?;
         let now = clock()?;
         self.db.execute(
-            "UPDATE processing_sessions SET state='consent_required',revision=revision+1 WHERE meeting_id=?1 AND state='prepared' AND (authorized_until<=?2 OR started_at>?2)",
+            "UPDATE processing_sessions SET state='consent_required',revision=revision+1 WHERE meeting_id=?1 AND state='prepared' AND (authorized_until<=?2 OR started_at>?2) AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage NOT IN ('completed','failed','cancelled','interrupted','consent_required'))",
             params![meeting_id, now],
         )?;
         let row: Option<(i64, String, String, i64, i64)> = self.db.query_row(
@@ -256,6 +260,7 @@ impl Core {
                 plan: serde_json::from_str(&json).map_err(|_| invalid_record())?,
                 started_at,
                 authorized_until,
+                workflow: self.processing_workflow(meeting_id)?,
             })
         })
         .transpose()
@@ -281,7 +286,8 @@ impl Core {
                 "Processing state changed. Refresh before cancelling.",
             ));
         }
-        let changed = self.db.execute(
+        let tx = self.db.transaction()?;
+        let changed = tx.execute(
             "UPDATE processing_sessions SET state='cancelled',revision=revision+1 WHERE meeting_id=?1 AND revision=?2",
             params![meeting_id, expected_revision],
         )?;
@@ -291,9 +297,21 @@ impl Core {
                 "Processing state changed. Refresh before cancelling.",
             ));
         }
+        tx.execute("UPDATE processing_runs SET stage='cancelled',error=NULL WHERE meeting_id=?1 AND stage NOT IN ('completed','cancelled')", [meeting_id])?;
+        tx.commit()?;
         self.session_processing(meeting_id)?
             .ok_or_else(invalid_record)
     }
+}
+
+pub(crate) fn seal(plan: &mut Plan) -> Result<()> {
+    plan.fingerprint.clear();
+    let bytes = serde_json::to_vec(plan).map_err(|_| invalid_record())?;
+    plan.fingerprint = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok(())
 }
 
 pub(crate) fn attach(tx: &Transaction<'_>, plan: &Plan, meeting_id: &str) -> Result<()> {
@@ -322,10 +340,15 @@ pub(crate) fn attach(tx: &Transaction<'_>, plan: &Plan, meeting_id: &str) -> Res
     }
     let authorized_until = started_at
         .checked_add(i64::from(plan.limits.duration_seconds))
+        .and_then(|deadline| deadline.checked_add(i64::from(plan.limits.post_stop_seconds)))
         .ok_or_else(changed)?;
     tx.execute(
         "INSERT INTO processing_sessions(id,meeting_id,state,plan_json,started_at,authorized_until) VALUES (?1,?2,'prepared',?3,?4,?5)",
         params![plan.id, meeting_id, serde_json::to_string(plan).map_err(|_| invalid_record())?, started_at, authorized_until],
+    )?;
+    tx.execute(
+        "INSERT INTO processing_runs(meeting_id,run_id,stage) VALUES (?1,?2,'live')",
+        params![meeting_id, plan.id],
     )?;
     Ok(())
 }
@@ -427,7 +450,7 @@ mod tests {
         assert_eq!(value["tracks"], serde_json::json!(["mic", "system"]));
         assert_eq!(
             value["limits"],
-            serde_json::json!({"duration_seconds":3600,"upload_bytes":268435456,"requests":1000,"text_characters":800000})
+            serde_json::json!({"duration_seconds":3600,"upload_bytes":268435456,"requests":1000,"text_bytes":800000,"post_stop_seconds":14400})
         );
         let json = serde_json::to_string(&plan).unwrap();
         assert!(!json.contains("synthetic-credential-reference"));
@@ -552,7 +575,7 @@ mod tests {
             .unwrap();
         let snapshot = core.session_processing(&id).unwrap().unwrap();
         assert_eq!((snapshot.state, snapshot.revision), (State::Prepared, 1));
-        assert_eq!(snapshot.authorized_until - snapshot.started_at, 3600);
+        assert_eq!(snapshot.authorized_until - snapshot.started_at, 18000);
         assert_eq!(
             core.cancel_session_processing(&id, 2).unwrap_err().code,
             "session_processing_conflict"
@@ -746,6 +769,54 @@ mod tests {
         }
         let cancelled = core.cancel_session_processing(&id, 2).unwrap();
         assert_eq!((cancelled.state, cancelled.revision), (State::Cancelled, 3));
+    }
+
+    #[test]
+    fn upgrade_from_v13_requires_review_without_expanding_legacy_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        let plan = core()
+            .prepare_session_processing(Request::Final {
+                live: true,
+                summary: None,
+            })
+            .unwrap();
+        let mut legacy = serde_json::to_value(plan).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("meeting_id");
+        let limits = object.get_mut("limits").unwrap().as_object_mut().unwrap();
+        limits.remove("post_stop_seconds");
+        let text = limits.remove("text_bytes").unwrap();
+        limits.insert("text_characters".into(), text);
+        {
+            let db = crate::storage::test_v11_database(&path);
+            db.execute_batch(include_str!("../migrations/012_saved_connections.sql"))
+                .unwrap();
+            db.execute_batch(include_str!("../migrations/013_session_processing.sql"))
+                .unwrap();
+            db.execute_batch("INSERT INTO meetings(id,title,started_at,ended_at,source,status) VALUES ('legacy','Fictional legacy','2026-01-01T00:00:00Z','2026-01-01T00:00:09Z','desktop','stopped'); INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('legacy','Retain legacy notes',9);").unwrap();
+            db.execute("INSERT INTO processing_sessions(id,meeting_id,state,plan_json,started_at,authorized_until) VALUES ('legacy-grant','legacy','prepared',?1,1,2)", [legacy.to_string()]).unwrap();
+        }
+        for _ in 0..2 {
+            let core = Core::open(&path).unwrap();
+            let snapshot = core.session_processing("legacy").unwrap().unwrap();
+            assert_eq!(
+                (snapshot.state, snapshot.revision),
+                (State::ConsentRequired, 2)
+            );
+            assert_eq!(snapshot.plan.limits.post_stop_seconds, 0);
+            assert_eq!(snapshot.plan.limits.text_bytes, 800000);
+            assert_eq!(
+                snapshot.workflow.unwrap().stage,
+                crate::session_workflow::Stage::ConsentRequired
+            );
+            let detail = core.get_meeting("legacy").unwrap();
+            assert_eq!(
+                (detail.user_markdown.as_str(), detail.notes_revision),
+                ("Retain legacy notes", 9)
+            );
+            assert!(core.processing_owner.is_idle());
+        }
     }
 
     #[test]

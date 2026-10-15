@@ -14,6 +14,8 @@ import {
   type MeetingDetail,
   type Settings,
   type SttProgress,
+  type SessionProcessingPlan,
+  type SessionProcessingSnapshot,
 } from "./lib/api";
 
 vi.mock("./lib/api", async (original) => {
@@ -25,6 +27,13 @@ vi.mock("./lib/api", async (original) => {
       listMeetings: vi.fn(),
       getMeeting: vi.fn(),
       getRecordingState: vi.fn(),
+      prepareSessionProcessing: vi.fn(),
+      getSessionProcessing: vi.fn(),
+      cancelSessionProcessing: vi.fn(),
+      acknowledgeProcessingNotes: vi.fn(),
+      prepareSessionRetry: vi.fn(),
+      retrySessionProcessing: vi.fn(),
+      onSessionProcessingChanged: vi.fn(),
       pause: vi.fn(),
       resume: vi.fn(),
       stop: vi.fn(),
@@ -107,6 +116,65 @@ const textPlan = {
   audio_bytes: 0,
   tracks: [],
 };
+const sessionPlan: SessionProcessingPlan = {
+  id: "session-plan",
+  meeting_id: null,
+  fingerprint: "session-consent",
+  configuration_revision: 1,
+  review_expires_at: 4_000_000_000,
+  scope: {
+    kind: "final",
+    live: true,
+    speech: { kind: "local_whisper", model: "small" },
+    summary: {
+      destination: {
+        kind: "compatible_api",
+        base_url: "https://summary.example/v1",
+        model: "chat",
+        connection_id: "chat",
+        connection_revision: 1,
+        assignment_revision: 1,
+      },
+      template: "general-v1",
+    },
+  },
+  language: "auto",
+  tracks: ["microphone", "system"],
+  limits: {
+    duration_seconds: 3600,
+    post_stop_seconds: 14400,
+    upload_bytes: 5000,
+    requests: 20,
+    text_bytes: 10000,
+  },
+};
+function sessionSnapshot(
+  revision: number,
+  stage: NonNullable<SessionProcessingSnapshot["workflow"]>["stage"] = "live",
+): SessionProcessingSnapshot {
+  return {
+    meeting_id: "sample",
+    revision,
+    state: "prepared",
+    plan: sessionPlan,
+    started_at: 1,
+    authorized_until: 4_000_000_000,
+    workflow: {
+      run_id: "run",
+      attempt: 1,
+      stage,
+      error: null,
+      live_incomplete: false,
+      transcript_done: false,
+      notes_revision: null,
+      notes_barrier: null,
+      requests_used: 0,
+      upload_bytes_used: 0,
+      text_bytes_used: 0,
+      provisional: [],
+    },
+  };
+}
 
 const initialSettings: Settings = {
   saved_connections: [],
@@ -156,6 +224,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.unstubAllGlobals();
   vi.mocked(api.isDesktop).mockReturnValue(true);
+  vi.mocked(api.getSessionProcessing).mockResolvedValue(null);
   vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting]);
   vi.mocked(api.getMeeting).mockResolvedValue(sample);
   vi.mocked(api.getRecordingState).mockResolvedValue({
@@ -189,6 +258,7 @@ beforeEach(() => {
   vi.mocked(api.planQuestion).mockResolvedValue(textPlan);
   for (const method of [
     api.onRecordingState,
+    api.onSessionProcessingChanged,
     api.onMeetingUpdated,
     api.onCloseRequested,
     api.onError,
@@ -628,10 +698,15 @@ describe("desktop foundation", () => {
     });
     await userEvent.click(start);
     await waitFor(() =>
-      expect(api.startCapture).toHaveBeenCalledWith("Untitled meeting", true, {
-        microphoneId: "mic",
-        outputId: "out",
-      }),
+      expect(api.startCapture).toHaveBeenCalledWith(
+        "Untitled meeting",
+        true,
+        {
+          microphoneId: "mic",
+          outputId: "out",
+        },
+        null,
+      ),
     );
     await screen.findByText("Recording: recording");
   });
@@ -756,7 +831,7 @@ describe("desktop foundation", () => {
       meeting_id: "sample",
       source: "desktop",
       error: "Device stopped responding",
-      recording_offset_ms: null,
+      recording_offset_ms: 0,
     });
     await ready();
     await userEvent.click(
@@ -1449,6 +1524,371 @@ describe("desktop foundation", () => {
       "browser preview cannot access",
     );
     expect(api.listMeetings).not.toHaveBeenCalled();
+  });
+});
+
+describe("automatic session processing", () => {
+  it.each([
+    "failed",
+    "completed",
+    "cancelled",
+    "interrupted",
+    "consent_required",
+  ] satisfies NonNullable<SessionProcessingSnapshot["workflow"]>["stage"][])(
+    "does not acknowledge or wait for notes in terminal stage %s",
+    async (stage) => {
+      const snapshot = sessionSnapshot(5, stage);
+      if (!snapshot.workflow) throw new Error("Missing workflow");
+      snapshot.workflow.notes_barrier = "terminal-barrier";
+      vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
+      await ready();
+      await screen.findByRole("region", { name: "Session processing" });
+      expect(api.acknowledgeProcessingNotes).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText(/Automatic summary waits for saved notes/),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("button", {
+          name: "Save notes and continue processing",
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("does not freeze notes or show summary waiting for final transcription without summary consent", async () => {
+    const snapshot = sessionSnapshot(5, "transcribing");
+    snapshot.plan = {
+      ...sessionPlan,
+      scope: {
+        kind: "final",
+        live: false,
+        speech: sessionPlan.scope.speech,
+        summary: null,
+      },
+    };
+    if (!snapshot.workflow) throw new Error("Missing workflow");
+    snapshot.workflow.notes_barrier = "speech-only-barrier";
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
+    await ready();
+    await screen.findByRole("region", { name: "Session processing" });
+    expect(api.acknowledgeProcessingNotes).not.toHaveBeenCalled();
+    expect(
+      screen.queryByText(/Automatic summary waits for saved notes/),
+    ).toBeNull();
+  });
+
+  it("acknowledges a tray stop without flushing another meeting's editor", async () => {
+    const other = {
+      ...sample,
+      meeting: { ...sample.meeting, id: "other", title: "Another note" },
+      user_markdown: "Other notes",
+      notes_revision: 4,
+    };
+    vi.mocked(api.listMeetings).mockResolvedValue([
+      sample.meeting,
+      other.meeting,
+    ]);
+    vi.mocked(api.getMeeting).mockImplementation(async (id) =>
+      id === "other" ? other : { ...sample, notes_revision: 9 },
+    );
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: /Another note/ }));
+    await screen.findByDisplayValue("Other notes");
+    const awaiting = sessionSnapshot(2, "awaiting_notes");
+    if (!awaiting.workflow) throw new Error("Missing workflow");
+    awaiting.workflow.notes_barrier = "tray-stop";
+    vi.mocked(api.getSessionProcessing).mockImplementation(async (id) =>
+      id === "sample" ? awaiting : null,
+    );
+    vi.mocked(api.acknowledgeProcessingNotes).mockImplementation(async () => {
+      expect(api.saveNotes).not.toHaveBeenCalled();
+      return {
+        ...awaiting,
+        revision: 3,
+        workflow: awaiting.workflow && {
+          ...awaiting.workflow,
+          notes_revision: 9,
+        },
+      };
+    });
+    fireEvent.change(screen.getByDisplayValue("Other notes"), {
+      target: { value: "Keep this draft" },
+    });
+    act(() =>
+      vi.mocked(api.onRecordingState).mock.calls[0]?.[0]({
+        revision: 5,
+        status: "stopped",
+        meeting_id: "sample",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: 1000,
+      }),
+    );
+    await waitFor(() =>
+      expect(api.acknowledgeProcessingNotes).toHaveBeenCalledWith(
+        "sample",
+        "run",
+        "tray-stop",
+        9,
+      ),
+    );
+    expect(screen.getByDisplayValue("Keep this draft")).toBeTruthy();
+  });
+
+  it.each([
+    ["live", { kind: "live_only" }],
+    ["final", { kind: "final", live: false, summary: null }],
+    ["both", { kind: "final", live: true, summary: null }],
+  ])(
+    "starts %s only with the reviewed processing fingerprint",
+    async (mode, request) => {
+      vi.mocked(api.prepareSessionProcessing).mockResolvedValue({
+        ...sessionPlan,
+        scope:
+          request.kind === "live_only"
+            ? { kind: "live_only", speech: sessionPlan.scope.speech }
+            : {
+                kind: "final",
+                live: mode === "both",
+                summary: null,
+                speech: sessionPlan.scope.speech,
+              },
+      });
+      vi.mocked(api.startCapture).mockResolvedValue({
+        revision: 1,
+        status: "recording",
+        meeting_id: "sample",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: 0,
+      });
+      await ready();
+      await userEvent.click(
+        screen.getByRole("button", { name: "New recording" }),
+      );
+      await userEvent.selectOptions(
+        screen.getByLabelText("Automatic processing"),
+        mode,
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Review processing" }),
+      );
+      expect(api.prepareSessionProcessing).toHaveBeenCalledWith(request);
+      await userEvent.click(
+        await screen.findByLabelText(
+          "I authorize this processing scope and these destinations and limits.",
+        ),
+      );
+      expect(
+        screen.getByRole("button", { name: "Start recording" }),
+      ).toHaveProperty("disabled", true);
+      await userEvent.click(
+        screen.getByLabelText(/I have informed participants/),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Start recording" }),
+      );
+      await waitFor(() =>
+        expect(api.startCapture).toHaveBeenCalledWith(
+          "Untitled meeting",
+          true,
+          { microphoneId: "mic", outputId: "out" },
+          "session-consent",
+        ),
+      );
+    },
+  );
+
+  it("requires separate reviewed future-content consent and invalidates it when scope changes", async () => {
+    vi.mocked(api.prepareSessionProcessing).mockResolvedValue(sessionPlan);
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
+    );
+    expect(screen.getByLabelText("Automatic processing")).toHaveProperty(
+      "value",
+      "recording",
+    );
+    await userEvent.click(screen.getByRole("checkbox"));
+    await userEvent.selectOptions(
+      screen.getByLabelText("Automatic processing"),
+      "both",
+    );
+    await userEvent.selectOptions(
+      screen.getByLabelText("Automatic summary"),
+      "general-v1",
+    );
+    const start = screen.getByRole("button", { name: "Start recording" });
+    expect(start).toHaveProperty("disabled", true);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review processing" }),
+    );
+    expect(api.prepareSessionProcessing).toHaveBeenCalledWith({
+      kind: "final",
+      live: true,
+      summary: "general-v1",
+    });
+    await screen.findByText(/https:\/\/summary.example/);
+    expect(screen.getByText(/UTF-8 text bytes/)).toBeTruthy();
+    expect(start).toHaveProperty("disabled", true);
+    await userEvent.click(
+      screen.getByLabelText(
+        "I authorize this processing scope and these destinations and limits.",
+      ),
+    );
+    expect(start).toHaveProperty("disabled", false);
+    await userEvent.selectOptions(
+      screen.getByLabelText("Automatic processing"),
+      "live",
+    );
+    expect(start).toHaveProperty("disabled", true);
+    expect(screen.queryByLabelText("Processing review")).toBeNull();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review processing" }),
+    );
+    expect(api.prepareSessionProcessing).toHaveBeenLastCalledWith({
+      kind: "live_only",
+    });
+    expect(api.startCapture).not.toHaveBeenCalled();
+  });
+
+  it("keeps failed note drafts and acknowledges the saved revision only on explicit retry", async () => {
+    const awaiting = sessionSnapshot(2, "awaiting_notes");
+    if (!awaiting.workflow) throw new Error("Missing workflow");
+    awaiting.workflow.notes_barrier = "stop-barrier";
+    vi.mocked(api.saveNotes).mockRejectedValue(new Error("disk full"));
+    vi.mocked(api.acknowledgeProcessingNotes).mockResolvedValue({
+      ...awaiting,
+      revision: 3,
+      workflow: { ...awaiting.workflow, notes_revision: 7 },
+    });
+    await ready();
+    fireEvent.change(screen.getByDisplayValue("Original notes"), {
+      target: { value: "Unsaved private draft" },
+    });
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(awaiting);
+    act(() =>
+      vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](awaiting),
+    );
+    await screen.findByText(/Notes acknowledgement failed: disk full/);
+    expect(api.acknowledgeProcessingNotes).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("Unsaved private draft")).toBeTruthy();
+    vi.mocked(api.saveNotes).mockResolvedValue(7);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Save notes and continue processing",
+      }),
+    );
+    await waitFor(() =>
+      expect(api.acknowledgeProcessingNotes).toHaveBeenCalledWith(
+        "sample",
+        "run",
+        "stop-barrier",
+        7,
+      ),
+    );
+    expect(screen.getByDisplayValue("Unsaved private draft")).toBeTruthy();
+  });
+
+  it("rejects stale and other-meeting live snapshots, deduplicates and bounds provisional rows", async () => {
+    const current = sessionSnapshot(5);
+    if (!current.workflow) throw new Error("Missing workflow");
+    current.workflow.provisional = Array.from({ length: 205 }, (_, index) => ({
+      id: `run:mic:${index}`,
+      chunk_id: index,
+      segment: {
+        speaker: "You",
+        timing: { kind: "untimed" },
+        text: `Live word ${index}`,
+      },
+    }));
+    current.workflow.provisional[204].segment.timing = {
+      kind: "timed",
+      start_ms: 123000,
+      end_ms: 124000,
+    };
+    current.workflow.provisional.push(current.workflow.provisional[204]);
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(current);
+    await ready();
+    await screen.findByText("Live word 204");
+    expect(screen.queryByText("Live word 0")).toBeNull();
+    expect(screen.getAllByText("Live word 204")).toHaveLength(1);
+    expect(
+      screen.getByText("Live word 204").parentElement?.textContent,
+    ).toContain("[02:03] You: Live word 204");
+    expect(
+      screen.getByText("Live word 203").parentElement?.textContent,
+    ).toContain("[Untimed]");
+    const stale = sessionSnapshot(3, "failed");
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(stale);
+    act(() =>
+      vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](stale),
+    );
+    await waitFor(() =>
+      expect(api.getSessionProcessing).toHaveBeenCalledTimes(2),
+    );
+    expect(screen.getByText("Live word 204")).toBeTruthy();
+    const other = { ...sessionSnapshot(9, "completed"), meeting_id: "other" };
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(other);
+    act(() =>
+      vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](other),
+    );
+    await waitFor(() =>
+      expect(api.getSessionProcessing).toHaveBeenCalledWith("other"),
+    );
+    expect(screen.getByText("Live word 204")).toBeTruthy();
+  });
+
+  it("cancels the exact revision and requires a new review before retry", async () => {
+    const current = sessionSnapshot(5);
+    const cancelled = {
+      ...sessionSnapshot(6, "cancelled"),
+      state: "cancelled" as const,
+    };
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(current);
+    vi.mocked(api.cancelSessionProcessing).mockResolvedValue(cancelled);
+    vi.mocked(api.prepareSessionRetry).mockResolvedValue({
+      ...sessionPlan,
+      meeting_id: "sample",
+      fingerprint: "retry-consent",
+    });
+    vi.mocked(api.retrySessionProcessing).mockResolvedValue(
+      sessionSnapshot(7, "transcribing"),
+    );
+    await ready();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Cancel session processing" }),
+    );
+    expect(api.cancelSessionProcessing).toHaveBeenCalledWith("sample", 5);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Review processing retry" }),
+    );
+    const retry = await screen.findByRole("button", {
+      name: "Confirm processing retry",
+    });
+    expect(
+      screen.getByText(/This authorizes processing the existing recording/),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(/This authorizes future recorded audio/),
+    ).toBeNull();
+    expect(retry).toHaveProperty("disabled", true);
+    await userEvent.click(
+      screen.getByLabelText(
+        "I authorize this processing scope and these destinations and limits.",
+      ),
+    );
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(
+      sessionSnapshot(7, "transcribing"),
+    );
+    await userEvent.click(retry);
+    await waitFor(() =>
+      expect(api.retrySessionProcessing).toHaveBeenCalledWith(
+        "sample",
+        "retry-consent",
+      ),
+    );
+    expect(api.startCapture).not.toHaveBeenCalled();
   });
 });
 

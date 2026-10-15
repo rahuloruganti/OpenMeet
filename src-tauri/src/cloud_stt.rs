@@ -388,6 +388,7 @@ fn parse_response(bytes: &[u8], track: &PreparedTrack, chunk: &Chunk) -> Result<
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn transcribe(
     connection: &Connection,
     tracks: &[Track],
@@ -396,6 +397,7 @@ pub fn transcribe(
     plan: &CloudPlan,
     cancel: &AtomicBool,
     mut report: impl FnMut(&str, u8),
+    mut before_request: impl FnMut(&str, u64) -> Result<()>,
 ) -> Result<Vec<Segment>> {
     cancelled(cancel)?;
     if serde_json::to_vec(tracks).map_err(|_| changed())? != plan.input {
@@ -442,6 +444,14 @@ pub fn transcribe(
             if !prompt.trim().is_empty() {
                 form = form.text("prompt", prompt.trim().to_string());
             }
+            cancelled(cancel)?;
+            let identity = serde_json::to_vec(&(chunk.digest, model, language, prompt.trim()))
+                .map_err(|_| changed())?;
+            let fingerprint: String = Sha256::digest(identity)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            before_request(&fingerprint, chunk.bytes)?;
             cancelled(cancel)?;
             let response = crate::providers::authorize(http.post(url.clone()), connection.key())
                 .multipart(form)
@@ -567,6 +577,62 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn authorization_denial_or_cancellation_never_opens_http_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let tracks = [synthetic(dir.path(), "mic", 1600)];
+        let plan = plan(&tracks).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let connection = Connection::for_test(
+            &format!("http://{}/v1", listener.local_addr().unwrap()),
+            "fictional",
+        );
+        let cancel = AtomicBool::new(false);
+        let mut authorized = None;
+        let error = transcribe(
+            &connection,
+            &tracks,
+            "auto",
+            "",
+            &plan,
+            &cancel,
+            |_, _| {},
+            |digest, bytes| {
+                authorized = Some((digest.to_string(), bytes));
+                Err(AppError::new("denied", "Denied"))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "denied");
+        let (digest, bytes) = authorized.unwrap();
+        assert_eq!(digest.len(), 64);
+        assert_eq!(bytes, plan.bytes);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        let error = transcribe(
+            &connection,
+            &tracks,
+            "auto",
+            "",
+            &plan,
+            &cancel,
+            |_, _| {},
+            |_, _| {
+                cancel.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "stt_cancelled");
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
     fn chunks_are_bounded_split_pauses_and_fingerprint_frozen_audio() {
         let dir = tempfile::tempdir().unwrap();
         let track = synthetic(dir.path(), "mic", 32000);
@@ -619,6 +685,7 @@ pub(crate) mod tests {
             &plan,
             &AtomicBool::new(false),
             |_, _| {},
+            |_, _| Ok(()),
         )
         .unwrap();
         worker.join().unwrap();
@@ -658,6 +725,7 @@ pub(crate) mod tests {
                     cancel.store(true, Ordering::SeqCst);
                 }
             },
+            |_, _| Ok(()),
         );
         worker.join().unwrap();
         assert_eq!(result.unwrap_err().code, "stt_cancelled");
@@ -667,9 +735,18 @@ pub(crate) mod tests {
         );
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(
-            transcribe(&connection, &tracks, "auto", "", &plan, &cancel, |_, _| {})
-                .unwrap_err()
-                .code,
+            transcribe(
+                &connection,
+                &tracks,
+                "auto",
+                "",
+                &plan,
+                &cancel,
+                |_, _| {},
+                |_, _| Ok(()),
+            )
+            .unwrap_err()
+            .code,
             "stt_cancelled"
         );
     }
