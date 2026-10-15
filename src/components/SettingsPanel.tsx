@@ -1,11 +1,22 @@
-import type { Ref } from "react";
+import { useState, type Ref } from "react";
 import type {
   ExportOptions,
-  MergeModel,
+  KeyStatus,
+  ProviderRole,
   Settings,
   SttDownloadProgress,
   SttStatus,
 } from "../lib/api";
+import { ProviderSettings } from "./ProviderSettings";
+import { SpeechModels } from "./SpeechModels";
+
+const tabs = [
+  { id: "speech", label: "Speech to text" },
+  { id: "summaries", label: "Summaries" },
+  { id: "automatic", label: "Automatic processing" },
+  { id: "general", label: "General" },
+] as const;
+type TabId = (typeof tabs)[number]["id"];
 
 export type SttDraft = Pick<
   Settings,
@@ -31,14 +42,10 @@ type Props = {
   sttProgress: SttDownloadProgress | null;
   installing: boolean;
   onInstallStt: () => void;
-  mergeKey: boolean | null;
-  mergeModel: string;
-  mergeModels: MergeModel[] | null;
-  onMergeModel: (value: string) => void;
-  onImportKey: () => void;
-  onDeleteKey: () => void;
-  onRefreshMerge: () => void;
-  onSaveMerge: () => void;
+  keyStatus: Record<ProviderRole, KeyStatus>;
+  onSettings: (settings: Settings) => void;
+  onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
+  onSttMode: (mode: Settings["stt_mode"]) => void;
   onShortcut: (value: string) => void;
   onClose: () => void;
   onChooseFolder: () => void;
@@ -49,12 +56,13 @@ type Props = {
   sttDraft: SttDraft;
   onStt: (change: Partial<SttDraft>) => void;
   onSaveStt: () => void;
+  onSttStatus: (status: SttStatus) => void;
+  onAutoTranscribe: (enabled: boolean) => void;
 };
 
 export function SettingsPanel(props: Props) {
   const { settings, disabled } = props;
-  const { mergeKey, mergeModel, mergeModels } = props;
-  const mergeSelectable = mergeModels?.find((m) => m.model === mergeModel);
+  const [tab, setTab] = useState<TabId>("speech");
   return (
     <section
       className="workspace-panel settings"
@@ -70,290 +78,312 @@ export function SettingsPanel(props: Props) {
         </button>
       </div>
       <p className="panel-description">Make OpenMeet work the way you do.</p>
+      <div
+        className="content-tabs"
+        role="tablist"
+        aria-label="Settings sections"
+      >
+        {tabs.map((item) => (
+          <button
+            key={item.id}
+            role="tab"
+            aria-selected={tab === item.id}
+            tabIndex={tab === item.id ? 0 : -1}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
       <div className="settings-grid">
-        <section
-          className="settings-section"
-          aria-label="Transcription settings"
-        >
-          <h3>Speech to text (local)</h3>
-          <p>
-            <strong>
-              {!props.stt
-                ? "Status unavailable"
-                : !props.stt.supported
-                  ? "Not supported on this platform yet"
-                  : props.stt.installed
-                    ? "Installed and verified"
-                    : "Not installed"}
-            </strong>
-          </p>
-          <p className="muted">
-            Transcribe on your computer with Whisper. Audio stays here.
-            Available on Windows x64.
-          </p>
-          <details className="help-details">
-            <summary>About model downloads</summary>
-            <p>
-              Whisper and Silero models come from huggingface.co; the engine
-              comes from github.com. Downloads are checked against pinned
-              SHA-256 checksums. Switching models keeps existing downloads.
-            </p>
-          </details>
-          <label>
-            Speech model
-            <select
-              value={props.sttDraft.stt_model}
-              disabled={disabled}
-              onChange={(event) =>
-                props.onStt({ stt_model: event.target.value })
-              }
-            >
-              {props.stt?.models.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.id} ({mb(item.size)} MB
-                  {item.installed ? ", downloaded" : ""})
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Spoken language
-            <select
-              value={props.sttDraft.stt_language}
-              disabled={disabled}
-              onChange={(event) =>
-                props.onStt({ stt_language: event.target.value })
-              }
-            >
-              {props.stt?.languages.map((code) => (
-                <option key={code} value={code}>
-                  {languageName(code)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Vocabulary hint (names, jargon; optional)
-            <input
-              value={props.sttDraft.stt_prompt}
-              disabled={disabled}
-              maxLength={500}
-              placeholder="e.g. Priya, Okta, Kubernetes"
-              onChange={(event) =>
-                props.onStt({ stt_prompt: event.target.value })
-              }
-            />
-          </label>
-          <button disabled={disabled || !props.stt} onClick={props.onSaveStt}>
-            Save transcription settings
-          </button>
-          {props.sttProgress && (
-            <p role="status">
-              Downloading {props.sttProgress.stage}:{" "}
-              {mb(props.sttProgress.downloaded)} / {mb(props.sttProgress.total)}{" "}
-              MB
-            </p>
-          )}
-          <button
-            disabled={
-              disabled ||
-              props.installing ||
-              !props.stt?.supported ||
-              props.stt.installed
-            }
-            onClick={props.onInstallStt}
+        {tab === "speech" && (
+          <section
+            className="settings-section"
+            aria-label="Transcription settings"
           >
-            {props.stt?.installed
-              ? "Speech engine installed"
-              : `Download speech engine and models (≈ ${mb(props.stt?.missing_bytes ?? 0)} MB)`}
-          </button>
-        </section>
-        <section className="settings-section" aria-label="Summary settings">
-          <h3>Merge Gateway</h3>
-          <p>
-            <strong>
-              {mergeKey === null
-                ? "API key status unavailable"
-                : mergeKey
-                  ? "API key saved in the OS keychain"
-                  : "No API key saved"}
-            </strong>
-          </p>
-          <p className="muted">
-            Summaries and meeting questions use Merge. Each send asks for your
-            confirmation. Audio is never sent.
-          </p>
-          <details className="help-details">
-            <summary>Key setup & privacy</summary>
-            <p className="muted">
-              The key is imported from the OPENMEET_LLM_API_KEY environment
-              variable by the desktop backend and stored in the OS keychain; it
-              never enters this window. Set the variable before starting
-              OpenMeet. Connecting sends only your API key to
-              api-gateway.merge.dev to list models; no meeting content is sent.
-              Notes and transcript text are sent only when you confirm a summary
-              or question for a meeting. Audio is never sent.
-            </p>
-          </details>
-          <div className="panel-actions">
-            <button disabled={disabled} onClick={props.onImportKey}>
-              Import key from environment
-            </button>
-            <button
-              disabled={disabled || !mergeKey}
-              onClick={props.onDeleteKey}
-            >
-              Remove saved key
-            </button>
-          </div>
-          <button
-            disabled={disabled || !mergeKey}
-            onClick={props.onRefreshMerge}
-          >
-            Connect / refresh Merge models
-          </button>
-          {mergeModels === null && (
-            <p className="muted">Merge models not fetched.</p>
-          )}
-          {mergeModels?.length === 0 && (
-            <p role="status">Merge returned no models for this key.</p>
-          )}
-          <label>
-            Merge model
-            <select
-              value={mergeModel}
-              disabled={disabled || !mergeModels?.length}
-              onChange={(event) => props.onMergeModel(event.target.value)}
-            >
-              <option value="">Select a Merge model</option>
-              {mergeModel && !mergeSelectable && (
-                <option value={mergeModel} disabled>
-                  {mergeModel} (
-                  {mergeModels === null ? "not checked" : "unavailable"})
-                </option>
-              )}
-              {mergeModels?.map((item) => (
-                <option
-                  key={item.model}
-                  value={item.model}
-                  disabled={!item.available}
-                >
-                  {item.display_name ?? item.model}
-                  {item.available
-                    ? ""
-                    : ` (unavailable: ${item.unavailable_reason ?? "unknown"})`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <p>Saved Merge model: {settings?.merge_model ?? "Not selected"}</p>
-          <button
-            disabled={disabled || !mergeSelectable?.available}
-            onClick={props.onSaveMerge}
-          >
-            Save Merge model
-          </button>
-        </section>
-        <section
-          className="settings-section"
-          aria-label="Storage and export settings"
-        >
-          <h3>Storage & export</h3>
-          <p className="muted">
-            Notes and audio are stored on this device, unencrypted. Exported
-            snapshots keep your earlier files intact.
-          </p>
-          <label>
-            Export folder
-            <output>{settings?.vault_folder ?? "Not selected"}</output>
-          </label>
-          <button disabled={disabled} onClick={props.onChooseFolder}>
-            Choose export folder
-          </button>
-        </section>
-        <section className="settings-section" aria-label="Keyboard shortcuts">
-          <h3>Keyboard shortcuts</h3>
-          <label>
-            Pause / resume shortcut
-            <input
-              value={props.shortcut}
-              disabled={disabled}
-              onChange={(event) => props.onShortcut(event.target.value)}
-              placeholder="CommandOrControl+Shift+Space"
-            />
-          </label>
-          <label>
-            Stop recording shortcut (optional)
-            <input
-              value={props.stopShortcut}
-              disabled={disabled}
-              onChange={(event) => props.onStopShortcut(event.target.value)}
-              placeholder="Leave empty for none"
-            />
-          </label>
-          <p className="muted">
-            There is no shortcut to start recording: starting always goes
-            through setup and consent.
-          </p>
-          <button
-            disabled={disabled || !props.shortcut.trim()}
-            onClick={props.onSaveShortcut}
-          >
-            Save shortcuts
-          </button>
-        </section>
-        {settings && (
-          <fieldset
-            className="export-options settings-section"
-            disabled={disabled}
-          >
-            <legend>Markdown export</legend>
+            <h3>Speech to text</h3>
             <label>
-              <input
-                type="checkbox"
-                checked={settings.export.summary}
-                onChange={(event) =>
-                  props.onExportOptions({
-                    ...settings.export,
-                    summary: event.target.checked,
-                  })
-                }
-              />
-              Include summary
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={settings.export.transcript}
-                onChange={(event) =>
-                  props.onExportOptions({
-                    ...settings.export,
-                    transcript: event.target.checked,
-                  })
-                }
-              />
-              Include transcript
-            </label>
-            <label>
-              File name
+              Transcription mode
               <select
-                value={settings.export.filename}
+                value={settings?.stt_mode ?? "local"}
+                disabled={disabled}
                 onChange={(event) =>
-                  props.onExportOptions({
-                    ...settings.export,
-                    filename: event.target.value as ExportOptions["filename"],
-                  })
+                  props.onSttMode(
+                    event.target.value === "cloud" ? "cloud" : "local",
+                  )
                 }
               >
-                <option value="title">Meeting title</option>
-                <option value="date_title">Date, then meeting title</option>
+                <option value="local">Local Whisper</option>
+                <option value="cloud">Cloud API</option>
               </select>
             </label>
+            {settings?.stt_mode === "cloud" ? (
+              <>
+                <p className="muted">
+                  Audio is uploaded to your selected provider after
+                  confirmation. Local model downloads are not required. Some
+                  models return text without timestamps.
+                </p>
+                <ProviderSettings
+                  role="cloud_stt"
+                  config={settings.cloud_stt}
+                  keyStatus={props.keyStatus.cloud_stt}
+                  disabled={disabled}
+                  onSaved={props.onSettings}
+                  onKeyStatus={props.onKeyStatus}
+                />
+              </>
+            ) : (
+              <>
+                <p className="muted">Audio stays on this device.</p>
+                <p>
+                  <strong>
+                    {!props.stt
+                      ? "Status unavailable"
+                      : !props.stt.supported
+                        ? "Not supported on this platform yet"
+                        : props.stt.installed
+                          ? "Installed and verified"
+                          : "Not installed"}
+                  </strong>
+                </p>
+                <p className="muted">
+                  Transcribe on your computer with Whisper. Audio stays here.
+                  Available on Windows x64.
+                </p>
+                <details className="help-details">
+                  <summary>About model downloads</summary>
+                  <p>
+                    Whisper and Silero models come from huggingface.co; the
+                    engine comes from github.com. Downloads are checked against
+                    pinned SHA-256 checksums. Switching models keeps existing
+                    downloads.
+                  </p>
+                </details>
+                <SpeechModels
+                  stt={props.stt}
+                  selected={props.sttDraft.stt_model}
+                  disabled={disabled}
+                  onSelect={(id) => props.onStt({ stt_model: id })}
+                  onStatus={props.onSttStatus}
+                />
+              </>
+            )}
+            <label>
+              Spoken language
+              <select
+                value={props.sttDraft.stt_language}
+                disabled={disabled}
+                onChange={(event) =>
+                  props.onStt({ stt_language: event.target.value })
+                }
+              >
+                {(props.stt?.languages ?? [props.sttDraft.stt_language]).map(
+                  (code) => (
+                    <option key={code} value={code}>
+                      {languageName(code)}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+            <label>
+              Vocabulary hint (names, jargon; optional)
+              <input
+                value={props.sttDraft.stt_prompt}
+                disabled={disabled}
+                maxLength={500}
+                placeholder="e.g. Priya, Okta, Kubernetes"
+                onChange={(event) =>
+                  props.onStt({ stt_prompt: event.target.value })
+                }
+              />
+            </label>
+            <button disabled={disabled} onClick={props.onSaveStt}>
+              Save transcription settings
+            </button>
+            {settings?.stt_mode !== "cloud" && (
+              <>
+                {props.sttProgress && (
+                  <p role="status">
+                    Downloading {props.sttProgress.stage}:{" "}
+                    {mb(props.sttProgress.downloaded)} /{" "}
+                    {mb(props.sttProgress.total)} MB
+                  </p>
+                )}
+                <button
+                  disabled={
+                    disabled ||
+                    props.installing ||
+                    !props.stt?.supported ||
+                    props.stt.installed
+                  }
+                  onClick={props.onInstallStt}
+                >
+                  {props.stt?.installed
+                    ? "Speech engine installed"
+                    : `Download speech engine and models (≈ ${mb(props.stt?.missing_bytes ?? 0)} MB)`}
+                </button>
+              </>
+            )}
+          </section>
+        )}
+        {tab === "summaries" && (
+          <section className="settings-section" aria-label="Summary settings">
+            <ProviderSettings
+              role="llm"
+              config={settings?.llm ?? null}
+              keyStatus={props.keyStatus.llm}
+              disabled={disabled}
+              onSaved={props.onSettings}
+              onKeyStatus={props.onKeyStatus}
+            />
+          </section>
+        )}
+        {tab === "automatic" && (
+          <section
+            className="settings-section"
+            aria-label="Automatic processing"
+          >
+            <h3>Automatic processing</h3>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={settings?.auto_transcribe ?? false}
+                disabled={
+                  disabled || !settings || settings.stt_mode === "cloud"
+                }
+                onChange={(event) =>
+                  props.onAutoTranscribe(event.target.checked)
+                }
+              />
+              <span>Transcribe on this device when a recording stops</span>
+            </label>
             <p className="muted">
-              Applies to new exports. Earlier snapshots are never renamed or
-              overwritten.
+              Uses the local speech model chosen under Speech to text. Audio
+              stays on this device and the previous transcript is kept if a run
+              fails.
             </p>
-          </fieldset>
+            {settings?.stt_mode === "cloud" && (
+              <p className="muted">
+                Not available with cloud transcription: uploading audio always
+                needs your confirmation for each recording.
+              </p>
+            )}
+            <p className="muted">
+              Summaries are never sent automatically. Use Enhance notes on a
+              meeting to review and confirm what is sent to your provider.
+            </p>
+          </section>
+        )}
+        {tab === "general" && (
+          <>
+            <section
+              className="settings-section"
+              aria-label="Storage and export settings"
+            >
+              <h3>Storage & export</h3>
+              <p className="muted">
+                Notes and audio are stored on this device, unencrypted. Exported
+                snapshots keep your earlier files intact.
+              </p>
+              <label>
+                Export folder
+                <output>{settings?.vault_folder ?? "Not selected"}</output>
+              </label>
+              <button disabled={disabled} onClick={props.onChooseFolder}>
+                Choose export folder
+              </button>
+            </section>
+            <section
+              className="settings-section"
+              aria-label="Keyboard shortcuts"
+            >
+              <h3>Keyboard shortcuts</h3>
+              <label>
+                Pause / resume shortcut
+                <input
+                  value={props.shortcut}
+                  disabled={disabled}
+                  onChange={(event) => props.onShortcut(event.target.value)}
+                  placeholder="CommandOrControl+Shift+Space"
+                />
+              </label>
+              <label>
+                Stop recording shortcut (optional)
+                <input
+                  value={props.stopShortcut}
+                  disabled={disabled}
+                  onChange={(event) => props.onStopShortcut(event.target.value)}
+                  placeholder="Leave empty for none"
+                />
+              </label>
+              <p className="muted">
+                There is no shortcut to start recording: starting always goes
+                through setup and consent.
+              </p>
+              <button
+                disabled={disabled || !props.shortcut.trim()}
+                onClick={props.onSaveShortcut}
+              >
+                Save shortcuts
+              </button>
+            </section>
+            {settings && (
+              <fieldset
+                className="export-options settings-section"
+                disabled={disabled}
+              >
+                <legend>Markdown export</legend>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.export.summary}
+                    onChange={(event) =>
+                      props.onExportOptions({
+                        ...settings.export,
+                        summary: event.target.checked,
+                      })
+                    }
+                  />
+                  Include summary
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.export.transcript}
+                    onChange={(event) =>
+                      props.onExportOptions({
+                        ...settings.export,
+                        transcript: event.target.checked,
+                      })
+                    }
+                  />
+                  Include transcript
+                </label>
+                <label>
+                  File name
+                  <select
+                    value={settings.export.filename}
+                    onChange={(event) =>
+                      props.onExportOptions({
+                        ...settings.export,
+                        filename: event.target
+                          .value as ExportOptions["filename"],
+                      })
+                    }
+                  >
+                    <option value="title">Meeting title</option>
+                    <option value="date_title">Date, then meeting title</option>
+                  </select>
+                </label>
+                <p className="muted">
+                  Applies to new exports. Earlier snapshots are never renamed or
+                  overwritten.
+                </p>
+              </fieldset>
+            )}
+          </>
         )}
       </div>
     </section>

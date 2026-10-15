@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   errorMessage,
+  isLocalBase,
   type Meeting,
   type MeetingDetail,
-  type MergeModel,
+  type KeyStatus,
+  type ProviderRole,
+  type ProcessingPlan,
   type SttDownloadProgress,
   type SttStatus,
   type AudioDevices,
@@ -72,9 +75,26 @@ export function App() {
     Record<string, number>
   >({});
   const [job, setJob] = useState<string | null>(null);
-  const [mergeKey, setMergeKey] = useState<boolean | null>(null);
-  const [mergeModel, setMergeModel] = useState("");
-  const [mergeModels, setMergeModels] = useState<MergeModel[] | null>(null);
+  const [keyStatus, setKeyStatus] = useState<Record<ProviderRole, KeyStatus>>({
+    llm: "missing",
+    cloud_stt: "missing",
+  });
+  const keyStatusVersion = useRef<Record<ProviderRole, number>>({
+    llm: 0,
+    cloud_stt: 0,
+  });
+  const updateKeyStatus = useCallback(
+    (role: ProviderRole, status: KeyStatus) => {
+      keyStatusVersion.current[role] += 1;
+      setKeyStatus((previous) => ({ ...previous, [role]: status }));
+    },
+    [],
+  );
+  const sttStatusVersion = useRef(0);
+  const updateStt = useCallback((status: SttStatus | null) => {
+    sttStatusVersion.current += 1;
+    setStt(status);
+  }, []);
   const [title, setTitle] = useState("Untitled meeting");
   const [consent, setConsent] = useState(false);
   const [devices, setDevices] = useState<AudioDevices | null>(null);
@@ -86,6 +106,7 @@ export function App() {
   const panelRef = useRef<HTMLElement | null>(null);
   const panelTrigger = useRef<HTMLButtonElement | null>(null);
   const listRequest = useRef(0);
+  const detailRequest = useRef(0);
   const jobRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const [hits, setHits] = useState<SearchHit[]>([]);
@@ -128,6 +149,13 @@ export function App() {
     setSelected(detail);
   }, []);
 
+  const refreshMeeting = useCallback(async (id: string) => {
+    const request = ++detailRequest.current;
+    const detail = await api.getMeeting(id);
+    if (selectedIdRef.current === id && request === detailRequest.current)
+      setSelected(detail);
+  }, []);
+
   // One in-flight task per lock; `mark` mirrors the lock into render state.
   const guard = useCallback(
     async (
@@ -165,17 +193,40 @@ export function App() {
     guard(controlBusyRef, setControlBusy, task, true);
   // Long local/remote jobs use their own flag so notes stay editable and recording controls stay live.
   const runJob = (kind: string, task: () => Promise<void>) =>
-    guard(jobRef, (on) => setJob(on ? kind : null), task);
+    guard(
+      jobRef,
+      (on) => {
+        if (on && kind === "transcribe") setTranscribeProgress({});
+        setJob(on ? kind : null);
+      },
+      task,
+    );
   const finishJob = async (id: string) => {
     await refreshList();
     // Do not yank the user back if they moved to another meeting meanwhile.
-    if (selectedIdRef.current === id) await openMeeting(id);
+    if (selectedIdRef.current === id) await refreshMeeting(id);
   };
+
+  useEffect(() => {
+    const id = recording.meeting_id;
+    if (recording.status !== "stopped" || !id || selectedIdRef.current !== id)
+      return;
+    void refreshMeeting(id).catch((failure: unknown) =>
+      setError(errorMessage(failure)),
+    );
+  }, [recording, refreshMeeting]);
 
   useEffect(() => {
     if (!desktop) return;
     let disposed = false;
     const listeners: (() => void)[] = [];
+    const autoJob = { current: false };
+    const endAutoJob = () => {
+      if (!autoJob.current) return;
+      autoJob.current = false;
+      setJob(null);
+      setTranscribeProgress({});
+    };
     const register = async (subscription: Promise<() => void>) => {
       const unlisten = await subscription;
       if (disposed) unlisten();
@@ -186,50 +237,81 @@ export function App() {
       await register(api.onRecordingState(updateRecording));
       await register(
         api.onMeetingUpdated(() => {
+          endAutoJob();
           void refreshList().catch((failure: unknown) =>
             setError(errorMessage(failure)),
           );
         }),
       );
       await register(api.onCloseRequested(() => setCloseRequested(true)));
-      await register(api.onError(setError));
+      await register(
+        api.onError((message) => {
+          endAutoJob();
+          setError(message);
+        }),
+      );
       await register(api.onAudioHealth(setHealth));
       await register(
         api.onSttProgress((progress) => {
+          // An automatic run started by the backend after Stop: reflect it as the active job.
+          if (progress.stage === "transcribing" && !jobRef.current) {
+            autoJob.current = true;
+            setJob("transcribe");
+          }
           if (progress.stage === "transcribing")
-            setTranscribeProgress((previous) => ({
-              ...previous,
-              [progress.track]: progress.percent,
-            }));
+            setTranscribeProgress((previous) => {
+              const next = { ...previous, [progress.track]: progress.percent };
+              if (progress.track !== "preparing") delete next.preparing;
+              return next;
+            });
           else setSttProgress(progress);
         }),
       );
       if (disposed) return;
-      const [state, preferences, warning, discovered, keyPresent, speech] =
-        await Promise.all([
-          api.getRecordingState(),
-          api.getSettings(),
-          api.getStartupWarning(),
-          api.listDevices(),
-          // A keychain failure must not block startup; the panel shows "unavailable".
-          api.mergeKeyStatus().catch(() => null),
-          api.sttStatus().catch(() => null),
-        ]);
+      const [state, preferences] = await Promise.all([
+        api.getRecordingState(),
+        api.getSettings(),
+      ]);
       if (disposed) return;
       updateRecording(state);
       setSettings(preferences);
       setShortcut(preferences.pause_shortcut);
       setStopShortcut(preferences.stop_shortcut ?? "");
       setSttDraft(preferences);
-      setMergeModel(preferences.merge_model ?? "");
-      setMergeKey(keyPresent ?? null);
-      setStt(speech ?? null);
-      setDevices(discovered);
-      setMicrophone(
-        preferences.microphone_id ?? discovered.microphones[0]?.id ?? "",
-      );
-      setOutput(preferences.output_id ?? discovered.outputs[0]?.id ?? "");
-      if (warning) setError(warning);
+      const speechVersion = sttStatusVersion.current;
+      // Device, credential, and engine discovery must not hold saved notes hostage.
+      void Promise.all([
+        api.getStartupWarning().then((warning) => {
+          if (!disposed && warning) setError(warning);
+        }),
+        api.listDevices().then((discovered) => {
+          if (disposed) return;
+          setDevices(discovered);
+          setMicrophone(
+            preferences.microphone_id ?? discovered.microphones[0]?.id ?? "",
+          );
+          setOutput(preferences.output_id ?? discovered.outputs[0]?.id ?? "");
+        }),
+        ...(["llm", "cloud_stt"] satisfies ProviderRole[]).map((role) => {
+          const version = keyStatusVersion.current[role];
+          return api
+            .providerKeyStatus(role)
+            .catch(() => "unavailable" as const)
+            .then((status) => {
+              if (!disposed && version === keyStatusVersion.current[role])
+                updateKeyStatus(role, status);
+            });
+        }),
+        api
+          .sttStatus()
+          .catch(() => null)
+          .then((speech) => {
+            if (!disposed && speechVersion === sttStatusVersion.current)
+              updateStt(speech);
+          }),
+      ]).catch((failure: unknown) => {
+        if (!disposed) setError(errorMessage(failure));
+      });
       const list = await refreshList();
       if (disposed) return;
       if (list[0]) await openMeeting(list[0].id);
@@ -242,7 +324,14 @@ export function App() {
       for (const unlisten of listeners) unlisten();
       writer.current?.dispose();
     };
-  }, [desktop, openMeeting, refreshList, updateRecording]);
+  }, [
+    desktop,
+    openMeeting,
+    refreshList,
+    updateRecording,
+    updateKeyStatus,
+    updateStt,
+  ]);
 
   useEffect(() => {
     if (job === null) {
@@ -302,6 +391,7 @@ export function App() {
 
   const active =
     recording.status === "recording" || recording.status === "paused";
+  useEffect(() => setHealth(null), [recording.meeting_id, active]);
   const openPanel = (
     next: "setup" | "settings",
     trigger: HTMLButtonElement,
@@ -334,10 +424,10 @@ export function App() {
     notes.trim().length > 0 || (selected?.segments.length ?? 0) > 0;
   const enhanceBlocked = !selected
     ? "Select a meeting first."
-    : mergeKey !== true
-      ? "Import a Merge API key in Settings first."
-      : !settings?.merge_model
-        ? "Choose and save a Merge model in Settings first."
+    : keyStatus.llm !== "present" && !isLocalBase(settings?.llm?.base_url ?? "")
+      ? "Save a summary API key in Settings first."
+      : !settings?.llm?.model
+        ? "Choose and save a summary model in Settings first."
         : !hasSummaryInput
           ? "Add notes or transcribe the audio first."
           : null;
@@ -359,15 +449,6 @@ export function App() {
         onSettings={(trigger) => openPanel("settings", trigger)}
         onOpenMeeting={(id) =>
           void run(async () => {
-            await openMeeting(id);
-            setPanel(null);
-          })
-        }
-        onLoadSample={() =>
-          void run(async () => {
-            await writer.current?.flush();
-            const id = await api.createFixture();
-            await refreshList();
             await openMeeting(id);
             setPanel(null);
           })
@@ -431,11 +512,12 @@ export function App() {
               <span className="preview-tag">Preview</span>
             </summary>
             <div className="privacy-popover">
-              <strong>Your notes stay on this device.</strong>
+              <strong>Your workspace is stored on this device.</strong>
               <p>
-                Recording saves microphone and system audio locally.
-                Transcription runs on this computer. Summaries and questions
-                send text to Merge only after you confirm.
+                Recording saves microphone and system audio locally. Local
+                transcription stays on this computer. Cloud transcription
+                uploads audio, and summaries and questions send text to your
+                selected provider only after you confirm.
               </p>
               <p>
                 Windows capture is not yet qualified. macOS capture is not
@@ -448,8 +530,7 @@ export function App() {
           {!desktop && (
             <p role="alert">
               Open this app with <code>corepack pnpm tauri dev</code>. The
-              browser preview cannot access the desktop database; it does not
-              simulate persistence.
+              browser preview cannot access the desktop database.
             </p>
           )}
           {error && (
@@ -493,7 +574,7 @@ export function App() {
               index.
             </p>
           )}
-          {health?.error && (
+          {active && health?.error && (
             <p className="error" role="alert">
               Audio: {health.error}
             </p>
@@ -528,16 +609,6 @@ export function App() {
                 await refreshList();
               })
             }
-            onStartSimulation={() =>
-              void run(async () => {
-                await writer.current?.flush();
-                const state = await api.start(title);
-                updateRecording(state);
-                setPanel(null);
-                if (state.meeting_id) await openMeeting(state.meeting_id);
-                await refreshList();
-              })
-            }
           />
         )}
         <MeetingWorkspace
@@ -545,16 +616,33 @@ export function App() {
           selected={selected}
           firstRun={ready && meetings.length === 0}
           job={job}
-          speechReady={stt?.installed === true}
+          speechReady={
+            settings?.stt_mode === "cloud"
+              ? (keyStatus.cloud_stt === "present" ||
+                  isLocalBase(settings.cloud_stt?.base_url ?? "")) &&
+                !!settings.cloud_stt?.model
+              : stt?.installed === true
+          }
+          sttMode={settings?.stt_mode ?? "local"}
+          connectionRevision={`${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`}
           enhanceBlocked={enhanceBlocked}
-          mergeModel={settings?.merge_model ?? ""}
-          onTranscribe={() => {
+          onPlanTranscription={async () => {
+            const id = selected?.meeting.id;
+            let plan: ProcessingPlan | null = null;
+            if (!id) return plan;
+            await run(async () => {
+              await writer.current?.flush();
+              plan = await api.planTranscription(id);
+            });
+            return plan;
+          }}
+          onTranscribe={(confirmation) => {
             const id = selected?.meeting.id;
             if (!id) return;
             void runJob("transcribe", async () => {
               await writer.current?.flush();
               try {
-                await api.transcribeMeeting(id);
+                await api.transcribeMeeting(id, confirmation);
               } catch (failure) {
                 const code = (failure as { code?: string } | null)?.code;
                 if (code !== "stt_cancelled") throw failure;
@@ -562,7 +650,7 @@ export function App() {
                 return;
               }
               await finishJob(id);
-              setNotice("Transcript generated locally and saved.");
+              setNotice("Transcript generated and saved.");
             });
           }}
           live={
@@ -574,6 +662,13 @@ export function App() {
           onCancelTranscribe={() =>
             void api
               .cancelTranscription()
+              .then((accepted) =>
+                setNotice(
+                  accepted
+                    ? "Cancellation requested. Audio already uploaded cannot be recalled."
+                    : "Transcription has not started or has already finished.",
+                ),
+              )
               .catch((failure: unknown) => setError(errorMessage(failure)))
           }
           getRecordingOffset={async () => {
@@ -596,38 +691,46 @@ export function App() {
               return null;
             }
           }}
-          onGenerate={(template, requests) => {
+          onGenerate={(template, confirmation) => {
             const id = selected?.meeting.id;
             if (!id) return;
             void runJob("summary", async () => {
               await writer.current?.flush();
-              // Consent is only ever true from the explicit confirmation card.
-              await api.generateSummary(id, true, template, requests);
+              await api.generateSummary(id, template, confirmation);
               await finishJob(id);
               setNotice(
-                "Summary generated and saved. Only notes and transcript text were sent to Merge.",
+                "Summary generated and saved. Only notes and transcript text were sent to your selected provider.",
               );
             });
           }}
           versions={summaryVersions}
-          onPlanSummary={async () => {
+          onPlanSummary={async (template) => {
             const id = selected?.meeting.id;
-            let requests: number | null = null;
-            if (!id) return requests;
+            let plan: ProcessingPlan | null = null;
+            if (!id) return plan;
             await run(async () => {
               await writer.current?.flush();
-              requests = await api.planSummary(id);
+              plan = await api.planSummary(id, template);
             });
-            return requests;
+            return plan;
           }}
           answer={answer}
-          onAsk={(question) => {
+          onPlanQuestion={async (question) => {
+            const id = selected?.meeting.id;
+            let plan: ProcessingPlan | null = null;
+            if (!id) return plan;
+            await run(async () => {
+              await writer.current?.flush();
+              plan = await api.planQuestion(id, question);
+            });
+            return plan;
+          }}
+          onAsk={(question, confirmation) => {
             const id = selected?.meeting.id;
             if (!id) return;
             void runJob("ask", async () => {
               await writer.current?.flush();
-              // Consent is only ever true from the explicit confirmation card.
-              const text = await api.askMeeting(id, question, true);
+              const text = await api.askMeeting(id, question, confirmation);
               if (selectedIdRef.current === id)
                 setAnswer({ meetingId: id, question, text });
             });
@@ -734,47 +837,19 @@ export function App() {
             settings={settings}
             disabled={disabled}
             shortcut={shortcut}
-            mergeKey={mergeKey}
-            mergeModel={mergeModel}
-            mergeModels={mergeModels}
+            keyStatus={keyStatus}
+            onKeyStatus={updateKeyStatus}
+            onSettings={setSettings}
+            onSttMode={(mode) =>
+              void run(async () => setSettings(await api.saveSttMode(mode)))
+            }
             stt={stt}
             sttProgress={sttProgress}
             installing={job !== null}
             onInstallStt={() =>
               void runJob("install", async () => {
-                setStt(await api.sttInstall());
+                updateStt(await api.sttInstall());
                 setNotice("Speech engine and models downloaded and verified.");
-              })
-            }
-            onMergeModel={setMergeModel}
-            onImportKey={() =>
-              void run(async () => {
-                setMergeKey(await api.importMergeKey());
-                setMergeModels(null);
-                setNotice("Merge API key saved to the OS keychain.");
-              })
-            }
-            onDeleteKey={() =>
-              void run(async () => {
-                setMergeKey(await api.deleteMergeKey());
-                setMergeModels(null);
-                setNotice("Merge API key removed from the OS keychain.");
-              })
-            }
-            onRefreshMerge={() =>
-              void run(async () => {
-                setMergeModels(null);
-                setMergeModels(await api.listMergeModels());
-                setNotice(
-                  "Connected to Merge Gateway. Only the API key was sent.",
-                );
-              })
-            }
-            onSaveMerge={() =>
-              void run(async () => {
-                const updated = await api.saveMergeModel(mergeModel);
-                setSettings(updated);
-                setNotice("Merge model selection saved.");
               })
             }
             onShortcut={setShortcut}
@@ -802,6 +877,12 @@ export function App() {
             onStt={(change) =>
               setSttDraft((draft) => ({ ...draft, ...change }))
             }
+            onSttStatus={updateStt}
+            onAutoTranscribe={(enabled) =>
+              void run(async () =>
+                setSettings(await api.saveAutoTranscribe(enabled)),
+              )
+            }
             onSaveStt={() =>
               void run(async () => {
                 const updated = await api.saveSttSettings(
@@ -811,7 +892,7 @@ export function App() {
                 );
                 setSettings(updated);
                 setSttDraft(updated);
-                setStt(await api.sttStatus());
+                updateStt(await api.sttStatus());
                 setNotice("Transcription settings saved.");
               })
             }
@@ -866,8 +947,7 @@ export function App() {
           >
             <h2 id="close-title">Save and quit?</h2>
             <p>
-              Your notes will be saved first. Any active recording or simulation
-              will stop.
+              Your notes will be saved first. Any active recording will stop.
             </p>
             <button
               autoFocus

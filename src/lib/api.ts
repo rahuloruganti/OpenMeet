@@ -1,6 +1,19 @@
 import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+export function isLocalBase(value: string): boolean {
+  try {
+    const host = new URL(value).hostname;
+    return (
+      host === "localhost" ||
+      host === "[::1]" ||
+      /^127\.\d+\.\d+\.\d+$/.test(host)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export type RecordingState = {
   revision: number;
   status: "idle" | "recording" | "paused" | "stopped";
@@ -21,8 +34,8 @@ export type Meeting = {
 };
 export type Segment = {
   speaker: "You" | "Others";
-  start_ms: number;
-  end_ms: number;
+  timing:
+    { kind: "timed"; start_ms: number; end_ms: number } | { kind: "untimed" };
   text: string;
 };
 export type MeetingDetail = {
@@ -33,6 +46,8 @@ export type MeetingDetail = {
   summary: string | null;
   summary_provider: string | null;
   summary_model: string | null;
+  transcript_provider: string | null;
+  transcript_model: string | null;
   tracks: Array<{
     kind: string;
     path: string;
@@ -68,11 +83,14 @@ export type Settings = {
   pause_shortcut: string;
   microphone_id: string | null;
   output_id: string | null;
-  merge_model: string | null;
+  llm: ProviderConfig | null;
+  cloud_stt: ProviderConfig | null;
+  stt_mode: "local" | "cloud";
   stt_language: string;
   stt_prompt: string;
   stt_model: string;
   stop_shortcut: string | null;
+  auto_transcribe: boolean;
   export: ExportOptions;
 };
 export type ExportOptions = {
@@ -80,11 +98,23 @@ export type ExportOptions = {
   summary: boolean;
   filename: "title" | "date_title";
 };
-export type MergeModel = {
+export type ProviderRole = "llm" | "cloud_stt";
+export type ProviderConfig = {
+  base_url: string;
+  model: string | null;
+  revision: number;
+};
+export type ProviderModel = { id: string };
+export type KeyStatus = "present" | "missing" | "unavailable";
+export type KeyChange =
+  { kind: "keep" } | { kind: "replace"; key: string } | { kind: "remove" };
+export type ProcessingPlan = {
+  fingerprint: string;
+  base_url: string;
   model: string;
-  display_name: string | null;
-  available: boolean;
-  unavailable_reason: string | null;
+  requests: number;
+  audio_bytes: number;
+  tracks: string[];
 };
 export type SttStatus = {
   engine: boolean;
@@ -93,8 +123,25 @@ export type SttStatus = {
   installed: boolean;
   missing_bytes: number;
   supported: boolean;
-  models: Array<{ id: string; size: number; installed: boolean }>;
+  models: SpeechModel[];
   languages: string[];
+};
+export type SpeechModel = {
+  id: string;
+  size: number;
+  installed: boolean;
+  /** "catalog" (pinned), "scan" (found on this computer) or "huggingface" (user-added, unpinned). */
+  source: "catalog" | "scan" | "huggingface";
+  name: string | null;
+  path: string | null;
+};
+export type HfRepo = { id: string; downloads: number; likes: number };
+export type HfFile = { name: string; size: number; sha256: string };
+export type HfRepoFiles = {
+  repo: string;
+  revision: string;
+  license: string | null;
+  files: HfFile[];
 };
 export type SttDownloadProgress = {
   stage: "engine" | "model" | "vad";
@@ -113,7 +160,7 @@ export type SearchHit = {
   kind: "title" | "notes" | "transcript" | "summary";
   snippet: string;
 };
-/** Versioned template ids; must match `merge::Template` serde names in Rust. */
+/** Versioned template ids; must match `llm::Template` serde names in Rust. */
 export type SummaryTemplate = "general-v1" | "standup-v1" | "one-to-one-v1";
 export type SummaryVersion = {
   id: number;
@@ -129,13 +176,6 @@ export const api = {
   listMeetings: () => invoke<Meeting[]>("list_meetings"),
   getMeeting: (id: string) => invoke<MeetingDetail>("get_meeting", { id }),
   getRecordingState: () => invoke<RecordingState>("get_recording_state"),
-  start: (title: string) =>
-    invoke<RecordingState>("start_recording", {
-      title,
-      simulation: true,
-      consent: false,
-      devices: null,
-    }),
   startCapture: (
     title: string,
     consent: boolean,
@@ -143,7 +183,6 @@ export const api = {
   ) =>
     invoke<RecordingState>("start_recording", {
       title,
-      simulation: false,
       consent,
       devices,
     }),
@@ -151,26 +190,57 @@ export const api = {
   pause: () => invoke<RecordingState>("pause_recording"),
   resume: () => invoke<RecordingState>("resume_recording"),
   stop: () => invoke<RecordingState>("stop_recording"),
-  createFixture: () => invoke<string>("create_fixture_meeting"),
   saveNotes: (id: string, markdown: string, expectedRevision: number) =>
     invoke<number>("save_notes", { id, markdown, expectedRevision }),
   getStartupWarning: () => invoke<string | null>("get_startup_warning"),
   getSettings: () => invoke<Settings>("get_settings"),
-  mergeKeyStatus: () => invoke<boolean>("merge_key_status"),
-  importMergeKey: () => invoke<boolean>("import_merge_key"),
-  deleteMergeKey: () => invoke<boolean>("delete_merge_key"),
-  listMergeModels: () => invoke<MergeModel[]>("list_merge_models"),
-  saveMergeModel: (model: string) =>
-    invoke<Settings>("save_merge_model", { model }),
+  providerKeyStatus: (role: ProviderRole) =>
+    invoke<KeyStatus>("provider_key_status", { role }),
+  saveProviderConnection: (
+    role: ProviderRole,
+    baseUrl: string,
+    keyChange: KeyChange,
+    expectedRevision: number | null,
+  ) =>
+    invoke<Settings>("save_provider_connection", {
+      role,
+      baseUrl,
+      keyChange,
+      expectedRevision,
+    }),
+  listProviderModels: (role: ProviderRole, expectedRevision: number) =>
+    invoke<ProviderModel[]>("list_provider_models", { role, expectedRevision }),
+  saveProviderModel: (
+    role: ProviderRole,
+    model: string,
+    expectedRevision: number,
+  ) =>
+    invoke<Settings>("save_provider_model", { role, model, expectedRevision }),
+  saveSttMode: (mode: Settings["stt_mode"]) =>
+    invoke<Settings>("save_stt_mode", { mode }),
   sttStatus: () => invoke<SttStatus>("stt_status"),
   sttInstall: () => invoke<SttStatus>("stt_install"),
-  transcribeMeeting: (id: string) => invoke<void>("transcribe_meeting", { id }),
+  saveAutoTranscribe: (enabled: boolean) =>
+    invoke<Settings>("save_auto_transcribe", { enabled }),
+  scanSpeechModels: () => invoke<SttStatus>("scan_speech_models"),
+  cancelModelScan: () => invoke<void>("cancel_model_scan"),
+  hfSearch: (query: string) => invoke<HfRepo[]>("hf_search", { query }),
+  hfRepoFiles: (repo: string) => invoke<HfRepoFiles>("hf_repo_files", { repo }),
+  hfDownload: (repo: string, file: string, sha256: string, size: number) =>
+    invoke<SttStatus>("hf_download", { repo, file, sha256, size }),
+  onModelScanProgress: (callback: (folders: number, found: number) => void) =>
+    listen<[number, number]>("model_scan_progress", (event) =>
+      callback(event.payload[0], event.payload[1]),
+    ),
+  planTranscription: (id: string) =>
+    invoke<ProcessingPlan>("plan_transcription", { id }),
+  transcribeMeeting: (id: string, confirmation: string | null) =>
+    invoke<void>("transcribe_meeting", { id, confirmation }),
   generateSummary: (
     id: string,
-    consent: boolean,
     template: SummaryTemplate,
-    requests: number,
-  ) => invoke<void>("generate_summary", { id, consent, template, requests }),
+    confirmation: string,
+  ) => invoke<void>("generate_summary", { id, template, confirmation }),
   saveSettings: (pauseShortcut: string, stopShortcut: string | null) =>
     invoke<Settings>("save_settings", { pauseShortcut, stopShortcut }),
   chooseVaultFolder: () => invoke<Settings>("choose_vault_folder"),
@@ -203,12 +273,15 @@ export const api = {
   deleteMeeting: (id: string) => invoke<void>("delete_meeting", { id }),
   searchMeetings: (query: string) =>
     invoke<SearchHit[]>("search_meetings", { query }),
-  /** Number of Merge requests a summary would send; sends nothing. */
-  planSummary: (id: string) => invoke<number>("plan_summary", { id }),
+  /** Plans a summary without submitting meeting content. */
+  planSummary: (id: string, template: SummaryTemplate) =>
+    invoke<ProcessingPlan>("plan_summary", { id, template }),
+  planQuestion: (id: string, question: string) =>
+    invoke<ProcessingPlan>("plan_question", { id, question }),
   listSummaries: (id: string) =>
     invoke<SummaryVersion[]>("list_summaries", { id }),
-  askMeeting: (id: string, question: string, consent: boolean) =>
-    invoke<string>("ask_meeting", { id, question, consent }),
+  askMeeting: (id: string, question: string, confirmation: string) =>
+    invoke<string>("ask_meeting", { id, question, confirmation }),
   renameMeeting: (id: string, title: string) =>
     invoke<string>("rename_meeting", { id, title }),
   saveExportOptions: (options: ExportOptions) =>
