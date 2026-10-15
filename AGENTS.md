@@ -4,30 +4,34 @@
 
 OpenMeet is a local-first desktop meeting notetaker built with Tauri 2, Rust, React, TypeScript, and Vite.
 
-- Phase 1A foundation exists: SQLite persistence, notes, settings, simulation, tray controls, shortcuts, and safe Markdown snapshots.
+- Foundation exists: SQLite persistence, notes, settings, tray controls, shortcuts, and safe Markdown snapshots. Production simulation/sample creation was removed; legacy records and test-only fixtures remain.
 - Phase 1B Windows capture code exists: microphone plus system-output capture through cpal, separate WAV files, timing indexes, and pause/resume controls.
-- Actual two-track recording has **not passed its hardware gate**. The last local hardware attempt found no microphone endpoint; device enumeration is not proof of capture.
-- macOS capture, VAD, resampling for STT, Whisper, model downloads, LLM summaries, and remaining MVP validation are unfinished.
+- Actual two-track recording has **not passed its hardware gate**. An authorized short Windows smoke test opened both devices and finalized two WAVs; audible content, pause privacy, failures, and long-run drift remain unqualified. See `docs/phase-1-foundation-verification.md`.
+- Local Windows Whisper/VAD downloads, generic OpenAI-compatible summaries/questions, and optional cloud STT are implemented. macOS capture and complete hardware/provider/MVP qualification remain unfinished. Verify current claims against executed checks.
 - Simulation and fictional fixtures are not real recordings or generated summaries. Preserve that distinction in the UI, database, exports, and reports.
 
 Read `docs/phase-1-implementation-plan.md` and `docs/implementation-status.md` before substantial work. Consult the original development-plan document for broader requirements. Documentation may lag implementation: verify claims against code and executed tests.
 
 ## Code map
 
-| Path | Responsibility |
-| --- | --- |
-| `src/App.tsx` | Meeting UI, notes, recording controls, settings |
-| `src/lib/api.ts` | Typed Tauri commands and event payloads |
-| `src/lib/note-writer.ts` | Serialized, debounced note saves |
-| `src-tauri/src/lib.rs` | Tauri commands, events, tray, shortcuts, lifecycle |
-| `src-tauri/src/domain.rs` | Shared backend types and errors |
-| `src-tauri/src/storage.rs` | SQLite, recording lifecycle, capture integration |
-| `src-tauri/src/audio.rs` | Device discovery, native capture, bounded queues, WAV writers |
-| `src-tauri/src/export.rs` | Markdown rendering and non-overwriting snapshot export |
-| `src-tauri/migrations/` | Ordered database migrations |
-| `fixtures/` | Fictional test data; never real meeting content |
-| `.github/workflows/ci.yml` | Windows/macOS build checks and dependency hygiene |
-| `log.md` | User prompt history and brief context |
+| Path                             | Responsibility                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------ |
+| `src/App.tsx`                    | Meeting UI, notes, recording controls, settings                                      |
+| `src/lib/api.ts`                 | Typed Tauri commands and event payloads                                              |
+| `src/lib/note-writer.ts`         | Serialized, debounced note saves                                                     |
+| `src-tauri/src/lib.rs`           | Tauri commands, events, tray, shortcuts, lifecycle                                   |
+| `src-tauri/src/domain.rs`        | Shared backend types and errors                                                      |
+| `src-tauri/src/storage.rs`       | SQLite, recording lifecycle, capture integration                                     |
+| `src-tauri/src/audio.rs`         | Device discovery, native capture, bounded queues, WAV writers                        |
+| `src-tauri/src/providers.rs`     | Independent provider validation, keychain credentials, model discovery, bounded HTTP |
+| `src-tauri/src/llm.rs`           | Summary/question prompts and bounded text requests                                   |
+| `src-tauri/src/cloud_stt.rs`     | Frozen bounded WAV uploads, timing validation, timed/untimed transcription           |
+| `src-tauri/src/model_library.rs` | Local model scan, Hugging Face search/verified download                              |
+| `src-tauri/src/export.rs`        | Markdown rendering and non-overwriting snapshot export                               |
+| `src-tauri/migrations/`          | Ordered database migrations                                                          |
+| `fixtures/`                      | Fictional test data; never real meeting content                                      |
+| `.github/workflows/ci.yml`       | Windows/macOS build checks and dependency hygiene                                    |
+| `log.md`                         | User prompt history and brief context                                                |
 
 ## Development environment
 
@@ -85,7 +89,7 @@ Capture qualification still requires real-machine checks: distinct tracks, audib
 - Use additive, versioned migrations; test upgrades with existing notes and foreign-key relationships. Do not reset a user's database to fix development errors.
 - Keep snapshot exports non-overwriting until a tested merge implementation replaces them. Protect filenames, destination paths, and concurrent publication.
 - Never delete existing audio, notes, or database files without explicit authorization. Keep partial artifacts recognizable and distinguish incomplete files from successful captures.
-- The user initially selected local-only LLM use, then explicitly requested an API-backed model and a Granola-style UI, and selected Merge Gateway (`merge.dev`). The model remains unconfirmed. Merge's documented OpenAI-compatible base URL is `https://api-gateway.merge.dev/v1/openai`; no gateway integration or connection test exists yet. Local Ollama model selection was removed as unused; cloud content submission still needs explicit per-action consent, backend-only credentials, and OS keychain storage. The key is imported from the `OPENMEET_LLM_API_KEY` environment variable (the backend no longer parses `.env`).
+- The user superseded Merge-specific setup with independent user-supplied OpenAI-compatible HTTPS base URL/key/model settings for LLM and cloud STT. Local Whisper stays the default. Settings keys briefly enter an uncontrolled password field/IPC before Rust stores them in the OS keychain; never read them back or persist them in frontend state. Environment import is removed. Changing the destination requires a new key. Cloud text and audio actions each require explicit consent bound to frozen configuration/content; no automatic uploads, model fallback, or billable retries. Legacy Merge keys/configuration are dormant, not automatically forwarded or deleted.
 - Do not add telemetry, automatic uploads, or cloud processing by default. Future cloud providers require clear disclosure and explicit opt-in; keys belong in the OS keychain, never in SQLite, Markdown, logs, or frontend state.
 - Do not log transcript content, private audio, credentials, or signed webhook URLs. Use fictional or properly licensed/consented fixtures.
 - App data and exports are currently unencrypted. A cloud-synced export folder can move files off-device even without an app upload feature.
@@ -93,6 +97,7 @@ Capture qualification still requires real-machine checks: distinct tracks, audib
 ## Repository and handoff
 
 - Preserve unrelated user changes. Never force-push, rewrite history, change repository visibility, or commit/push unless requested.
+- Whenever you create a branch and commit/push work to it, create and attach a pull request in the same task. If that branch already has a pull request, update the existing PR instead of creating a duplicate.
 - Keep build output, `node_modules`, local databases/audio, credentials, and environment files out of commits. Keep both dependency lockfiles tracked.
 - Track new dependency/model licenses in `THIRD_PARTY_LICENSES.md`; do not treat the initial inventory as a completed release audit.
 - Update affected documentation when behavior changes, especially consent/privacy wording and simulation-only claims. Append significant user requests and brief outcomes to `log.md` without secrets or invented timestamps.

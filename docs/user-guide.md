@@ -24,7 +24,7 @@ The **Meetings** button collapses or opens the sidebar. Use **Tab** to move betw
 | Simulation       | A recording-state demonstration that opens no audio devices.                                                      |
 | Fictional sample | Test notes, transcript, and a hand-written summary.                                                               |
 
-Click **Load fictional sample** to explore example content. To explore recording controls without capture, open **New recording → Try a simulation instead**. Neither action produces real meeting audio or AI output.
+Sample and simulation creation has been removed. Those labels describe preserved historical records only; edited notes remain accessible. Use **New note** for writing without capture.
 
 ## Record on Windows
 
@@ -44,11 +44,13 @@ The code excludes paused audio, but real-device pause privacy, device failures, 
 
 ## Transcribe and play audio
 
-1. Open **Settings → Speech to text (local)**.
+1. Open **Settings → Speech to text** and choose **Local Whisper**.
 2. Choose a speech model, language, and optional vocabulary hint. Click **Save transcription settings**.
 3. Click **Download speech engine and models** if the selected model is missing.
 4. Stop the recording, open its **Transcript** tab, and click **Transcribe audio**.
 5. Monitor progress or click **Cancel transcription**.
+
+**Available speech models** lists bundled catalog entries plus Whisper files found by the local scan. **Find on Hugging Face** searches only when pressed and downloads only after you confirm a file; those models are user-added. **Settings → Automatic processing** can transcribe locally when a recording stops; it is off by default, unavailable in cloud mode, and never sends summaries or audio anywhere.
 
 The engine and models download only on an explicit action. The selected model runs locally on finalized, nonempty tracks. Failed or cancelled runs keep the previous transcript. Changing models preserves existing downloads. See [downloaded components](dependencies.md#speech-engine-and-model-downloads) for versions and sizes.
 
@@ -56,9 +58,13 @@ The engine and models download only on an explicit action. The selected model ru
 
 The Transcript tab provides one player for each playable track. Select a transcript timestamp to seek the corresponding track. Timestamp links inserted in notes can jump to audio; system-track seeking is approximate. Leaving the Transcript tab or opening settings pauses playback. Missing or incomplete files produce a visible error.
 
+For cloud STT, choose **Cloud API** and configure its independent HTTPS base URL, masked API key, and model. Refresh lists available IDs; use a custom ID if discovery is unsupported. Save the model. Local engine downloads are not needed for cloud mode. Language/vocabulary settings remain available, but a provider may reject unsupported options visibly.
+
+**Transcribe audio** in cloud mode first shows an audio-upload confirmation with destination, model, tracks, bytes, and request count. Cancelling the review sends nothing. Cancelling an active run prevents further chunks and preserves the old transcript, but audio already uploaded cannot be recalled and in-flight work may still be billed. JSON results without timing are explicitly untimed and grouped by track; their text supports search, summaries, and export, without timestamp links.
+
 ## Generate summaries and ask questions
 
-Configure the optional Merge key and model using the [README's Merge setup](../README.md#set-up-optional-ai-summaries). A key and available model are required for these actions.
+Configure your independent LLM base URL, key, and model using the [README setup](../README.md#set-up-optional-ai-summaries). Keys are saved in the OS keychain and not read back into the form. Model discovery is optional; the chosen model must support the chat endpoint.
 
 1. Open **Summary** and choose **General**, **Stand-up**, or **One-to-one**.
 2. Click **Enhance notes**.

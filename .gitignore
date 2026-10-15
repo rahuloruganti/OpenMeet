@@ -12,3 +12,6 @@ Thumbs.db
 # Locally installed agent skills
 .agents/
 skills-lock.json
+
+# Local audit artifacts
+.audit/

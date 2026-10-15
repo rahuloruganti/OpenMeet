@@ -1,6 +1,6 @@
 # OpenMeet
 
-A desktop meeting notetaker with local notes, Windows audio capture, offline transcription, and optional AI summaries through Merge Gateway.
+A desktop meeting notetaker with local notes, Windows audio capture, local or cloud transcription, and optional summaries through your OpenAI-compatible provider.
 
 **Preview:** Windows capture has not passed full hardware qualification. macOS recording and transcription are unavailable. There is no installer yet; run the app from source using the steps below.
 
@@ -68,34 +68,25 @@ Exported files appear in the chosen folder's `Meetings` directory. Export create
 5. Open **Settings**, choose a speech model, and download the speech engine and models if needed.
 6. Open the meeting's **Transcript** tab and click **Transcribe audio**.
 
-Audio and transcription stay on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
+Local Whisper keeps audio and transcription on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
 
-To explore without capturing audio, load the **fictional sample**, or open **New recording → Try a simulation instead**. Samples and simulations are labeled and do not record audio.
+For cloud transcription, choose **Settings → Speech to text → Cloud API**. Save its own HTTPS API base URL/key, then select a discovered model or enter a custom model ID. Each transcription asks before uploading audio and shows the destination, model, tracks, bytes, and request count. Text-only model results have no fabricated timestamps or playback links. Provider retention and charges apply; cancellation cannot recall audio already uploaded.
+
+Sample and simulation creation has been removed. Existing historical samples remain labeled and accessible to preserve edited notes. Use **New note** without opening audio devices.
 
 ### Set up optional AI summaries
 
-Notes, recording, and local transcription work without a Merge key. Summaries and **Ask this meeting** require a Merge Gateway account and an available model.
+Notes, recording, and local transcription work without a cloud key. Summaries and **Ask this meeting** use your provider's OpenAI-compatible chat API.
 
-Before starting OpenMeet, set the key in PowerShell without putting it in command history:
+1. Open **Settings → Summaries and questions**.
+2. Enter the provider's HTTPS API base URL, including its API path, and paste your API key into the masked field. Save the connection.
+3. Refresh models and choose one from the dropdown, or enter a custom model ID if discovery is unavailable. Save the model.
 
-```powershell
-$mergeKey = Read-Host 'Merge API key' -AsSecureString
-$env:OPENMEET_LLM_API_KEY = [System.Net.NetworkCredential]::new('', $mergeKey).Password
-just dev
-```
+Keys pass briefly through the password field and IPC to Rust, then live in the OS keychain. They are not read back into Settings. Changing the URL requires entering a key for that destination. The LLM and cloud-speech connections are independent. Saving settings makes no content request; refreshing models sends credentials only. Environment-key import has been removed.
 
-In **Settings → Merge Gateway**, click **Import key from environment**, then **Connect / refresh Merge models**. Choose an available model and click **Save Merge model**. The key is stored in the OS keychain; `.env` files are not read.
+Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. Review the destination, model, content, and request count before confirming. These calls send notes and transcript text only. Questions have their own confirmation, and earlier summaries remain available in the version picker.
 
-Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. Review the destination, model, content, and request count before confirming. Notes and transcript text leave your device only after that confirmation. Audio is never sent. Questions have their own confirmation, and earlier summaries remain available in the version picker.
-
-After quitting the development app, clear the key from the launching shell:
-
-```powershell
-Remove-Item Env:OPENMEET_LLM_API_KEY
-Remove-Variable mergeKey
-```
-
-Future launches can use the saved keychain entry without setting the variable again. Live summary quality has not yet been qualified.
+Compatible endpoints must implement the operation you select; a model list does not prove chat or transcription support. No automatic model/provider fallback occurs. Live provider quality has not yet been qualified.
 
 ## Commands
 
@@ -144,7 +135,7 @@ The local database is `meetings.db` in:
 
 Audio and timing files are under `audio/<meeting ID>/` in the same directory. Files are **unencrypted**. OS backups and cloud-synced export folders may copy them off-device.
 
-There is no telemetry, automatic cloud processing, or audio upload. Model downloads and Merge requests happen on explicit actions. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm. Exported snapshots remain untouched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
+There is no telemetry or automatic cloud processing. Downloads, model discovery, text submission, and cloud audio upload each require explicit actions. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm. Exported snapshots remain untouched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
 
 Full capture qualification, long-run drift measurements, macOS support, and installers remain open. See [implementation status](docs/implementation-status.md), [feature plan](docs/feature-plan.md), [privacy](docs/privacy.md), and [consent](docs/consent.md).
 

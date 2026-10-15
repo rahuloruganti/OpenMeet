@@ -13,36 +13,43 @@ flowchart LR
     Backend --> STT[Local whisper.cpp subprocess]
     Files --> STT
     STT --> Core
-    Backend -->|Confirmed meeting text| Merge[Merge Gateway]
-    Merge --> Core
+    Backend -->|Confirmed meeting text| LLM[Configured LLM API]
+    LLM --> Core
+    Backend -->|Confirmed audio chunks| Cloud[Configured speech API]
+    Files --> Cloud
+    Cloud --> Core
     Backend --> Export[Markdown snapshots]
     Backend -->|Events| UI
 ```
 
-Model downloads are separate explicit network actions. Audio is not sent to Merge. The diagram describes the implementation; it does not establish hardware or provider qualification.
+Model downloads are separate explicit network actions. Cloud transcription uploads audio only after its own confirmation; local Whisper remains the default. Summary/question calls send text only. The diagram does not establish hardware or provider qualification.
 
 ## Code ownership
 
-| File or directory                       | Responsibility                                                                                          |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `src/App.tsx`                           | Selection, settings/setup panels, command orchestration, operation guards, and note lifecycle.          |
-| `src/components/MeetingSidebar.tsx`     | Meeting library, source labels, title and content search.                                               |
-| `src/components/MeetingWorkspace.tsx`   | Notes, transcript, playback, summaries, questions, export, and deletion confirmations.                  |
-| `src/components/SetupPanel.tsx`         | Device selection, capture consent, and separate simulation entry.                                       |
-| `src/components/SettingsPanel.tsx`      | Speech settings/downloads, Merge setup, shortcuts, and export preferences.                              |
-| `src/components/RecordingControls.tsx`  | Backend capture state, pause/resume/stop, and audio meters.                                             |
-| `src/lib/api.ts`                        | TypeScript command bindings, response types, events, and asset URLs.                                    |
-| `src/lib/note-writer.ts`                | Debounced and serialized note writes with flush and error handling.                                     |
-| `src/lib/markdown.tsx`, `timestamps.ts` | Supported Markdown rendering and timestamp parsing.                                                     |
-| `src-tauri/src/lib.rs`                  | Tauri handlers, shared state, worker dispatch, events, tray, shortcuts, and graceful exit.              |
-| `src-tauri/src/domain.rs`               | Rust payloads, settings, recording state, and error codes.                                              |
-| `src-tauri/src/storage.rs`              | `Core`, SQLite migrations, persistence, search, capture lifecycle, deletion, and recovery metadata.     |
-| `src-tauri/src/audio.rs`                | Device enumeration, bounded sample queues, capture worker, WAV writers, timing indexes, and WAV repair. |
-| `src-tauri/src/stt.rs`                  | Pinned artifact downloads, local engine execution, progress/cancel, and time mapping.                   |
-| `src-tauri/src/merge.rs`                | Keychain access, model discovery, prompts, input limits, summaries, and meeting questions.              |
-| `src-tauri/src/export.rs`               | Markdown rendering, safe filenames, and non-overwriting publication.                                    |
-| `src-tauri/migrations/`                 | Ordered SQLite upgrades through schema v9.                                                              |
-| `fixtures/`                             | Fictional content used for tests and the sample meeting.                                                |
+| File or directory                                          | Responsibility                                                                                                    |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `src/App.tsx`                                              | Selection, settings/setup panels, command orchestration, operation guards, and note lifecycle.                    |
+| `src/components/MeetingSidebar.tsx`                        | Meeting library, source labels, title and content search.                                                         |
+| `src/components/MeetingWorkspace.tsx`                      | Notes, transcript, playback, summaries, questions, export, and deletion confirmations.                            |
+| `src/components/SetupPanel.tsx`                            | Device selection and capture consent.                                                                             |
+| `src/components/SettingsPanel.tsx`, `ProviderSettings.tsx` | Independent provider/key/model setup, speech mode/downloads, shortcuts, and export preferences.                   |
+| `src/components/RecordingControls.tsx`                     | Backend capture state, pause/resume/stop, and audio meters.                                                       |
+| `src/lib/api.ts`                                           | TypeScript command bindings, response types, events, and asset URLs.                                              |
+| `src/lib/note-writer.ts`                                   | Debounced and serialized note writes with flush and error handling.                                               |
+| `src/lib/markdown.tsx`, `timestamps.ts`                    | Supported Markdown rendering and timestamp parsing.                                                               |
+| `src-tauri/src/lib.rs`                                     | Tauri handlers, shared state, worker dispatch, events, tray, shortcuts, and graceful exit.                        |
+| `src-tauri/src/domain.rs`                                  | Rust payloads, settings, recording state, and error codes.                                                        |
+| `src-tauri/src/storage.rs`                                 | `Core`, SQLite migrations, persistence, search, capture lifecycle, deletion, and recovery metadata.               |
+| `src-tauri/src/audio.rs`                                   | Device enumeration, bounded sample queues, capture worker, WAV writers, timing indexes, and WAV repair.           |
+| `src-tauri/src/stt.rs`                                     | Pinned artifact downloads, local engine execution, progress/cancel, and time mapping.                             |
+| `src-tauri/src/providers.rs`                               | URL/model validation, keychain access, frozen credentials, model discovery, and bounded HTTP.                     |
+| `src-tauri/src/llm.rs`                                     | Summary/question prompts, input limits, and chunked text requests.                                                |
+| `src-tauri/src/cloud_stt.rs`                               | Frozen bounded WAV preparation, pause-aware chunks, multipart uploads, and timed/untimed parsing.                 |
+| `src-tauri/src/model_library.rs`                           | Bounded read-only local scan for `ggml*.bin` models; explicit Hugging Face search and SHA-256-verified downloads. |
+| `src-tauri/src/stt_models.rs`                              | Generated pinned Whisper artifact catalog (`scripts/refresh-whisper-catalog.ps1`).                                |
+| `src-tauri/src/export.rs`                                  | Markdown rendering, safe filenames, and non-overwriting publication.                                              |
+| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v11.                                                                       |
+| `fixtures/`                                                | Fictional test resources, excluded from production creation paths.                                                |
 
 ## State and concurrency
 
@@ -50,7 +57,7 @@ Model downloads are separate explicit network actions. Audio is not sent to Merg
 
 The backend's `RecordingState` contains a monotonically increasing revision, status, meeting ID, source, error, and optional audio-derived offset. The frontend uses revisions to avoid replacing newer state with an older response. Commands return authoritative state; events notify the frontend to refresh.
 
-Capture status is `idle`, `recording`, `paused`, or `stopped`. A persisted meeting can also be `interrupted`. Its source is independently `note`, `desktop`, `simulation`, or `fixture`. A stopped fixture is not evidence of completed capture.
+Capture status is `idle`, `recording`, `paused`, or `stopped`. A persisted meeting can also be `interrupted`. New meetings are `note` or `desktop`; legacy `simulation` and `fixture` sources stay readable and honestly labeled. Their creation commands and production fixture loading are removed.
 
 There is one active capture. The transcription module also uses a process-wide lock and cancellation flag. Frontend guards prevent overlapping UI jobs, but there is no durable processing-job queue. A restart does not resume an inference request.
 
@@ -66,30 +73,34 @@ Windows capture opens the explicitly selected microphone and system output. Call
 
 Control acknowledgements and real-device timing remain stabilization work. Synthetic pause tests do not qualify hardware pause privacy. Silent WASAPI loopback may deliver no frames.
 
-Transcription runs the downloaded Windows x64 CPU build of whisper.cpp with the selected Whisper model, Silero VAD, language, and vocabulary hint. Finalized tracks are processed locally. JSON results become `You` and `Others` segments; the timing index maps file positions onto the session timeline. A successful run replaces prior Whisper segments. Failure or cancellation preserves the previous transcript and notes.
+Local transcription runs the downloaded Windows x64 CPU build of whisper.cpp with the selected model, Silero VAD, language, and vocabulary hint. Cloud mode independently selects a compatible endpoint/key/model and uploads frozen PCM16 WAV chunks after confirmation. Chunk boundaries respect pause generations and timing discontinuities. Both modes preserve `You` and `Others` track labels.
 
-## Merge requests
+The transcription run guard covers preparation, processing, and publication. Cancellation and final publication share a gate. A successful transaction replaces prior local/cloud generated segments and stores provider/model provenance, including successful empty results. Failure/cancellation preserves the previous transcript and notes. Valid timestamps map through the original timing index. JSON text without timestamps is explicitly untimed, grouped by track, and has no seek link or fabricated time citation.
 
-The current adapter uses `https://api-gateway.merge.dev/v1/models` for model discovery and `https://api-gateway.merge.dev/v1/chat/completions` for summaries and questions. These are the routes in `merge.rs`; older plans mention a different OpenAI-compatible route.
+## Provider requests
 
-The API key is explicitly imported from `OPENMEET_LLM_API_KEY` into the OS keychain. React receives key status, never the key value. Model discovery is user-triggered and carries no meeting text. The model selection must be present in the available catalog before saving.
+One independent connection serves summaries/questions and another serves cloud STT. Rust appends `models`, `chat/completions`, or `audio/transcriptions` to a validated user-supplied HTTPS API base, preserving its path prefix. Redirects are disabled. Credentials and response bodies do not enter diagnostics. HTTP loopback is allowed only in test builds for synthetic test servers.
 
-The summary planner chooses a single request or transcript chunks followed by a combination request. The backend checks consent and that the required request count still matches the confirmed count. Oversized inputs are refused. Summary versions persist with provider, model, and versioned template ID. Questions use only the selected meeting and return an answer without persisting it.
+Settings submits a transient password input through IPC to the OS keychain. Read responses contain key status only. Saving connection/model settings makes no network request; explicit refresh fetches generic `data[].id` model lists. Custom IDs work without discovery or catalog membership. A model list proves neither chat nor audio capability. Legacy Merge configuration is not automatically activated or converted.
+
+The summary planner chooses a single request or transcript chunks followed by a combination request. Consent binds configuration revision/destination, model, exact content, action/template/question, and request plan. Oversized inputs are refused. Summary versions persist with destination, model, and template ID. Questions use only the selected meeting and return an answer without persisting it. Cloud audio plans additionally bind frozen chunk content/timing hashes. No automatic uploads, provider fallback, or billable retries are performed.
 
 ## Storage and migrations
 
-| Table            | Contents                                                                         |
-| ---------------- | -------------------------------------------------------------------------------- |
-| `meetings`       | Title, source, timestamps, persisted status, and capture error.                  |
-| `notes`          | User Markdown and optimistic revision.                                           |
-| `tracks`         | Paths, audio format, frame counts, dropped frames, and finalization.             |
-| `segments`       | Track label, times, text, source, and final pass.                                |
-| `summaries`      | Retained versions with provider, model, and template ID.                         |
-| `settings`       | Devices, shortcuts, speech configuration, Merge model, and export choices.       |
-| `search`         | FTS5 copies of titles, notes, transcript text, and summaries.                    |
-| `capture_events` | Historical schema table; current capture no longer writes lifecycle events here. |
+| Table                    | Contents                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `meetings`               | Title, source, timestamps, persisted status, and capture error.                       |
+| `notes`                  | User Markdown and optimistic revision.                                                |
+| `tracks`                 | Paths, audio format, frame counts, dropped frames, and finalization.                  |
+| `segments`               | Track label, paired nullable times, text, source, and final pass.                     |
+| `summaries`              | Retained versions with provider, model, and template ID.                              |
+| `settings`               | Devices, shortcuts, local model/language/vocabulary, speech mode, and export choices. |
+| `provider_connections`   | Role-specific nonsecret endpoint/model/revision and OS-keychain account reference.    |
+| `meeting_transcriptions` | Last successful provider/model provenance per meeting.                                |
+| `search`                 | FTS5 copies of titles, notes, transcript text, and summaries.                         |
+| `capture_events`         | Historical schema table; current capture no longer writes lifecycle events here.      |
 
-`Core::open` enables WAL and applies numbered migrations using `PRAGMA user_version`. Table rebuilds that need foreign keys disabled perform a foreign-key check before committing. Existing user databases must be upgraded, never reset to repair a development problem. Older `local_model` settings remain in the schema but are unused.
+`Core::open` enables WAL and applies numbered migrations using `PRAGMA user_version`. Table rebuilds that need foreign keys disabled perform a foreign-key check before committing. Migration 012 adds the local model library and the opt-in auto-transcribe setting. Migration 011 preserves segment IDs and restores FTS triggers while adding cloud/untimed entries. Existing user databases are upgraded without resetting them. Legacy `local_model`/`merge_model` columns remain unused.
 
 Search triggers maintain the FTS5 index as notes, segments, titles, and summaries change. Audio and models are separate files, not database blobs. See [privacy](privacy.md) for paths and backup boundaries.
 

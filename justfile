@@ -28,5 +28,4 @@ check:
 
 # Build a release executable with the frontend embedded (no installer).
 build:
-    corepack pnpm build
-    cargo build --release --locked --manifest-path src-tauri/Cargo.toml
+    corepack pnpm tauri build --no-bundle -- --locked

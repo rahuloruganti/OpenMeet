@@ -47,14 +47,14 @@ Format frontend changes with `corepack pnpm format` and Rust changes with `cargo
 
 ## Test at the right boundary
 
-| Area          | Existing coverage                                                                                     | What it does not establish                                                   |
-| ------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| React         | Vitest, jsdom, Testing Library, mocked Tauri commands/events.                                         | Native permissions, clipboard, playback devices, or webview behavior.        |
-| Notes         | Debounced writes, stale revision refusal, save failure, draft retention, export and close ordering.   | Survival of text never saved before power loss.                              |
-| Storage       | Populated-database upgrades, foreign keys, FTS5 updates, source labels, and deletion bounds.          | Secure erasure, live backup consistency, or every filesystem failure.        |
-| Audio         | Synthetic samples, pause generations, WAV writing/repair, and capture internals.                      | Audible real-device content, sleep/wake, driver failures, or long-run drift. |
-| Transcription | Artifact validation, output parsing, timing, arguments, progress, and cancellation with fake engines. | Real-engine accuracy or performance across models and languages.             |
-| Merge         | Mock HTTP responses, pagination, errors, prompts, chunk plans, and question bounds.                   | Live billing, model quality, availability, or provider retention.            |
+| Area          | Existing coverage                                                                                                                  | What it does not establish                                                                         |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| React         | Vitest, jsdom, Testing Library, mocked Tauri commands/events.                                                                      | Native permissions, clipboard, playback devices, or webview behavior.                              |
+| Notes         | Debounced writes, stale revision refusal, save failure, draft retention, export and close ordering.                                | Survival of text never saved before power loss.                                                    |
+| Storage       | Populated-database upgrades, foreign keys, FTS5 updates, source labels, and deletion bounds.                                       | Secure erasure, live backup consistency, or every filesystem failure.                              |
+| Audio         | Synthetic samples, pause generations, WAV writing/repair, and capture internals.                                                   | Audible real-device content, sleep/wake, driver failures, or long-run drift.                       |
+| Transcription | Artifact validation, output parsing, timing, arguments, progress, and cancellation with fake engines.                              | Real-engine accuracy or performance across models and languages.                                   |
+| Providers     | Synthetic HTTP responses, discovery/custom IDs, redirects, errors, text/audio plans, timing, cancellation, and atomic publication. | Live billing, model quality, availability, provider retention, and native keychain fault behavior. |
 
 Routine tests use synthetic audio and fictional text. Do not start a recording or submit meeting content to a provider as part of normal verification.
 
@@ -65,6 +65,14 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml audio::tests::windows_d
 ```
 
 Do not run all ignored tests. Missing devices block the test; they do not count as a pass. Hardware qualification also needs audible distinct tracks, absence of paused content, failure recovery, and a 60-minute run with measured relative drift below 100 ms. See [open work](implementation-status.md#open-work).
+
+The separate ignored Windows keychain test creates and removes only a unique synthetic credential. It does not read configured keys or contact a provider. It exercises the actual credential store, so keep it separate from the routine suite:
+
+```sh
+cargo test --locked --manifest-path src-tauri/Cargo.toml providers::tests::windows_keychain_round_trip_uses_only_new_synthetic_credentials -- --ignored --exact --nocapture
+```
+
+Current executed results and remaining gates are recorded in [Phase 1 foundation verification](phase-1-foundation-verification.md).
 
 ## Check dependency hygiene
 
@@ -81,9 +89,9 @@ Install cargo-deny separately if needed. [deny.toml](../deny.toml) defines allow
 just build
 ```
 
-The recipe builds frontend assets, then runs `cargo build --release --locked`. On Windows the result is `src-tauri/target/release/openmeet.exe`. Close a running release executable before rebuilding it.
+The recipe runs `corepack pnpm tauri build --no-bundle -- --locked`. Tauri builds the frontend and enables its production asset protocol. A plain `cargo build --release` leaves that protocol disabled and tries to load the development server instead. On Windows the result is `src-tauri/target/release/openmeet.exe`. Close a running release executable before rebuilding it.
 
-The executable embeds the frontend and does not require Vite. WebView2 remains a Windows runtime prerequisite. Speech artifacts and Merge credentials are configured separately in the app. Bundling is disabled in `tauri.conf.json`: this command produces no installer, signing, notarization, or updater.
+The executable embeds the frontend and does not require Vite. WebView2 remains a Windows runtime prerequisite. Local speech artifacts and independent provider credentials are configured in the app. Bundling is disabled in `tauri.conf.json`: this command produces no installer, signing, notarization, or updater.
 
 ## Protect data during development
 

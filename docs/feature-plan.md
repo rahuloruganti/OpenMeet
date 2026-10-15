@@ -4,6 +4,8 @@ Status (2026-10-12): **M0–M5 implemented and unit/mock-tested; no milestone ex
 
 ## Ground rules for every milestone
 
+The 2026-10-13 [provider-settings change](provider-settings-plan.md) supersedes the environment-only/Merge-only decisions below. Settings now accepts personal API keys, supports independent LLM and local/cloud-STT selection, and removes production demo creation. Historical milestone decisions remain recorded here; current behavior and qualification are in [implementation status](implementation-status.md).
+
 - One milestone = one reviewable change set. Finish, check, and update `implementation-status.md` and `log.md` before starting the next.
 - Schema changes are additive, numbered migrations (`006_…` onward, appended to the loop in `storage.rs::open`). Each gets an upgrade test from a **populated v5** database (notes, segments, summaries, tracks, foreign keys).
 - Rust `domain.rs` and TypeScript `api.ts` change together; add a serde test when a payload changes shape.

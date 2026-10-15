@@ -28,22 +28,22 @@ Automatic meeting detection; live STT; diarization and named speakers; Parakeet;
 
 Phase 1 supports retrying failed processing. Rich regeneration with a different model/template belongs to Phase 2, although summary history is built now.
 
-**Current LLM decision:** API-backed use through Merge Gateway (`merge.dev`) superseded the original local-provider plan. The implemented adapter has model selection, summaries, and questions, with backend-only credentials in the OS keychain and per-action content consent. Ollama selection was removed. Current routes and limits are described in [architecture.md](architecture.md#merge-requests); a live summary qualification gate remains open.
+**Current provider decision:** Users supply an OpenAI-compatible HTTPS base URL, API key, and model in Settings, independently for LLM and cloud STT. This supersedes Merge-specific/environment-import setup. Local Whisper remains the transcription default. Keys pass transiently through password input/IPC to the OS keychain, never into persistent frontend state. Text and audio submissions each require per-action consent. See [provider architecture](architecture.md#provider-requests) and the [provider-settings design](provider-settings-plan.md); live provider qualification remains open.
 
 ## 2. Prerequisites and decisions
 
 Complete or confirm these before starting subphase 1A:
 
-| Decision/check | Required outcome |
-| --- | --- |
-| Fresh build or reuse | Inspect Meetily's current capture code, platform support, and license; record the reuse decision. Do not assume an existing codebase. |
-| Toolchain and shell | A minimal Tauri 2 app builds on Windows x64 and Apple Silicon CI. Document Rust, Node/pnpm, CMake/Clang, Windows SDK, and Xcode prerequisites. |
-| Dependency versions | Verify actual available versions, APIs, native-library compatibility, and licenses. The source document's version claims are inputs to verify, not guaranteed pins. Commit Cargo and pnpm lockfiles. |
-| Two-track capture | Prove mic plus system capture on real machines; 60-minute run with under 100 ms relative drift. Validate cpal loopback before selecting OS fallbacks. |
-| macOS compatibility | Prefer Core Audio taps where supported; validate the runtime minimum. Supporting macOS 13–14.5 requires a proven ScreenCaptureKit fallback, otherwise explicitly narrow MVP support rather than claim coverage. |
-| Native inference | Whisper and sherpa-onnx VAD compile on both platforms. Select one Whisper model that meets the target laptop's runtime and accuracy budget. |
-| LLM context | A one-hour fixture's final ten minutes survive the Ollama summarization path. |
-| License and fixture rights | Choose MIT or Apache-2.0; record model/dependency attribution and use redistributable or internally consented test recordings. |
+| Decision/check             | Required outcome                                                                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fresh build or reuse       | Inspect Meetily's current capture code, platform support, and license; record the reuse decision. Do not assume an existing codebase.                                                                           |
+| Toolchain and shell        | A minimal Tauri 2 app builds on Windows x64 and Apple Silicon CI. Document Rust, Node/pnpm, CMake/Clang, Windows SDK, and Xcode prerequisites.                                                                  |
+| Dependency versions        | Verify actual available versions, APIs, native-library compatibility, and licenses. The source document's version claims are inputs to verify, not guaranteed pins. Commit Cargo and pnpm lockfiles.            |
+| Two-track capture          | Prove mic plus system capture on real machines; 60-minute run with under 100 ms relative drift. Validate cpal loopback before selecting OS fallbacks.                                                           |
+| macOS compatibility        | Prefer Core Audio taps where supported; validate the runtime minimum. Supporting macOS 13–14.5 requires a proven ScreenCaptureKit fallback, otherwise explicitly narrow MVP support rather than claim coverage. |
+| Native inference           | Whisper and sherpa-onnx VAD compile on both platforms. Select one Whisper model that meets the target laptop's runtime and accuracy budget.                                                                     |
+| LLM context                | A one-hour fixture's final ten minutes survive the Ollama summarization path.                                                                                                                                   |
+| License and fixture rights | Choose MIT or Apache-2.0; record model/dependency attribution and use redistributable or internally consented test recordings.                                                                                  |
 
 Windows detection, Power Automate, and bot spikes do not block Phase 1. Diarization benchmarks can wait; sherpa-onnx buildability still matters because this phase uses its VAD.
 
@@ -114,13 +114,13 @@ Use bundled SQLite with WAL, foreign keys, and versioned migrations. Implement `
 
 Subphases 1A–1E all belong to **Roadmap Phase 1: MVP**. They do not replace Roadmap Phases 2–5. Each subphase produces a testable deliverable and ends with an acceptance gate, rather than a fixed deadline.
 
-| Subphase | Deliverable | Prerequisite |
-| --- | --- | --- |
-| 1A — Foundation | Persistent desktop shell with a simulated recording flow | Section 2 prerequisites confirmed |
-| 1B — Capture | Reliable two-track recording on both operating systems | 1A gate passed |
-| 1C — Transcription | Verified model downloads and local final transcripts | 1B gate passed |
-| 1D — Summaries and export | Context-safe summaries and edit-preserving Markdown output | 1C gate passed |
-| 1E — MVP validation | Integrated, recoverable MVP and internal installers | 1D gate passed |
+| Subphase                  | Deliverable                                                | Prerequisite                      |
+| ------------------------- | ---------------------------------------------------------- | --------------------------------- |
+| 1A — Foundation           | Persistent desktop shell with a simulated recording flow   | Section 2 prerequisites confirmed |
+| 1B — Capture              | Reliable two-track recording on both operating systems     | 1A gate passed                    |
+| 1C — Transcription        | Verified model downloads and local final transcripts       | 1B gate passed                    |
+| 1D — Summaries and export | Context-safe summaries and edit-preserving Markdown output | 1C gate passed                    |
+| 1E — MVP validation       | Integrated, recoverable MVP and internal installers        | 1D gate passed                    |
 
 Automated tests accompany each subphase; 1E validates the integrated system rather than introducing testing for the first time.
 
