@@ -8,9 +8,14 @@ import {
   type ModelScan,
 } from "../lib/api";
 
-type Props = { disabled: boolean; onImported: () => Promise<void> };
+type Props = {
+  disabled: boolean;
+  onImported: () => Promise<void>;
+  /** Catalog model ids a scan found on disk (not necessarily imported). */
+  onFound?: (ids: string[]) => void;
+};
 const mb = (bytes: number) => (bytes / 1048576).toFixed(1);
-export function ModelLibrary({ disabled, onImported }: Props) {
+export function ModelLibrary({ disabled, onImported, onFound }: Props) {
   const [scan, setScan] = useState<ModelScan | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<HubModel[]>([]);
@@ -38,6 +43,21 @@ export function ModelLibrary({ disabled, onImported }: Props) {
       void unlisten.then((stop) => stop()).catch(() => {});
     };
   }, []);
+  const [picked, setPicked] = useState("");
+  const scanCommon = async () => {
+    const value = await api.scanLocalModels(null);
+    if (!live.current) return;
+    setScan(value);
+    onFound?.(
+      value.models.flatMap((model) =>
+        model.format === "whisper" && model.model_id ? [model.model_id] : [],
+      ),
+    );
+  };
+  // Opening Settings scans the common model folders once. The scan is local and read-only.
+  useEffect(() => {
+    void scanCommon().catch(() => {});
+  }, []);
   const run = async (task: () => Promise<void>) => {
     if (lock.current) return;
     lock.current = true;
@@ -57,7 +77,7 @@ export function ModelLibrary({ disabled, onImported }: Props) {
     await onImported();
     if (live.current)
       setNotice(
-        `Whisper model ${id} verified and imported. Select it in Speech model, then save transcription settings.`,
+        `Whisper model ${id} verified and imported. Select it in Available speech models, then save transcription settings.`,
       );
   };
   return (
@@ -76,12 +96,7 @@ export function ModelLibrary({ disabled, onImported }: Props) {
       <div className="panel-actions">
         <button
           disabled={disabled || busy}
-          onClick={() =>
-            void run(async () => {
-              const value = await api.scanLocalModels(null);
-              if (live.current) setScan(value);
-            })
-          }
+          onClick={() => void run(scanCommon)}
         >
           Scan common folders
         </button>
@@ -113,35 +128,47 @@ export function ModelLibrary({ disabled, onImported }: Props) {
               Scan limit reached. Choose a smaller folder to find more files.
             </p>
           )}
-          {scan.models.length === 0 && <p>No model files found.</p>}
-          <ul>
-            {scan.models.map((model) => (
-              <li key={model.path}>
-                <p>
-                  {model.path} · {model.format} · {mb(model.size)} MB
-                </p>
-                {model.model_id ? (
-                  <button
+          {(() => {
+            const speech = scan.models.filter(
+              (model) => model.format === "whisper" && model.model_id,
+            );
+            const chosen = speech.find((model) => model.path === picked);
+            return speech.length === 0 ? (
+              <p>No speech models found.</p>
+            ) : (
+              <>
+                <label>
+                  Found speech models
+                  <select
+                    value={picked}
                     disabled={disabled || busy}
-                    onClick={() =>
-                      void run(async () => {
-                        const result = await api.importLocalModel(model.path);
-                        await imported(result.model_id);
-                      })
-                    }
+                    onChange={(event) => setPicked(event.target.value)}
                   >
-                    Verify and import {model.model_id}
-                  </button>
-                ) : (
-                  <p className="muted">
-                    {model.format === "gguf"
-                      ? "Use with an external server. Inference compatibility unverified."
-                      : "Not a supported Whisper catalog candidate."}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
+                    <option value="">Choose a model to import</option>
+                    {speech.map((model) => (
+                      <option key={model.path} value={model.path}>
+                        {model.model_id} · {mb(model.size)} MB · {model.path}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  disabled={disabled || busy || !chosen}
+                  onClick={() =>
+                    chosen &&
+                    void run(async () => {
+                      const result = await api.importLocalModel(chosen.path);
+                      await imported(result.model_id);
+                    })
+                  }
+                >
+                  {chosen
+                    ? "Verify and import " + chosen.model_id
+                    : "Verify and import"}
+                </button>
+              </>
+            );
+          })()}
         </>
       )}
       <h4>Public Hugging Face models</h4>

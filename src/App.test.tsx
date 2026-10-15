@@ -220,7 +220,22 @@ const installed = {
   languages: ["auto", "de", "en"],
 };
 
+async function chooseProcessing(mode: string, summary?: string) {
+  await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+  await userEvent.click(screen.getByRole("tab", { name: "General" }));
+  await userEvent.selectOptions(
+    screen.getByLabelText("Automatic processing"),
+    mode,
+  );
+  if (summary)
+    await userEvent.selectOptions(
+      screen.getByLabelText("Automatic summary"),
+      summary,
+    );
+}
+
 beforeEach(() => {
+  localStorage.removeItem("openmeet.automaticProcessing");
   vi.resetAllMocks();
   vi.unstubAllGlobals();
   vi.mocked(api.isDesktop).mockReturnValue(true);
@@ -1663,12 +1678,9 @@ describe("automatic session processing", () => {
         recording_offset_ms: 0,
       });
       await ready();
+      await chooseProcessing(mode);
       await userEvent.click(
         screen.getByRole("button", { name: "New recording" }),
-      );
-      await userEvent.selectOptions(
-        screen.getByLabelText("Automatic processing"),
-        mode,
       );
       await userEvent.click(
         screen.getByRole("button", { name: "Review processing" }),
@@ -1705,19 +1717,12 @@ describe("automatic session processing", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
     );
-    expect(screen.getByLabelText("Automatic processing")).toHaveProperty(
-      "value",
-      "recording",
+    expect(screen.getByText(/Recording only/)).toBeTruthy();
+    await chooseProcessing("both", "general-v1");
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
     );
-    await userEvent.click(screen.getByRole("checkbox"));
-    await userEvent.selectOptions(
-      screen.getByLabelText("Automatic processing"),
-      "both",
-    );
-    await userEvent.selectOptions(
-      screen.getByLabelText("Automatic summary"),
-      "general-v1",
-    );
+    expect(screen.getByText(/Live and final transcription/)).toBeTruthy();
     const start = screen.getByRole("button", { name: "Start recording" });
     expect(start).toHaveProperty("disabled", true);
     await userEvent.click(
@@ -1736,12 +1741,16 @@ describe("automatic session processing", () => {
         "I authorize this processing scope and these destinations and limits.",
       ),
     );
+    const consent = screen.getByLabelText(/I have informed participants/);
+    if (!(consent as HTMLInputElement).checked) await userEvent.click(consent);
     expect(start).toHaveProperty("disabled", false);
-    await userEvent.selectOptions(
-      screen.getByLabelText("Automatic processing"),
-      "live",
+    await chooseProcessing("live");
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
     );
-    expect(start).toHaveProperty("disabled", true);
+    expect(
+      screen.getByRole("button", { name: "Start recording" }),
+    ).toHaveProperty("disabled", true);
     expect(screen.queryByLabelText("Processing review")).toBeNull();
     await userEvent.click(
       screen.getByRole("button", { name: "Review processing" }),
@@ -2497,7 +2506,7 @@ describe("transcript and audio", () => {
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.selectOptions(
-      screen.getByLabelText("Speech model"),
+      screen.getByLabelText("Available speech models"),
       "base",
     );
     await userEvent.selectOptions(

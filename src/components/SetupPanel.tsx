@@ -5,8 +5,8 @@ import {
   type AudioDevices,
   type SessionProcessingPlan,
   type SessionProcessingRequest,
-  type SummaryTemplate,
 } from "../lib/api";
+import type { ProcessingChoice } from "../lib/processing";
 import { SessionReview } from "./SessionReview";
 
 type Props = {
@@ -24,13 +24,26 @@ type Props = {
   onOutput: (value: string) => void;
   onClose: () => void;
   configurationRevision: string;
+  processing: ProcessingChoice;
+  onOpenSettings: () => void;
   onStartCapture: (confirmation: string | null) => void;
 };
 
+const modeLabels = {
+  recording: "Recording only",
+  live: "Live transcription only",
+  final: "Final transcription after stop",
+  both: "Live and final transcription",
+} as const;
+const templateLabels = {
+  "general-v1": "General",
+  "standup-v1": "Stand-up",
+  "one-to-one-v1": "One-to-one",
+} as const;
+
 export function SetupPanel(props: Props) {
   const { devices, microphone, output, disabled, active } = props;
-  const [mode, setMode] = useState("recording");
-  const [summary, setSummary] = useState<SummaryTemplate | null>(null);
+  const { mode, summary } = props.processing;
   const [plan, setPlan] = useState<SessionProcessingPlan | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -153,43 +166,13 @@ export function SetupPanel(props: Props) {
           </label>
         ))}
       </div>
-      <label>
-        Automatic processing
-        <select
-          value={mode}
-          disabled={disabled || active}
-          onChange={(event) => setMode(event.target.value)}
-        >
-          <option value="recording">Recording only</option>
-          <option value="live">Live transcription only</option>
-          <option value="final">Final transcription after stop</option>
-          <option value="both">Live and final transcription</option>
-        </select>
-      </label>
-      {(mode === "final" || mode === "both") && (
-        <label>
-          Automatic summary
-          <select
-            value={summary ?? ""}
-            onChange={(event) => {
-              const value = event.target.value;
-              setSummary(
-                value === "general-v1" ||
-                  value === "standup-v1" ||
-                  value === "one-to-one-v1"
-                  ? value
-                  : null,
-              );
-            }}
-            disabled={disabled || active}
-          >
-            <option value="">No automatic summary</option>
-            <option value="general-v1">General</option>
-            <option value="standup-v1">Stand-up</option>
-            <option value="one-to-one-v1">One-to-one</option>
-          </select>
-        </label>
-      )}
+      <p>
+        Automatic processing: <strong>{modeLabels[mode]}</strong>
+        {summary ? `, ${templateLabels[summary]} summary` : ""}.{" "}
+        <button type="button" onClick={props.onOpenSettings}>
+          Change in Settings
+        </button>
+      </p>
       {mode !== "recording" && (
         <button
           disabled={disabled || active || reviewing}

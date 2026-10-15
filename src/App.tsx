@@ -29,6 +29,11 @@ import {
 } from "./components/MeetingWorkspace";
 import { RecordingControls } from "./components/RecordingControls";
 import { SetupPanel } from "./components/SetupPanel";
+import {
+  loadProcessing,
+  saveProcessing,
+  type ProcessingChoice,
+} from "./lib/processing";
 import { SessionReview } from "./components/SessionReview";
 import { SettingsPanel, type SttDraft } from "./components/SettingsPanel";
 
@@ -64,6 +69,12 @@ export function App() {
     recording_offset_ms: null,
   });
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [autoProcessing, setAutoProcessing] =
+    useState<ProcessingChoice>(loadProcessing);
+  const chooseAutoProcessing = (choice: ProcessingChoice) => {
+    saveProcessing(choice);
+    setAutoProcessing(choice);
+  };
   const [shortcut, setShortcut] = useState("");
   const [stopShortcut, setStopShortcut] = useState("");
   const [sttDraft, setSttDraft] = useState<SttDraft>({
@@ -864,6 +875,8 @@ export function App() {
             disabled={disabled}
             active={active}
             configurationRevision={JSON.stringify(settings)}
+            processing={autoProcessing}
+            onOpenSettings={() => setPanel("settings")}
             onTitle={setTitle}
             onConsent={setConsent}
             onMicrophone={setMicrophone}
@@ -1112,6 +1125,8 @@ export function App() {
         {panel === "settings" && (
           <SettingsPanel
             panelRef={panelRef}
+            processing={autoProcessing}
+            onProcessing={chooseAutoProcessing}
             settings={settings}
             disabled={disabled}
             shortcut={shortcut}

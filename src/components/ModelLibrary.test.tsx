@@ -20,16 +20,17 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.onModelLibraryProgress).mockResolvedValue(() => {});
 });
-it("makes no automatic requests and respects a cancelled folder picker", async () => {
+it("scans common folders once on open, makes no network request, and respects a cancelled folder picker", async () => {
   vi.mocked(api.chooseModelFolder).mockResolvedValue(null);
   render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
   await userEvent.type(screen.getByLabelText("Hugging Face search"), "gguf");
   expect(api.searchHfModels).not.toHaveBeenCalled();
-  expect(api.scanLocalModels).not.toHaveBeenCalled();
+  expect(api.scanLocalModels).toHaveBeenCalledOnce();
+  expect(api.scanLocalModels).toHaveBeenCalledWith(null);
   await userEvent.click(
     screen.getByRole("button", { name: "Choose model folder" }),
   );
-  expect(api.scanLocalModels).not.toHaveBeenCalled();
+  expect(api.scanLocalModels).toHaveBeenCalledOnce();
 });
 it("imports only catalog candidates and refreshes installed model status", async () => {
   vi.mocked(api.scanLocalModels).mockResolvedValue({
@@ -43,9 +44,11 @@ it("imports only catalog candidates and refreshes installed model status", async
   vi.mocked(api.importLocalModel).mockResolvedValue({ model_id: "small" });
   const refresh = vi.fn();
   render(<ModelLibrary disabled={false} onImported={refresh} />);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Scan common folders" }),
+  await userEvent.selectOptions(
+    await screen.findByLabelText("Found speech models"),
+    "C:/small.bin",
   );
+  expect(screen.queryByText(/model\.gguf/)).toBeNull();
   await userEvent.click(
     await screen.findByRole("button", { name: "Verify and import small" }),
   );
