@@ -49,6 +49,14 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
             output.push_str(&format!("model: {}\n", quote(model)));
         }
     }
+    if options.transcript {
+        if let Some(provider) = &detail.transcript_provider {
+            output.push_str(&format!("transcript_provider: {}\n", quote(provider)));
+        }
+        if let Some(model) = &detail.transcript_model {
+            output.push_str(&format!("transcript_model: {}\n", quote(model)));
+        }
+    }
     output.push_str(&format!(
         "tags: [meeting]\n---\n\n> {}\n\n",
         banner(&detail.meeting.source)
@@ -67,12 +75,21 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
     if detail.segments.is_empty() {
         output.push_str("No transcript generated.\n");
     }
+    if detail
+        .segments
+        .iter()
+        .any(|segment| segment.timing == SegmentTiming::Untimed)
+    {
+        output.push_str("\nUntimed entries have no provider timestamps. Track order does not establish who spoke first.\n");
+    }
     for segment in &detail.segments {
+        let timing = match segment.timing {
+            SegmentTiming::Timed { start_ms, .. } => format!("({:.1}s)", start_ms as f64 / 1000.0),
+            SegmentTiming::Untimed => "(untimed)".into(),
+        };
         output.push_str(&format!(
-            "\n**{}** ({:.1}s): {}\n",
-            segment.speaker,
-            segment.start_ms as f64 / 1000.0,
-            segment.text
+            "\n**{}** {}: {}\n",
+            segment.speaker, timing, segment.text
         ));
     }
     output
@@ -332,5 +349,46 @@ mod tests {
             }))
             .is_err());
         }
+    }
+
+    #[test]
+    fn untimed_transcript_exports_provenance_without_invented_timestamps() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Untimed transcript").unwrap();
+        core.replace_transcript(
+            &id,
+            &[
+                Segment {
+                    speaker: "You".into(),
+                    text: "Local track words".into(),
+                    timing: SegmentTiming::Untimed,
+                },
+                Segment {
+                    speaker: "Others".into(),
+                    text: "Remote track words".into(),
+                    timing: SegmentTiming::Untimed,
+                },
+            ],
+            "https://speech.example/v1",
+            "speech-model",
+        )
+        .unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        let text = render(&detail, &ALL);
+        assert!(text.contains("transcript_provider: \"https://speech.example/v1\""));
+        assert!(text.contains("transcript_model: \"speech-model\""));
+        assert!(text.contains("**You** (untimed): Local track words"));
+        assert!(text.contains("**Others** (untimed): Remote track words"));
+        assert!(!text.contains("(0.0s)"));
+        let without = render(
+            &detail,
+            &ExportOptions {
+                transcript: false,
+                ..ALL
+            },
+        );
+        assert!(!without.contains("transcript_provider"));
+        assert!(!without.contains("speech-model"));
+        assert!(!without.contains("Local track words"));
     }
 }

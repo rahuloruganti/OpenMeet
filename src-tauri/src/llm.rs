@@ -1,124 +1,10 @@
-//! Merge Gateway credential storage, model discovery, summaries and questions.
-//!
-//! The API key lives in the OS credential store and never leaves Rust. Meeting
-//! text (never audio) is sent only by the consented summary and question calls.
-use crate::domain::{AppError, Result};
-use reqwest::{blocking::Client, redirect::Policy, StatusCode, Url};
-use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, io::Read, time::Duration};
-
-const BASE_URL: &str = "https://api-gateway.merge.dev/v1";
-const KEYCHAIN_SERVICE: &str = "dev.openmeet.preview";
-const KEYCHAIN_USER: &str = "merge-gateway-api-key";
-const ENV_KEY_NAME: &str = "OPENMEET_LLM_API_KEY";
-const MAX_KEY_LEN: usize = 512;
-const PAGE_LIMIT: &str = "100";
-const MAX_PAGES: usize = 20;
-const MAX_PAGE_BYTES: u64 = 4 * 1024 * 1024;
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct MergeModel {
-    pub model: String,
-    pub display_name: Option<String>,
-    pub available: bool,
-    pub unavailable_reason: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Page {
-    #[serde(default)]
-    data: Vec<Item>,
-    #[serde(default)]
-    has_more: bool,
-    next_cursor: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Item {
-    model: String,
-    display_name: Option<String>,
-    availability_status: Option<String>,
-    #[serde(default)]
-    access_required: bool,
-    access_reason: Option<String>,
-}
-
-fn client(timeout: Duration) -> reqwest::Result<Client> {
-    Client::builder()
-        .redirect(Policy::none())
-        .connect_timeout(timeout.min(Duration::from_secs(5)))
-        .timeout(timeout)
-        .build()
-}
-
-/// Reads at most `max` bytes; `None` when the body is unreadable or larger.
-fn read_capped(response: reqwest::blocking::Response, max: u64) -> Option<Vec<u8>> {
-    let mut body = Vec::new();
-    response.take(max + 1).read_to_end(&mut body).ok()?;
-    (body.len() as u64 <= max).then_some(body)
-}
-
-fn keychain_error(_: keyring::Error) -> AppError {
-    AppError::new(
-        "keychain_unavailable",
-        "The OS credential store could not be used. No key was read or changed.",
-    )
-}
-
-fn entry() -> Result<keyring::Entry> {
-    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(keychain_error)
-}
-
-pub fn key_present() -> Result<bool> {
-    match entry()?.get_password() {
-        Ok(_) => Ok(true),
-        Err(keyring::Error::NoEntry) => Ok(false),
-        Err(error) => Err(keychain_error(error)),
-    }
-}
-
-fn load_key() -> Result<String> {
-    match entry()?.get_password() {
-        Ok(key) => Ok(key),
-        Err(keyring::Error::NoEntry) => Err(AppError::new(
-            "merge_key_missing",
-            "No Merge API key is saved. Import one first.",
-        )),
-        Err(error) => Err(keychain_error(error)),
-    }
-}
-
-pub fn delete_key() -> Result<()> {
-    match entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(keychain_error(error)),
-    }
-}
-
-/// Copies the key from the `OPENMEET_LLM_API_KEY` environment variable into the OS
-/// credential store. The key is read and stored entirely in Rust; the webview never
-/// receives it.
-pub fn import_key_from_env() -> Result<()> {
-    let key = std::env::var(ENV_KEY_NAME).unwrap_or_default();
-    let key = key.trim();
-    if key.is_empty() {
-        return Err(AppError::new(
-            "merge_env_missing",
-            format!("{ENV_KEY_NAME} is not set. Set it in the environment, restart OpenMeet, and retry. Nothing was saved."),
-        ));
-    }
-    if !valid_key(key) {
-        return Err(AppError::new(
-            "merge_key_invalid",
-            format!("{ENV_KEY_NAME} contains unsupported characters. Nothing was saved."),
-        ));
-    }
-    entry()?.set_password(key).map_err(keychain_error)
-}
-
-fn valid_key(key: &str) -> bool {
-    !key.is_empty() && key.len() <= MAX_KEY_LEN && key.bytes().all(|b| b.is_ascii_graphic())
-}
+//! Consented summaries and questions through an OpenAI-compatible provider.
+use crate::{
+    domain::{AppError, Result},
+    providers::{authorize, check_status, client, read_capped, Connection},
+};
+use serde::Deserialize;
+use std::time::Duration;
 
 /// Largest single request body (notes + transcript text) sent in one call.
 const MAX_SUMMARY_INPUT_CHARS: usize = 120_000;
@@ -179,7 +65,7 @@ const MERGE_NOTE: &str = "The transcript is given as partial notes from consecut
 Combine them into one summary and keep facts from every part.";
 
 const ASK_PROMPT: &str = "You answer one question about a single meeting using only its notes and transcript. \
-If they do not contain the answer, say so. Cite [mm:ss] times from the transcript where possible. Answer in short Markdown.";
+If they do not contain the answer, say so. Cite [mm:ss] times only when supplied in the transcript. Never invent timestamps for untimed text. Answer in short Markdown.";
 
 #[derive(Deserialize)]
 struct ChatReply {
@@ -238,20 +124,25 @@ fn plan_chunks(notes: &str, lines: &[String]) -> Result<Vec<String>> {
     Ok(chunks)
 }
 
-/// Number of Merge requests a summary of this content will send.
+/// Number of provider requests a summary of this content will send.
 pub fn summary_requests(notes: &str, lines: &[String]) -> Result<usize> {
     let chunks = plan_chunks(notes, lines)?.len();
     Ok(if chunks == 1 { 1 } else { chunks + 1 })
 }
 
-/// Sends the notes and transcript text (never audio) to Merge chat completions.
+/// Sends the notes and transcript text (never audio) to the selected provider chat completions.
 /// Callers must have obtained explicit per-action consent.
-pub fn summarize(model: &str, template: Template, notes: &str, lines: &[String]) -> Result<String> {
-    let url = format!("{BASE_URL}/chat/completions");
+pub fn summarize(
+    connection: &Connection,
+    template: Template,
+    notes: &str,
+    lines: &[String],
+) -> Result<String> {
+    let url = connection.endpoint("chat/completions")?;
     summarize_at(
-        &url,
-        &load_key()?,
-        model,
+        url.as_str(),
+        connection.key(),
+        connection.model()?,
         template,
         notes,
         lines,
@@ -294,7 +185,7 @@ fn summarize_at(
     }
     if notes.len() + partials.len() > MAX_SUMMARY_INPUT_CHARS {
         return Err(AppError::new(
-            "merge_response",
+            "provider_response",
             "The partial summaries were too long to combine. Nothing was saved.",
         ));
     }
@@ -310,19 +201,18 @@ fn summarize_at(
 }
 
 /// Sends one question with this meeting's notes and transcript text (never audio).
-/// Without consent nothing is sent. The answer is returned, not stored.
+/// The command boundary validates per-action consent. The answer is returned, not stored.
 pub fn ask(
-    consent: bool,
-    model: &str,
+    connection: &Connection,
     notes: &str,
     lines: &[String],
     question: &str,
 ) -> Result<String> {
-    let url = format!("{BASE_URL}/chat/completions");
+    let url = connection.endpoint("chat/completions")?;
     ask_at(
-        &url,
-        consent.then(load_key).transpose()?.as_deref(),
-        model,
+        url.as_str(),
+        Some(connection.key()),
+        connection.model()?,
         notes,
         lines,
         question,
@@ -330,7 +220,24 @@ pub fn ask(
     )
 }
 
-/// `key` is `None` exactly when consent was not given.
+/// Validates a question before presenting cloud submission consent.
+pub fn validate_question(notes: &str, lines: &[String], question: &str) -> Result<()> {
+    let question = question.trim();
+    if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
+        return Err(AppError::new(
+            "invalid_question",
+            format!("Ask a question of 1 to {MAX_QUESTION_CHARS} characters. Nothing was sent."),
+        ));
+    }
+    let transcript = lines.join("\n");
+    if notes.len() + transcript.len() + question.len() > MAX_SUMMARY_INPUT_CHARS {
+        return Err(too_long(
+            "This meeting is too long to ask about in one request. Nothing was sent.".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn ask_at(
     url: &str,
     key: Option<&str>,
@@ -346,19 +253,9 @@ fn ask_at(
             "Confirm what will be sent before asking. Nothing was sent.",
         ));
     };
+    validate_question(notes, lines, question)?;
     let question = question.trim();
-    if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
-        return Err(AppError::new(
-            "invalid_question",
-            format!("Ask a question of 1 to {MAX_QUESTION_CHARS} characters. Nothing was sent."),
-        ));
-    }
     let transcript = lines.join("\n");
-    if notes.len() + transcript.len() + question.len() > MAX_SUMMARY_INPUT_CHARS {
-        return Err(too_long(
-            "This meeting is too long to ask about in one request. Nothing was sent.".into(),
-        ));
-    }
     let user = format!("<notes>\n{notes}\n</notes>\n\n<transcript>\n{transcript}\n</transcript>\n\n<question>\n{question}\n</question>");
     chat(
         url,
@@ -380,8 +277,8 @@ fn chat(
 ) -> Result<String> {
     let unreachable = || {
         AppError::new(
-            "merge_unreachable",
-            "Cannot reach Merge Gateway. Nothing was saved; check your connection and try again.",
+            "provider_unreachable",
+            "Cannot reach the selected provider. Nothing was saved; check your connection and try again.",
         )
     };
     let body = serde_json::json!({
@@ -391,10 +288,7 @@ fn chat(
             { "role": "user", "content": user },
         ],
     });
-    let response = client(timeout)
-        .map_err(|_| unreachable())?
-        .post(url)
-        .bearer_auth(key)
+    let response = authorize(client(timeout).map_err(|_| unreachable())?.post(url), key)
         .header("Content-Type", "application/json")
         .body(body.to_string())
         .send()
@@ -404,8 +298,8 @@ fn chat(
         .and_then(|raw| serde_json::from_slice(&raw).ok())
         .ok_or_else(|| {
             AppError::new(
-                "merge_response",
-                "Merge Gateway returned an unusable response. Nothing was saved.",
+                "provider_response",
+                "the selected provider returned an unusable response. Nothing was saved.",
             )
         })?;
     reply
@@ -416,117 +310,16 @@ fn chat(
         .find(|text| !text.is_empty())
         .ok_or_else(|| {
             AppError::new(
-                "merge_response",
+                "provider_response",
                 "The model returned an empty response. Nothing was saved.",
             )
         })
 }
-
-fn check_status(status: StatusCode) -> Result<()> {
-    match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(AppError::new(
-            "merge_unauthorized",
-            "Merge rejected the API key. Check the key and import it again.",
-        )),
-        StatusCode::TOO_MANY_REQUESTS => Err(AppError::new(
-            "merge_rate_limited",
-            "Merge Gateway is rate limiting requests. Wait a moment and retry.",
-        )),
-        status if !status.is_success() => Err(AppError::new(
-            "merge_response",
-            format!("Merge Gateway returned HTTP {status}. The selected model may not support this request; nothing was saved."),
-        )),
-        _ => Ok(()),
-    }
-}
-
-pub fn list_models() -> Result<Vec<MergeModel>> {
-    let url = format!("{BASE_URL}/models");
-    fetch_models(&url, &load_key()?, Duration::from_secs(15))
-}
-
-fn fetch_models(url: &str, key: &str, timeout: Duration) -> Result<Vec<MergeModel>> {
-    let unreachable = || {
-        AppError::new(
-            "merge_unreachable",
-            "Cannot reach Merge Gateway. Check your network connection and try again.",
-        )
-    };
-    let invalid = |detail: &str| {
-        AppError::new(
-            "merge_response",
-            format!("Merge Gateway returned an unusable model list: {detail}."),
-        )
-    };
-    let client = client(timeout).map_err(|_| unreachable())?;
-    let base = Url::parse(url).map_err(|_| unreachable())?;
-    let mut models: Vec<MergeModel> = Vec::new();
-    let mut seen = HashSet::new();
-    let mut cursor: Option<String> = None;
-    for _ in 0..MAX_PAGES {
-        let mut page_url = base.clone();
-        {
-            let mut query = page_url.query_pairs_mut();
-            query.append_pair("limit", PAGE_LIMIT);
-            if let Some(cursor) = &cursor {
-                query.append_pair("cursor", cursor);
-            }
-        }
-        let response = client
-            .get(page_url)
-            .bearer_auth(key)
-            .send()
-            .map_err(|_| unreachable())?;
-        check_status(response.status())?;
-        let body = read_capped(response, MAX_PAGE_BYTES)
-            .ok_or_else(|| invalid("response was unreadable or exceeded the 4 MiB limit"))?;
-        let page: Page =
-            serde_json::from_slice(&body).map_err(|_| invalid("response was not valid JSON"))?;
-        for item in page.data {
-            let id = item.model;
-            let usable = !id.is_empty()
-                && id.len() <= 256
-                && !id.chars().any(|c| c.is_whitespace() || c.is_control());
-            if !usable || models.iter().any(|existing| existing.model == id) {
-                continue;
-            }
-            let status = item.availability_status.unwrap_or_default();
-            let available = status == "available" && !item.access_required;
-            let unavailable_reason = (!available).then(|| {
-                let reason = if item.access_required {
-                    item.access_reason
-                        .unwrap_or_else(|| "access_required".into())
-                } else if status.is_empty() {
-                    "status_unknown".into()
-                } else {
-                    format!("status_{status}")
-                };
-                reason.chars().take(80).collect()
-            });
-            models.push(MergeModel {
-                model: id,
-                display_name: item.display_name,
-                available,
-                unavailable_reason,
-            });
-        }
-        if !page.has_more {
-            models.sort_by(|a, b| a.model.cmp(&b.model));
-            return Ok(models);
-        }
-        match page.next_cursor {
-            Some(next) if !next.is_empty() && seen.insert(next.clone()) => cursor = Some(next),
-            _ => return Err(invalid("pagination did not advance")),
-        }
-    }
-    Err(invalid("too many pages"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::{
-        io::{BufRead, BufReader, Write},
+        io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
         sync::{Arc, Mutex},
         thread::{self, JoinHandle},
@@ -616,107 +409,6 @@ mod tests {
     }
 
     #[test]
-    fn paginates_sends_bearer_key_and_flags_unavailable_models() {
-        let first = r#"{"object":"list","has_more":true,"next_cursor":"b/model",
-            "data":[
-              {"model":"openai/gpt-5.4","provider":"openai","display_name":"GPT","availability_status":"available","access_required":false,"access_reason":null},
-              {"model":"x/gated","provider":"x","availability_status":"available","access_required":true,"access_reason":"vendor_access_required"},
-              {"model":"bad id","availability_status":"available"}
-            ]}"#;
-        let second = r#"{"object":"list","has_more":false,"next_cursor":null,
-            "data":[{"model":"a/degraded","availability_status":"degraded"},
-                    {"model":"openai/gpt-5.4","availability_status":"available"}]}"#;
-        let (url, worker, seen) = serve(vec![ok(first), ok(second)]);
-        let models = fetch_models(&url, "mg_test_key", Duration::from_secs(3)).unwrap();
-        worker.join().unwrap();
-        let ids: Vec<_> = models.iter().map(|m| m.model.as_str()).collect();
-        assert_eq!(ids, ["a/degraded", "openai/gpt-5.4", "x/gated"]);
-        assert!(models[1].available && models[1].unavailable_reason.is_none());
-        assert_eq!(
-            models[0].unavailable_reason.as_deref(),
-            Some("status_degraded")
-        );
-        assert_eq!(
-            models[2].unavailable_reason.as_deref(),
-            Some("vendor_access_required")
-        );
-        let requests = seen.lock().unwrap();
-        assert!(requests[0].contains("limit=100") && !requests[0].contains("cursor="));
-        assert!(requests[1].contains("cursor=b%2fmodel") || requests[1].contains("cursor=b/model"));
-        assert!(requests
-            .iter()
-            .all(|r| r.contains("authorization: bearer mg_test_key")));
-    }
-
-    #[test]
-    fn auth_rate_limit_and_server_errors_are_sanitized() {
-        for (code, expected) in [
-            ("401 Unauthorized", "merge_unauthorized"),
-            ("403 Forbidden", "merge_unauthorized"),
-            ("429 Too Many Requests", "merge_rate_limited"),
-            ("500 Internal Server Error", "merge_response"),
-        ] {
-            let (url, worker, _) = serve(vec![status(code)]);
-            let error = fetch_models(&url, "mg_secret_value", Duration::from_secs(3)).unwrap_err();
-            worker.join().unwrap();
-            assert_eq!(error.code, expected);
-            assert!(!error.message.contains("mg_secret_value"));
-        }
-    }
-
-    #[test]
-    fn redirects_are_not_followed_and_never_receive_the_key() {
-        let destination = TcpListener::bind("127.0.0.1:0").unwrap();
-        destination.set_nonblocking(true).unwrap();
-        let redirect = format!(
-            "HTTP/1.1 302 Found\r\nLocation: http://{}/steal\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            destination.local_addr().unwrap()
-        );
-        let (url, worker, _) = serve(vec![redirect]);
-        assert_eq!(
-            fetch_models(&url, "mg_key", Duration::from_secs(3))
-                .unwrap_err()
-                .code,
-            "merge_response"
-        );
-        worker.join().unwrap();
-        assert_eq!(
-            destination.accept().unwrap_err().kind(),
-            std::io::ErrorKind::WouldBlock
-        );
-    }
-
-    #[test]
-    fn invalid_oversized_and_non_advancing_pages_fail_visibly() {
-        let oversized = "x".repeat(MAX_PAGE_BYTES as usize + 1);
-        for body in [
-            "not json".to_string(),
-            oversized,
-            r#"{"data":[],"has_more":true,"next_cursor":null}"#.to_string(),
-        ] {
-            let (url, worker, _) = serve(vec![ok(&body)]);
-            assert_eq!(
-                fetch_models(&url, "mg_key", Duration::from_secs(3))
-                    .unwrap_err()
-                    .code,
-                "merge_response"
-            );
-            worker.join().unwrap();
-        }
-        // A repeated cursor must not loop until the page cap.
-        let page = r#"{"data":[],"has_more":true,"next_cursor":"same"}"#;
-        let (url, worker, seen) = serve(vec![ok(page), ok(page)]);
-        assert_eq!(
-            fetch_models(&url, "mg_key", Duration::from_secs(3))
-                .unwrap_err()
-                .code,
-            "merge_response"
-        );
-        worker.join().unwrap();
-        assert_eq!(seen.lock().unwrap().len(), 2);
-    }
-
-    #[test]
     fn summary_request_carries_content_only_in_the_body_and_surfaces_failures() {
         let reply = r#"{"choices":[{"message":{"content":"  ## Summary\nDone.  "}}]}"#;
         let (url, worker, seen) = serve(vec![ok(reply)]);
@@ -740,14 +432,14 @@ mod tests {
             "content must not be in headers or URL"
         );
         for (response, code) in [
-            (status("401 Unauthorized"), "merge_unauthorized"),
-            (status("400 Bad Request"), "merge_response"),
-            (ok(r#"{"choices":[]}"#), "merge_response"),
+            (status("401 Unauthorized"), "provider_unauthorized"),
+            (status("400 Bad Request"), "provider_response"),
+            (ok(r#"{"choices":[]}"#), "provider_response"),
             (
                 ok(r#"{"choices":[{"message":{"content":"   "}}]}"#),
-                "merge_response",
+                "provider_response",
             ),
-            (ok("garbage"), "merge_response"),
+            (ok("garbage"), "provider_response"),
         ] {
             let (url, worker, _) = serve(vec![response]);
             let error = summarize_at(
@@ -945,36 +637,5 @@ mod tests {
             listener.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock
         );
-        assert_eq!(
-            ask(false, "m", "n", &lines, "What?").unwrap_err().code,
-            "consent_required"
-        );
-    }
-
-    #[test]
-    fn unreachable_server_fails_without_hanging() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/v1/models", listener.local_addr().unwrap());
-        drop(listener);
-        assert_eq!(
-            fetch_models(&url, "mg_key", Duration::from_millis(200))
-                .unwrap_err()
-                .code,
-            "merge_unreachable"
-        );
-    }
-
-    #[test]
-    fn key_validation_rejects_empty_spaced_and_oversized_values() {
-        assert!(valid_key("mg_abc123"));
-        for bad in [
-            "",
-            "has space",
-            "line
-break",
-            &"k".repeat(MAX_KEY_LEN + 1),
-        ] {
-            assert!(!valid_key(bad));
-        }
     }
 }

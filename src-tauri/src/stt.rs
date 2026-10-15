@@ -5,7 +5,7 @@
 //! gates every track so silence is not "transcribed" into hallucinated text.
 use crate::{
     audio::Track,
-    domain::{AppError, Result, Segment, Settings},
+    domain::{AppError, Result, Segment, SegmentTiming, Settings},
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,41 +37,7 @@ const ENGINE: Artifact = Artifact {
     sha256: "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb",
     size: 8_928_640,
 };
-// Multilingual models. Size and SHA-256 are Hugging Face's LFS metadata for ggerganov/whisper.cpp
-// (API tree listing and the X-Linked-Size/ETag headers agree); "small" also matches the README SHA-1.
-static MODELS: [(&str, Artifact); 3] = [
-    (
-        "base",
-        Artifact {
-            name: "model",
-            file: "ggml-base.bin",
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-            sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
-            size: 147_951_465,
-        },
-    ),
-    (
-        "small",
-        Artifact {
-            name: "model",
-            file: "ggml-small.bin",
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
-            sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-            size: 487_601_967,
-        },
-    ),
-    (
-        "large-v3-turbo",
-        Artifact {
-            name: "model",
-            file: "ggml-large-v3-turbo.bin",
-            url:
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-            sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
-            size: 1_624_555_275,
-        },
-    ),
-];
+include!("stt_models.rs");
 /// Whisper language codes offered in Settings; anything else is rejected before it reaches `-l`.
 pub const LANGUAGES: [&str; 35] = [
     "auto", "ar", "ca", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hr", "hu",
@@ -104,9 +70,29 @@ pub struct Status {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelStatus {
-    pub id: &'static str,
+    pub id: String,
     pub size: u64,
     pub installed: bool,
+    /// "catalog" (pinned), "scan" (found on this computer) or "huggingface" (user-added).
+    pub source: String,
+    /// File name for library models; `None` for the pinned catalog.
+    pub name: Option<String>,
+    pub path: Option<String>,
+}
+
+/// A user-supplied whisper.cpp model file registered in the local library. Never pinned:
+/// size is recorded and re-checked, and the file stays where it is.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LocalModel {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    pub source: String,
+    pub repo: Option<String>,
+    pub revision: Option<String>,
+    pub sha256: Option<String>,
+    pub license: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -138,8 +124,38 @@ fn model(id: &str) -> Result<&'static Artifact> {
         .ok_or_else(|| AppError::new("stt_settings", "Choose one of the listed speech models."))
 }
 
-/// Checks transcription settings before they are stored or passed to the engine.
+/// Resolves a model id to its file and exact size: pinned catalog first, then the local library.
+fn resolve(
+    root: &Path,
+    id: &str,
+    local: &[LocalModel],
+) -> Result<(PathBuf, u64, Option<&'static Artifact>)> {
+    if let Ok(artifact) = model(id) {
+        return Ok((
+            models_dir(root).join(artifact.file),
+            artifact.size,
+            Some(artifact),
+        ));
+    }
+    local
+        .iter()
+        .find(|item| item.id == id)
+        .map(|item| (PathBuf::from(&item.path), item.size, None))
+        .ok_or_else(|| AppError::new("stt_settings", "Choose one of the listed speech models."))
+}
+
+#[cfg(test)]
 pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
+    validate_with(language, prompt, model_id, &[])
+}
+
+/// Checks transcription settings before they are stored or passed to the engine.
+pub fn validate_with(
+    language: &str,
+    prompt: &str,
+    model_id: &str,
+    local: &[LocalModel],
+) -> Result<()> {
     if !LANGUAGES.contains(&language) {
         return Err(AppError::new(
             "stt_settings",
@@ -152,19 +168,30 @@ pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
             "Keep the vocabulary hint to one line of at most 500 characters.",
         ));
     }
-    model(model_id).map(|_| ())
+    resolve(Path::new(""), model_id, local).map(|_| ())
 }
 
 pub fn status(root: &Path, model_id: &str) -> Status {
+    status_with(root, model_id, &[])
+}
+
+pub fn status_with(root: &Path, model_id: &str, local: &[LocalModel]) -> Status {
     let engine = engine_dir(root).join(ENGINE_EXE).is_file()
         && fs::read_to_string(engine_dir(root).join(ENGINE_MARKER))
             .is_ok_and(|marker| marker.trim() == ENGINE.sha256);
     let present = |artifact: &Artifact| {
         fs::metadata(models_dir(root).join(artifact.file)).is_ok_and(|m| m.len() == artifact.size)
     };
-    let selected = model(model_id).ok();
-    let (model, vad) = (selected.is_some_and(present), present(&VAD));
-    let model_size = selected.map_or(0, |artifact| artifact.size);
+    let selected = resolve(root, model_id, local).ok();
+    let model = selected
+        .as_ref()
+        .is_some_and(|(path, size, _)| fs::metadata(path).is_ok_and(|m| m.len() == *size));
+    let vad = present(&VAD);
+    // A library model is never downloaded by the engine install; only catalog models count as missing.
+    let model_size = selected
+        .as_ref()
+        .and_then(|(_, _, artifact)| artifact.map(|a| a.size))
+        .unwrap_or(0);
     let missing = [(engine, ENGINE.size), (model, model_size), (vad, VAD.size)]
         .iter()
         .filter(|(have, _)| !have)
@@ -180,13 +207,33 @@ pub fn status(root: &Path, model_id: &str) -> Status {
         models: MODELS
             .iter()
             .map(|(id, artifact)| ModelStatus {
-                id,
+                id: (*id).to_string(),
                 size: artifact.size,
                 installed: present(artifact),
+                source: "catalog".into(),
+                name: None,
+                path: None,
             })
+            .chain(local.iter().map(|item| ModelStatus {
+                id: item.id.clone(),
+                size: item.size,
+                installed: fs::metadata(&item.path).is_ok_and(|m| m.len() == item.size),
+                source: item.source.clone(),
+                name: Some(item.name.clone()),
+                path: Some(item.path.clone()),
+            }))
             .collect(),
         languages: &LANGUAGES,
     }
+}
+
+/// Whether `name` is one of the pinned catalog files (so a scan does not list it twice).
+pub fn is_catalog_file(name: &str) -> bool {
+    MODELS.iter().any(|(_, artifact)| artifact.file == name)
+}
+
+pub(crate) fn models_folder(root: &Path) -> PathBuf {
+    models_dir(root)
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -197,9 +244,43 @@ fn stt_error(message: impl Into<String>) -> AppError {
     AppError::new("stt", message)
 }
 
+pub(crate) fn download_client() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(3600))
+        .build()
+        .map_err(|_| stt_error("Could not prepare the download client."))
+}
+
 fn download(
     client: &reqwest::blocking::Client,
     artifact: &Artifact,
+    destination: &Path,
+    progress: impl FnMut(u64),
+) -> Result<()> {
+    download_verified(
+        client,
+        artifact.url,
+        artifact.size,
+        artifact.sha256,
+        destination,
+        progress,
+    )
+}
+
+/// Streams `url` to `destination.part`, enforcing the exact size and SHA-256 before publishing.
+pub(crate) fn download_verified(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    size: u64,
+    sha256: &str,
     destination: &Path,
     mut progress: impl FnMut(u64),
 ) -> Result<()> {
@@ -208,7 +289,7 @@ fn download(
         let _ = fs::remove_file(&part);
         stt_error(message.to_string())
     };
-    let mut response = client.get(artifact.url).send().map_err(|_| {
+    let mut response = client.get(url).send().map_err(|_| {
         fail("Could not reach the download server. Check your connection and try again.")
     })?;
     if !response.status().is_success() {
@@ -229,7 +310,7 @@ fn download(
             break;
         }
         done += read as u64;
-        if done > artifact.size {
+        if done > size {
             return Err(fail(
                 "The download was larger than expected and was discarded.",
             ));
@@ -241,7 +322,7 @@ fn download(
     }
     file.flush()?;
     drop(file);
-    if done != artifact.size || hex(&hasher.finalize()) != artifact.sha256 {
+    if done != size || hex(&hasher.finalize()) != sha256 {
         return Err(fail(
             "The download failed its checksum and was discarded. Nothing was installed.",
         ));
@@ -290,32 +371,31 @@ fn extract_engine(zip_path: &Path, destination: &Path) -> Result<()> {
 
 /// Downloads whatever is missing for the selected model. Each artifact is verified before it
 /// is installed. Other models already on disk are kept.
-pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) -> Result<Status> {
-    let selected = model(model_id)?;
+#[cfg(test)]
+pub fn install(root: &Path, model_id: &str, report: impl FnMut(Progress)) -> Result<Status> {
+    install_with(root, model_id, &[], report)
+}
+
+/// Library models are never downloaded here: only the engine and VAD are fetched for them.
+pub fn install_with(
+    root: &Path,
+    model_id: &str,
+    local: &[LocalModel],
+    mut report: impl FnMut(Progress),
+) -> Result<Status> {
+    let (_, _, selected) = resolve(root, model_id, local)?;
     if !status(root, model_id).supported {
         return Err(stt_error(
             "Local speech-to-text is only set up for Windows x64 in this preview.",
         ));
     }
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(3600))
-        .build()
-        .map_err(|_| stt_error("Could not prepare the download client."))?;
+    let client = download_client()?;
     fs::create_dir_all(models_dir(root))?;
-    let before = status(root, model_id);
-    let pending = [
-        (before.engine, &ENGINE),
-        (before.vad, &VAD),
-        (before.model, selected),
-    ];
+    let before = status_with(root, model_id, local);
+    let mut pending = vec![(before.engine, &ENGINE), (before.vad, &VAD)];
+    if let Some(artifact) = selected {
+        pending.push((before.model, artifact));
+    }
     for (present, artifact) in pending {
         if present {
             continue;
@@ -341,7 +421,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
             fs::write(engine_dir(root).join(ENGINE_MARKER), ENGINE.sha256)?;
         }
     }
-    Ok(status(root, model_id))
+    Ok(status_with(root, model_id, local))
 }
 
 #[derive(Deserialize)]
@@ -431,8 +511,10 @@ fn parse_output(json: &[u8], speaker: &str, rate: u32, index: &[Block]) -> Resul
         let end = session_ms(index, rate, item.offsets.to.max(item.offsets.from));
         segments.push(Segment {
             speaker: speaker.to_string(),
-            start_ms: start,
-            end_ms: end.max(start),
+            timing: SegmentTiming::Timed {
+                start_ms: start,
+                end_ms: end.max(start),
+            },
             text: text.to_string(),
         });
     }
@@ -443,6 +525,48 @@ fn parse_output(json: &[u8], speaker: &str, rate: u32, index: &[Block]) -> Resul
 static BUSY: Mutex<()> = Mutex::new(());
 // Set by `cancel`; the run loop that owns the child process sees it and kills the engine.
 static CANCEL: AtomicBool = AtomicBool::new(false);
+static FINALIZE: Mutex<()> = Mutex::new(());
+static COMMITTED: AtomicBool = AtomicBool::new(false);
+
+/// One owner across local/cloud work, including publication of the complete result.
+pub fn run<T>(operation: impl FnOnce(&AtomicBool) -> Result<T>) -> Result<T> {
+    let gate = FINALIZE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = match BUSY.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            return Err(stt_error(
+                "A transcription is already running. Wait for it to finish.",
+            ))
+        }
+    };
+    CANCEL.store(false, Ordering::SeqCst);
+    COMMITTED.store(false, Ordering::SeqCst);
+    drop(gate);
+    operation(&CANCEL)
+}
+
+/// Cancellation and final publication share a gate, so an acknowledged cancel cannot commit later.
+pub fn finish<T>(cancel: &AtomicBool, publish: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _gate = FINALIZE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cancel.load(Ordering::SeqCst) {
+        return Err(cancelled());
+    }
+    let result = publish()?;
+    COMMITTED.store(true, Ordering::SeqCst);
+    Ok(result)
+}
+
+fn cancelled() -> AppError {
+    AppError::new(
+        "stt_cancelled",
+        "Transcription was cancelled. The previous transcript was kept.",
+    )
+}
 
 /// Parses whisper-cli `-pp` lines such as `whisper_print_progress_callback: progress =  45%`.
 fn parse_progress(line: &str) -> Option<u8> {
@@ -451,17 +575,30 @@ fn parse_progress(line: &str) -> Option<u8> {
     (percent <= 100).then_some(percent)
 }
 
+#[cfg(test)]
 fn engine_command(
     root: &Path,
     settings: &Settings,
     track: &Track,
     output_base: &Path,
 ) -> Result<Command> {
-    validate(
+    engine_command_with(root, settings, &[], track, output_base)
+}
+
+fn engine_command_with(
+    root: &Path,
+    settings: &Settings,
+    local: &[LocalModel],
+    track: &Track,
+    output_base: &Path,
+) -> Result<Command> {
+    validate_with(
         &settings.stt_language,
         &settings.stt_prompt,
         &settings.stt_model,
+        local,
     )?;
+    let (model_path, _, _) = resolve(root, &settings.stt_model, local)?;
     let threads = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
         .min(8);
@@ -469,7 +606,7 @@ fn engine_command(
     command
         .current_dir(engine_dir(root))
         .arg("-m")
-        .arg(models_dir(root).join(model(&settings.stt_model)?.file))
+        .arg(model_path)
         .arg("--vad")
         .arg("-vm")
         .arg(models_dir(root).join(VAD.file))
@@ -572,23 +709,13 @@ fn run_engine(
     )
 }
 
-/// Runs one engine process per track under the BUSY guard. Nothing is returned on failure
+/// Runs one engine process per track inside the transcription run. Nothing is returned on failure
 /// or cancellation, so callers never replace an existing transcript with partial output.
 fn run_tracks(
     tracks: &[Track],
     mut command_for: impl FnMut(&Track, &Path) -> Result<Command>,
     mut report: impl FnMut(&str, u8),
 ) -> Result<Vec<Segment>> {
-    let _guard = match BUSY.try_lock() {
-        Ok(guard) => guard,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => {
-            return Err(stt_error(
-                "A transcription is already running. Wait for it to finish.",
-            ))
-        }
-    };
-    CANCEL.store(false, Ordering::SeqCst);
     let mut segments = Vec::new();
     for track in tracks {
         let scratch = tempfile::tempdir()?;
@@ -602,9 +729,16 @@ fn run_tracks(
             |percent| report(&track.kind, percent),
         )?);
     }
+    let times = |segment: &Segment| match segment.timing {
+        SegmentTiming::Timed { start_ms, end_ms } => (start_ms, end_ms),
+        SegmentTiming::Untimed => (i64::MAX, i64::MAX),
+    };
     segments.sort_by(|a, b| {
-        (a.start_ms, &a.speaker, a.end_ms).cmp(&(b.start_ms, &b.speaker, b.end_ms))
+        (times(a).0, &a.speaker, times(a).1).cmp(&(times(b).0, &b.speaker, times(b).1))
     });
+    if CANCEL.load(Ordering::SeqCst) {
+        return Err(cancelled());
+    }
     Ok(segments)
 }
 
@@ -613,22 +747,29 @@ pub fn transcribe(
     root: &Path,
     tracks: &[Track],
     settings: &Settings,
+    local: &[LocalModel],
     report: impl FnMut(&str, u8),
 ) -> Result<Vec<Segment>> {
-    if !status(root, &settings.stt_model).installed {
+    if !status_with(root, &settings.stt_model, local).installed {
         return Err(stt_error(
             "The speech engine and the selected model are not installed. Download them in Settings first.",
         ));
     }
     run_tracks(
         tracks,
-        |track, output_base| engine_command(root, settings, track, output_base),
+        |track, output_base| engine_command_with(root, settings, local, track, output_base),
         report,
     )
 }
 
 /// Asks the running transcription (if any) to stop. Returns whether one was running.
 pub fn cancel() -> bool {
+    let _gate = FINALIZE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if COMMITTED.load(Ordering::SeqCst) {
+        return false;
+    }
     match BUSY.try_lock() {
         Err(TryLockError::WouldBlock) => {
             CANCEL.store(true, Ordering::SeqCst);
@@ -680,7 +821,13 @@ mod tests {
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].text, "Hello there.");
         assert_eq!(segments[0].speaker, "Others");
-        assert_eq!((segments[1].start_ms, segments[1].end_ms), (3000, 3500));
+        assert_eq!(
+            segments[1].timing,
+            SegmentTiming::Timed {
+                start_ms: 3000,
+                end_ms: 3500
+            }
+        );
         assert_eq!(
             parse_output(b"not json", "You", 16000, &[])
                 .unwrap_err()
@@ -858,11 +1005,15 @@ mod tests {
             .unwrap();
         let small = status(dir.path(), "small");
         assert!(!small.model);
-        let installed: Vec<_> = small.models.iter().map(|m| (m.id, m.installed)).collect();
-        assert_eq!(
-            installed,
-            [("base", true), ("small", false), ("large-v3-turbo", false)]
-        );
+        let installed: Vec<_> = small
+            .models
+            .iter()
+            .map(|m| (m.id.as_str(), m.installed))
+            .collect();
+        assert_eq!(installed.len(), 33);
+        assert!(installed.contains(&("base", true)));
+        assert!(installed.contains(&("small", false)));
+        assert!(installed.contains(&("tiny-q5_1", false)));
         assert!(status(dir.path(), "base").model);
         assert!(!status(dir.path(), "huge").model);
         assert!(small.languages.contains(&"auto"));
@@ -934,11 +1085,13 @@ mod tests {
         };
 
         let mut seen = Vec::new();
-        let segments = run_tracks(
-            std::slice::from_ref(&track),
-            fake("fast"),
-            |kind, percent| seen.push((kind.to_string(), percent)),
-        )
+        let segments = run(|_| {
+            run_tracks(
+                std::slice::from_ref(&track),
+                fake("fast"),
+                |kind, percent| seen.push((kind.to_string(), percent)),
+            )
+        })
         .unwrap();
         assert_eq!(seen, [("mic".to_string(), 10), ("mic".to_string(), 100)]);
         assert_eq!(segments.len(), 1);
@@ -954,18 +1107,24 @@ mod tests {
             &id,
             &[Segment {
                 speaker: "Others".into(),
-                start_ms: 0,
-                end_ms: 10,
+                timing: SegmentTiming::Timed {
+                    start_ms: 0,
+                    end_ms: 10,
+                },
                 text: "Earlier run".into(),
             }],
+            "whisper",
+            "small",
         )
         .unwrap();
         let (progress_tx, progress_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn({
             let track = track.clone();
             move || {
-                run_tracks(&[track], fake("slow"), move |_, percent| {
-                    let _ = progress_tx.send(percent);
+                run(|_| {
+                    run_tracks(&[track], fake("slow"), move |_, percent| {
+                        let _ = progress_tx.send(percent);
+                    })
                 })
             }
         });
@@ -981,7 +1140,8 @@ mod tests {
             "the engine was killed"
         );
         // Same order as `transcribe_meeting`: the transcript is replaced only on success.
-        let saved = result.and_then(|segments| core.replace_transcript(&id, &segments));
+        let saved =
+            result.and_then(|segments| core.replace_transcript(&id, &segments, "whisper", "small"));
         assert_eq!(saved.unwrap_err().code, "stt_cancelled");
         assert!(progress_rx.try_iter().all(|percent| percent != 100));
         let texts: Vec<_> = core
@@ -993,5 +1153,24 @@ mod tests {
             .collect();
         assert!(texts.contains(&"Earlier run".to_string()));
         assert_eq!(texts.len(), 3, "two fixture segments plus the earlier run");
+        let mut published = "previous";
+        let cancelled = run(|token| {
+            assert!(cancel());
+            finish(token, || {
+                published = "replacement";
+                Ok(())
+            })
+        });
+        assert_eq!(cancelled.unwrap_err().code, "stt_cancelled");
+        assert_eq!(published, "previous");
+        run(|token| {
+            finish(token, || {
+                published = "complete";
+                Ok(())
+            })
+        })
+        .unwrap();
+        assert_eq!(published, "complete");
+        assert!(!cancel(), "publication already completed");
     }
 }
