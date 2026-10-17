@@ -69,11 +69,14 @@ type Props = {
   onImported: () => Promise<void>;
   processing: ProcessingChoice;
   onProcessing: (choice: ProcessingChoice) => void;
+  initialTab?: "cloud" | "local" | "general";
 };
 
 export function SettingsPanel(props: Props) {
   const { settings, disabled } = props;
-  const [tab, setTab] = useState<"cloud" | "local" | "general">("local");
+  const [tab, setTab] = useState<"cloud" | "local" | "general">(
+    props.initialTab ?? "local",
+  );
   // Catalog models a scan found on disk but that are not imported yet.
   const [found, setFound] = useState<string[]>([]);
   return (

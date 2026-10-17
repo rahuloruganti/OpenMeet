@@ -32,7 +32,7 @@ it("scans common folders once on open, makes no network request, and respects a 
   );
   expect(api.scanLocalModels).toHaveBeenCalledOnce();
 });
-it("imports only catalog candidates and refreshes installed model status", async () => {
+it("imports only catalog candidates, shows external-server models separately, and updates found models on custom folder scan", async () => {
   vi.mocked(api.scanLocalModels).mockResolvedValue({
     models: [
       { path: "C:/small.bin", format: "whisper", size: 123, model_id: "small" },
@@ -43,12 +43,20 @@ it("imports only catalog candidates and refreshes installed model status", async
   });
   vi.mocked(api.importLocalModel).mockResolvedValue({ model_id: "small" });
   const refresh = vi.fn();
-  render(<ModelLibrary disabled={false} onImported={refresh} />);
-  await userEvent.selectOptions(
-    await screen.findByLabelText("Found speech models"),
-    "C:/small.bin",
+  const onFound = vi.fn();
+  render(
+    <ModelLibrary disabled={false} onImported={refresh} onFound={onFound} />,
   );
-  expect(screen.queryByText(/model\.gguf/)).toBeNull();
+  const select = await screen.findByLabelText("Found speech models");
+  await userEvent.selectOptions(select, "C:/small.bin");
+  expect(onFound).toHaveBeenCalledWith(["small"]);
+  expect(select.textContent).not.toMatch(/model\.gguf/);
+  expect(screen.getByText(/C:\/model\.gguf · gguf · 0\.0 MB/)).toBeTruthy();
+  expect(
+    screen.getByText(
+      /Use with an external server\. Inference compatibility unverified\./,
+    ),
+  ).toBeTruthy();
   await userEvent.click(
     await screen.findByRole("button", { name: "Verify and import small" }),
   );
@@ -56,6 +64,25 @@ it("imports only catalog candidates and refreshes installed model status", async
   expect(refresh).toHaveBeenCalledOnce();
   expect(api.importLocalModel).toHaveBeenCalledWith("C:/small.bin");
   expect(screen.getByText(/Scan limit reached/)).toBeTruthy();
+
+  vi.mocked(api.chooseModelFolder).mockResolvedValue("C:/custom");
+  vi.mocked(api.scanLocalModels).mockResolvedValueOnce({
+    models: [
+      {
+        path: "C:/custom/base.bin",
+        format: "whisper",
+        size: 456,
+        model_id: "base",
+      },
+    ],
+    folders: [{ path: "C:/custom", status: "scanned" }],
+    truncated: false,
+  });
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose model folder" }),
+  );
+  expect(api.scanLocalModels).toHaveBeenLastCalledWith("C:/custom");
+  expect(onFound).toHaveBeenLastCalledWith(["base"]);
 });
 it("reports failed downloads and allows cancellation while a transfer is pending", async () => {
   const file = {

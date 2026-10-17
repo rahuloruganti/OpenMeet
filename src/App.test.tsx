@@ -1718,6 +1718,14 @@ describe("automatic session processing", () => {
       screen.getByRole("button", { name: "New recording" }),
     );
     expect(screen.getByText(/Recording only/)).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Change in Settings" }),
+    );
+    expect(
+      screen
+        .getByRole("tab", { name: "General" })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
     await chooseProcessing("both", "general-v1");
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
