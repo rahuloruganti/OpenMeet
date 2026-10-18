@@ -776,6 +776,13 @@ textarea.notes-editor {
 .ask-answer {
   margin-top: 16px;
 }
+.library-meetings {
+  max-height: 240px;
+  margin: 8px 0;
+  padding: 0 4px;
+  overflow-y: auto;
+  list-style: none;
+}
 .section-intro {
   margin-bottom: 20px;
 }

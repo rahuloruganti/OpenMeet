@@ -29,6 +29,7 @@ import {
   type SummaryDraft,
 } from "./components/MeetingWorkspace";
 import { RecordingControls } from "./components/RecordingControls";
+import { LibraryQuestion } from "./components/LibraryQuestion";
 import { SetupPanel } from "./components/SetupPanel";
 import {
   loadProcessing,
@@ -132,7 +133,16 @@ export function App() {
       else delete next[id];
       return next;
     });
-  const [panel, setPanel] = useState<"setup" | "settings" | null>(null);
+  const [panel, setPanel] = useState<"setup" | "settings" | "library" | null>(
+    null,
+  );
+  // Kept mounted once opened so an answer survives following one of its links.
+  const [libraryOpened, setLibraryOpened] = useState(false);
+  // A library-answer citation waiting for its meeting to be shown.
+  const [pendingJump, setPendingJump] = useState<{
+    meetingId: string;
+    ms: number | null;
+  } | null>(null);
   const [settingsTab, setSettingsTab] = useState<"cloud" | "local" | "general">(
     "local",
   );
@@ -534,7 +544,7 @@ export function App() {
     recording.status === "recording" || recording.status === "paused";
   useEffect(() => setHealth(null), [recording.meeting_id, active]);
   const openPanel = (
-    next: "setup" | "settings",
+    next: "setup" | "settings" | "library",
     trigger: HTMLButtonElement,
   ) => {
     panelTrigger.current = trigger;
@@ -590,6 +600,10 @@ export function App() {
         onSettings={(trigger) => {
           setSettingsTab("local");
           openPanel("settings", trigger);
+        }}
+        onLibrary={(trigger) => {
+          setLibraryOpened(true);
+          openPanel("library", trigger);
         }}
         onOpenMeeting={(id) =>
           void run(async () => {
@@ -647,7 +661,9 @@ export function App() {
                 ? "Preferences"
                 : panel === "setup"
                   ? "New recording"
-                  : "Workspace"}
+                  : panel === "library"
+                    ? "Ask across meetings"
+                    : "Workspace"}
             </span>
           </div>
           <details className="privacy-details">
@@ -922,7 +938,27 @@ export function App() {
             }
           />
         )}
+        {libraryOpened && (
+          <LibraryQuestion
+            hidden={panel !== "library"}
+            panelRef={panel === "library" ? panelRef : null}
+            meetings={meetings}
+            connectionRevision={`${settings?.llm?.revision ?? 0}`}
+            disabled={disabled}
+            onClose={() => setPanel(null)}
+            onOpen={(id, ms) =>
+              void run(async () => {
+                await openMeeting(id);
+                if (selectedIdRef.current !== id) return;
+                setPanel(null);
+                setPendingJump({ meetingId: id, ms });
+              })
+            }
+          />
+        )}
         <MeetingWorkspace
+          pendingJump={pendingJump}
+          onJumpDone={() => setPendingJump(null)}
           hidden={panel !== null}
           selected={selected}
           firstRun={ready && meetings.length === 0}

@@ -78,6 +78,8 @@ vi.mock("./lib/api", async (original) => {
       editSegment: vi.fn(),
       getTranscriptVersion: vi.fn(),
       askMeeting: vi.fn(),
+      planLibraryQuestion: vi.fn(),
+      askLibrary: vi.fn(),
       deleteQuestionThread: vi.fn(),
       renameMeeting: vi.fn(),
       saveExportOptions: vi.fn(),
@@ -2822,6 +2824,70 @@ describe("transcript and audio", () => {
     const segment = document.getElementById("segment-21");
     expect(segment?.className).toContain("highlighted-segment");
     expect(document.activeElement).toBe(segment);
+  });
+
+  it("opens a cited library-answer time in its meeting on the transcript", async () => {
+    const other = {
+      ...recorded,
+      meeting: { ...recorded.meeting, id: "rec", title: "Recorded sync" },
+    };
+    const withMeta = {
+      ...other,
+      segment_meta: [{ id: 31, original_text: null }],
+    };
+    vi.mocked(api.listMeetings).mockResolvedValue([
+      sample.meeting,
+      other.meeting,
+    ]);
+    vi.mocked(api.getMeeting).mockImplementation(async (id) =>
+      id === "rec" ? withMeta : sample,
+    );
+    vi.mocked(api.planLibraryQuestion).mockResolvedValue(textPlan);
+    vi.mocked(api.askLibrary).mockResolvedValue(
+      "Moved [M1 0:08] and [M2 0:08].",
+    );
+    vi.mocked(api.audioPosition).mockResolvedValue(2250);
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Ask across meetings" }),
+    );
+    await userEvent.click(screen.getByLabelText(/Recorded sync/));
+    await userEvent.type(screen.getByLabelText("Question"), "What moved?");
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(api.planLibraryQuestion).toHaveBeenCalledWith(
+      ["rec"],
+      "What moved?",
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Send question" }),
+    );
+    expect(api.askLibrary).toHaveBeenCalledWith(
+      ["rec"],
+      "What moved?",
+      "text-consent",
+    );
+    expect(await screen.findByText("(unverified)")).toBeTruthy();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open Recorded sync at 0:08" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: "Transcript" })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
+    expect(api.getMeeting).toHaveBeenLastCalledWith("rec");
+    await waitFor(() =>
+      expect(api.audioPosition).toHaveBeenCalledWith("rec", "system", 8250),
+    );
+    const segment = document.getElementById("segment-31");
+    expect(segment?.className).toContain("highlighted-segment");
+    expect(document.activeElement).toBe(segment);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Ask across meetings" }),
+    );
+    expect(screen.getByLabelText("Library answer")).toBeTruthy();
   });
 
   it("seeks the speaker's track to the backend-mapped file time", async () => {

@@ -4,11 +4,12 @@ import { Fragment, type ReactNode } from "react";
 // lists, **bold**, `code` and paragraphs. It builds React elements, never HTML
 // strings, so anything else (tags, links, images) stays literal text.
 const inlinePattern = /(\*\*[^*\n]+\*\*|`[^`\n]+`)/;
-// The same subset plus time tokens, matching `timestampTokens`.
+// The same subset plus `[m:ss]` time tokens (matching `timestampTokens`) and the
+// `[M2]` / `[M2 m:ss]` meeting tokens of a library answer.
 const referencePattern =
-  /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[(?:\d{1,2}:)?\d{1,3}:\d{2}\])/;
+  /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[(?:M\d{1,2} )?(?:\d{1,2}:)?\d{1,3}:\d{2}\]|\[M\d{1,2}\])/;
 
-/** Renders a `[m:ss]` token, e.g. as a validated link; absent, tokens stay text. */
+/** Renders a `[m:ss]`, `[M2 m:ss]` or `[M2]` token, e.g. as a validated link; absent, tokens stay text. */
 export type ReferenceRenderer = (token: string) => ReactNode;
 
 function inline(text: string, reference?: ReferenceRenderer): ReactNode[] {

@@ -1143,6 +1143,145 @@ async fn ask_meeting(
     .await
 }
 
+/// The library scope: the ids as chosen, duplicates dropped, 1 to 20 of them.
+fn library_ids(mut ids: Vec<String>) -> Result<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(id.clone()));
+    if ids.is_empty() || ids.len() > llm::MAX_LIBRARY_MEETINGS {
+        return Err(AppError::new(
+            "invalid_scope",
+            format!(
+                "Choose 1 to {} meetings. Nothing was sent.",
+                llm::MAX_LIBRARY_MEETINGS
+            ),
+        ));
+    }
+    Ok(ids)
+}
+
+/// Exactly what a library question would send for each meeting, in scope order.
+fn library_scope(core: &Core, ids: &[String]) -> Result<Vec<llm::LibraryItem>> {
+    ids.iter()
+        .map(|id| {
+            let detail = core.get_meeting(id).map_err(|error| {
+                if error.code == "not_found" {
+                    AppError::new(
+                        "invalid_scope",
+                        "A selected meeting no longer exists. Nothing was sent.",
+                    )
+                } else {
+                    error
+                }
+            })?;
+            Ok(llm::LibraryItem {
+                id: id.clone(),
+                lines: transcript_lines(&detail.segments, &detail.speaker_names),
+                title: detail.meeting.title,
+                started_at: detail.meeting.started_at,
+                notes_revision: detail.notes_revision,
+                notes: detail.user_markdown,
+            })
+        })
+        .collect()
+}
+
+fn library_plan(
+    config: &ProviderConfig,
+    items: &[llm::LibraryItem],
+    question: &str,
+) -> Result<ProcessingPlan> {
+    processing_plan(
+        config,
+        &("library", question.trim(), items),
+        1,
+        0,
+        Vec::new(),
+    )
+}
+
+/// Every scoped meeting's sent text must still match what was reviewed.
+fn library_unchanged(core: &Core, ids: &[String], items: &[llm::LibraryItem]) -> bool {
+    library_scope(core, ids).is_ok_and(|now| now == items)
+}
+
+fn library_check(
+    core: &Core,
+    ids: &[String],
+    config: &ProviderConfig,
+    items: &[llm::LibraryItem],
+) -> Result<()> {
+    if core.quitting
+        || core.settings()?.connection(ProviderRole::Llm) != Some(config)
+        || !library_unchanged(core, ids, items)
+    {
+        return Err(plan_changed());
+    }
+    Ok(())
+}
+
+async fn library_snapshot(
+    app: &AppHandle,
+    meeting_ids: Vec<String>,
+) -> Result<(Vec<String>, Vec<llm::LibraryItem>, ProviderConfig)> {
+    let ids = library_ids(meeting_ids)?;
+    with_core(app.clone(), false, move |core, _| {
+        let items = library_scope(core, &ids)?;
+        let config = require_connection(&core.settings()?, ProviderRole::Llm)?;
+        Ok((ids, items, config))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn plan_library_question(
+    app: AppHandle,
+    meeting_ids: Vec<String>,
+    question: String,
+) -> Result<ProcessingPlan> {
+    let (_, items, config) = library_snapshot(&app, meeting_ids).await?;
+    llm::validate_library(&items, &question)?;
+    library_plan(&config, &items, &question)
+}
+
+/// One request over the chosen meetings; the answer is returned, never stored.
+#[tauri::command]
+async fn ask_library(
+    app: AppHandle,
+    meeting_ids: Vec<String>,
+    question: String,
+    confirmation: String,
+) -> Result<String> {
+    let (ids, items, config) = library_snapshot(&app, meeting_ids).await?;
+    llm::validate_library(&items, &question)?;
+    let plan = library_plan(&config, &items, &question)?;
+    confirm(&plan, Some(&confirmation))?;
+    blocking(move || {
+        let owner = {
+            let state = app.state::<AppState>();
+            let core = state.core.lock().map_err(|_| plan_changed())?;
+            core.processing_owner.clone()
+        };
+        let operation = owner.begin("library")?;
+        let unchanged = || {
+            let state = app.state::<AppState>();
+            let core = state.core.lock().map_err(|_| plan_changed())?;
+            library_check(&core, &ids, &config, &items)
+        };
+        let answer = llm::ask_library(
+            &providers::load_connection(&config)?,
+            &items,
+            &question,
+            operation.cancel(),
+            |_| unchanged(),
+        )?;
+        operation.finish(|| {
+            unchanged()?;
+            Ok(answer)
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 async fn delete_question_thread(
     app: AppHandle,
@@ -1613,6 +1752,7 @@ pub fn run() {
             save_stt_mode,
             plan_transcription,
             plan_question,
+            plan_library_question,
             stt_status,
             stt_install,
             transcribe_meeting,
@@ -1629,6 +1769,7 @@ pub fn run() {
             edit_segment,
             get_transcript_version,
             ask_meeting,
+            ask_library,
             delete_question_thread,
             rename_meeting,
             set_meeting_tags,
@@ -1760,6 +1901,103 @@ mod tests {
         assert_eq!(
             earlier_turns(&foreign, Some(thread.id)).unwrap_err().code,
             "not_found"
+        );
+    }
+
+    #[test]
+    fn library_scope_is_explicit_ordered_and_bound_to_every_meetings_sent_text() {
+        let mut core = Core::open(std::path::Path::new(":memory:")).unwrap();
+        let (a, b, outside) = (
+            core.create_note("Alpha").unwrap(),
+            core.create_note("Beta").unwrap(),
+            core.create_note("Outside").unwrap(),
+        );
+        core.save_notes(&a, "Alpha notes", 0).unwrap();
+        core.save_notes(&outside, "Private elsewhere", 0).unwrap();
+        let segment = |text: &str| Segment {
+            speaker: "You".into(),
+            timing: SegmentTiming::Timed {
+                start_ms: 61_000,
+                end_ms: 62_000,
+            },
+            text: text.into(),
+        };
+        core.replace_transcript(&b, &[segment("Beta words")], "p", "m")
+            .unwrap();
+        let config = ProviderConfig {
+            base_url: "https://provider.example/v1".into(),
+            model: Some("model-a".into()),
+            revision: 1,
+            credential_account: Some("private-reference".into()),
+        };
+        // Duplicates collapse in first-seen order; empty, oversized and unknown scopes are refused.
+        let ids = library_ids(vec![b.clone(), a.clone(), b.clone()]).unwrap();
+        assert_eq!(ids, [b.clone(), a.clone()]);
+        assert_eq!(library_ids(vec![]).unwrap_err().code, "invalid_scope");
+        let many: Vec<String> = (0..=llm::MAX_LIBRARY_MEETINGS)
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(library_ids(many).unwrap_err().code, "invalid_scope");
+        assert_eq!(
+            library_scope(&core, &["missing".into()]).unwrap_err().code,
+            "invalid_scope"
+        );
+
+        let items = library_scope(&core, &ids).unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Beta", "Alpha"]
+        );
+        assert_eq!(items[0].lines, ["[1:01] You: Beta words"]);
+        assert_eq!(items[1].notes, "Alpha notes");
+        let sent = serde_json::to_string(&items).unwrap();
+        assert!(!sent.contains("Private elsewhere") && !sent.contains("Outside"));
+
+        let reviewed = library_plan(&config, &items, " Why? ").unwrap();
+        let same = library_plan(&config, &library_scope(&core, &ids).unwrap(), "Why?").unwrap();
+        confirm(&same, Some(&reviewed.fingerprint)).unwrap();
+        assert!(library_unchanged(&core, &ids, &items));
+        // The unselected meeting may change freely; either selected meeting may not.
+        core.save_notes(&outside, "Edited elsewhere", 1).unwrap();
+        assert!(library_unchanged(&core, &ids, &items));
+        for change in ["notes", "transcript", "title", "order", "question"] {
+            let (mut now, mut question) = (ids.clone(), "Why?");
+            match change {
+                "notes" => {
+                    core.save_notes(&a, "Alpha notes edited", 1).unwrap();
+                }
+                "transcript" => core
+                    .replace_transcript(&b, &[segment("Changed words")], "p", "m")
+                    .unwrap(),
+                "title" => {
+                    core.rename_meeting(&b, "Renamed").unwrap();
+                }
+                "order" => now.reverse(),
+                _ => question = "Who?",
+            }
+            let current = library_scope(&core, &now).unwrap();
+            let plan = library_plan(&config, &current, question).unwrap();
+            assert_eq!(
+                confirm(&plan, Some(&reviewed.fingerprint))
+                    .unwrap_err()
+                    .code,
+                "processing_plan_changed",
+                "{change}"
+            );
+            if matches!(change, "notes" | "transcript" | "title") {
+                assert!(!library_unchanged(&core, &ids, &items), "{change}");
+            }
+        }
+        // With no saved LLM connection the settings check also refuses.
+        let fresh = library_scope(&core, &ids).unwrap();
+        assert_eq!(
+            library_check(&core, &ids, &config, &fresh)
+                .unwrap_err()
+                .code,
+            "processing_plan_changed"
         );
     }
 

@@ -32,6 +32,21 @@ describe("renderMarkdown", () => {
     expect(html("At [0:01].")).toBe("<div><p>At [0:01].</p></div>");
   });
 
+  it("tokenizes meeting references only for a reference renderer", () => {
+    const text = "Both agree [M1 0:08] and [M12], not [M1 9:99x] or [m1].";
+    const output = render(
+      <div>
+        {renderMarkdown(text, (token) => (
+          <mark>{token}</mark>
+        ))}
+      </div>,
+    ).container.innerHTML;
+    expect(output).toBe(
+      "<div><p>Both agree <mark>[M1 0:08]</mark> and <mark>[M12]</mark>, not [M1 9:99x] or [m1].</p></div>",
+    );
+    expect(html(text)).toBe(`<div><p>${text}</p></div>`);
+  });
+
   it.each([
     ["<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"],
     ["[x](javascript:alert(1))", "[x](javascript:alert(1))"],

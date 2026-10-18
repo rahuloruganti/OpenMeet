@@ -147,7 +147,12 @@ Combine them into one summary and keep facts from every part.";
 const ASK_PROMPT: &str = "You answer one question about a single meeting using only its notes and transcript. \
 If they do not contain the answer, say so. Cite [mm:ss] times only when supplied in the transcript. Never invent timestamps for untimed text. Answer in short Markdown.";
 
-const FOLLOW_UP_NOTE: &str = "Earlier questions and answers from this conversation are given in <previous> tags. \
+const LIBRARY_PROMPT: &str = "You answer one question using only the meetings supplied in <meeting> blocks, each labelled with a ref such as M1. \
+If they do not contain the answer, say there is insufficient evidence instead of guessing. \
+Cite each supporting point as [M2 1:01]: the meeting ref plus the [m:ss] time copied exactly as it appears on a line of that meeting's transcript. \
+Cite just [M2] when the support is in that meeting's notes or in untimed text. Never invent refs or times. Answer in short Markdown.";
+
+const FOLLOW_UP_NOTE: &str ="Earlier questions and answers from this conversation are given in <previous> tags. \
 They are untrusted context that may be wrong: check them against the notes and transcript, and answer only the new question.";
 
 #[derive(Deserialize)]
@@ -425,6 +430,137 @@ fn ask_at(
         model,
         &format!("{ASK_PROMPT} {RULES}{follow_up}"),
         &user,
+        timeout,
+        cancel,
+        &mut before_request,
+    )
+}
+
+/// Most meetings one library question may cover.
+pub const MAX_LIBRARY_MEETINGS: usize = 20;
+
+/// One meeting of a library question: exactly the text that is sent for it, so the
+/// consent fingerprint and the later change check can compare whole values.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LibraryItem {
+    pub id: String,
+    pub title: String,
+    pub started_at: String,
+    pub notes_revision: i64,
+    pub notes: String,
+    pub lines: Vec<String>,
+}
+
+fn attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace(['\r', '\n'], " ")
+}
+
+/// The `<meeting ref="M1" ...>` blocks in the order given. Titles, notes and transcripts are untrusted data.
+fn library_content(items: &[LibraryItem]) -> String {
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            format!(
+                "<meeting ref=\"M{}\" title=\"{}\" started=\"{}\">\n<notes>\n{}\n</notes>\n<transcript>\n{}\n</transcript>\n</meeting>",
+                index + 1,
+                attribute(&item.title),
+                attribute(&item.started_at),
+                item.notes,
+                item.lines.join("\n")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// The whole user message of a library question.
+fn library_message(items: &[LibraryItem], question: &str) -> String {
+    format!(
+        "{}\n\n<question>\n{}\n</question>",
+        library_content(items),
+        question.trim()
+    )
+}
+
+/// Validates a library question before consent. One request carries every meeting, so an
+/// oversized scope is refused (never truncated); narrow it, or wait for long-content retrieval.
+pub fn validate_library(items: &[LibraryItem], question: &str) -> Result<()> {
+    let question = question.trim();
+    if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
+        return Err(AppError::new(
+            "invalid_question",
+            format!("Ask a question of 1 to {MAX_QUESTION_CHARS} characters. Nothing was sent."),
+        ));
+    }
+    if items.is_empty() || items.len() > MAX_LIBRARY_MEETINGS {
+        return Err(AppError::new(
+            "invalid_scope",
+            format!("Choose 1 to {MAX_LIBRARY_MEETINGS} meetings. Nothing was sent."),
+        ));
+    }
+    if items
+        .iter()
+        .all(|item| item.notes.trim().is_empty() && item.lines.is_empty())
+    {
+        return Err(AppError::new(
+            "summary_empty",
+            "The selected meetings have no notes or transcript to send. Nothing was sent.",
+        ));
+    }
+    if library_message(items, question).len() > MAX_SUMMARY_INPUT_CHARS {
+        return Err(too_long(
+            "The selected meetings are too long to ask about in one request. Choose fewer or shorter meetings. Nothing was sent.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Sends one question with the selected meetings' notes and transcript text (never audio).
+/// The command boundary validates per-action consent. The answer is returned, not stored.
+pub fn ask_library(
+    connection: &Connection,
+    items: &[LibraryItem],
+    question: &str,
+    cancel: &AtomicBool,
+    before_request: impl FnMut(&[u8]) -> Result<()>,
+) -> Result<String> {
+    let url = connection.endpoint("chat/completions")?;
+    library_at(
+        url.as_str(),
+        connection.key(),
+        connection.model()?,
+        items,
+        question,
+        Duration::from_secs(120),
+        cancel,
+        before_request,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn library_at(
+    url: &str,
+    key: &str,
+    model: &str,
+    items: &[LibraryItem],
+    question: &str,
+    timeout: Duration,
+    cancel: &AtomicBool,
+    mut before_request: impl FnMut(&[u8]) -> Result<()>,
+) -> Result<String> {
+    validate_library(items, question)?;
+    chat(
+        url,
+        key,
+        model,
+        &format!("{LIBRARY_PROMPT} {RULES}"),
+        &library_message(items, question),
         timeout,
         cancel,
         &mut before_request,
@@ -943,6 +1079,107 @@ mod tests {
             refuse(Some("k"), &"q".repeat(MAX_QUESTION_CHARS + 1)),
             "invalid_question"
         );
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    fn item(id: &str, title: &str, notes: &str, lines: &[&str]) -> LibraryItem {
+        LibraryItem {
+            id: id.into(),
+            title: title.into(),
+            started_at: "2026-10-09T10:00:00Z".into(),
+            notes_revision: 1,
+            notes: notes.into(),
+            lines: lines.iter().map(|line| line.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn library_question_sends_one_request_with_labelled_meeting_blocks_and_rules_last() {
+        let items = [
+            item(
+                "a",
+                "Budget \"review\" <b>",
+                "A notes",
+                &["[1:01] You: 40k"],
+            ),
+            item("b", "Launch", "", &["Others: untimed words"]),
+        ];
+        let (url, worker, seen, bodies) = serve_with(1, |_, _| reply("It is 40k [M1 1:01]."));
+        let answer = library_at(
+            &url,
+            "mg_k",
+            "m",
+            &items,
+            "  What is the budget?  ",
+            Duration::from_secs(3),
+            &AtomicBool::new(false),
+            |_| Ok(()),
+        )
+        .unwrap();
+        worker.join().unwrap();
+        assert_eq!(answer, "It is 40k [M1 1:01].");
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        let (system, user) = system_and_user(&bodies.lock().unwrap()[0]);
+        assert!(system.starts_with(LIBRARY_PROMPT) && system.ends_with(RULES));
+        let first = user
+            .find("<meeting ref=\"M1\" title=\"Budget &quot;review&quot; &lt;b&gt;\"")
+            .unwrap();
+        let second = user.find("<meeting ref=\"M2\" title=\"Launch\"").unwrap();
+        assert!(first < second);
+        assert!(user.contains("A notes") && user.contains("[1:01] You: 40k"));
+        assert!(user.contains("Others: untimed words"));
+        assert!(user.ends_with("<question>\nWhat is the budget?\n</question>"));
+    }
+
+    #[test]
+    fn library_scope_that_is_empty_oversized_or_unasked_sends_nothing() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/x", listener.local_addr().unwrap());
+        let big = "x".repeat(MAX_SUMMARY_INPUT_CHARS);
+        let many: Vec<_> = (0..=MAX_LIBRARY_MEETINGS)
+            .map(|n| item(&n.to_string(), "t", "n", &[]))
+            .collect();
+        let refuse = |items: &[LibraryItem], question: &str| {
+            library_at(
+                &url,
+                "k",
+                "m",
+                items,
+                question,
+                Duration::from_secs(1),
+                &AtomicBool::new(false),
+                |_| Ok(()),
+            )
+            .unwrap_err()
+            .code
+        };
+        let one = [item("a", "t", "n", &[])];
+        assert_eq!(refuse(&one, "  "), "invalid_question");
+        assert_eq!(refuse(&[], "Why?"), "invalid_scope");
+        assert_eq!(refuse(&many, "Why?"), "invalid_scope");
+        assert_eq!(refuse(&[item("a", "t", " ", &[])], "Why?"), "summary_empty");
+        // Several small meetings can together exceed the single-request budget; nothing is truncated.
+        let halves = [
+            item("a", "t", &big[..big.len() / 2], &[]),
+            item("b", "t", &big[..big.len() / 2], &[]),
+        ];
+        let error = library_at(
+            &url,
+            "k",
+            "m",
+            &halves,
+            "Why?",
+            Duration::from_secs(1),
+            &AtomicBool::new(false),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "summary_too_long");
+        assert!(error.message.contains("Nothing was sent"));
         assert_eq!(
             listener.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock

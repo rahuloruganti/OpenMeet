@@ -55,6 +55,39 @@ export type SegmentDraft = {
   text: string;
 };
 
+/** The finalized tracks a recorded meeting can play. */
+function playableTracks(selected: MeetingDetail) {
+  const { meeting } = selected;
+  return meeting.source === "desktop" &&
+    meeting.status !== "recording" &&
+    meeting.status !== "paused"
+    ? selected.tracks.filter((track) => track.finalized && track.frames > 0)
+    : [];
+}
+
+/** What opening a cited second does: the segments to highlight and the first one to focus and play. */
+function citationTarget(selected: MeetingDetail, matches: number[]) {
+  const first = matches[0];
+  const meta = first === undefined ? undefined : selected.segment_meta[first];
+  if (first === undefined || !meta) return null;
+  const segment = selected.segments[first];
+  const kind = segment.speaker === "You" ? "mic" : "system";
+  return {
+    highlighted: matches.flatMap((index) => {
+      const id = selected.segment_meta[index]?.id;
+      return id === undefined ? [] : [id];
+    }),
+    pending: {
+      id: meta.id,
+      seek:
+        segment.timing.kind === "timed" &&
+        playableTracks(selected).some((track) => track.kind === kind)
+          ? { kind, startMs: segment.timing.start_ms }
+          : null,
+    },
+  };
+}
+
 export const contentTabs = [
   { id: "notes", label: "My notes" },
   { id: "summary", label: "Summary" },
@@ -131,6 +164,9 @@ type Props = {
   getRecordingOffset: () => Promise<number | null>;
   /** Maps a transcript time to the track's file time in ms, or null on failure. */
   onSeek: (kind: string, sessionMs: number) => Promise<number | null>;
+  /** A library-answer citation to open once its meeting is selected. */
+  pendingJump: { meetingId: string; ms: number | null } | null;
+  onJumpDone: () => void;
 };
 
 export function MeetingWorkspace(props: Props) {
@@ -244,6 +280,20 @@ export function MeetingWorkspace(props: Props) {
     setCopyStatus("");
   }, [versions]);
   useEffect(() => setHighlighted([]), [meetingId]);
+  // Runs after the effects above, so their resets cannot undo the jump.
+  const jump = props.pendingJump;
+  useEffect(() => {
+    if (!jump || selected?.meeting.id !== jump.meetingId) return;
+    props.onJumpDone();
+    const target =
+      jump.ms === null
+        ? null
+        : citationTarget(selected, segmentsAt(selected.segments, jump.ms));
+    if (!target) return;
+    setHighlighted(target.highlighted);
+    setPendingReference(target.pending);
+    props.onTab("transcript");
+  });
   const play = (kind: string, fileMs: number) => {
     const player = players.current[kind];
     if (!player) return;
@@ -333,45 +383,27 @@ export function MeetingWorkspace(props: Props) {
   };
   const draft = props.summaryDraft;
   const stale = current ? current.stale : selected.summary_stale;
-  const playable =
-    meeting.source === "desktop" &&
-    meeting.status !== "recording" &&
-    meeting.status !== "paused"
-      ? selected.tracks.filter((track) => track.finalized && track.frames > 0)
-      : [];
+  const playable = playableTracks(selected);
   /** A `[m:ss]` citation becomes a link only when a stored timed segment starts in that second. */
   const reference = (token: string) => {
     const ms = parseTimestamp(token);
-    const matches = ms === null ? [] : segmentsAt(selected.segments, ms);
-    const first = matches[0];
-    const meta = first === undefined ? undefined : selected.segment_meta[first];
-    if (first === undefined || !meta)
+    const target = citationTarget(
+      selected,
+      ms === null ? [] : segmentsAt(selected.segments, ms),
+    );
+    if (!target)
       return (
         <span className="unverified-reference">
           {token} <span className="muted">(unverified)</span>
         </span>
       );
-    const segment = selected.segments[first];
-    const kind = segment.speaker === "You" ? "mic" : "system";
     return (
       <button
         className="seek-button"
         aria-label={`Open transcript at ${token.slice(1, -1)}`}
         onClick={() => {
-          setHighlighted(
-            matches.flatMap((index) => {
-              const id = selected.segment_meta[index]?.id;
-              return id === undefined ? [] : [id];
-            }),
-          );
-          setPendingReference({
-            id: meta.id,
-            seek:
-              segment.timing.kind === "timed" &&
-              playable.some((track) => track.kind === kind)
-                ? { kind, startMs: segment.timing.start_ms }
-                : null,
-          });
+          setHighlighted(target.highlighted);
+          setPendingReference(target.pending);
           props.onTab("transcript");
         }}
       >

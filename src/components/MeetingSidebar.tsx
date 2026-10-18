@@ -20,6 +20,7 @@ type Props = {
   onSearch: (value: string) => void;
   onNewRecording: (trigger: HTMLButtonElement) => void;
   onSettings: (trigger: HTMLButtonElement) => void;
+  onLibrary: (trigger: HTMLButtonElement) => void;
   onOpenMeeting: (id: string) => void;
   onNewNote: () => void;
   /** Full-text matches in notes, transcripts and summaries for the current search. */
@@ -195,6 +196,12 @@ export function MeetingSidebar(props: Props) {
           )}
       </div>
       <div className="sidebar-bottom">
+        <button
+          disabled={disabled || meetings.length === 0}
+          onClick={(event) => props.onLibrary(event.currentTarget)}
+        >
+          Ask across meetings
+        </button>
         <button onClick={(event) => props.onSettings(event.currentTarget)}>
           Settings
         </button>

@@ -559,6 +559,12 @@ export const api = {
       threadId,
       confirmation,
     }),
+  /** Plans one question over 1 to 20 meetings, in this order; nothing is sent. */
+  planLibraryQuestion: (meetingIds: string[], question: string) =>
+    invoke<ProcessingPlan>("plan_library_question", { meetingIds, question }),
+  /** One request over the reviewed meetings; the answer is returned, not stored. */
+  askLibrary: (meetingIds: string[], question: string, confirmation: string) =>
+    invoke<string>("ask_library", { meetingIds, question, confirmation }),
   /** Returns the remaining threads. */
   deleteQuestionThread: (meetingId: string, threadId: number) =>
     invoke<QuestionThread[]>("delete_question_thread", { meetingId, threadId }),
