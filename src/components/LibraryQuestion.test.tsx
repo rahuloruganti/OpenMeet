@@ -171,7 +171,10 @@ it("discloses that only locally selected excerpts are sent for long content", as
   expect(card.textContent).toContain(
     "12 transcript excerpts selected on this device by keyword match from 2 meetings",
   );
-  expect(card.textContent).toContain("not the full transcripts or notes");
+  expect(card.textContent).toContain("not the full transcripts");
+  expect(card.textContent).toContain(
+    "each meeting's notes if they mention a keyword",
+  );
   expect(card.textContent).not.toContain("notes and transcript text");
   expect(card.textContent).toContain("Alpha sync");
 });

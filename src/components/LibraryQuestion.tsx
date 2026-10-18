@@ -304,7 +304,7 @@ export function LibraryQuestion(props: Props) {
             <li>
               Sent in {review.plan.requests} request: your question, and the{" "}
               {review.plan.excerpts
-                ? `title and start date of only these meetings, with ${review.plan.excerpts.segments} transcript excerpts selected on this device by keyword match from ${review.plan.excerpts.meetings} meeting${review.plan.excerpts.meetings === 1 ? "" : "s"}, plus any matching parts of their notes — not the full transcripts or notes`
+                ? `title and start date of only these meetings, with ${review.plan.excerpts.segments} transcript excerpts selected on this device by keyword match from ${review.plan.excerpts.meetings} meeting${review.plan.excerpts.meetings === 1 ? "" : "s"}, plus each meeting's notes if they mention a keyword (only the matching paragraphs when long) — not the full transcripts`
                 : "title, start date, notes and transcript text (with speaker names) of only these meetings"}
               :
               <ol>

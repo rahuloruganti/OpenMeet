@@ -1036,7 +1036,7 @@ export function MeetingWorkspace(props: Props) {
                 <li>
                   Sent in {asking.requests} request(s): your question,{" "}
                   {asking.excerpts
-                    ? `${asking.excerpts.segments} transcript excerpts selected on this device by keyword match, plus any matching parts of your notes, from this meeting only — not the full transcript or notes`
+                    ? `${asking.excerpts.segments} transcript excerpts selected on this device by keyword match, plus your notes if they mention a keyword (only the matching paragraphs when the notes are long), from this meeting only — not the full transcript`
                     : `${contentScope} of this meeting only`}
                   .
                 </li>

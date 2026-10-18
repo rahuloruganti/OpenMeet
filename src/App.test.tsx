@@ -1920,7 +1920,10 @@ describe("desktop foundation", () => {
     expect(card.textContent).toContain(
       "14 transcript excerpts selected on this device by keyword match",
     );
-    expect(card.textContent).toContain("not the full transcript or notes");
+    expect(card.textContent).toContain("not the full transcript");
+    expect(card.textContent).toContain(
+      "plus your notes if they mention a keyword",
+    );
     expect(card.textContent).not.toContain("the transcript text (");
     expect(card.textContent).toContain("saved with this meeting");
   });
