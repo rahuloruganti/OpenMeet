@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the session-consent records. This is a preview with open qualification gates, not a complete MVP.
+OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the session-consent records. Schema v15 adds custom summary templates and saved summary instructions. This is a preview with open qualification gates, not a complete MVP.
 
 ## Phase 3 workflow implemented, qualification open
 
@@ -29,7 +29,7 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | Playback                | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
 | Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision-bound consent.          |
 | Cloud transcription     | Explicit audio confirmation, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
-| Summaries and questions | Configured chat API, three templates, history/copy, bounded chunked summaries, and per-meeting questions.                                                                  |
+| Summaries and questions | Configured chat API, three built-in templates plus custom templates and saved instructions, history/copy, bounded chunked summaries, and per-meeting questions.            |
 | Export                  | Folder picker, source-aware Markdown, optional transcript/summary, filename preferences, and non-overwriting snapshots.                                                    |
 | Recovery and retention  | Interrupted-recording detection, repaired copies preserving originals, typed-confirmation delete audio/meeting, and disk usage.                                            |
 | Development             | Pinned toolchains and lockfiles, just recipes, automated frontend/Rust checks, and CI definitions.                                                                         |
@@ -86,6 +86,7 @@ The October 14 [Phase 1 foundation verification](phase-1-foundation-verification
 
 ### Stabilization and native UI
 
+- The startup pause-shortcut warning comes from another application owning CommandOrControl+Shift+Space (Windows error 1409). The warning now names every failing shortcut and chord; choose another shortcut in Settings. The default is unchanged.
 - Verify repeated native cold starts after removing optional discovery from the saved-notes startup dependency.
 - Qualify native failures after bounding worker control waits and testing stalled workers, late finalization, and SQLite publication failure/retry.
 - Qualify audio-health cleanup and draft-preserving finalized metadata refresh in the native app; regression tests pass.

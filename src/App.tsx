@@ -118,6 +118,9 @@ export function App() {
   const [health, setHealth] = useState<AudioHealth | null>(null);
   const [closeRequested, setCloseRequested] = useState(false);
   const [panel, setPanel] = useState<"setup" | "settings" | null>(null);
+  const [settingsTab, setSettingsTab] = useState<"cloud" | "local" | "general">(
+    "local",
+  );
   const panelRef = useRef<HTMLElement | null>(null);
   const panelTrigger = useRef<HTMLButtonElement | null>(null);
   const listRequest = useRef(0);
@@ -573,7 +576,10 @@ export function App() {
           setConsent(false);
           openPanel("setup", trigger);
         }}
-        onSettings={(trigger) => openPanel("settings", trigger)}
+        onSettings={(trigger) => {
+          setSettingsTab("local");
+          openPanel("settings", trigger);
+        }}
         onOpenMeeting={(id) =>
           void run(async () => {
             await openMeeting(id);
@@ -876,7 +882,10 @@ export function App() {
             active={active}
             configurationRevision={JSON.stringify(settings)}
             processing={autoProcessing}
-            onOpenSettings={() => setPanel("settings")}
+            onOpenSettings={() => {
+              setSettingsTab("general");
+              setPanel("settings");
+            }}
             onTitle={setTitle}
             onConsent={setConsent}
             onMicrophone={setMicrophone}
@@ -995,6 +1004,8 @@ export function App() {
             });
           }}
           versions={summaryVersions}
+          customTemplates={settings?.summary_templates ?? []}
+          summaryInstructions={settings?.summary_instructions ?? ""}
           onPlanSummary={async (template) => {
             const id = selected?.meeting.id;
             let plan: ProcessingPlan | null = null;
@@ -1125,6 +1136,7 @@ export function App() {
         {panel === "settings" && (
           <SettingsPanel
             panelRef={panelRef}
+            initialTab={settingsTab}
             processing={autoProcessing}
             onProcessing={chooseAutoProcessing}
             settings={settings}

@@ -213,6 +213,16 @@ pub struct Settings {
     pub stt_model: String,
     pub stop_shortcut: Option<String>,
     pub export: ExportOptions,
+    pub summary_instructions: String,
+    pub summary_templates: Vec<CustomTemplate>,
+}
+
+/// A user-defined summary structure; `id` is `custom-<uuid>` and is stored with each summary.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CustomTemplate {
+    pub id: String,
+    pub name: String,
+    pub instructions: String,
 }
 
 impl Settings {

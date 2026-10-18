@@ -34,6 +34,9 @@ export function SessionReview({
           Automatic summary: {destination(final.summary.destination)}, template{" "}
           {final.summary.template}. Saved notes and the final transcript will be
           included.
+          {final.summary.instructions
+            ? " Your saved summary instructions will also be sent."
+            : ""}
         </p>
       )}
       <p>

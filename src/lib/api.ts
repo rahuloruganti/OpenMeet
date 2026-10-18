@@ -55,6 +55,8 @@ export type SessionProcessingPlan = {
         summary: {
           destination: SessionDestination;
           template: SummaryTemplate;
+          /** Saved personal instructions frozen at review; omitted when empty. */
+          instructions?: string;
         } | null;
       };
   language: string;
@@ -170,6 +172,14 @@ export type Settings = {
   stt_model: string;
   stop_shortcut: string | null;
   export: ExportOptions;
+  summary_instructions: string;
+  summary_templates: CustomTemplate[];
+};
+/** User-defined summary structure; `id` is `custom-<uuid>`. */
+export type CustomTemplate = {
+  id: string;
+  name: string;
+  instructions: string;
 };
 export type ExportOptions = {
   transcript: boolean;
@@ -383,11 +393,18 @@ export const api = {
     invoke<ProcessingPlan>("plan_transcription", { id }),
   transcribeMeeting: (id: string, confirmation: string | null) =>
     invoke<void>("transcribe_meeting", { id, confirmation }),
-  generateSummary: (
-    id: string,
-    template: SummaryTemplate,
-    confirmation: string,
-  ) => invoke<void>("generate_summary", { id, template, confirmation }),
+  /** `template` is a built-in `SummaryTemplate` or a `CustomTemplate` id. */
+  generateSummary: (id: string, template: string, confirmation: string) =>
+    invoke<void>("generate_summary", { id, template, confirmation }),
+  saveSummaryInstructions: (instructions: string) =>
+    invoke<Settings>("save_summary_instructions", { instructions }),
+  saveSummaryTemplate: (
+    id: string | null,
+    name: string,
+    instructions: string,
+  ) => invoke<Settings>("save_summary_template", { id, name, instructions }),
+  deleteSummaryTemplate: (id: string) =>
+    invoke<Settings>("delete_summary_template", { id }),
   saveSettings: (pauseShortcut: string, stopShortcut: string | null) =>
     invoke<Settings>("save_settings", { pauseShortcut, stopShortcut }),
   chooseVaultFolder: () => invoke<Settings>("choose_vault_folder"),
@@ -421,7 +438,7 @@ export const api = {
   searchMeetings: (query: string) =>
     invoke<SearchHit[]>("search_meetings", { query }),
   /** Plans a summary without submitting meeting content. */
-  planSummary: (id: string, template: SummaryTemplate) =>
+  planSummary: (id: string, template: string) =>
     invoke<ProcessingPlan>("plan_summary", { id, template }),
   planQuestion: (id: string, question: string) =>
     invoke<ProcessingPlan>("plan_question", { id, question }),

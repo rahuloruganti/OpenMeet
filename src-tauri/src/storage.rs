@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 14;
+const LATEST_SCHEMA: i64 = 15;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -86,6 +86,11 @@ impl Core {
             (
                 14,
                 include_str!("../migrations/014_processing_workflow.sql"),
+                false,
+            ),
+            (
+                15,
+                include_str!("../migrations/015_summary_templates.sql"),
                 false,
             ),
         ];
@@ -1017,6 +1022,83 @@ impl Core {
         self.settings()
     }
 
+    /// Personal instructions added to every later summary request, manual or automatic.
+    pub fn save_summary_instructions(&mut self, instructions: &str) -> Result<Settings> {
+        let instructions = instructions.trim();
+        crate::llm::validate_instructions(instructions, MAX_SUMMARY_INSTRUCTIONS)?;
+        self.db.execute(
+            "UPDATE settings SET summary_instructions = ?1 WHERE id = 1",
+            [instructions],
+        )?;
+        self.settings()
+    }
+
+    /// Creates a template when `id` is `None`; otherwise replaces an existing one.
+    pub fn save_summary_template(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        instructions: &str,
+    ) -> Result<Settings> {
+        let (name, instructions) = (name.trim(), instructions.trim());
+        if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+            return Err(AppError::new(
+                "summary_template",
+                "Enter a template name of 1–80 characters on one line.",
+            ));
+        }
+        crate::llm::validate_instructions(instructions, MAX_TEMPLATE_INSTRUCTIONS)?;
+        if instructions.is_empty() {
+            return Err(AppError::new(
+                "summary_template",
+                "Describe the summary structure for this template.",
+            ));
+        }
+        let changed = match id {
+            Some(id) => self.db.execute(
+                "UPDATE summary_templates SET name=?2,instructions=?3 WHERE id=?1",
+                params![id, name, instructions],
+            )?,
+            None => {
+                let count: i64 =
+                    self.db
+                        .query_row("SELECT COUNT(*) FROM summary_templates", [], |row| {
+                            row.get(0)
+                        })?;
+                if count >= MAX_CUSTOM_TEMPLATES {
+                    return Err(AppError::new(
+                        "summary_template",
+                        format!("You can save up to {MAX_CUSTOM_TEMPLATES} custom templates."),
+                    ));
+                }
+                self.db.execute(
+                    "INSERT INTO summary_templates(id,name,instructions) VALUES (?1,?2,?3)",
+                    params![
+                        format!("{CUSTOM_TEMPLATE_PREFIX}{}", Uuid::new_v4()),
+                        name,
+                        instructions
+                    ],
+                )?
+            }
+        };
+        if changed != 1 {
+            return Err(missing_template());
+        }
+        self.settings()
+    }
+
+    /// Existing summaries keep their stored text; history shows a fallback label afterwards.
+    pub fn delete_summary_template(&mut self, id: &str) -> Result<Settings> {
+        if self
+            .db
+            .execute("DELETE FROM summary_templates WHERE id=?1", [id])?
+            != 1
+        {
+            return Err(missing_template());
+        }
+        self.settings()
+    }
+
     /// Unfinalized tracks of an interrupted desktop recording as (kind, original, repaired copy).
     /// Copying happens outside the core lock; see `mark_recovered`.
     pub fn recoverable_tracks(&self, id: &str) -> Result<Vec<(String, PathBuf, PathBuf)>> {
@@ -1088,8 +1170,18 @@ fn read_settings(db: &Connection) -> Result<Settings> {
     };
     let llm = connection(ProviderRole::Llm)?;
     let cloud_stt = connection(ProviderRole::CloudStt)?;
+    let summary_templates = db
+        .prepare("SELECT id,name,instructions FROM summary_templates ORDER BY name,id")?
+        .query_map([], |row| {
+            Ok(CustomTemplate {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                instructions: row.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -1118,9 +1210,23 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                     stt_prompt: row.get(9)?,
                     stt_model: row.get(10)?,
                     stop_shortcut: row.get(11)?,
+                    summary_instructions: row.get(12)?,
+                    summary_templates,
                 })
             },
         )?)
+}
+
+pub const CUSTOM_TEMPLATE_PREFIX: &str = "custom-";
+const MAX_CUSTOM_TEMPLATES: i64 = 50;
+const MAX_TEMPLATE_INSTRUCTIONS: usize = 4000;
+const MAX_SUMMARY_INSTRUCTIONS: usize = 2000;
+
+pub fn missing_template() -> AppError {
+    AppError::new(
+        "summary_template_missing",
+        "This summary template no longer exists. Choose another template.",
+    )
 }
 
 fn saved_connection_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedConnection> {
@@ -1614,6 +1720,78 @@ mod tests {
             Some("two")
         );
         assert!(core.list_summaries("missing").unwrap().is_empty());
+    }
+
+    #[test]
+    fn custom_templates_and_instructions_are_validated_persisted_and_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        let settings = core
+            .save_summary_template(None, "  Retro  ", "## Went well\n## To improve")
+            .unwrap();
+        let id = settings.summary_templates[0].id.clone();
+        assert!(id.starts_with(CUSTOM_TEMPLATE_PREFIX));
+        assert_eq!(settings.summary_templates[0].name, "Retro");
+        core.save_summary_template(Some(&id), "Retrospective", "## Actions")
+            .unwrap();
+        core.save_summary_instructions(" Use British English.\n")
+            .unwrap();
+        for (name, instructions) in [
+            ("", "## A"),
+            (&"n".repeat(81) as &str, "## A"),
+            ("Line\nbreak", "## A"),
+            ("Empty", "   "),
+            ("Long", &"x".repeat(4001) as &str),
+            ("Control", "bell\u{7}"),
+        ] {
+            assert!(
+                core.save_summary_template(None, name, instructions)
+                    .unwrap_err()
+                    .code
+                    .starts_with("summary_"),
+                "{name}"
+            );
+        }
+        assert!(core.save_summary_instructions(&"x".repeat(2001)).is_err());
+        assert_eq!(
+            core.save_summary_template(Some("custom-missing"), "Name", "## A")
+                .unwrap_err()
+                .code,
+            "summary_template_missing"
+        );
+        drop(core);
+        let mut core = Core::open(&path).unwrap();
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.summary_instructions, "Use British English.");
+        assert_eq!(
+            settings.summary_templates,
+            [CustomTemplate {
+                id: id.clone(),
+                name: "Retrospective".into(),
+                instructions: "## Actions".into()
+            }]
+        );
+        let meeting = core.create_note("Fictional template meeting").unwrap();
+        core.save_summary(&meeting, "p", "m", "Kept summary", &id)
+            .unwrap();
+        assert!(core
+            .delete_summary_template(&id)
+            .unwrap()
+            .summary_templates
+            .is_empty());
+        assert_eq!(
+            core.delete_summary_template(&id).unwrap_err().code,
+            "summary_template_missing"
+        );
+        assert_eq!(core.list_summaries(&meeting).unwrap()[0].template, id);
+        for index in 0..MAX_CUSTOM_TEMPLATES {
+            core.save_summary_template(None, &format!("T{index}"), "## A")
+                .unwrap();
+        }
+        assert!(core
+            .save_summary_template(None, "One more", "## A")
+            .is_err());
     }
 
     #[test]
