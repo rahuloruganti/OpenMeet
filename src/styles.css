@@ -719,6 +719,11 @@ textarea.notes-editor {
 .summary-version {
   margin: 12px 0 20px;
 }
+.highlighted-segment {
+  outline: 2px solid var(--divider);
+  border-radius: 6px;
+  background: #f8f9fb;
+}
 .segment-edit {
   display: inline-flex;
   flex-wrap: wrap;

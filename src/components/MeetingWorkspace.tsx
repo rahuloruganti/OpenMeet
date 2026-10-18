@@ -17,7 +17,12 @@ import { ActionItems } from "./ActionItems";
 import { SpeakerNamesForm } from "./SpeakerNames";
 import { TranscriptVersions } from "./TranscriptVersions";
 import { formatBytes, sourceLabels } from "../lib/meeting-labels";
-import { formatTimestamp, timestampAtCaret } from "../lib/timestamps";
+import {
+  formatTimestamp,
+  parseTimestamp,
+  segmentsAt,
+  timestampAtCaret,
+} from "../lib/timestamps";
 
 const trackLabels: Record<string, string> = {
   mic: "You (microphone)",
@@ -140,6 +145,12 @@ export function MeetingWorkspace(props: Props) {
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [jumpHint, setJumpHint] = useState("");
   const [playbackError, setPlaybackError] = useState("");
+  // Segment ids a clicked reference points to; the first is opened once the tab shows.
+  const [highlighted, setHighlighted] = useState<number[]>([]);
+  const [pendingReference, setPendingReference] = useState<{
+    id: number;
+    seek: { kind: string; startMs: number } | null;
+  } | null>(null);
   const actions = useRef<HTMLDetailsElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const players = useRef<Record<string, HTMLAudioElement | null>>({});
@@ -189,6 +200,33 @@ export function MeetingWorkspace(props: Props) {
     setVersionId(null);
     setCopyStatus("");
   }, [versions]);
+  useEffect(() => setHighlighted([]), [meetingId]);
+  const play = (kind: string, fileMs: number) => {
+    const player = players.current[kind];
+    if (!player) return;
+    player.currentTime = fileMs / 1000;
+    setPlaybackError("");
+    void player
+      .play()
+      ?.catch(() =>
+        setPlaybackError(
+          "Audio could not play. Check your output device and try again.",
+        ),
+      );
+  };
+  // Runs after the Transcript tab is shown, so the tab-change pause cannot stop it.
+  useEffect(() => {
+    if (tab !== "transcript" || !pendingReference) return;
+    const element = document.getElementById(`segment-${pendingReference.id}`);
+    element?.scrollIntoView?.({ block: "center" });
+    element?.focus();
+    const seek = pendingReference.seek;
+    setPendingReference(null);
+    if (seek)
+      void props.onSeek(seek.kind, seek.startMs).then((fileMs) => {
+        if (fileMs !== null) play(seek.kind, fileMs);
+      });
+  });
 
   if (!selected) {
     return (
@@ -258,18 +296,45 @@ export function MeetingWorkspace(props: Props) {
     meeting.status !== "paused"
       ? selected.tracks.filter((track) => track.finalized && track.frames > 0)
       : [];
-  const play = (kind: string, fileMs: number) => {
-    const player = players.current[kind];
-    if (!player) return;
-    player.currentTime = fileMs / 1000;
-    setPlaybackError("");
-    void player
-      .play()
-      ?.catch(() =>
-        setPlaybackError(
-          "Audio could not play. Check your output device and try again.",
-        ),
+  /** A `[m:ss]` citation becomes a link only when a stored timed segment starts in that second. */
+  const reference = (token: string) => {
+    const ms = parseTimestamp(token);
+    const matches = ms === null ? [] : segmentsAt(selected.segments, ms);
+    const first = matches[0];
+    const meta = first === undefined ? undefined : selected.segment_meta[first];
+    if (first === undefined || !meta)
+      return (
+        <span className="unverified-reference">
+          {token} <span className="muted">(unverified)</span>
+        </span>
       );
+    const segment = selected.segments[first];
+    const kind = segment.speaker === "You" ? "mic" : "system";
+    return (
+      <button
+        className="seek-button"
+        aria-label={`Open transcript at ${token.slice(1, -1)}`}
+        onClick={() => {
+          setHighlighted(
+            matches.flatMap((index) => {
+              const id = selected.segment_meta[index]?.id;
+              return id === undefined ? [] : [id];
+            }),
+          );
+          setPendingReference({
+            id: meta.id,
+            seek:
+              segment.timing.kind === "timed" &&
+              playable.some((track) => track.kind === kind)
+                ? { kind, startMs: segment.timing.start_ms }
+                : null,
+          });
+          props.onTab("transcript");
+        }}
+      >
+        {token}
+      </button>
+    );
   };
   const insertTimestamp = async () => {
     const offset = await props.getRecordingOffset();
@@ -610,7 +675,8 @@ export function MeetingWorkspace(props: Props) {
           {summary && stale && (
             <p className="muted" role="status">
               The transcript or speaker names changed after this summary was
-              made. Generate a new summary to include the changes.
+              made. Generate a new summary to include the changes. Time links
+              point to the current transcript.
             </p>
           )}
           {props.enhanceBlocked !== null && (
@@ -723,7 +789,9 @@ export function MeetingWorkspace(props: Props) {
               </div>
             </div>
           ) : summary ? (
-            <div className="summary-body">{renderMarkdown(summary)}</div>
+            <div className="summary-body">
+              {renderMarkdown(summary, reference)}
+            </div>
           ) : (
             <p className="muted">
               No summary yet. Use Enhance notes after adding notes or a
@@ -774,6 +842,7 @@ export function MeetingWorkspace(props: Props) {
             summaryId={shown?.id ?? versions[0]?.id ?? null}
             disabled={disabled}
             onItems={(items) => props.onActionItems(selected.meeting.id, items)}
+            reference={reference}
           />
           <form
             className="ask-meeting"
@@ -850,7 +919,7 @@ export function MeetingWorkspace(props: Props) {
               <p>
                 <strong>Q: {props.answer.question}</strong>
               </p>
-              {renderMarkdown(props.answer.text)}
+              {renderMarkdown(props.answer.text, reference)}
               <p className="muted">
                 AI-generated from this meeting's notes and transcript. Not
                 saved; check it before relying on it.
@@ -1095,7 +1164,16 @@ export function MeetingWorkspace(props: Props) {
                 ? `${(timing.start_ms / 1000).toFixed(1)}s`
                 : "Untimed";
             return (
-              <p className="transcript-segment" key={index}>
+              <p
+                className={
+                  meta && highlighted.includes(meta.id)
+                    ? "transcript-segment highlighted-segment"
+                    : "transcript-segment"
+                }
+                key={index}
+                id={meta ? `segment-${meta.id}` : undefined}
+                tabIndex={-1}
+              >
                 <strong>{speaker}</strong>{" "}
                 {timing.kind === "timed" &&
                 playable.some((track) => track.kind === kind) ? (

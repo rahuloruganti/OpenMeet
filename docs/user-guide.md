@@ -110,6 +110,10 @@ Notes and transcript text leave the device after confirmation. Audio is never in
 
 Use the version picker to read earlier summaries. **Copy summary** and **Copy action items** write to the system clipboard, where other apps may read the text. Markdown export always uses the latest saved summary, regardless of the viewed version.
 
+### Source links
+
+Summaries are asked to end key points, decisions, and action items with the `[m:ss]` time of a supporting transcript line; this instruction is shared by every template. Answers and imported tasks can carry the same times. A time becomes a link only when a stored timed segment starts in that second. Clicking it opens the Transcript tab, highlights the segment, and plays its track from there when the audio is available. Times with no matching segment show "(unverified)". When both tracks have a segment in the same second, both are highlighted and the first is played. A link proves only that the segment exists, not that it supports the claim, so read the segment. Untimed transcripts cannot be cited. Links always point to the current transcript, including after edits or re-transcription.
+
 ### Edit a summary
 
 Click **Edit summary** to change the summary on screen. **Save edited summary** adds your text as a new version; the generated version and every earlier one stay in the version picker. Edited versions are labelled "edited by you", and Markdown export marks the summary with `summary_edited: true`. An unsaved edit stays open while you switch meetings. If you quit, OpenMeet warns you and asks before discarding it. If a newer summary arrived while you were editing, the first save is refused and your edit stays open, so neither version replaces the other silently. Review the newer version; saving again puts your edit on top of it. The version picker is locked while an edit is open, and deleting a meeting discards its unsaved edit. Generating a summary when the current version is your edit tells you that the new summary becomes current while your edit stays in history. Editing a summary sends nothing.

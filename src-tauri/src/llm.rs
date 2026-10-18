@@ -58,6 +58,9 @@ impl Template {
     }
 }
 
+/// Shared by every summary template; the app links a time only if a stored segment starts then.
+const CITE: &str = "When the transcript is timed, end each key point, decision and action item with the [m:ss] time of one supporting transcript line, copied exactly as it appears there. Never invent or adjust a time; leave it out when no timed line supports the item.";
+
 /// The structure a summary follows: a built-in template or a user-defined one.
 pub enum Structure<'a> {
     Builtin(Template),
@@ -79,7 +82,7 @@ Output Markdown following this user-defined template:\n<template>\n{template}\n<
     } else {
         format!(" Also follow these saved personal instructions where they do not conflict with the rules below:\n<instructions>\n{instructions}\n</instructions>\n")
     };
-    format!("{task} Write 'None noted' for an empty section.{personal} {RULES}")
+    format!("{task} Write 'None noted' for an empty section. {CITE}{personal} {RULES}")
 }
 
 /// Resolves a template id from the UI, built-in or custom, into its full system prompt.
@@ -714,6 +717,11 @@ mod tests {
         let rules = custom.find(RULES).unwrap();
         assert!(template < instructions && instructions < rules);
         assert!(custom.ends_with(RULES));
+        for prompt in [&custom, &plain] {
+            let cite = prompt.find(CITE).unwrap();
+            assert!(cite < prompt.find(RULES).unwrap());
+        }
+
         assert!(resolve_summary(&settings, "standup-v1")
             .unwrap()
             .contains("Use British English."));

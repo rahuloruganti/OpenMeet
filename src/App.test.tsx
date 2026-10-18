@@ -2654,6 +2654,52 @@ describe("transcript and audio", () => {
     vi.mocked(api.audioSrc).mockImplementation((path) => `asset://${path}`);
   });
 
+  it("links only summary and task times that match a stored segment, then opens and plays it", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...recorded,
+      summary: "## Decisions\n- Moved the launch [0:08], budget [9:59]",
+      summary_provider: "merge",
+      summary_model: "m1",
+      segment_meta: [{ id: 21, original_text: null }],
+      action_items: [
+        {
+          id: 1,
+          text: "Confirm launch [0:08]",
+          owner: null,
+          due_date: null,
+          done: false,
+          source: "summary",
+          summary_id: 4,
+        },
+      ],
+    });
+    vi.mocked(api.audioPosition).mockResolvedValue(2250);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(screen.getByText("(unverified)")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Open transcript at 9:59" }),
+    ).toBeNull();
+    const links = screen.getAllByRole("button", {
+      name: "Open transcript at 0:08",
+    });
+    expect(links).toHaveLength(2);
+    await userEvent.click(links[0]);
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: "Transcript" })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
+    await waitFor(() =>
+      expect(api.audioPosition).toHaveBeenCalledWith("sample", "system", 8250),
+    );
+    const segment = document.getElementById("segment-21");
+    expect(segment?.className).toContain("highlighted-segment");
+    expect(document.activeElement).toBe(segment);
+  });
+
   it("seeks the speaker's track to the backend-mapped file time", async () => {
     vi.mocked(api.getMeeting).mockResolvedValue(recorded);
     vi.mocked(api.audioPosition).mockResolvedValue(2250);

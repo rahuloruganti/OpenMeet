@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { api, errorMessage, type ActionItem } from "../lib/api";
+import { timestampTokens } from "../lib/timestamps";
 
 type Props = {
   meetingId: string;
@@ -8,6 +9,8 @@ type Props = {
   summaryId: number | null;
   disabled: boolean;
   onItems: (items: ActionItem[]) => void;
+  /** Renders a `[m:ss]` citation found in a task as a validated source link. */
+  reference?: (token: string) => ReactNode;
 };
 
 /** Editable tasks. Unknown owners and due dates stay empty instead of being guessed. */
@@ -17,6 +20,7 @@ export function ActionItems({
   summaryId,
   disabled,
   onItems,
+  reference,
 }: Props) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -100,6 +104,13 @@ export function ActionItems({
             <span className="muted">
               {item.source === "summary" ? "From summary" : "Added manually"}
             </span>
+            {reference &&
+              item.text
+                .split(timestampTokens)
+                .filter((_, index) => index % 2 === 1)
+                .map((token, index) => (
+                  <span key={index}>Source {reference(token)}</span>
+                ))}
             <button
               aria-label={`Delete task: ${item.text}`}
               disabled={locked}

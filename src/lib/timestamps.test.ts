@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatTimestamp, timestampAtCaret } from "./timestamps";
+import {
+  formatTimestamp,
+  parseTimestamp,
+  segmentsAt,
+  timestampAtCaret,
+} from "./timestamps";
 
 describe("note timestamps", () => {
   it("formats minutes and hours", () => {
@@ -14,6 +19,34 @@ describe("note timestamps", () => {
     expect(timestampAtCaret(text, 20)).toBe(3_723_000);
     expect(timestampAtCaret(text, text.length)).toBeNull();
     expect(timestampAtCaret("[75:30]", 0)).toBe(4_530_000);
+  });
+
+  it("resolves references with the prompt's whole-second rule", () => {
+    const at = (start_ms: number) => ({
+      speaker: "You" as const,
+      timing: { kind: "timed" as const, start_ms, end_ms: start_ms + 1 },
+      text: "t",
+    });
+    const segments = [
+      at(61_800),
+      {
+        speaker: "Others" as const,
+        timing: { kind: "untimed" as const },
+        text: "u",
+      },
+      at(4_503_000),
+      at(61_200),
+    ];
+    expect(parseTimestamp("[1:01]")).toBe(61_000);
+    expect(parseTimestamp("[01:01]")).toBe(61_000);
+    expect(parseTimestamp("[75:03]")).toBe(4_503_000);
+    expect(parseTimestamp("[1:15:03]")).toBe(4_503_000);
+    expect(parseTimestamp("[9:99]")).toBeNull();
+    expect(parseTimestamp("x [1:01]")).toBeNull();
+    expect(segmentsAt(segments, 61_000)).toEqual([0, 3]);
+    expect(segmentsAt(segments, 4_503_000)).toEqual([2]);
+    expect(segmentsAt(segments, 62_000)).toEqual([]);
+    expect(segmentsAt(segments, 0)).toEqual([]);
   });
 
   it("rejects malformed timestamps", () => {

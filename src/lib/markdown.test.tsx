@@ -17,6 +17,21 @@ describe("renderMarkdown", () => {
     );
   });
 
+  it("renders time tokens through a reference renderer, including inside bold", () => {
+    const output = render(
+      <div>
+        {renderMarkdown("- **Ship [0:01]** then [9:99]\n`[0:01]`", (token) => (
+          <mark>{token}</mark>
+        ))}
+      </div>,
+    ).container.innerHTML;
+    expect(output).toBe(
+      "<div><ul><li><strong>Ship <mark>[0:01]</mark></strong> then <mark>[9:99]</mark></li></ul>" +
+        "<p><code>[0:01]</code></p></div>",
+    );
+    expect(html("At [0:01].")).toBe("<div><p>At [0:01].</p></div>");
+  });
+
   it.each([
     ["<script>alert(1)</script>", "&lt;script&gt;alert(1)&lt;/script&gt;"],
     ["[x](javascript:alert(1))", "[x](javascript:alert(1))"],
