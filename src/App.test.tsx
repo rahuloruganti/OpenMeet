@@ -109,6 +109,7 @@ const sample: MeetingDetail = {
   transcript_model: null,
   action_items: [],
   summary_edited: false,
+  speaker_names: { you: null, others: null },
 };
 
 const textPlan = {

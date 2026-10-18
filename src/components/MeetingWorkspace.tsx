@@ -4,6 +4,8 @@ import {
   isLocalBase,
   type ActionItem,
   type CustomTemplate,
+  type SpeakerNames,
+  speakerLabel,
   type MeetingDetail,
   type ProcessingPlan,
   type Settings,
@@ -12,6 +14,7 @@ import {
 } from "../lib/api";
 import { extractSection, renderMarkdown } from "../lib/markdown";
 import { ActionItems } from "./ActionItems";
+import { SpeakerNamesForm } from "./SpeakerNames";
 import { formatBytes, sourceLabels } from "../lib/meeting-labels";
 import { formatTimestamp, timestampAtCaret } from "../lib/timestamps";
 
@@ -78,6 +81,7 @@ type Props = {
   onSummaryDraft: (draft: SummaryDraft | null) => void;
   /** Resolves true once saved; a failure keeps the draft. */
   onSaveSummaryEdit: (draft: SummaryDraft) => Promise<boolean>;
+  onSpeakerNames: (meetingId: string, names: SpeakerNames) => void;
   /** Replaces the selected meeting's tasks after a backend change. */
   onActionItems: (meetingId: string, items: ActionItem[]) => void;
   onPlanQuestion: (question: string) => Promise<ProcessingPlan | null>;
@@ -300,7 +304,10 @@ export function MeetingWorkspace(props: Props) {
     }
   };
   const blocked = disabled || job !== null || props.enhanceBlocked !== null;
-  const contentScope = `your notes (${props.notes.length} characters) and the transcript text (${selected.segments.length} segments)`;
+  const named =
+    selected.speaker_names.you !== null ||
+    selected.speaker_names.others !== null;
+  const contentScope = `your notes (${props.notes.length} characters) and the transcript text (${selected.segments.length} segments${named ? ", with your speaker names" : ""})`;
   const recoverable =
     meeting.source === "desktop" &&
     meeting.status === "interrupted" &&
@@ -1015,6 +1022,15 @@ export function MeetingWorkspace(props: Props) {
               and numbers before relying on it.
             </p>
           )}
+          {hasTranscript && (
+            <SpeakerNamesForm
+              key={`${meeting.id}:${selected.speaker_names.you ?? ""}:${selected.speaker_names.others ?? ""}`}
+              meetingId={meeting.id}
+              names={selected.speaker_names}
+              disabled={disabled}
+              onNames={(names) => props.onSpeakerNames(meeting.id, names)}
+            />
+          )}
           {selected.segments.some(
             (segment) => segment.timing.kind === "untimed",
           ) && (
@@ -1025,6 +1041,10 @@ export function MeetingWorkspace(props: Props) {
           )}
           {selected.segments.map((segment, index) => {
             const kind = segment.speaker === "You" ? "mic" : "system";
+            const speaker = speakerLabel(
+              selected.speaker_names,
+              segment.speaker,
+            );
             const timing = segment.timing;
             const time =
               timing.kind === "timed"
@@ -1032,12 +1052,12 @@ export function MeetingWorkspace(props: Props) {
                 : "Untimed";
             return (
               <p className="transcript-segment" key={index}>
-                <strong>{segment.speaker}</strong>{" "}
+                <strong>{speaker}</strong>{" "}
                 {timing.kind === "timed" &&
                 playable.some((track) => track.kind === kind) ? (
                   <button
                     className="seek-button"
-                    aria-label={`Play ${segment.speaker} from ${time}`}
+                    aria-label={`Play ${speaker} from ${time}`}
                     onClick={() =>
                       void props
                         .onSeek(kind, timing.start_ms)

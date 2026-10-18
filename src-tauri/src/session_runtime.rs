@@ -262,10 +262,11 @@ fn summary(app: &AppHandle, id: &str, run: &str) -> Result<()> {
         };
         core.processing_stage(id, run, Stage::AwaitingNotes, Stage::Summarizing)?;
         let (notes, revision) = core.frozen_processing_notes(id, run)?;
+        let detail = core.get_meeting(id)?;
         Ok((
             notes,
             revision,
-            core.get_meeting(id)?.segments,
+            (detail.segments, detail.speaker_names),
             core.settings()?,
             summary.template,
             crate::llm::summary_system(
@@ -277,7 +278,8 @@ fn summary(app: &AppHandle, id: &str, run: &str) -> Result<()> {
     notify(app, id);
     let config = crate::require_connection(&settings, ProviderRole::Llm)?;
     let remote = crate::providers::load_connection(&config)?;
-    let lines = crate::transcript_lines(&segments);
+    let (segments, names) = segments;
+    let lines = crate::transcript_lines(&segments, &names);
     let markdown =
         crate::llm::summarize(&remote, &system, &notes, &lines, guard.cancel(), |body| {
             let fingerprint = Sha256::digest(body)

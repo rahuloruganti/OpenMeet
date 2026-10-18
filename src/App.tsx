@@ -1058,6 +1058,13 @@ export function App() {
             });
             return saved;
           }}
+          onSpeakerNames={(id, names) =>
+            setSelected((current) =>
+              current?.meeting.id === id
+                ? { ...current, speaker_names: names }
+                : current,
+            )
+          }
           onActionItems={(id, items) =>
             // Patch only the tasks so an unsaved notes draft is untouched.
             setSelected((current) =>

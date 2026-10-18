@@ -639,18 +639,23 @@ fn confirm(plan: &ProcessingPlan, confirmation: Option<&str>) -> Result<()> {
     }
 }
 
-fn transcript_lines(segments: &[Segment]) -> Vec<String> {
+/// Prompt lines keep the "You"/"Others" label beside any user-given name, so the shared
+/// rules about microphone and system audio still apply.
+fn transcript_lines(segments: &[Segment], names: &SpeakerNames) -> Vec<String> {
     segments
         .iter()
-        .map(|segment| match &segment.timing {
-            SegmentTiming::Timed { start_ms, .. } => format!(
-                "[{}:{:02}] {}: {}",
-                start_ms / 60_000,
-                start_ms / 1000 % 60,
-                segment.speaker,
-                segment.text
-            ),
-            SegmentTiming::Untimed => format!("{}: {}", segment.speaker, segment.text),
+        .map(|segment| {
+            let speaker = names.label(&segment.speaker);
+            match &segment.timing {
+                SegmentTiming::Timed { start_ms, .. } => format!(
+                    "[{}:{:02}] {}: {}",
+                    start_ms / 60_000,
+                    start_ms / 1000 % 60,
+                    speaker,
+                    segment.text
+                ),
+                SegmentTiming::Untimed => format!("{}: {}", speaker, segment.text),
+            }
         })
         .collect()
 }
@@ -846,7 +851,7 @@ async fn text_snapshot(
     let id = id.to_string();
     with_core(app.clone(), false, move |core, _| {
         let detail = core.get_meeting(&id)?;
-        let lines = transcript_lines(&detail.segments);
+        let lines = transcript_lines(&detail.segments, &detail.speaker_names);
         if detail.user_markdown.trim().is_empty() && lines.is_empty() {
             return Err(AppError::new(
                 "summary_empty",
@@ -918,7 +923,7 @@ fn manual_text_check(
     if core.quitting
         || core.settings()?.connection(ProviderRole::Llm) != Some(config)
         || current.notes_revision != revision
-        || transcript_lines(&current.segments) != lines
+        || transcript_lines(&current.segments, &current.speaker_names) != lines
     {
         return Err(plan_changed());
     }
@@ -976,6 +981,19 @@ async fn generate_summary(
             publish(&app, &core.recording_state());
             Ok(())
         })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_speaker_names(
+    app: AppHandle,
+    meeting_id: String,
+    you: Option<String>,
+    others: Option<String>,
+) -> Result<SpeakerNames> {
+    with_core(app, false, move |core, _| {
+        core.save_speaker_names(&meeting_id, you.as_deref(), others.as_deref())
     })
     .await
 }
@@ -1506,6 +1524,7 @@ pub fn run() {
             plan_summary,
             list_summaries,
             save_summary_edit,
+            save_speaker_names,
             ask_meeting,
             rename_meeting,
             save_export_options,
@@ -1653,8 +1672,16 @@ mod tests {
             },
         ];
         assert_eq!(
-            transcript_lines(&entries),
+            transcript_lines(&entries, &SpeakerNames::default()),
             ["[1:01] You: Timed words", "Others: Untimed words"]
+        );
+        let names = SpeakerNames {
+            you: Some("Rahul".into()),
+            others: None,
+        };
+        assert_eq!(
+            transcript_lines(&entries, &names),
+            ["[1:01] Rahul (You): Timed words", "Others: Untimed words"]
         );
     }
 

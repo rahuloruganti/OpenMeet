@@ -709,7 +709,10 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
     core.processing_stage(&id, &plan.id, Stage::AwaitingNotes, Stage::Summarizing)
         .unwrap();
     let (notes, frozen_revision) = core.frozen_processing_notes(&id, &plan.id).unwrap();
-    let lines = crate::transcript_lines(&core.get_meeting(&id).unwrap().segments);
+    let lines = crate::transcript_lines(
+        &core.get_meeting(&id).unwrap().segments,
+        &Default::default(),
+    );
     let mut authorized_json = Vec::new();
     let guard = core.processing_owner.begin(&id).unwrap();
     let summary = llm::summarize(
@@ -947,7 +950,10 @@ fn cancel_during_final_upload_survives_restart_and_reviewed_retry_completes() {
     core.processing_stage(&id, &run, Stage::AwaitingNotes, Stage::Summarizing)
         .unwrap();
     let (notes, frozen_revision) = core.frozen_processing_notes(&id, &run).unwrap();
-    let lines = crate::transcript_lines(&core.get_meeting(&id).unwrap().segments);
+    let lines = crate::transcript_lines(
+        &core.get_meeting(&id).unwrap().segments,
+        &Default::default(),
+    );
     let guard = core.processing_owner.begin_session(&id, &run).unwrap();
     let summary = llm::summarize(
         &Connection::for_test(&base, "synthetic-text"),

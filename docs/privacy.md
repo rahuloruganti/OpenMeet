@@ -32,8 +32,8 @@ Desktop capture writes the selected microphone and system output locally. System
 | Search Hugging Face / list files  | Public Hugging Face API.                                          | Search query or repository identifier; no meeting content or provider credentials.            |
 | Download selected public model    | Hugging Face and approved HTTPS artifact hosts.                   | Revision-pinned file and local provenance manifest; no meeting uploads.                       |
 | Refresh provider models           | Saved API base plus `/models` (HTTPS or local loopback HTTP).     | Credentials only; no meeting content. Saving a model makes no request.                        |
-| Confirm Enhance notes             | Saved LLM base plus `/chat/completions`.                          | Notes/transcript text, model, prompt/template, and saved summary instructions. No audio.      |
-| Confirm Ask this meeting          | Same saved LLM chat-completions route.                            | The question and that meeting's notes/transcript. No audio or other meetings.                 |
+| Confirm Enhance notes             | Saved LLM base plus `/chat/completions`.                          | Notes/transcript with speaker names, model, prompt/template, saved instructions. No audio.    |
+| Confirm Ask this meeting          | Same saved LLM chat-completions route.                            | The question and the meeting's notes/transcript and speaker names. No audio or other meetings. |
 | Confirm cloud transcription       | Independently saved speech base plus `/audio/transcriptions`.     | Finalized microphone/system audio as bounded WAV chunks, model, language and vocabulary hint. |
 | Confirm an automatic session scope | Reviewed speech and optional summary destinations. | Future accepted audio in finalized live chunks and/or final tracks; saved notes and final transcript only if automatic summary is enabled. |
 | Confirm a processing retry | Destinations in the fresh review for the existing stopped recording. | Remaining authorized final audio/text work, with new finite budgets; earlier requests may already have been billed. |

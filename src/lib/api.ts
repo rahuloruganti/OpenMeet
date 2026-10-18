@@ -130,6 +130,7 @@ export type MeetingDetail = {
   action_items: ActionItem[];
   /** The latest summary is a user edit, not unedited model output. */
   summary_edited: boolean;
+  speaker_names: SpeakerNames;
   tracks: Array<{
     kind: string;
     path: string;
@@ -177,6 +178,14 @@ export type Settings = {
   export: ExportOptions;
   summary_instructions: string;
   summary_templates: CustomTemplate[];
+};
+/** Display names for the "You" (microphone) and "Others" (system audio) labels. */
+export type SpeakerNames = { you: string | null; others: string | null };
+/** "Rahul (You)" when named, otherwise the stored label; matches Rust `SpeakerNames::label`. */
+export const speakerLabel = (names: SpeakerNames, speaker: string) => {
+  const name =
+    speaker === "You" ? names.you : speaker === "Others" ? names.others : null;
+  return name ? `${name} (${speaker})` : speaker;
 };
 /** Editable meeting task; `owner` and `due_date` are null when not established. */
 export type ActionItem = {
@@ -481,6 +490,12 @@ export const api = {
   listSummaries: (id: string) =>
     invoke<SummaryVersion[]>("list_summaries", { id }),
   /** Saves an edit of `baseId` as the newest version; refused if `expectedLatestId` is stale. */
+  /** Empty names clear back to "You"/"Others". */
+  saveSpeakerNames: (
+    meetingId: string,
+    you: string | null,
+    others: string | null,
+  ) => invoke<SpeakerNames>("save_speaker_names", { meetingId, you, others }),
   saveSummaryEdit: (
     meetingId: string,
     baseId: number,

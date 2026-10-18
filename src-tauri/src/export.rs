@@ -111,7 +111,9 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
         };
         output.push_str(&format!(
             "\n**{}** {}: {}\n",
-            segment.speaker, timing, segment.text
+            detail.speaker_names.label(&segment.speaker),
+            timing,
+            segment.text
         ));
     }
     output
@@ -240,6 +242,68 @@ mod tests {
         assert!(fs::read_to_string(second.path)
             .unwrap()
             .contains(&detail.user_markdown));
+    }
+
+    #[test]
+    fn speaker_names_validate_persist_and_label_the_export() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional named speakers").unwrap();
+        core.replace_transcript(
+            &id,
+            &[
+                Segment {
+                    speaker: "You".into(),
+                    timing: SegmentTiming::Timed {
+                        start_ms: 0,
+                        end_ms: 100,
+                    },
+                    text: "Hello".into(),
+                },
+                Segment {
+                    speaker: "Others".into(),
+                    timing: SegmentTiming::Untimed,
+                    text: "Hi".into(),
+                },
+            ],
+            "whisper",
+            "small",
+        )
+        .unwrap();
+        let unnamed = render(&core.get_meeting(&id).unwrap(), &ALL);
+        assert!(unnamed.contains("\n**You** (0.0s): Hello\n"));
+        for bad in ["Two\nlines", &"n".repeat(81) as &str] {
+            assert_eq!(
+                core.save_speaker_names(&id, Some(bad), None)
+                    .unwrap_err()
+                    .code,
+                "speaker_name"
+            );
+        }
+        assert_eq!(
+            core.save_speaker_names("missing", Some("Rahul"), None)
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        let names = core
+            .save_speaker_names(&id, Some(" Rahul "), Some("Client team"))
+            .unwrap();
+        assert_eq!(names.you.as_deref(), Some("Rahul"));
+        let detail = core.get_meeting(&id).unwrap();
+        assert_eq!(detail.segments[0].speaker, "You");
+        let named = render(&detail, &ALL);
+        assert!(named.contains("\n**Rahul (You)** (0.0s): Hello\n"));
+        assert!(named.contains("\n**Client team (Others)** (untimed): Hi\n"));
+        let cleared = core.save_speaker_names(&id, Some(""), None).unwrap();
+        assert_eq!(cleared, SpeakerNames::default());
+        assert_eq!(render(&core.get_meeting(&id).unwrap(), &ALL), unnamed);
+        core.save_speaker_names(&id, Some("Rahul"), None).unwrap();
+        core.delete_meeting(&id).unwrap();
+        let left: i64 = core
+            .db
+            .query_row("SELECT COUNT(*) FROM speaker_names", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
     }
 
     #[test]

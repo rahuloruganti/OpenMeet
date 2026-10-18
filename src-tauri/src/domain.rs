@@ -96,6 +96,26 @@ pub struct MeetingDetail {
     pub action_items: Vec<ActionItem>,
     /// The latest summary is a user edit rather than unedited model output.
     pub summary_edited: bool,
+    pub speaker_names: SpeakerNames,
+}
+
+/// Optional display names for the "You" (microphone) and "Others" (system audio) labels.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SpeakerNames {
+    pub you: Option<String>,
+    pub others: Option<String>,
+}
+
+impl SpeakerNames {
+    /// "Rahul (You)" when named, otherwise the stored label unchanged.
+    pub fn label(&self, speaker: &str) -> String {
+        let name = match speaker {
+            "You" => self.you.as_deref(),
+            "Others" => self.others.as_deref(),
+            _ => None,
+        };
+        name.map_or_else(|| speaker.to_string(), |name| format!("{name} ({speaker})"))
+    }
 }
 
 /// An editable meeting task. `owner` and `due_date` are None when not established.

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 17;
+const LATEST_SCHEMA: i64 = 18;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -101,6 +101,11 @@ impl Core {
             (
                 17,
                 include_str!("../migrations/017_summary_edits.sql"),
+                false,
+            ),
+            (
+                18,
+                include_str!("../migrations/018_speaker_names.sql"),
                 false,
             ),
         ];
@@ -543,7 +548,9 @@ impl Core {
             .optional()?
             .unwrap_or((None, None));
         let action_items = self.action_items(id)?;
+        let speaker_names = self.speaker_names(id)?;
         Ok(MeetingDetail {
+            speaker_names,
             action_items,
             summary_edited,
             meeting,
@@ -588,6 +595,57 @@ impl Core {
             params![id, model, provider, markdown, template],
         )?;
         Ok(())
+    }
+
+    pub fn speaker_names(&self, id: &str) -> Result<SpeakerNames> {
+        let mut names = SpeakerNames::default();
+        let mut query = self
+            .db
+            .prepare("SELECT speaker, name FROM speaker_names WHERE meeting_id=?1")?;
+        for row in query.query_map([id], |row| Ok((row.get::<_, String>(0)?, row.get(1)?)))? {
+            let (speaker, name) = row?;
+            match speaker.as_str() {
+                "You" => names.you = Some(name),
+                _ => names.others = Some(name),
+            }
+        }
+        Ok(names)
+    }
+
+    /// Empty names clear the label back to "You"/"Others".
+    pub fn save_speaker_names(
+        &mut self,
+        id: &str,
+        you: Option<&str>,
+        others: Option<&str>,
+    ) -> Result<SpeakerNames> {
+        let clean = |value: Option<&str>| -> Result<Option<String>> {
+            let value = value.unwrap_or("").trim();
+            if value.chars().count() > 80 || value.chars().any(char::is_control) {
+                return Err(AppError::new(
+                    "speaker_name",
+                    "Keep each speaker name on one line, at most 80 characters.",
+                ));
+            }
+            Ok((!value.is_empty()).then(|| value.to_string()))
+        };
+        let names = [("You", clean(you)?), ("Others", clean(others)?)];
+        self.get_meeting(id)?;
+        let tx = self.db.transaction()?;
+        for (speaker, name) in names {
+            match name {
+                Some(name) => tx.execute(
+                    "INSERT INTO speaker_names(meeting_id,speaker,name) VALUES (?1,?2,?3) ON CONFLICT(meeting_id,speaker) DO UPDATE SET name=excluded.name",
+                    params![id, speaker, name],
+                )?,
+                None => tx.execute(
+                    "DELETE FROM speaker_names WHERE meeting_id=?1 AND speaker=?2",
+                    params![id, speaker],
+                )?,
+            };
+        }
+        tx.commit()?;
+        self.speaker_names(id)
     }
 
     /// Saves the user's edit of `base_id` as the newest version, keeping every earlier one. Refuses
