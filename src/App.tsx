@@ -995,6 +995,8 @@ export function App() {
             });
           }}
           versions={summaryVersions}
+          customTemplates={settings?.summary_templates ?? []}
+          summaryInstructions={settings?.summary_instructions ?? ""}
           onPlanSummary={async (template) => {
             const id = selected?.meeting.id;
             let plan: ProcessingPlan | null = null;

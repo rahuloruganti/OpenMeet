@@ -9,6 +9,7 @@ import type {
 } from "../lib/api";
 import { ModelLibrary } from "./ModelLibrary";
 import { ProviderSettings } from "./ProviderSettings";
+import { SummaryTemplates } from "./SummaryTemplates";
 import type { ProcessingChoice } from "../lib/processing";
 
 /** Engines other apps (such as Handy) offer that OpenMeet cannot run yet. Listed, never selectable. */
@@ -385,6 +386,11 @@ export function SettingsPanel(props: Props) {
             confirmation before it starts.
           </p>
         </section>
+        <SummaryTemplates
+          settings={settings}
+          disabled={disabled}
+          onSettings={props.onSettings}
+        />
         <section
           className="settings-section"
           aria-label="Storage and export settings"

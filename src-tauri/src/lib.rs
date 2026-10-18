@@ -868,19 +868,26 @@ fn text_plan(
     )
 }
 
+/// The full system prompt is part of the consent fingerprint, so editing the template or
+/// saved instructions after review requires a new confirmation.
+async fn summary_prompt(app: &AppHandle, template: &str) -> Result<String> {
+    let template = template.to_string();
+    with_core(app.clone(), false, move |core, _| {
+        llm::resolve_summary(&core.settings()?, &template)
+    })
+    .await
+}
+
 #[tauri::command]
-async fn plan_summary(
-    app: AppHandle,
-    id: String,
-    template: llm::Template,
-) -> Result<ProcessingPlan> {
+async fn plan_summary(app: AppHandle, id: String, template: String) -> Result<ProcessingPlan> {
+    let system = summary_prompt(&app, &template).await?;
     let (detail, config, lines) = text_snapshot(&app, &id).await?;
     text_plan(
         &config,
         &detail,
         &lines,
         "summary",
-        template.id(),
+        &system,
         llm::summary_requests(&detail.user_markdown, &lines)?,
     )
 }
@@ -907,16 +914,17 @@ fn manual_text_check(
 async fn generate_summary(
     app: AppHandle,
     id: String,
-    template: llm::Template,
+    template: String,
     confirmation: String,
 ) -> Result<()> {
+    let system = summary_prompt(&app, &template).await?;
     let (detail, config, lines) = text_snapshot(&app, &id).await?;
     let plan = text_plan(
         &config,
         &detail,
         &lines,
         "summary",
-        template.id(),
+        &system,
         llm::summary_requests(&detail.user_markdown, &lines)?,
     )?;
     confirm(&plan, Some(&confirmation))?;
@@ -930,7 +938,7 @@ async fn generate_summary(
         let mut sent = 0;
         let markdown = llm::summarize(
             &providers::load_connection(&config)?,
-            template,
+            &system,
             &detail.user_markdown,
             &lines,
             operation.cancel(),
@@ -949,7 +957,7 @@ async fn generate_summary(
             let state = app.state::<AppState>();
             let mut core = state.core.lock().map_err(|_| plan_changed())?;
             manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
-            core.save_summary(&id, &plan.base_url, &plan.model, &markdown, template.id())?;
+            core.save_summary(&id, &plan.base_url, &plan.model, &markdown, &template)?;
             publish(&app, &core.recording_state());
             Ok(())
         })
@@ -1190,6 +1198,32 @@ async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<S
 }
 
 #[tauri::command]
+async fn save_summary_instructions(app: AppHandle, instructions: String) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_summary_instructions(&instructions)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_summary_template(
+    app: AppHandle,
+    id: Option<String>,
+    name: String,
+    instructions: String,
+) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_summary_template(id.as_deref(), &name, &instructions)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_summary_template(app: AppHandle, id: String) -> Result<Settings> {
+    with_core(app, false, move |core, _| core.delete_summary_template(&id)).await
+}
+
+#[tauri::command]
 async fn cancel_transcription(app: AppHandle) -> Result<bool> {
     let owner = with_core(app, false, |core, _| Ok(core.processing_owner.clone())).await?;
     Ok(owner.cancel_active())
@@ -1314,7 +1348,7 @@ pub fn run() {
             stt_status, stt_install, transcribe_meeting, generate_summary,
             create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
             plan_summary, list_summaries, ask_meeting,
-            rename_meeting, save_export_options, recover_audio,
+            rename_meeting, save_export_options, save_summary_instructions, save_summary_template, delete_summary_template, recover_audio,
             cancel_transcription, save_stt_settings, audio_position,
             choose_model_folder, scan_local_models, import_local_model,
             search_hf_models, list_hf_files, download_hf_model, cancel_model_download,
@@ -1336,6 +1370,43 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn summary_consent_binds_the_resolved_template_and_instructions() {
+        let mut core = Core::open(std::path::Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional summary consent").unwrap();
+        core.save_notes(&id, "Fictional notes", 0).unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        let config = ProviderConfig {
+            base_url: "https://provider.example/v1".into(),
+            model: Some("model-a".into()),
+            revision: 1,
+            credential_account: Some("private-reference".into()),
+        };
+        let settings = core
+            .save_summary_template(None, "Retro", "## Went well")
+            .unwrap();
+        let template = settings.summary_templates[0].id.clone();
+        let plan_for = |settings: &Settings| {
+            let system = llm::resolve_summary(settings, &template).unwrap();
+            text_plan(&config, &detail, &[], "summary", &system, 1).unwrap()
+        };
+        let reviewed = plan_for(&settings);
+        confirm(&plan_for(&settings), Some(&reviewed.fingerprint)).unwrap();
+        let edited = core
+            .save_summary_template(Some(&template), "Retro", "## Changed")
+            .unwrap();
+        assert!(confirm(&plan_for(&edited), Some(&reviewed.fingerprint)).is_err());
+        let instructed = core.save_summary_instructions("Be brief.").unwrap();
+        let reviewed = plan_for(&instructed);
+        let changed = core.save_summary_instructions("Be detailed.").unwrap();
+        assert!(confirm(&plan_for(&changed), Some(&reviewed.fingerprint)).is_err());
+        let deleted = core.delete_summary_template(&template).unwrap();
+        assert_eq!(
+            llm::resolve_summary(&deleted, &template).unwrap_err().code,
+            "summary_template_missing"
+        );
+    }
 
     #[test]
     fn consent_binds_destination_model_revision_and_content() {

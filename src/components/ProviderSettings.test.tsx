@@ -47,6 +47,8 @@ const settings: Settings = {
   microphone_id: null,
   output_id: null,
   export: { transcript: true, summary: true, filename: "title" },
+  summary_instructions: "",
+  summary_templates: [],
 };
 const props = () => ({
   settings,

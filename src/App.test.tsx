@@ -191,6 +191,8 @@ const initialSettings: Settings = {
   stt_prompt: "",
   stt_model: "small",
   stop_shortcut: null,
+  summary_instructions: "",
+  summary_templates: [],
 };
 
 const notInstalled = {
@@ -1407,6 +1409,44 @@ describe("desktop foundation", () => {
       expect(api.generateSummary).toHaveBeenCalledWith(
         "sample",
         "standup-v1",
+        textPlan.fingerprint,
+      ),
+    );
+  });
+
+  it("sends a custom template and discloses saved instructions before sending", async () => {
+    vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      llm: { base_url: textPlan.base_url, model: "openai/gpt-x", revision: 1 },
+      summary_instructions: "Write in British English.",
+      summary_templates: [
+        { id: "custom-retro", name: "Retro", instructions: "## Went well" },
+      ],
+    });
+    vi.mocked(api.generateSummary).mockResolvedValue(undefined);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Template" }),
+      "Retro",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Enhance notes" }),
+    );
+    expect(api.planSummary).toHaveBeenCalledWith("sample", "custom-retro");
+    const card = screen.getByRole("group", { name: "Confirm sending" });
+    expect(card.textContent).toContain("Template: Retro");
+    expect(card.textContent).toContain(
+      "Includes your saved summary instructions.",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Send and generate summary" }),
+    );
+    await waitFor(() =>
+      expect(api.generateSummary).toHaveBeenCalledWith(
+        "sample",
+        "custom-retro",
         textPlan.fingerprint,
       ),
     );

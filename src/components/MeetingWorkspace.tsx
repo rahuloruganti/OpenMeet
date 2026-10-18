@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   isLocalBase,
+  type CustomTemplate,
   type MeetingDetail,
   type ProcessingPlan,
   type Settings,
@@ -22,12 +23,13 @@ const templates: { id: SummaryTemplate; label: string }[] = [
   { id: "standup-v1", label: "Stand-up" },
   { id: "one-to-one-v1", label: "One-to-one" },
 ];
-const templateLabel = (id: string) =>
+const templateLabel = (id: string, custom: CustomTemplate[]) =>
   templates.find((template) => template.id === id)?.label ??
+  custom.find((template) => template.id === id)?.name ??
   ({ "summary-v1": "General", fixture: "Sample" } as Record<string, string>)[
     id
   ] ??
-  id;
+  (id.startsWith("custom-") ? "Deleted custom template" : id);
 
 export type Answer = { meetingId: string; question: string; text: string };
 
@@ -59,10 +61,14 @@ type Props = {
   onExport: () => void;
   onPlanTranscription: () => Promise<ProcessingPlan | null>;
   onTranscribe: (confirmation: string | null) => void;
-  onGenerate: (template: SummaryTemplate, confirmation: string) => void;
+  /** `template` is a built-in id or a custom template id. */
+  onGenerate: (template: string, confirmation: string) => void;
   /** Stored summaries, newest first. */
   versions: SummaryVersion[];
-  onPlanSummary: (template: SummaryTemplate) => Promise<ProcessingPlan | null>;
+  customTemplates: CustomTemplate[];
+  /** Saved personal instructions sent with every summary. */
+  summaryInstructions: string;
+  onPlanSummary: (template: string) => Promise<ProcessingPlan | null>;
   onPlanQuestion: (question: string) => Promise<ProcessingPlan | null>;
   onAsk: (question: string, confirmation: string) => void;
   answer: Answer | null;
@@ -89,7 +95,15 @@ export function MeetingWorkspace(props: Props) {
   const [confirmingAudio, setConfirmingAudio] = useState<ProcessingPlan | null>(
     null,
   );
-  const [template, setTemplate] = useState<SummaryTemplate>("general-v1");
+  const [chosenTemplate, setTemplate] = useState<string>("general-v1");
+  // A deleted custom template falls back to General instead of failing at send time.
+  const template =
+    templates.some((item) => item.id === chosenTemplate) ||
+    props.customTemplates.some((item) => item.id === chosenTemplate)
+      ? chosenTemplate
+      : "general-v1";
+  // Content key, not array identity, so a settings refresh keeps an open review.
+  const customKey = JSON.stringify(props.customTemplates);
   const [versionId, setVersionId] = useState<number | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [question, setQuestion] = useState("");
@@ -128,6 +142,8 @@ export function MeetingWorkspace(props: Props) {
     props.sttMode,
     template,
     question,
+    customKey,
+    props.summaryInstructions,
   ]);
   const reviewPlan = async (
     load: () => Promise<ProcessingPlan | null>,
@@ -517,13 +533,16 @@ export function MeetingWorkspace(props: Props) {
                 <select
                   value={template}
                   disabled={blocked}
-                  onChange={(event) =>
-                    setTemplate(event.target.value as SummaryTemplate)
-                  }
+                  onChange={(event) => setTemplate(event.target.value)}
                 >
                   {templates.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.label}
+                    </option>
+                  ))}
+                  {props.customTemplates.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
                     </option>
                   ))}
                 </select>
@@ -564,7 +583,12 @@ export function MeetingWorkspace(props: Props) {
                   Model: <code>{confirming.model}</code> via{" "}
                   <code>{confirming.base_url}</code>
                 </li>
-                <li>Template: {templateLabel(template)}</li>
+                <li>
+                  Template: {templateLabel(template, props.customTemplates)}
+                </li>
+                {props.summaryInstructions !== "" && (
+                  <li>Includes your saved summary instructions.</li>
+                )}
                 <li>Sent: {contentScope}.</li>
                 <li>
                   Requests:{" "}
@@ -605,7 +629,7 @@ export function MeetingWorkspace(props: Props) {
               >
                 {versions.map((version, index) => (
                   <option key={version.id} value={version.id}>
-                    {`Version ${versions.length - index} · ${version.model} · ${templateLabel(version.template)}`}
+                    {`Version ${versions.length - index} · ${version.model} · ${templateLabel(version.template, props.customTemplates)}`}
                   </option>
                 ))}
               </select>
