@@ -127,6 +127,7 @@ export type MeetingDetail = {
   summary_model: string | null;
   transcript_provider: string | null;
   transcript_model: string | null;
+  action_items: ActionItem[];
   tracks: Array<{
     kind: string;
     path: string;
@@ -174,6 +175,16 @@ export type Settings = {
   export: ExportOptions;
   summary_instructions: string;
   summary_templates: CustomTemplate[];
+};
+/** Editable meeting task; `owner` and `due_date` are null when not established. */
+export type ActionItem = {
+  id: number;
+  text: string;
+  owner: string | null;
+  due_date: string | null;
+  done: boolean;
+  source: "manual" | "summary";
+  summary_id: number | null;
 };
 /** User-defined summary structure; `id` is `custom-<uuid>`. */
 export type CustomTemplate = {
@@ -405,6 +416,27 @@ export const api = {
   ) => invoke<Settings>("save_summary_template", { id, name, instructions }),
   deleteSummaryTemplate: (id: string) =>
     invoke<Settings>("delete_summary_template", { id }),
+  /** Creates a task when `itemId` is null; otherwise edits it. Returns the meeting's tasks. */
+  saveActionItem: (
+    meetingId: string,
+    itemId: number | null,
+    text: string,
+    owner: string | null,
+    dueDate: string | null,
+    done: boolean,
+  ) =>
+    invoke<ActionItem[]>("save_action_item", {
+      meetingId,
+      itemId,
+      text,
+      owner,
+      dueDate,
+      done,
+    }),
+  deleteActionItem: (meetingId: string, itemId: number) =>
+    invoke<ActionItem[]>("delete_action_item", { meetingId, itemId }),
+  importActionItems: (meetingId: string, summaryId: number) =>
+    invoke<ActionItem[]>("import_action_items", { meetingId, summaryId }),
   saveSettings: (pauseShortcut: string, stopShortcut: string | null) =>
     invoke<Settings>("save_settings", { pauseShortcut, stopShortcut }),
   chooseVaultFolder: () => invoke<Settings>("choose_vault_folder"),

@@ -1,3 +1,4 @@
+mod action_items;
 pub mod audio;
 mod audio_timing;
 mod capture_gate;
@@ -1212,6 +1213,53 @@ async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<S
 }
 
 #[tauri::command]
+async fn save_action_item(
+    app: AppHandle,
+    meeting_id: String,
+    item_id: Option<i64>,
+    text: String,
+    owner: Option<String>,
+    due_date: Option<String>,
+    done: bool,
+) -> Result<Vec<ActionItem>> {
+    with_core(app, false, move |core, _| {
+        core.save_action_item(
+            &meeting_id,
+            item_id,
+            &text,
+            owner.as_deref(),
+            due_date.as_deref(),
+            done,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_action_item(
+    app: AppHandle,
+    meeting_id: String,
+    item_id: i64,
+) -> Result<Vec<ActionItem>> {
+    with_core(app, false, move |core, _| {
+        core.delete_action_item(&meeting_id, item_id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_action_items(
+    app: AppHandle,
+    meeting_id: String,
+    summary_id: i64,
+) -> Result<Vec<ActionItem>> {
+    with_core(app, false, move |core, _| {
+        core.import_action_items(&meeting_id, summary_id)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_summary_instructions(app: AppHandle, instructions: String) -> Result<Settings> {
     with_core(app, false, move |core, _| {
         core.save_summary_instructions(&instructions)
@@ -1449,6 +1497,9 @@ pub fn run() {
             save_summary_instructions,
             save_summary_template,
             delete_summary_template,
+            save_action_item,
+            delete_action_item,
+            import_action_items,
             recover_audio,
             cancel_transcription,
             save_stt_settings,

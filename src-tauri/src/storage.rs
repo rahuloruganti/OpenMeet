@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 15;
+const LATEST_SCHEMA: i64 = 16;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -91,6 +91,11 @@ impl Core {
             (
                 15,
                 include_str!("../migrations/015_summary_templates.sql"),
+                false,
+            ),
+            (
+                16,
+                include_str!("../migrations/016_action_items.sql"),
                 false,
             ),
         ];
@@ -532,7 +537,9 @@ impl Core {
             )
             .optional()?
             .unwrap_or((None, None));
+        let action_items = self.action_items(id)?;
         Ok(MeetingDetail {
+            action_items,
             meeting,
             user_markdown,
             notes_revision,

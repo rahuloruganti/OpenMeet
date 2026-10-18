@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   isLocalBase,
+  type ActionItem,
   type CustomTemplate,
   type MeetingDetail,
   type ProcessingPlan,
@@ -10,6 +11,7 @@ import {
   type SummaryVersion,
 } from "../lib/api";
 import { extractSection, renderMarkdown } from "../lib/markdown";
+import { ActionItems } from "./ActionItems";
 import { formatBytes, sourceLabels } from "../lib/meeting-labels";
 import { formatTimestamp, timestampAtCaret } from "../lib/timestamps";
 
@@ -69,6 +71,8 @@ type Props = {
   /** Saved personal instructions sent with every summary. */
   summaryInstructions: string;
   onPlanSummary: (template: string) => Promise<ProcessingPlan | null>;
+  /** Replaces the selected meeting's tasks after a backend change. */
+  onActionItems: (meetingId: string, items: ActionItem[]) => void;
   onPlanQuestion: (question: string) => Promise<ProcessingPlan | null>;
   onAsk: (question: string, confirmation: string) => void;
   answer: Answer | null;
@@ -667,6 +671,13 @@ export function MeetingWorkspace(props: Props) {
               it.
             </p>
           )}
+          <ActionItems
+            meetingId={selected.meeting.id}
+            items={selected.action_items}
+            summaryId={shown?.id ?? versions[0]?.id ?? null}
+            disabled={disabled}
+            onItems={(items) => props.onActionItems(selected.meeting.id, items)}
+          />
           <form
             className="ask-meeting"
             onSubmit={(event) => {

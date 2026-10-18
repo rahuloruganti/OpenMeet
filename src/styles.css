@@ -719,6 +719,25 @@ textarea.notes-editor {
 .summary-version {
   margin: 12px 0 20px;
 }
+.action-items {
+  margin-top: 24px;
+}
+.action-items ul {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+.action-items li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.action-items li input:not([type]) {
+  flex: 1 1 160px;
+  min-width: 0;
+}
 .ask-meeting {
   display: grid;
   gap: 8px;

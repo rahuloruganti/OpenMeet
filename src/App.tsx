@@ -1006,6 +1006,14 @@ export function App() {
           versions={summaryVersions}
           customTemplates={settings?.summary_templates ?? []}
           summaryInstructions={settings?.summary_instructions ?? ""}
+          onActionItems={(id, items) =>
+            // Patch only the tasks so an unsaved notes draft is untouched.
+            setSelected((current) =>
+              current?.meeting.id === id
+                ? { ...current, action_items: items }
+                : current,
+            )
+          }
           onPlanSummary={async (template) => {
             const id = selected?.meeting.id;
             let plan: ProcessingPlan | null = null;

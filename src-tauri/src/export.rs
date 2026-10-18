@@ -67,6 +67,25 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
             detail.summary.as_deref().unwrap_or("No summary generated.")
         ));
     }
+    // User-edited tasks sit outside the AI markers and are exported whenever any exist.
+    if !detail.action_items.is_empty() {
+        output.push_str("## Tasks\n");
+        for item in &detail.action_items {
+            output.push_str(&format!(
+                "- [{}] {} — Owner: {} — Due: {} — {}\n",
+                if item.done { "x" } else { " " },
+                item.text,
+                item.owner.as_deref().unwrap_or("Unassigned"),
+                item.due_date.as_deref().unwrap_or("not set"),
+                if item.source == "summary" {
+                    "From summary"
+                } else {
+                    "Added manually"
+                }
+            ));
+        }
+        output.push('\n');
+    }
     output.push_str(&format!("## My notes\n{}\n", detail.user_markdown));
     if !options.transcript {
         return output;
@@ -218,6 +237,38 @@ mod tests {
         assert!(fs::read_to_string(second.path)
             .unwrap()
             .contains(&detail.user_markdown));
+    }
+
+    #[test]
+    fn tasks_export_outside_ai_markers_with_explicit_unknowns() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional tasks").unwrap();
+        assert!(!render(&core.get_meeting(&id).unwrap(), &ALL).contains("## Tasks"));
+        core.save_action_item(&id, None, "Send the deck", None, None, false)
+            .unwrap();
+        core.save_action_item(
+            &id,
+            None,
+            "Book a room",
+            Some("Sam"),
+            Some("2026-11-02"),
+            true,
+        )
+        .unwrap();
+        let summary_off = ExportOptions {
+            summary: false,
+            ..ALL
+        };
+        for options in [ALL, summary_off] {
+            let rendered = render(&core.get_meeting(&id).unwrap(), &options);
+            let tasks = rendered.find("## Tasks").unwrap();
+            assert!(rendered.rfind("%%ai-end%%").is_none_or(|end| end < tasks));
+            assert!(rendered.contains(
+                "- [ ] Send the deck — Owner: Unassigned — Due: not set — Added manually\n"
+            ));
+            assert!(rendered
+                .contains("- [x] Book a room — Owner: Sam — Due: 2026-11-02 — Added manually\n"));
+        }
     }
 
     #[test]

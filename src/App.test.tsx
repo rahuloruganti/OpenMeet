@@ -106,6 +106,7 @@ const sample: MeetingDetail = {
   summary_template: "fixture",
   transcript_provider: null,
   transcript_model: null,
+  action_items: [],
 };
 
 const textPlan = {

@@ -93,6 +93,20 @@ pub struct MeetingDetail {
     pub summary_template: Option<String>,
     pub transcript_provider: Option<String>,
     pub transcript_model: Option<String>,
+    pub action_items: Vec<ActionItem>,
+}
+
+/// An editable meeting task. `owner` and `due_date` are None when not established.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ActionItem {
+    pub id: i64,
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+    pub done: bool,
+    /// "manual" or "summary"; summary imports keep the summary version id while it exists.
+    pub source: String,
+    pub summary_id: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

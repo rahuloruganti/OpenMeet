@@ -104,6 +104,10 @@ Notes and transcript text leave the device after confirmation. Audio is never in
 
 Use the version picker to read earlier summaries. **Copy summary** and **Copy action items** write to the system clipboard, where other apps may read the text. Markdown export always uses the latest saved summary, regardless of the viewed version.
 
+### Tasks
+
+The **Tasks** list below the summary holds editable action items. Add a task by hand, or click **Add from summary** to copy the bullets in the shown summary version's "Action items" section. Importing adds only bullets not already imported from that version, even if you edited them since. If a bullet is too long or the meeting would exceed 200 tasks, nothing is added. Owners and due dates are never guessed; they stay "Unassigned" and empty until you set them. Tick a task to mark it done. Tasks are stored on this device and are included in every Markdown export as a "Tasks" checklist, whatever the summary option is set to.
+
 **Ask this meeting** sends your question and that meeting's notes and transcript after a separate confirmation. The answer appears in the interface and is not saved or exported. Check AI output before relying on it. Live summary quality and long-meeting behavior remain unqualified.
 
 ## Export Markdown
