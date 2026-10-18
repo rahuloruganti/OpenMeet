@@ -951,7 +951,7 @@ fn cancel_during_final_upload_survives_restart_and_reviewed_retry_completes() {
     let guard = core.processing_owner.begin_session(&id, &run).unwrap();
     let summary = llm::summarize(
         &Connection::for_test(&base, "synthetic-text"),
-        Template::General,
+        &crate::llm::summary_system(crate::llm::Structure::Builtin(Template::General), ""),
         &notes,
         &lines,
         guard.cancel(),
