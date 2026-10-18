@@ -1185,6 +1185,22 @@ impl Core {
         Ok(hits)
     }
 
+    /// Segment ids (the transcript rows' rowids) of the in-scope meetings that match any of
+    /// `terms`, best bm25 match first. Terms reach FTS5 only as quoted strings.
+    pub fn transcript_hits(&self, meeting_ids: &[String], terms: &[String]) -> Result<Vec<i64>> {
+        let Some(query) = crate::retrieval::fts_query(terms) else {
+            return Ok(Vec::new());
+        };
+        let marks = vec!["?"; meeting_ids.len()].join(", ");
+        let mut statement = self.db.prepare(&format!(
+            "SELECT rowid FROM search WHERE search MATCH ?1 AND kind = 'transcript' AND meeting_id IN ({marks}) ORDER BY rank LIMIT {}",
+            crate::retrieval::MAX_HITS
+        ))?;
+        let params = std::iter::once(&query).chain(meeting_ids);
+        let rows = statement.query_map(rusqlite::params_from_iter(params), |row| row.get(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<i64>, _>>()?)
+    }
+
     /// Returns the stored (trimmed) title. Exported snapshots keep their old names.
     pub fn rename_meeting(&mut self, id: &str, title: &str) -> Result<String> {
         let title = validate_title(title)?;

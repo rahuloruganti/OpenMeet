@@ -35,6 +35,7 @@ const plan = {
   requests: 1,
   audio_bytes: 0,
   tracks: [],
+  excerpts: null,
 };
 const detail = (id: string): MeetingDetail =>
   ({
@@ -153,4 +154,47 @@ it("links only in-scope citations that match a stored segment and marks the rest
     screen.getByRole("button", { name: "Open Alpha sync" }),
   );
   expect(onOpen).toHaveBeenLastCalledWith("a", null);
+});
+
+it("discloses that only locally selected excerpts are sent for long content", async () => {
+  vi.mocked(api.planLibraryQuestion).mockResolvedValue({
+    ...plan,
+    excerpts: { segments: 12, meetings: 2 },
+  });
+  show();
+  await userEvent.click(screen.getByLabelText(/Alpha sync/));
+  await userEvent.click(screen.getByLabelText(/Gamma plan/));
+  await ask();
+  const card = await screen.findByRole("group", {
+    name: "Confirm sending library question",
+  });
+  expect(card.textContent).toContain(
+    "12 transcript excerpts selected on this device by keyword match from 2 meetings",
+  );
+  expect(card.textContent).toContain("not the full transcripts or notes");
+  expect(card.textContent).not.toContain("notes and transcript text");
+  expect(card.textContent).toContain("Alpha sync");
+});
+
+it("shows no matching passages as a status message, not an error, and sends nothing", async () => {
+  const message =
+    "No passages in the selected content matched your question. Nothing was sent.";
+  vi.mocked(api.planLibraryQuestion).mockRejectedValue({
+    code: "insufficient_evidence",
+    message,
+  });
+  show();
+  await userEvent.click(screen.getByLabelText(/Alpha sync/));
+  await ask();
+  expect((await screen.findByText(message)).getAttribute("role")).toBe(
+    "status",
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(
+    screen.queryByRole("group", { name: "Confirm sending library question" }),
+  ).toBeNull();
+  expect(api.askLibrary).not.toHaveBeenCalled();
+  // Changing the question clears the message.
+  await userEvent.type(screen.getByLabelText("Question"), "?");
+  expect(screen.queryByText(message)).toBeNull();
 });

@@ -13,6 +13,7 @@ mod phase_three_tests;
 mod processing_control;
 mod providers;
 mod question_threads;
+mod retrieval;
 mod session_processing;
 mod session_runtime;
 mod session_workflow;
@@ -627,6 +628,7 @@ fn processing_plan(
         requests,
         audio_bytes,
         tracks,
+        excerpts: None,
     })
 }
 
@@ -1045,6 +1047,177 @@ async fn list_summaries(app: AppHandle, id: String) -> Result<Vec<SummaryVersion
     with_core(app, false, move |core, _| core.list_summaries(&id)).await
 }
 
+type Chosen = Vec<std::collections::BTreeSet<usize>>;
+
+/// Nothing in the selected content matched the question, so nothing is sent. The UI shows
+/// this as an ordinary status message, not a failure.
+fn insufficient_evidence() -> AppError {
+    AppError::new(
+        "insufficient_evidence",
+        "No passages in the selected content matched your question. Nothing was sent.",
+    )
+}
+
+/// Transcript lines (per meeting, as line indexes) matching the question's keywords, best
+/// match first with their neighbours, within `budget` bytes. `lines` are the meetings' full
+/// transcript lines in the order of `details`.
+fn pick_excerpts(
+    core: &Core,
+    details: &[&MeetingDetail],
+    lines: &[Vec<String>],
+    terms: &[String],
+    budget: usize,
+) -> Result<Chosen> {
+    let ids: Vec<String> = details
+        .iter()
+        .map(|detail| detail.meeting.id.clone())
+        .collect();
+    // Search rowids are segment ids; `segment_meta` is aligned with the transcript lines.
+    let position: std::collections::HashMap<i64, (usize, usize)> = details
+        .iter()
+        .enumerate()
+        .flat_map(|(meeting, detail)| {
+            detail
+                .segment_meta
+                .iter()
+                .enumerate()
+                .map(move |(line, meta)| (meta.id, (meeting, line)))
+        })
+        .collect();
+    let hits: Vec<_> = core
+        .transcript_hits(&ids, terms)?
+        .into_iter()
+        .filter_map(|id| position.get(&id).copied())
+        .collect();
+    let sizes: Vec<Vec<usize>> = lines
+        .iter()
+        .map(|meeting| meeting.iter().map(String::len).collect())
+        .collect();
+    Ok(retrieval::select(&hits, &sizes, budget))
+}
+
+/// What a question about one meeting sends: everything when it fits one request, otherwise
+/// the notes and transcript excerpts selected locally by keyword match. Recomputed from
+/// stored data at send time, so a change to anything sent is a changed plan.
+#[derive(Clone, Debug, PartialEq)]
+struct QuestionContent {
+    notes: String,
+    lines: Vec<String>,
+    excerpts: Option<ExcerptSummary>,
+}
+
+fn question_content(
+    core: &Core,
+    detail: &MeetingDetail,
+    question: &str,
+    earlier: &[QuestionTurn],
+) -> Result<QuestionContent> {
+    llm::check_question(question, earlier)?;
+    let lines = transcript_lines(&detail.segments, &detail.speaker_names);
+    if llm::question_fits(&detail.user_markdown, &lines, question, earlier) {
+        return Ok(QuestionContent {
+            notes: detail.user_markdown.clone(),
+            lines,
+            excerpts: None,
+        });
+    }
+    let terms = retrieval::terms(question);
+    let notes = retrieval::notes_excerpt(&detail.user_markdown, &terms, llm::NOTES_SHARE);
+    let chosen = pick_excerpts(
+        core,
+        &[detail],
+        std::slice::from_ref(&lines),
+        &terms,
+        llm::question_budget(&notes, question, earlier),
+    )?;
+    if chosen[0].is_empty() && notes.is_empty() {
+        return Err(insufficient_evidence());
+    }
+    Ok(QuestionContent {
+        lines: retrieval::excerpt_lines(&lines, &chosen[0]),
+        notes,
+        excerpts: Some(retrieval::summary(&chosen)),
+    })
+}
+
+/// The consent fingerprint binds exactly the text that will be sent.
+fn question_plan(
+    config: &ProviderConfig,
+    detail: &MeetingDetail,
+    content: &QuestionContent,
+    block: &str,
+) -> Result<ProcessingPlan> {
+    let mut plan = processing_plan(
+        config,
+        &(
+            "question",
+            &detail.meeting.id,
+            detail.notes_revision,
+            &content.notes,
+            &content.lines,
+            block,
+            content.excerpts.is_some(),
+        ),
+        1,
+        0,
+        Vec::new(),
+    )?;
+    plan.excerpts = content.excerpts.clone();
+    Ok(plan)
+}
+
+async fn question_snapshot(
+    app: &AppHandle,
+    id: &str,
+    question: &str,
+    thread_id: Option<i64>,
+) -> Result<(
+    MeetingDetail,
+    ProviderConfig,
+    Vec<QuestionTurn>,
+    QuestionContent,
+)> {
+    let (id, question) = (id.to_string(), question.to_string());
+    with_core(app.clone(), false, move |core, _| {
+        let detail = core.get_meeting(&id)?;
+        if detail.user_markdown.trim().is_empty() && detail.segments.is_empty() {
+            return Err(AppError::new(
+                "summary_empty",
+                "There are no notes or transcript to send. Nothing was sent.",
+            ));
+        }
+        let config = require_connection(&core.settings()?, ProviderRole::Llm)?;
+        let earlier = earlier_turns(&detail.question_threads, thread_id)?;
+        let content = question_content(core, &detail, &question, &earlier)?;
+        Ok((detail, config, earlier, content))
+    })
+    .await
+}
+
+/// The provider, notes revision, thread and sent content must all still match what was reviewed.
+fn question_unchanged(
+    core: &Core,
+    id: &str,
+    config: &ProviderConfig,
+    reviewed: (&MeetingDetail, &QuestionContent),
+    question: &str,
+    thread: (Option<i64>, &[QuestionTurn]),
+) -> Result<()> {
+    let current = core.get_meeting(id)?;
+    if core.quitting
+        || core.settings()?.connection(ProviderRole::Llm) != Some(config)
+        || current.notes_revision != reviewed.0.notes_revision
+        || earlier_turns(&core.question_threads(id)?, thread.0)? != thread.1
+        || question_content(core, &current, question, thread.1)
+            .ok()
+            .as_ref()
+            != Some(reviewed.1)
+    {
+        return Err(plan_changed());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn plan_question(
     app: AppHandle,
@@ -1052,16 +1225,13 @@ async fn plan_question(
     question: String,
     thread_id: Option<i64>,
 ) -> Result<ProcessingPlan> {
-    let (detail, config, lines) = text_snapshot(&app, &id).await?;
-    let earlier = earlier_turns(&detail.question_threads, thread_id)?;
-    llm::validate_question(&detail.user_markdown, &lines, &question, &earlier)?;
-    text_plan(
+    let (detail, config, earlier, content) =
+        question_snapshot(&app, &id, &question, thread_id).await?;
+    question_plan(
         &config,
         &detail,
-        &lines,
-        "question",
+        &content,
         &llm::question_block(&question, &earlier),
-        1,
     )
 }
 
@@ -1086,16 +1256,13 @@ async fn ask_meeting(
     thread_id: Option<i64>,
     confirmation: String,
 ) -> Result<QuestionThread> {
-    let (detail, config, lines) = text_snapshot(&app, &id).await?;
-    let earlier = earlier_turns(&detail.question_threads, thread_id)?;
-    llm::validate_question(&detail.user_markdown, &lines, &question, &earlier)?;
-    let plan = text_plan(
+    let (detail, config, earlier, content) =
+        question_snapshot(&app, &id, &question, thread_id).await?;
+    let plan = question_plan(
         &config,
         &detail,
-        &lines,
-        "question",
+        &content,
         &llm::question_block(&question, &earlier),
-        1,
     )?;
     confirm(&plan, Some(&confirmation))?;
     blocking(move || {
@@ -1107,16 +1274,20 @@ async fn ask_meeting(
         let operation = owner.begin(&id)?;
         // Content, provider, and the thread's turns must still match what was reviewed.
         let unchanged = |core: &Core| -> Result<()> {
-            manual_text_check(core, &id, &config, detail.notes_revision, &lines)?;
-            if earlier_turns(&core.question_threads(&id)?, thread_id)? != earlier {
-                return Err(plan_changed());
-            }
-            Ok(())
+            question_unchanged(
+                core,
+                &id,
+                &config,
+                (&detail, &content),
+                &question,
+                (thread_id, &earlier),
+            )
         };
         let answer = llm::ask(
             &providers::load_connection(&config)?,
-            &detail.user_markdown,
-            &lines,
+            &content.notes,
+            &content.lines,
+            content.excerpts.is_some(),
             &question,
             &earlier,
             operation.cancel(),
@@ -1159,11 +1330,19 @@ fn library_ids(mut ids: Vec<String>) -> Result<Vec<String>> {
     Ok(ids)
 }
 
-/// Exactly what a library question would send for each meeting, in scope order.
-fn library_scope(core: &Core, ids: &[String]) -> Result<Vec<llm::LibraryItem>> {
-    ids.iter()
+/// What a library question sends for each meeting, in scope order: the whole meetings when
+/// they fit one request, otherwise only the excerpts selected locally by keyword match.
+#[derive(Clone, Debug, PartialEq)]
+struct LibraryScope {
+    items: Vec<llm::LibraryItem>,
+    excerpts: Option<ExcerptSummary>,
+}
+
+fn library_scope(core: &Core, ids: &[String], question: &str) -> Result<LibraryScope> {
+    let details = ids
+        .iter()
         .map(|id| {
-            let detail = core.get_meeting(id).map_err(|error| {
+            core.get_meeting(id).map_err(|error| {
                 if error.code == "not_found" {
                     AppError::new(
                         "invalid_scope",
@@ -1172,47 +1351,96 @@ fn library_scope(core: &Core, ids: &[String]) -> Result<Vec<llm::LibraryItem>> {
                 } else {
                     error
                 }
-            })?;
-            Ok(llm::LibraryItem {
-                id: id.clone(),
-                lines: transcript_lines(&detail.segments, &detail.speaker_names),
-                title: detail.meeting.title,
-                started_at: detail.meeting.started_at,
-                notes_revision: detail.notes_revision,
-                notes: detail.user_markdown,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    let full: Vec<llm::LibraryItem> = details
+        .iter()
+        .map(|detail| llm::LibraryItem {
+            id: detail.meeting.id.clone(),
+            lines: transcript_lines(&detail.segments, &detail.speaker_names),
+            title: detail.meeting.title.clone(),
+            started_at: detail.meeting.started_at.clone(),
+            notes_revision: detail.notes_revision,
+            notes: detail.user_markdown.clone(),
+        })
+        .collect();
+    llm::check_library(&full, question)?;
+    if llm::library_fits(&full, question) {
+        return Ok(LibraryScope {
+            items: full,
+            excerpts: None,
+        });
+    }
+    let terms = retrieval::terms(question);
+    let share = llm::NOTES_SHARE / full.len();
+    let mut items: Vec<llm::LibraryItem> = full
+        .iter()
+        .map(|item| llm::LibraryItem {
+            notes: retrieval::notes_excerpt(&item.notes, &terms, share),
+            lines: Vec::new(),
+            ..item.clone()
+        })
+        .collect();
+    let lines: Vec<Vec<String>> = full.into_iter().map(|item| item.lines).collect();
+    let chosen = pick_excerpts(
+        core,
+        &details.iter().collect::<Vec<_>>(),
+        &lines,
+        &terms,
+        llm::library_budget(&items, question),
+    )?;
+    if chosen.iter().all(std::collections::BTreeSet::is_empty)
+        && items.iter().all(|item| item.notes.is_empty())
+    {
+        return Err(insufficient_evidence());
+    }
+    for ((item, all), picked) in items.iter_mut().zip(&lines).zip(&chosen) {
+        item.lines = retrieval::excerpt_lines(all, picked);
+    }
+    Ok(LibraryScope {
+        items,
+        excerpts: Some(retrieval::summary(&chosen)),
+    })
 }
 
+/// The consent fingerprint binds exactly the text that will be sent.
 fn library_plan(
     config: &ProviderConfig,
-    items: &[llm::LibraryItem],
+    scope: &LibraryScope,
     question: &str,
 ) -> Result<ProcessingPlan> {
-    processing_plan(
+    let mut plan = processing_plan(
         config,
-        &("library", question.trim(), items),
+        &(
+            "library",
+            question.trim(),
+            &scope.items,
+            scope.excerpts.is_some(),
+        ),
         1,
         0,
         Vec::new(),
-    )
+    )?;
+    plan.excerpts = scope.excerpts.clone();
+    Ok(plan)
 }
 
 /// Every scoped meeting's sent text must still match what was reviewed.
-fn library_unchanged(core: &Core, ids: &[String], items: &[llm::LibraryItem]) -> bool {
-    library_scope(core, ids).is_ok_and(|now| now == items)
+fn library_unchanged(core: &Core, ids: &[String], question: &str, scope: &LibraryScope) -> bool {
+    library_scope(core, ids, question).is_ok_and(|now| now == *scope)
 }
 
 fn library_check(
     core: &Core,
     ids: &[String],
     config: &ProviderConfig,
-    items: &[llm::LibraryItem],
+    question: &str,
+    scope: &LibraryScope,
 ) -> Result<()> {
     if core.quitting
         || core.settings()?.connection(ProviderRole::Llm) != Some(config)
-        || !library_unchanged(core, ids, items)
+        || !library_unchanged(core, ids, question, scope)
     {
         return Err(plan_changed());
     }
@@ -1222,12 +1450,14 @@ fn library_check(
 async fn library_snapshot(
     app: &AppHandle,
     meeting_ids: Vec<String>,
-) -> Result<(Vec<String>, Vec<llm::LibraryItem>, ProviderConfig)> {
+    question: &str,
+) -> Result<(Vec<String>, LibraryScope, ProviderConfig)> {
     let ids = library_ids(meeting_ids)?;
+    let question = question.to_string();
     with_core(app.clone(), false, move |core, _| {
-        let items = library_scope(core, &ids)?;
+        let scope = library_scope(core, &ids, &question)?;
         let config = require_connection(&core.settings()?, ProviderRole::Llm)?;
-        Ok((ids, items, config))
+        Ok((ids, scope, config))
     })
     .await
 }
@@ -1238,9 +1468,9 @@ async fn plan_library_question(
     meeting_ids: Vec<String>,
     question: String,
 ) -> Result<ProcessingPlan> {
-    let (_, items, config) = library_snapshot(&app, meeting_ids).await?;
-    llm::validate_library(&items, &question)?;
-    library_plan(&config, &items, &question)
+    let (_, scope, config) = library_snapshot(&app, meeting_ids, &question).await?;
+    llm::validate_library(&scope.items, &question)?;
+    library_plan(&config, &scope, &question)
 }
 
 /// One request over the chosen meetings; the answer is returned, never stored.
@@ -1251,9 +1481,9 @@ async fn ask_library(
     question: String,
     confirmation: String,
 ) -> Result<String> {
-    let (ids, items, config) = library_snapshot(&app, meeting_ids).await?;
-    llm::validate_library(&items, &question)?;
-    let plan = library_plan(&config, &items, &question)?;
+    let (ids, scope, config) = library_snapshot(&app, meeting_ids, &question).await?;
+    llm::validate_library(&scope.items, &question)?;
+    let plan = library_plan(&config, &scope, &question)?;
     confirm(&plan, Some(&confirmation))?;
     blocking(move || {
         let owner = {
@@ -1265,11 +1495,12 @@ async fn ask_library(
         let unchanged = || {
             let state = app.state::<AppState>();
             let core = state.core.lock().map_err(|_| plan_changed())?;
-            library_check(&core, &ids, &config, &items)
+            library_check(&core, &ids, &config, &question, &scope)
         };
         let answer = llm::ask_library(
             &providers::load_connection(&config)?,
-            &items,
+            &scope.items,
+            scope.excerpts.is_some(),
             &question,
             operation.cancel(),
             |_| unchanged(),
@@ -1939,11 +2170,15 @@ mod tests {
             .collect();
         assert_eq!(library_ids(many).unwrap_err().code, "invalid_scope");
         assert_eq!(
-            library_scope(&core, &["missing".into()]).unwrap_err().code,
+            library_scope(&core, &["missing".into()], "Why?")
+                .unwrap_err()
+                .code,
             "invalid_scope"
         );
 
-        let items = library_scope(&core, &ids).unwrap();
+        let scope = library_scope(&core, &ids, "Why?").unwrap();
+        assert_eq!(scope.excerpts, None);
+        let items = &scope.items;
         assert_eq!(
             items
                 .iter()
@@ -1956,13 +2191,18 @@ mod tests {
         let sent = serde_json::to_string(&items).unwrap();
         assert!(!sent.contains("Private elsewhere") && !sent.contains("Outside"));
 
-        let reviewed = library_plan(&config, &items, " Why? ").unwrap();
-        let same = library_plan(&config, &library_scope(&core, &ids).unwrap(), "Why?").unwrap();
+        let reviewed = library_plan(&config, &scope, " Why? ").unwrap();
+        let same = library_plan(
+            &config,
+            &library_scope(&core, &ids, "Why?").unwrap(),
+            "Why?",
+        )
+        .unwrap();
         confirm(&same, Some(&reviewed.fingerprint)).unwrap();
-        assert!(library_unchanged(&core, &ids, &items));
+        assert!(library_unchanged(&core, &ids, "Why?", &scope));
         // The unselected meeting may change freely; either selected meeting may not.
         core.save_notes(&outside, "Edited elsewhere", 1).unwrap();
-        assert!(library_unchanged(&core, &ids, &items));
+        assert!(library_unchanged(&core, &ids, "Why?", &scope));
         for change in ["notes", "transcript", "title", "order", "question"] {
             let (mut now, mut question) = (ids.clone(), "Why?");
             match change {
@@ -1978,7 +2218,7 @@ mod tests {
                 "order" => now.reverse(),
                 _ => question = "Who?",
             }
-            let current = library_scope(&core, &now).unwrap();
+            let current = library_scope(&core, &now, question).unwrap();
             let plan = library_plan(&config, &current, question).unwrap();
             assert_eq!(
                 confirm(&plan, Some(&reviewed.fingerprint))
@@ -1988,13 +2228,13 @@ mod tests {
                 "{change}"
             );
             if matches!(change, "notes" | "transcript" | "title") {
-                assert!(!library_unchanged(&core, &ids, &items), "{change}");
+                assert!(!library_unchanged(&core, &ids, "Why?", &scope), "{change}");
             }
         }
         // With no saved LLM connection the settings check also refuses.
-        let fresh = library_scope(&core, &ids).unwrap();
+        let fresh = library_scope(&core, &ids, "Why?").unwrap();
         assert_eq!(
-            library_check(&core, &ids, &config, &fresh)
+            library_check(&core, &ids, &config, "Why?", &fresh)
                 .unwrap_err()
                 .code,
             "processing_plan_changed"
@@ -2126,5 +2366,261 @@ mod tests {
             );
         }
         assert!(parse_shortcuts(&"A+".repeat(60), None).is_err());
+    }
+
+    /// A fictional meeting of `count` one-second lines ("filler N"); `special` replaces the
+    /// text of chosen lines.
+    fn long_meeting(
+        core: &mut Core,
+        title: &str,
+        count: usize,
+        filler: &str,
+        special: &[(usize, &str)],
+    ) -> String {
+        let id = core.create_note(title).unwrap();
+        let segments: Vec<Segment> = (0..count)
+            .map(|n| Segment {
+                speaker: "Others".into(),
+                timing: SegmentTiming::Timed {
+                    start_ms: n as i64 * 1000,
+                    end_ms: n as i64 * 1000 + 500,
+                },
+                text: special
+                    .iter()
+                    .find(|(at, _)| *at == n)
+                    .map_or_else(|| format!("{filler} {n}"), |(_, text)| text.to_string()),
+            })
+            .collect();
+        core.replace_transcript(&id, &segments, "whisper", "small")
+            .unwrap();
+        id
+    }
+
+    fn filler() -> String {
+        format!("filler {}", "x".repeat(100))
+    }
+
+    fn config() -> ProviderConfig {
+        ProviderConfig {
+            base_url: "https://provider.example/v1".into(),
+            model: Some("m".into()),
+            revision: 1,
+            credential_account: None,
+        }
+    }
+
+    fn full_lines(detail: &MeetingDetail) -> Vec<String> {
+        transcript_lines(&detail.segments, &detail.speaker_names)
+    }
+
+    #[test]
+    fn long_meeting_question_sends_hits_with_neighbours_in_order_and_binds_them() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = long_meeting(
+            &mut core,
+            "Long",
+            1500,
+            &filler(),
+            &[
+                (700, "Persimmon budget approved at 40k"),
+                (1200, "Then the persimmon rollout starts"),
+            ],
+        );
+        let detail = core.get_meeting(&id).unwrap();
+        let all = full_lines(&detail);
+        assert!(!llm::question_fits("", &all, "q", &[]));
+        let question = "What was the persimmon budget?";
+        let content = question_content(&core, &detail, question, &[]).unwrap();
+        assert_eq!(
+            content.excerpts,
+            Some(ExcerptSummary {
+                segments: 10,
+                meetings: 1
+            })
+        );
+        assert_eq!(all[700], "[11:40] Others: Persimmon budget approved at 40k");
+        let expected: Vec<String> = all[698..=702]
+            .iter()
+            .chain(["…".to_string()].iter())
+            .chain(all[1198..=1202].iter())
+            .cloned()
+            .collect();
+        assert_eq!(content.lines, expected);
+        assert!(content.notes.is_empty());
+        // Words from a hostile question are quoted text, never FTS5 syntax.
+        let hostile = "persimmon\" OR NEAR( budget* AND body:x";
+        assert!(question_content(&core, &detail, hostile, &[])
+            .unwrap()
+            .excerpts
+            .is_some());
+
+        // The fingerprint binds the excerpted lines: editing one changes the plan ...
+        let block = llm::question_block(question, &[]);
+        let plan = question_plan(&config(), &detail, &content, &block).unwrap();
+        assert_eq!(plan.excerpts, content.excerpts);
+        let edit = |core: &mut Core, line: usize, text: &str| {
+            let detail = core.get_meeting(&id).unwrap();
+            core.edit_segment(
+                &id,
+                detail.segment_meta[line].id,
+                &detail.segments[line].text,
+                text,
+            )
+            .unwrap();
+            let detail = core.get_meeting(&id).unwrap();
+            let content = question_content(core, &detail, question, &[]).unwrap();
+            let plan = question_plan(&config(), &detail, &content, &block).unwrap();
+            (content, plan)
+        };
+        let (edited, edited_plan) = edit(&mut core, 700, "Persimmon budget approved at 45k");
+        assert_ne!(edited, content);
+        assert_ne!(edited_plan.fingerprint, plan.fingerprint);
+        // ... while a line that is not sent can change without invalidating the review.
+        let (same, same_plan) = edit(&mut core, 10, "Something else entirely");
+        assert_eq!(same, edited);
+        assert_eq!(same_plan.fingerprint, edited_plan.fingerprint);
+    }
+
+    #[test]
+    fn excerpts_respect_the_budget_without_cutting_a_line() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let dense = format!("persimmon {}", "x".repeat(400));
+        let id = long_meeting(&mut core, "Dense", 1500, &dense, &[]);
+        let detail = core.get_meeting(&id).unwrap();
+        let all = full_lines(&detail);
+        let content = question_content(&core, &detail, "persimmon?", &[]).unwrap();
+        let sent = content.lines.join("\n").len();
+        assert!(sent > 0 && sent <= llm::question_budget("", "persimmon?", &[]));
+        assert!(content
+            .lines
+            .iter()
+            .all(|line| line == "…" || all.contains(line)));
+        assert!(llm::validate_question(&content.notes, &content.lines, "persimmon?", &[]).is_ok());
+    }
+
+    #[test]
+    fn question_without_a_match_is_insufficient_evidence_and_sends_nothing() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = long_meeting(&mut core, "Long", 1500, &filler(), &[]);
+        let detail = core.get_meeting(&id).unwrap();
+        // The command stops here, before a request exists to send.
+        let error = question_content(&core, &detail, "What about zucchini?", &[]).unwrap_err();
+        assert_eq!(error.code, "insufficient_evidence");
+        assert!(error.message.ends_with("Nothing was sent."));
+        // A question with no usable words matches nothing either.
+        assert_eq!(
+            question_content(&core, &detail, "Why is it so?", &[])
+                .unwrap_err()
+                .code,
+            "insufficient_evidence"
+        );
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        // Matching notes alone are enough evidence to ask.
+        core.save_notes(&id, "The zucchini plan is final", detail.notes_revision)
+            .unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        let content = question_content(&core, &detail, "What about zucchini?", &[]).unwrap();
+        assert_eq!(content.notes, "The zucchini plan is final");
+        assert!(content.lines.is_empty());
+        assert_eq!(content.excerpts.map(|e| e.segments), Some(0));
+    }
+
+    #[test]
+    fn short_meeting_still_sends_the_full_content() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = long_meeting(&mut core, "Short", 5, "line", &[]);
+        let detail = core.get_meeting(&id).unwrap();
+        core.save_notes(&id, "My notes", detail.notes_revision)
+            .unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        let content = question_content(&core, &detail, "Anything unrelated?", &[]).unwrap();
+        assert_eq!(content.excerpts, None);
+        assert_eq!(content.notes, "My notes");
+        assert_eq!(content.lines, full_lines(&detail));
+        let plan = question_plan(&config(), &detail, &content, "q").unwrap();
+        assert_eq!(plan.excerpts, None);
+    }
+
+    #[test]
+    fn library_over_budget_sends_excerpts_across_meetings() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let a = long_meeting(
+            &mut core,
+            "Alpha",
+            700,
+            &filler(),
+            &[(300, "Persimmon budget approved")],
+        );
+        let b = long_meeting(&mut core, "Beta", 700, &filler(), &[]);
+        let c = long_meeting(
+            &mut core,
+            "Gamma",
+            700,
+            &filler(),
+            &[(650, "The persimmon budget doubled")],
+        );
+        let ids = vec![a.clone(), b, c];
+        let question = "persimmon budget";
+        let scope = library_scope(&core, &ids, question).unwrap();
+        assert_eq!(
+            scope.excerpts,
+            Some(ExcerptSummary {
+                segments: 10,
+                meetings: 2
+            })
+        );
+        // Refs stay M1..M3 in scope order; the meeting without a match sends no transcript.
+        assert_eq!(scope.items.len(), 3);
+        assert!(scope.items[0]
+            .lines
+            .contains(&"[5:00] Others: Persimmon budget approved".to_string()));
+        assert!(scope.items[1].lines.is_empty());
+        assert!(scope.items[2]
+            .lines
+            .contains(&"[10:50] Others: The persimmon budget doubled".to_string()));
+        assert!(llm::validate_library(&scope.items, question).is_ok());
+        let plan = library_plan(&config(), &scope, question).unwrap();
+        assert_eq!(plan.excerpts, scope.excerpts);
+        assert!(library_unchanged(&core, &ids, question, &scope));
+        // Editing an excerpted segment changes what is sent, so the review is void.
+        let detail = core.get_meeting(&a).unwrap();
+        core.edit_segment(
+            &a,
+            detail.segment_meta[300].id,
+            &detail.segments[300].text,
+            "Persimmon budget rejected",
+        )
+        .unwrap();
+        assert!(!library_unchanged(&core, &ids, question, &scope));
+        let changed = library_scope(&core, &ids, question).unwrap();
+        assert_ne!(
+            library_plan(&config(), &changed, question)
+                .unwrap()
+                .fingerprint,
+            plan.fingerprint
+        );
+        assert_eq!(
+            library_scope(&core, &ids, "zucchini").unwrap_err().code,
+            "insufficient_evidence"
+        );
+    }
+
+    #[test]
+    fn small_library_scope_still_sends_every_meeting_in_full() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let a = long_meeting(&mut core, "Alpha", 4, "one", &[]);
+        let b = long_meeting(&mut core, "Beta", 4, "two", &[]);
+        let scope = library_scope(&core, &[a.clone(), b], "Unrelated words?").unwrap();
+        assert_eq!(scope.excerpts, None);
+        assert_eq!(
+            scope.items[0].lines,
+            full_lines(&core.get_meeting(&a).unwrap())
+        );
+        assert_eq!(scope.items[1].lines.len(), 4);
     }
 }

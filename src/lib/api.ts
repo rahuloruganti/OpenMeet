@@ -287,6 +287,8 @@ export type ProcessingPlan = {
   requests: number;
   audio_bytes: number;
   tracks: string[];
+  /** Set when a question sends only locally selected excerpts of long content. */
+  excerpts: { segments: number; meetings: number } | null;
 };
 export type SttStatus = {
   engine: boolean;

@@ -129,6 +129,7 @@ const textPlan = {
   requests: 1,
   audio_bytes: 0,
   tracks: [],
+  excerpts: null,
 };
 const sessionPlan: SessionProcessingPlan = {
   id: "session-plan",
@@ -1900,6 +1901,54 @@ describe("desktop foundation", () => {
     expect(api.saveNotes).not.toHaveBeenCalled();
   });
 
+  it("discloses excerpt mode in the question consent card and keeps the full-content wording otherwise", async () => {
+    providerReady();
+    vi.mocked(api.planQuestion).mockResolvedValue({
+      ...textPlan,
+      excerpts: { segments: 14, meetings: 1 },
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Ask this meeting" }),
+      "What is the budget?",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    const card = screen.getByRole("group", {
+      name: "Confirm sending question",
+    });
+    expect(card.textContent).toContain(
+      "14 transcript excerpts selected on this device by keyword match",
+    );
+    expect(card.textContent).toContain("not the full transcript or notes");
+    expect(card.textContent).not.toContain("the transcript text (");
+    expect(card.textContent).toContain("saved with this meeting");
+  });
+
+  it("shows a question with no matching passages as a status message and asks for no consent", async () => {
+    providerReady();
+    const message =
+      "No passages in the selected content matched your question. Nothing was sent.";
+    vi.mocked(api.planQuestion).mockRejectedValue({
+      code: "insufficient_evidence",
+      message,
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Ask this meeting" }),
+      "What about zucchini?",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    const shown = await screen.findByText(message);
+    expect(shown.closest("[role=status]")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.queryByRole("group", { name: "Confirm sending question" }),
+    ).toBeNull();
+    expect(api.askMeeting).not.toHaveBeenCalled();
+  });
+
   it("sends a follow-up within the active thread and discloses the earlier turns", async () => {
     providerReady();
     vi.mocked(api.getMeeting).mockResolvedValue({
@@ -3255,6 +3304,7 @@ describe("provider workflows", () => {
     requests: 1,
     audio_bytes: 32044,
     tracks: ["mic"],
+    excerpts: null,
   };
 
   it("requires explicit audio confirmation in cloud mode without requiring local downloads", async () => {

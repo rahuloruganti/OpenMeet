@@ -47,6 +47,8 @@ export function LibraryQuestion(props: Props) {
   } | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  // Nothing matched, so nothing was sent: a result, not a failure.
+  const [notice, setNotice] = useState("");
   const [answered, setAnswered] = useState<Answered | null>(null);
   const version = useRef(0);
 
@@ -67,6 +69,7 @@ export function LibraryQuestion(props: Props) {
   useEffect(() => {
     version.current += 1;
     setReview(null);
+    setNotice("");
     setWorking(false);
   }, [scopeKey, question, props.connectionRevision]);
 
@@ -74,13 +77,17 @@ export function LibraryQuestion(props: Props) {
     const current = ++version.current;
     const ids = scope.map((meeting) => meeting.id);
     setError("");
+    setNotice("");
     setWorking(true);
     try {
       const result = await api.planLibraryQuestion(ids, question.trim());
       if (current === version.current)
         setReview({ plan: result, ids, question: question.trim() });
     } catch (failure) {
-      if (current === version.current) setError(errorMessage(failure));
+      if (current !== version.current) return;
+      const code = (failure as { code?: string } | null)?.code;
+      if (code === "insufficient_evidence") setNotice(errorMessage(failure));
+      else setError(errorMessage(failure));
     } finally {
       if (current === version.current) setWorking(false);
     }
@@ -276,6 +283,7 @@ export function LibraryQuestion(props: Props) {
         </div>
       </form>
       {error && <p role="alert">{error}</p>}
+      {notice && <p role="status">{notice}</p>}
       {review && (
         <div
           className="consent-card"
@@ -294,9 +302,11 @@ export function LibraryQuestion(props: Props) {
               <code>{review.plan.base_url}</code>
             </li>
             <li>
-              Sent in {review.plan.requests} request: your question, and the
-              title, start date, notes and transcript text (with speaker names)
-              of only these meetings:
+              Sent in {review.plan.requests} request: your question, and the{" "}
+              {review.plan.excerpts
+                ? `title and start date of only these meetings, with ${review.plan.excerpts.segments} transcript excerpts selected on this device by keyword match from ${review.plan.excerpts.meetings} meeting${review.plan.excerpts.meetings === 1 ? "" : "s"}, plus any matching parts of their notes — not the full transcripts or notes`
+                : "title, start date, notes and transcript text (with speaker names) of only these meetings"}
+              :
               <ol>
                 {review.ids.map((id) => (
                   <li key={id}>

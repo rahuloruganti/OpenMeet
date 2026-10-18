@@ -1150,7 +1150,14 @@ export function App() {
             if (!id) return plan;
             await run(async () => {
               await writer.current?.flush();
-              plan = await api.planQuestion(id, question, threadId);
+              try {
+                plan = await api.planQuestion(id, question, threadId);
+              } catch (failure) {
+                // Nothing matched: nothing is sent, which is an answer, not a failure.
+                const code = (failure as { code?: string } | null)?.code;
+                if (code !== "insufficient_evidence") throw failure;
+                setNotice(errorMessage(failure));
+              }
             });
             return plan;
           }}

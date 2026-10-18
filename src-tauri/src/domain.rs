@@ -266,6 +266,13 @@ pub enum KeyChange {
     Remove,
 }
 
+/// A question about long content sends locally selected excerpts instead of everything.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExcerptSummary {
+    pub segments: usize,
+    pub meetings: usize,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct ProcessingPlan {
     pub fingerprint: String,
@@ -274,6 +281,8 @@ pub struct ProcessingPlan {
     pub requests: usize,
     pub audio_bytes: u64,
     pub tracks: Vec<String>,
+    /// Set when only selected excerpts are sent; None means the full content.
+    pub excerpts: Option<ExcerptSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
