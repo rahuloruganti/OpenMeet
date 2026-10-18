@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, type ActionItem } from "../lib/api";
@@ -62,6 +62,18 @@ it("adds, edits, completes, imports and deletes tasks, keeping unknowns explicit
     "Send the final deck",
     null,
     null,
+    false,
+  );
+  const due = screen.getByLabelText("Due date: Send the deck");
+  fireEvent.change(due, { target: { value: "2026-10-31" } });
+  expect(api.saveActionItem).toHaveBeenCalledTimes(2);
+  fireEvent.blur(due);
+  expect(api.saveActionItem).toHaveBeenLastCalledWith(
+    "m1",
+    7,
+    "Send the deck",
+    null,
+    "2026-10-31",
     false,
   );
   await userEvent.click(screen.getByLabelText("Done: Send the deck"));

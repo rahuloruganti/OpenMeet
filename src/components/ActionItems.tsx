@@ -91,7 +91,9 @@ export function ActionItems({
               aria-label={`Due date: ${item.text}`}
               defaultValue={item.due_date ?? ""}
               disabled={locked}
-              onChange={(event) =>
+              // Commit on blur: typing a year fires intermediate valid dates.
+              onBlur={(event) =>
+                event.target.value !== (item.due_date ?? "") &&
                 save(item, { due_date: event.target.value || null })
               }
             />
