@@ -98,8 +98,8 @@ Capture qualification still requires real-machine checks: distinct tracks, audib
 
 ## Repository and handoff
 
-- Preserve unrelated user changes. Never force-push, rewrite history, change repository visibility, or commit/push unless requested.
-- Whenever you create a branch and commit/push work to it, create and attach a pull request in the same task. If that branch already has a pull request, update the existing PR instead of creating a duplicate.
+- Preserve unrelated user changes. Never force-push, rewrite history, or change repository visibility.
+- Commit work directly to `main` and push it. Do not create feature branches or open pull requests.
 - Keep build output, `node_modules`, local databases/audio, credentials, and environment files out of commits. Keep both dependency lockfiles tracked.
 - Track new dependency/model licenses in `THIRD_PARTY_LICENSES.md`; do not treat the initial inventory as a completed release audit.
 - Update affected documentation when behavior changes, especially consent/privacy wording and simulation-only claims. Append significant user requests and brief outcomes to `log.md` without secrets or invented timestamps.
