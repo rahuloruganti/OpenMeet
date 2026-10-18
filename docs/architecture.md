@@ -50,7 +50,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/llm.rs`                                     | Summary/question prompts, input limits, and chunked text requests.                                      |
 | `src-tauri/src/cloud_stt.rs`                               | Frozen bounded WAV preparation, pause-aware chunks, multipart uploads, and timed/untimed parsing.       |
 | `src-tauri/src/export.rs`                                  | Markdown rendering, safe filenames, and non-overwriting publication.                                    |
-| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v14.                                                             |
+| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v15.                                                             |
 | `fixtures/`                                                | Fictional test resources, excluded from production creation paths.                                      |
 
 ## State and concurrency
@@ -107,7 +107,7 @@ Reusable saved connections supply independent summary/question and speech task a
 
 Settings submits a transient password input through IPC to the OS keychain. Read responses contain key status only. Saving connection/model settings makes no network request; explicit refresh fetches generic `data[].id` model lists. Custom IDs work without discovery or catalog membership. A model list proves neither chat nor audio capability. Legacy Merge configuration is not automatically activated or converted.
 
-The summary planner chooses a single request or transcript chunks followed by a combination request. Consent binds configuration revision/destination, model, exact content, action/template/question, and request plan. Oversized inputs are refused. Summary versions persist with destination, model, and template ID. Questions use only the selected meeting and return an answer without persisting it. Cloud audio plans additionally bind frozen chunk content/timing hashes. Automatic uploads require the session grant above. Manual exact-content consent remains separate. No provider fallback or automatic billable retry is performed.
+The summary planner chooses a single request or transcript chunks followed by a combination request. Consent binds configuration revision/destination, model, exact content, action, the fully resolved summary prompt (including custom template and saved instructions) or question, and request plan. Automatic summary scopes freeze saved instructions at review. Oversized inputs are refused. Summary versions persist with destination, model, and template ID. Questions use only the selected meeting and return an answer without persisting it. Cloud audio plans additionally bind frozen chunk content/timing hashes. Automatic uploads require the session grant above. Manual exact-content consent remains separate. No provider fallback or automatic billable retry is performed.
 
 The Rust `model_library` module owns bounded scans, verified catalog imports, public Hugging Face metadata, pinned downloads, and provenance manifests. It shares an artifact-operation guard and cancellation/publication gate with the existing speech installer. Discovery does not activate a model or start inference. `model_library_progress` reports transfer bytes. See [Phase 2 verification](phase-2-settings-verification.md) for limits.
 
@@ -120,7 +120,8 @@ The Rust `model_library` module owns bounded scans, verified catalog imports, pu
 | `tracks`                   | Paths, audio format, frame counts, dropped frames, and finalization.                  |
 | `segments`                 | Track label, paired nullable times, text, source, and final pass.                     |
 | `summaries`                | Retained versions with provider, model, and template ID.                              |
-| `settings`                 | Devices, shortcuts, local model/language/vocabulary, speech mode, and export choices. |
+| `settings`                 | Devices, shortcuts, local speech settings, speech mode, export, summary instructions. |
+| `summary_templates`        | Custom summary template names and structure text; IDs are `custom-<uuid>`.            |
 | `saved_connections`        | Named nonsecret endpoint/revision and OS-keychain account reference.                  |
 | `provider_assignments`     | Independent task connection/model selection and monotonic revision.                   |
 | `processing_configuration` | Revision invalidating session reviews after speech/provider edits.                    |

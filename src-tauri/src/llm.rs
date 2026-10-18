@@ -1,7 +1,8 @@
 //! Consented summaries and questions through an OpenAI-compatible provider.
 use crate::{
-    domain::{AppError, Result},
+    domain::{AppError, Result, Settings},
     providers::{authorize, check_status, client, read_capped, Connection},
+    storage::{missing_template, CUSTOM_TEMPLATE_PREFIX},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -57,8 +58,69 @@ impl Template {
     }
 }
 
+/// The structure a summary follows: a built-in template or a user-defined one.
+pub enum Structure<'a> {
+    Builtin(Template),
+    Custom(&'a str),
+}
+
+/// User-authored text (template and saved instructions) comes before the shared rules so
+/// the rules take precedence.
+pub fn summary_system(structure: Structure<'_>, instructions: &str) -> String {
+    let task = match structure {
+        Structure::Builtin(template) => builtin_task(template).to_string(),
+        Structure::Custom(template) => format!(
+            "You write concise, faithful meeting summaries. \
+Output Markdown following this user-defined template:\n<template>\n{template}\n</template>\n"
+        ),
+    };
+    let personal = if instructions.is_empty() {
+        String::new()
+    } else {
+        format!(" Also follow these saved personal instructions where they do not conflict with the rules below:\n<instructions>\n{instructions}\n</instructions>\n")
+    };
+    format!("{task} Write 'None noted' for an empty section.{personal} {RULES}")
+}
+
+/// Resolves a template id from the UI, built-in or custom, into its full system prompt.
+pub fn resolve_summary(settings: &Settings, template: &str) -> Result<String> {
+    let instructions = &settings.summary_instructions;
+    if let Some(custom) = settings.summary_templates.iter().find(|t| t.id == template) {
+        return Ok(summary_system(
+            Structure::Custom(&custom.instructions),
+            instructions,
+        ));
+    }
+    if template.starts_with(CUSTOM_TEMPLATE_PREFIX) {
+        return Err(missing_template());
+    }
+    let builtin: Template = serde_json::from_value(serde_json::Value::String(template.into()))
+        .map_err(|_| AppError::new("summary_template", "Unknown summary template."))?;
+    Ok(summary_system(Structure::Builtin(builtin), instructions))
+}
+
+/// Bounds user-authored prompt text: at most `max` characters, no control characters but newlines and tabs.
+pub fn validate_instructions(text: &str, max: usize) -> Result<()> {
+    if text.chars().count() > max
+        || text
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        return Err(AppError::new(
+            "summary_instructions",
+            format!("Use at most {max} characters without control characters."),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn system_prompt(template: Template) -> String {
-    let task = match template {
+    summary_system(Structure::Builtin(template), "")
+}
+
+fn builtin_task(template: Template) -> &'static str {
+    match template {
         Template::General => "You write concise, faithful meeting summaries. \
 Output Markdown with exactly these sections: ## Summary, ## Key points, ## Decisions, ## Action items.",
         Template::Standup => "You write concise, faithful stand-up meeting summaries. \
@@ -66,8 +128,7 @@ Output Markdown with exactly these sections: ## Summary, ## Done, ## Next, ## Bl
 Group items by person when the speaker is clear.",
         Template::OneToOne => "You write concise, faithful summaries of one-to-one meetings. \
 Output Markdown with exactly these sections: ## Summary, ## Discussion, ## Feedback, ## Decisions, ## Action items.",
-    };
-    format!("{task} Write 'None noted' for an empty section. {RULES}")
+    }
 }
 
 const PARTIAL_PROMPT: &str = "You write faithful partial notes for one consecutive part of a longer meeting transcript. \
@@ -147,7 +208,7 @@ pub fn summary_requests(notes: &str, lines: &[String]) -> Result<usize> {
 /// Callers must have obtained explicit per-action consent.
 pub fn summarize(
     connection: &Connection,
-    template: Template,
+    system: &str,
     notes: &str,
     lines: &[String],
     cancel: &AtomicBool,
@@ -158,7 +219,7 @@ pub fn summarize(
         url.as_str(),
         connection.key(),
         connection.model()?,
-        template,
+        system,
         notes,
         lines,
         Duration::from_secs(120),
@@ -172,7 +233,7 @@ fn summarize_at(
     url: &str,
     key: &str,
     model: &str,
-    template: Template,
+    system: &str,
     notes: &str,
     lines: &[String],
     timeout: Duration,
@@ -181,7 +242,6 @@ fn summarize_at(
 ) -> Result<String> {
     cancelled(cancel)?;
     let chunks = plan_chunks(notes, lines)?;
-    let system = system_prompt(template);
     if let [transcript] = chunks.as_slice() {
         let user =
             format!("<notes>\n{notes}\n</notes>\n\n<transcript>\n{transcript}\n</transcript>");
@@ -189,7 +249,7 @@ fn summarize_at(
             url,
             key,
             model,
-            &system,
+            system,
             &user,
             timeout,
             cancel,
@@ -497,7 +557,7 @@ mod tests {
             &url,
             "fictional",
             "test",
-            Template::General,
+            &system_prompt(Template::General),
             "notes",
             &[],
             Duration::from_secs(1),
@@ -523,7 +583,7 @@ mod tests {
             &url,
             "fictional",
             "test",
-            Template::General,
+            &system_prompt(Template::General),
             "notes",
             &lines,
             Duration::from_secs(3),
@@ -551,7 +611,7 @@ mod tests {
             &url,
             "mg_test_key",
             "anthropic/claude-haiku-5-5",
-            Template::General,
+            &system_prompt(Template::General),
             "my private note",
             &["You: hello".to_string()],
             Duration::from_secs(3),
@@ -583,7 +643,7 @@ mod tests {
                 &url,
                 "mg_k",
                 "m",
-                Template::General,
+                &system_prompt(Template::General),
                 "n",
                 &["t".to_string()],
                 Duration::from_secs(3),
@@ -601,7 +661,7 @@ mod tests {
             "http://127.0.0.1:1/x",
             "k",
             "m",
-            Template::General,
+            &system_prompt(Template::General),
             "",
             &huge,
             Duration::from_secs(1),
@@ -637,13 +697,45 @@ mod tests {
     }
 
     #[test]
+    fn custom_templates_and_saved_instructions_precede_the_shared_rules() {
+        let mut core = crate::storage::Core::open(std::path::Path::new(":memory:")).unwrap();
+        let settings = core
+            .save_summary_template(None, "Retro", "## Went well\n## To improve")
+            .unwrap();
+        let id = settings.summary_templates[0].id.clone();
+        let plain = resolve_summary(&settings, "general-v1").unwrap();
+        assert_eq!(plain, system_prompt(Template::General));
+        let settings = core
+            .save_summary_instructions("Use British English.")
+            .unwrap();
+        let custom = resolve_summary(&settings, &id).unwrap();
+        let template = custom.find("## To improve").unwrap();
+        let instructions = custom.find("Use British English.").unwrap();
+        let rules = custom.find(RULES).unwrap();
+        assert!(template < instructions && instructions < rules);
+        assert!(custom.ends_with(RULES));
+        assert!(resolve_summary(&settings, "standup-v1")
+            .unwrap()
+            .contains("Use British English."));
+        let settings = core.delete_summary_template(&id).unwrap();
+        assert_eq!(
+            resolve_summary(&settings, &id).unwrap_err().code,
+            "summary_template_missing"
+        );
+        assert_eq!(
+            resolve_summary(&settings, "standup-v2").unwrap_err().code,
+            "summary_template"
+        );
+    }
+
+    #[test]
     fn standup_template_prompt_is_sent() {
         let (url, worker, _, bodies) = serve_with(1, |_, _| reply("## Summary\nok"));
         summarize_at(
             &url,
             "mg_k",
             "m",
-            Template::Standup,
+            &system_prompt(Template::Standup),
             "notes",
             &["[0:01] You: done".to_string()],
             Duration::from_secs(3),
@@ -701,7 +793,7 @@ mod tests {
             &url,
             "mg_k",
             "m",
-            Template::General,
+            &system_prompt(Template::General),
             "my notes",
             &lines,
             Duration::from_secs(5),

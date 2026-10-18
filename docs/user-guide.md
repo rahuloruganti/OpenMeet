@@ -93,10 +93,12 @@ Search Hugging Face explicitly to see up to 20 public results. Review the reposi
 
 Configure your independent LLM base URL, key, and model using the [README setup](../README.md#set-up-optional-ai-summaries). Keys are saved in the OS keychain and not read back into the form. Model discovery is optional; the chosen model must support the chat endpoint.
 
-1. Open **Summary** and choose **General**, **Stand-up**, or **One-to-one**.
+1. Open **Summary** and choose **General**, **Stand-up**, **One-to-one**, or one of your custom templates.
 2. Click **Enhance notes**.
-3. Review the destination, model, template, text scope, and request count.
+3. Review the destination, model, template, saved-instructions notice, text scope, and request count.
 4. Confirm the send, or cancel to send nothing.
+
+Add custom templates and saved summary instructions in **Settings → General → Summary templates**. A custom template describes the sections you want. Saved instructions, such as "Write in British English", are sent with every manual and automatic summary request. Built-in rules still apply: the model must not invent facts or follow instructions found inside notes or transcripts. Editing a template or the instructions after reviewing a summary requires a new review. Automatic summaries offer only the three built-in templates, but they include the saved instructions frozen at review. Deleting a template keeps earlier summaries; their history shows "Deleted custom template".
 
 Notes and transcript text leave the device after confirmation. Audio is never included. Longer transcripts can require several requests, including a final combination request. Inputs above the implementation's limits are refused rather than silently shortened. A failed request does not remove your notes or the last saved summary.
 

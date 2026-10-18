@@ -251,7 +251,7 @@ fn final_transcript(app: &AppHandle, id: &str, run: &str) -> Result<()> {
 }
 fn summary(app: &AppHandle, id: &str, run: &str) -> Result<()> {
     let guard = owner(app, id, run)?;
-    let (notes, revision, segments, settings, template) = core(app, |core| {
+    let (notes, revision, segments, settings, template, system) = core(app, |core| {
         let snapshot = core.check_processing(id, run, Stage::AwaitingNotes, false)?;
         let Scope::Final {
             summary: Some(summary),
@@ -268,6 +268,10 @@ fn summary(app: &AppHandle, id: &str, run: &str) -> Result<()> {
             core.get_meeting(id)?.segments,
             core.settings()?,
             summary.template,
+            crate::llm::summary_system(
+                crate::llm::Structure::Builtin(summary.template),
+                &summary.instructions,
+            ),
         ))
     })?;
     notify(app, id);
@@ -275,7 +279,7 @@ fn summary(app: &AppHandle, id: &str, run: &str) -> Result<()> {
     let remote = crate::providers::load_connection(&config)?;
     let lines = crate::transcript_lines(&segments);
     let markdown =
-        crate::llm::summarize(&remote, template, &notes, &lines, guard.cancel(), |body| {
+        crate::llm::summarize(&remote, &system, &notes, &lines, guard.cancel(), |body| {
             let fingerprint = Sha256::digest(body)
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
