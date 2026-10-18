@@ -366,6 +366,11 @@ mod tests {
                 "provider_unauthorized",
             ),
             ("", "429 Too Many Requests", "provider_rate_limited"),
+            (
+                "raw secret body",
+                "500 Internal Server Error",
+                "provider_response",
+            ),
         ] {
             let (url, worker) = serve(body, status);
             let error = list_models(&Connection::for_test(&url, "m")).unwrap_err();
@@ -384,6 +389,21 @@ mod tests {
             "provider_models"
         );
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn unavailable_server_reports_unreachable_without_credentials() {
+        // Bind then drop the listener so the port refuses connections.
+        let url = format!(
+            "http://{}/v1",
+            TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+        );
+        let error = list_models(&Connection::for_test(&url, "m")).unwrap_err();
+        assert_eq!(error.code, "provider_unreachable");
+        assert!(!error.message.contains("synthetic-test-key"));
     }
 
     #[test]
