@@ -51,7 +51,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/cloud_stt.rs`                               | Frozen bounded WAV preparation, pause-aware chunks, multipart uploads, and timed/untimed parsing.       |
 | `src-tauri/src/export.rs`                                  | Markdown rendering, safe filenames, and non-overwriting publication.                                    |
 | `src-tauri/src/action_items.rs`                            | Editable meeting tasks, validation, and explicit imports from a summary's Action items section.         |
-| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v19.                                                             |
+| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v20.                                                             |
 | `fixtures/`                                                | Fictional test resources, excluded from production creation paths.                                      |
 
 ## State and concurrency
@@ -120,7 +120,7 @@ The Rust `model_library` module owns bounded scans, verified catalog imports, pu
 | `notes`                    | User Markdown and optimistic revision.                                                |
 | `tracks`                   | Paths, audio format, frame counts, dropped frames, and finalization.                  |
 | `segments`                 | Track label, paired nullable times, text, source, and final pass.                     |
-| `summaries`                | Retained versions with provider, model, template ID, and the version a user edited.   |
+| `summaries`                | Versions with provider, model, template ID, edited-from version, and transcript hash. |
 | `settings`                 | Devices, shortcuts, local speech settings, speech mode, export, summary instructions. |
 | `summary_templates`        | Custom summary template names and structure text; IDs are `custom-<uuid>`.            |
 | `transcript_versions`      | Read-only copies of replaced transcripts, including edits, with engine provenance.    |

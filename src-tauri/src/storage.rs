@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 19;
+const LATEST_SCHEMA: i64 = 20;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -111,6 +111,11 @@ impl Core {
             (
                 19,
                 include_str!("../migrations/019_transcript_edits.sql"),
+                false,
+            ),
+            (
+                20,
+                include_str!("../migrations/020_summary_freshness.sql"),
                 false,
             ),
         ];
@@ -524,15 +529,15 @@ impl Core {
             .collect::<std::result::Result<Vec<_>, _>>()?
             .into_iter()
             .unzip();
-        let (summary, summary_provider, summary_model, summary_template, summary_edited) = self
+        let (summary, summary_provider, summary_model, summary_template, summary_edited, summary_hash) = self
             .db
             .query_row(
-                "SELECT markdown, provider, model, template_hash, edited_from IS NOT NULL FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
+                "SELECT markdown, provider, model, template_hash, edited_from IS NOT NULL, transcript_hash FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
                 [id],
-                |row| Ok((Some(row.get(0)?), Some(row.get(1)?), Some(row.get(2)?), Some(row.get(3)?), row.get(4)?)),
+                |row| Ok((Some(row.get(0)?), Some(row.get(1)?), Some(row.get(2)?), Some(row.get(3)?), row.get(4)?, row.get::<_, Option<String>>(5)?)),
             )
             .optional()?
-            .unwrap_or((None, None, None, None, false));
+            .unwrap_or((None, None, None, None, false, None));
         let mut query = self.db.prepare("SELECT kind, path, timing_path, device_name, sample_rate, channels, frames, dropped_frames, finalized FROM tracks WHERE meeting_id = ?1 ORDER BY kind")?;
         let tracks = query
             .query_map([id], |row| {
@@ -563,7 +568,10 @@ impl Core {
         let action_items = self.action_items(id)?;
         let speaker_names = self.speaker_names(id)?;
         let transcript_versions = self.transcript_versions(id)?;
+        let summary_stale =
+            summary_hash.is_some_and(|hash| hash != transcript_hash(&segments, &speaker_names));
         Ok(MeetingDetail {
+            summary_stale,
             segment_meta,
             transcript_versions,
             speaker_names,
@@ -606,9 +614,13 @@ impl Core {
         markdown: &str,
         template: &str,
     ) -> Result<()> {
+        // Callers refuse to publish when the transcript changed during generation, so the
+        // current transcript is the one this summary read.
+        let detail = self.get_meeting(id)?;
+        let hash = transcript_hash(&detail.segments, &detail.speaker_names);
         self.db.execute(
-            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown) VALUES (?1, ?5, ?2, ?3, ?4)",
-            params![id, model, provider, markdown, template],
+            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown, transcript_hash) VALUES (?1, ?5, ?2, ?3, ?4, ?6)",
+            params![id, model, provider, markdown, template, hash],
         )?;
         Ok(())
     }
@@ -691,11 +703,11 @@ impl Core {
                 "A newer summary version arrived while you were editing. Review it in the version picker; saving again puts your edit on top of it.",
             ));
         }
-        let (base, template, model, provider): (String, String, String, String) = tx
+        let (base, template, model, provider, hash): (String, String, String, String, Option<String>) = tx
             .query_row(
-                "SELECT markdown, template_hash, model, provider FROM summaries WHERE id=?1 AND meeting_id=?2",
+                "SELECT markdown, template_hash, model, provider, transcript_hash FROM summaries WHERE id=?1 AND meeting_id=?2",
                 params![base_id, id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()?
             .ok_or_else(|| AppError::new("not_found", "This summary version is not available."))?;
@@ -705,10 +717,10 @@ impl Core {
                 "The summary is unchanged. Nothing was saved.",
             ));
         }
-        // Provenance of the edited AI output is kept; `edited_from` marks the text as the user's.
+        // Provenance and freshness of the edited output are kept; `edited_from` marks the text as the user's.
         tx.execute(
-            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown, edited_from) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, template, model, provider, markdown, base_id],
+            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown, edited_from, transcript_hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, template, model, provider, markdown, base_id, hash],
         )?;
         tx.commit()?;
         Ok(())
@@ -716,8 +728,13 @@ impl Core {
 
     /// Every summary version, newest first. The table has no timestamp, so ids order them.
     pub fn list_summaries(&self, id: &str) -> Result<Vec<SummaryVersion>> {
+        let current = match self.get_meeting(id) {
+            Ok(detail) => transcript_hash(&detail.segments, &detail.speaker_names),
+            Err(error) if error.code == "not_found" => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
         let mut query = self.db.prepare(
-            "SELECT id, provider, model, template_hash, markdown, edited_from FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC",
+            "SELECT id, provider, model, template_hash, markdown, edited_from, transcript_hash FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC",
         )?;
         let versions = query
             .query_map([id], |row| {
@@ -728,6 +745,9 @@ impl Core {
                     template: row.get(3)?,
                     markdown: row.get(4)?,
                     edited_from: row.get(5)?,
+                    stale: row
+                        .get::<_, Option<String>>(6)?
+                        .is_some_and(|hash| hash != current),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1353,6 +1373,15 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                 })
             },
         )?)
+}
+
+/// SHA-256 of the exact transcript lines a summary reads, speaker names included.
+pub(crate) fn transcript_hash(segments: &[Segment], names: &SpeakerNames) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(crate::transcript_lines(segments, names).join("\n"))
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub const CUSTOM_TEMPLATE_PREFIX: &str = "custom-";

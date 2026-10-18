@@ -407,7 +407,8 @@ impl Core {
             return Err(AppError::new("notes_conflict","Meeting content changed during summary generation. Previous summary is unchanged; review before retrying."));
         }
         let tx = self.db.transaction()?;
-        tx.execute("INSERT INTO summaries(meeting_id,template_hash,model,provider,markdown) VALUES (?1,?2,?3,?4,?5)",params![id,template,model,provider,markdown])?;
+        let hash = crate::storage::transcript_hash(&detail.segments, &detail.speaker_names);
+        tx.execute("INSERT INTO summaries(meeting_id,template_hash,model,provider,markdown,transcript_hash) VALUES (?1,?2,?3,?4,?5,?6)",params![id,template,model,provider,markdown,hash])?;
         tx.execute("UPDATE processing_runs SET stage='completed',error=NULL WHERE meeting_id=?1 AND run_id=?2",params![id,run])?;
         bump(&tx, id)?;
         tx.commit()?;

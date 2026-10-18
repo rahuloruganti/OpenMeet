@@ -206,6 +206,110 @@ mod tests {
     }
 
     #[test]
+    fn summaries_go_stale_on_transcript_or_name_changes_and_fresh_on_revert() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional freshness").unwrap();
+        core.replace_transcript(&id, &[line("Budget is 40k", 0)], "whisper", "small")
+            .unwrap();
+        core.save_summary(&id, "p", "m", "## Summary\n40k", "general-v1")
+            .unwrap();
+        assert!(!core.get_meeting(&id).unwrap().summary_stale);
+        let segment = core.get_meeting(&id).unwrap().segment_meta[0].id;
+        core.edit_segment(&id, segment, "Budget is 40k", "Budget is 45k")
+            .unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        assert!(detail.summary_stale);
+        assert!(core.list_summaries(&id).unwrap()[0].stale);
+        // An edit of a stale summary stays stale until it is regenerated.
+        let base = core.list_summaries(&id).unwrap()[0].id;
+        core.save_summary_edit(&id, base, base, "## Summary\nEdited")
+            .unwrap();
+        assert!(core.get_meeting(&id).unwrap().summary_stale);
+        core.edit_segment(&id, segment, "Budget is 45k", "Budget is 40k")
+            .unwrap();
+        assert!(!core.get_meeting(&id).unwrap().summary_stale);
+        core.save_speaker_names(&id, Some("Rahul"), None).unwrap();
+        assert!(core.get_meeting(&id).unwrap().summary_stale);
+        core.save_summary(&id, "p", "m", "## Summary\nRahul: 40k", "general-v1")
+            .unwrap();
+        let versions = core.list_summaries(&id).unwrap();
+        assert!(!versions[0].stale && versions[1].stale);
+        // Older summaries without a recorded hash are never flagged.
+        core.db
+            .execute("UPDATE summaries SET transcript_hash=NULL", [])
+            .unwrap();
+        core.save_speaker_names(&id, None, None).unwrap();
+        assert!(!core.get_meeting(&id).unwrap().summary_stale);
+    }
+
+    #[test]
+    fn upgrade_from_populated_v17_keeps_transcripts_summaries_tasks_and_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = crate::storage::test_v11_database(&path);
+            for script in [
+                include_str!("../migrations/012_saved_connections.sql"),
+                include_str!("../migrations/013_session_processing.sql"),
+                include_str!("../migrations/014_processing_workflow.sql"),
+                include_str!("../migrations/015_summary_templates.sql"),
+                include_str!("../migrations/016_action_items.sql"),
+                include_str!("../migrations/017_summary_edits.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("INSERT INTO meetings(id,title,started_at,source,status) VALUES ('existing','Fictional upgrade','test','desktop','stopped');
+                INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('existing','Preserve the original notes',7);
+                INSERT INTO segments(id,meeting_id,speaker,start_ms,end_ms,text,source,pass) VALUES (42,'existing','You',0,1000,'Persimmon original','whisper','final');
+                INSERT INTO meeting_transcriptions(meeting_id,provider,model) VALUES ('existing','whisper','small');
+                INSERT INTO summaries(id,meeting_id,template_hash,model,provider,markdown) VALUES (5,'existing','general-v1','m','p','Kept summary');
+                INSERT INTO action_items(meeting_id,text,source,summary_id,origin_text) VALUES ('existing','Kept task','summary',5,'Kept task');").unwrap();
+        }
+        for _ in 0..2 {
+            let core = Core::open(&path).unwrap();
+            let detail = core.get_meeting("existing").unwrap();
+            assert_eq!(detail.segments[0].text, "Persimmon original");
+            assert_eq!(
+                detail.segment_meta,
+                [crate::domain::SegmentMeta {
+                    id: 42,
+                    original_text: None
+                }]
+            );
+            assert!(detail.transcript_versions.is_empty() && !detail.summary_stale);
+            assert_eq!(detail.speaker_names, crate::domain::SpeakerNames::default());
+            assert_eq!(detail.action_items[0].summary_id, Some(5));
+            assert_eq!(detail.summary.as_deref(), Some("Kept summary"));
+            let violations: i64 = core
+                .db
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(violations, 0);
+        }
+        let mut core = Core::open(&path).unwrap();
+        core.edit_segment("existing", 42, "Persimmon original", "Quince corrected")
+            .unwrap();
+        assert_eq!(
+            core.search_meetings("Quince").unwrap()[0].meeting_id,
+            "existing"
+        );
+        assert!(core.search_meetings("Persimmon").unwrap().is_empty());
+        core.replace_transcript("existing", &[line("Fresh", 0)], "whisper", "base")
+            .unwrap();
+        assert_eq!(
+            core.transcript_version(
+                "existing",
+                core.transcript_versions("existing").unwrap()[0].id
+            )
+            .unwrap()[0]
+                .text,
+            "Quince corrected"
+        );
+    }
+
+    #[test]
     fn replacing_keeps_the_edited_transcript_as_a_read_only_version() {
         let mut core = Core::open(Path::new(":memory:")).unwrap();
         let id = core.create_note("Fictional re-transcription").unwrap();

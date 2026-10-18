@@ -130,6 +130,8 @@ export type MeetingDetail = {
   action_items: ActionItem[];
   /** The latest summary is a user edit, not unedited model output. */
   summary_edited: boolean;
+  /** The transcript or speaker names changed after the latest summary was made. */
+  summary_stale: boolean;
   speaker_names: SpeakerNames;
   /** Aligned by index with `segments`. */
   segment_meta: SegmentMeta[];
@@ -313,6 +315,8 @@ export type SummaryVersion = {
   markdown: string;
   /** Version the user edited this one from; null for generated output. */
   edited_from: number | null;
+  /** The transcript or speaker names changed after this version was made. */
+  stale: boolean;
 };
 
 export const api = {

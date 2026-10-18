@@ -111,6 +111,7 @@ const sample: MeetingDetail = {
   transcript_model: null,
   action_items: [],
   summary_edited: false,
+  summary_stale: false,
   speaker_names: { you: null, others: null },
   segment_meta: [],
   transcript_versions: [],
@@ -1498,6 +1499,7 @@ describe("desktop foundation", () => {
         template: "standup-v1",
         markdown: "## Summary\nNewest.\n## Action items\n- Ship it",
         edited_from: null,
+        stale: false,
       },
       {
         id: 2,
@@ -1506,6 +1508,7 @@ describe("desktop foundation", () => {
         template: "general-v1",
         markdown: "## Summary\nOlder.",
         edited_from: null,
+        stale: false,
       },
       {
         id: 1,
@@ -1514,6 +1517,7 @@ describe("desktop foundation", () => {
         template: "fixture",
         markdown: "A fictional summary.",
         edited_from: null,
+        stale: false,
       },
     ]);
     await ready();
@@ -1565,6 +1569,7 @@ describe("desktop foundation", () => {
         template: "general-v1",
         markdown: "## Summary\nGenerated.",
         edited_from: null,
+        stale: false,
       },
     ]);
   };
@@ -1591,6 +1596,7 @@ describe("desktop foundation", () => {
         template: "general-v1",
         markdown: "Newer generated text.",
         edited_from: null,
+        stale: false,
       },
     ]);
     await userEvent.click(
@@ -1723,6 +1729,26 @@ describe("desktop foundation", () => {
     expect(await screen.findByText(/Kept earlier words/)).toBeTruthy();
   });
 
+  it("says when a summary is older than the transcript", async () => {
+    editableVersions();
+    vi.mocked(api.listSummaries).mockResolvedValue([
+      {
+        id: 4,
+        provider: "merge",
+        model: "m1",
+        template: "general-v1",
+        markdown: "## Summary\nGenerated.",
+        edited_from: null,
+        stale: true,
+      },
+    ]);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(
+      await screen.findByText(/changed after this summary was made/),
+    ).toBeTruthy();
+  });
+
   it("keeps an unsaved summary edit when switching meetings", async () => {
     editableVersions();
     const second = { ...sample.meeting, id: "second", title: "Second meeting" };
@@ -1782,6 +1808,7 @@ describe("desktop foundation", () => {
         template: "general-v1",
         markdown: "## Summary\nMine.",
         edited_from: 4,
+        stale: false,
       },
       {
         id: 4,
@@ -1790,6 +1817,7 @@ describe("desktop foundation", () => {
         template: "general-v1",
         markdown: "## Summary\nGenerated.",
         edited_from: null,
+        stale: false,
       },
     ]);
     await ready();

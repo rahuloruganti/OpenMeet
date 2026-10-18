@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the session-consent records. Schema v15 adds custom summary templates and saved summary instructions. Schema v16 adds editable tasks. Schema v17 records user-edited summary versions. This is a preview with open qualification gates, not a complete MVP.
+OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the session-consent records. Schema v15 adds custom summary templates and saved summary instructions. Schema v16 adds editable tasks. Schema v17 records user-edited summary versions. Schemas v18–v20 add speaker names, transcript edits with earlier transcripts, and summary freshness. This is a preview with open qualification gates, not a complete MVP.
 
 ## Phase 3 workflow implemented, qualification open
 
@@ -27,6 +27,7 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | Local transcription     | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
 | Automatic processing    | Reviewed session scopes, bounded live previews, final transcription, optional summary, saved-note acknowledgement, cancellation, and explicit retry.                       |
 | Playback                | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
+| Transcript corrections  | Per-meeting speaker names, segment edits with revert, read-only earlier transcripts kept on re-transcription, and out-of-date summary notices.                          |
 | Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision-bound consent.          |
 | Cloud transcription     | Explicit audio confirmation, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
 | Summaries and questions | Configured chat API, three built-in templates plus custom templates and saved instructions, history/copy, user edits saved as labelled versions, bounded chunked summaries, and per-meeting questions. |

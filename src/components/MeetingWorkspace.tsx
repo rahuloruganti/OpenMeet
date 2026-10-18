@@ -251,6 +251,7 @@ export function MeetingWorkspace(props: Props) {
       : `version ${versions.length - index}`;
   };
   const draft = props.summaryDraft;
+  const stale = current ? current.stale : selected.summary_stale;
   const playable =
     meeting.source === "desktop" &&
     meeting.status !== "recording" &&
@@ -606,6 +607,12 @@ export function MeetingWorkspace(props: Props) {
               </button>
             </div>
           </div>
+          {summary && stale && (
+            <p className="muted" role="status">
+              The transcript or speaker names changed after this summary was
+              made. Generate a new summary to include the changes.
+            </p>
+          )}
           {props.enhanceBlocked !== null && (
             <p id="enhance-hint" className="muted">
               {props.enhanceBlocked}

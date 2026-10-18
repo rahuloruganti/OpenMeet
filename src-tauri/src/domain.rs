@@ -96,6 +96,8 @@ pub struct MeetingDetail {
     pub action_items: Vec<ActionItem>,
     /// The latest summary is a user edit rather than unedited model output.
     pub summary_edited: bool,
+    /// The transcript or speaker names changed after the latest summary was made.
+    pub summary_stale: bool,
     pub speaker_names: SpeakerNames,
     /// Aligned by index with `segments`, from the same query.
     pub segment_meta: Vec<SegmentMeta>,
@@ -302,6 +304,8 @@ pub struct SummaryVersion {
     pub markdown: String,
     /// The version this one was edited from by the user; None for generated output.
     pub edited_from: Option<i64>,
+    /// The transcript or speaker names changed after this version was made.
+    pub stale: bool,
 }
 
 #[derive(Debug, Serialize)]

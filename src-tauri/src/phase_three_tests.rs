@@ -797,6 +797,7 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
     assert_eq!(detail.segments, expected_segments);
     assert_eq!(detail.user_markdown, "Frozen reviewed notes");
     assert_eq!(detail.summary.as_deref(), Some(summary.as_str()));
+    assert!(!detail.summary_stale);
 }
 
 #[test]
@@ -1000,6 +1001,7 @@ fn cancel_during_final_upload_survives_restart_and_reviewed_retry_completes() {
     let detail = core.get_meeting(&id).unwrap();
     assert_eq!(detail.segments, expected_segments);
     assert_eq!(detail.summary.as_deref(), Some(summary.as_str()));
+    assert!(!detail.summary_stale);
     let markdown = std::fs::read_to_string(
         export::write_snapshot(&detail, folder.path(), &export_options())
             .unwrap()
