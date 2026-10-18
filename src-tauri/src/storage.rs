@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 16;
+const LATEST_SCHEMA: i64 = 17;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -96,6 +96,11 @@ impl Core {
             (
                 16,
                 include_str!("../migrations/016_action_items.sql"),
+                false,
+            ),
+            (
+                17,
+                include_str!("../migrations/017_summary_edits.sql"),
                 false,
             ),
         ];
@@ -501,15 +506,15 @@ impl Core {
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let (summary, summary_provider, summary_model, summary_template) = self
+        let (summary, summary_provider, summary_model, summary_template, summary_edited) = self
             .db
             .query_row(
-                "SELECT markdown, provider, model, template_hash FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
+                "SELECT markdown, provider, model, template_hash, edited_from IS NOT NULL FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
                 [id],
-                |row| Ok((Some(row.get(0)?), Some(row.get(1)?), Some(row.get(2)?), Some(row.get(3)?))),
+                |row| Ok((Some(row.get(0)?), Some(row.get(1)?), Some(row.get(2)?), Some(row.get(3)?), row.get(4)?)),
             )
             .optional()?
-            .unwrap_or((None, None, None, None));
+            .unwrap_or((None, None, None, None, false));
         let mut query = self.db.prepare("SELECT kind, path, timing_path, device_name, sample_rate, channels, frames, dropped_frames, finalized FROM tracks WHERE meeting_id = ?1 ORDER BY kind")?;
         let tracks = query
             .query_map([id], |row| {
@@ -540,6 +545,7 @@ impl Core {
         let action_items = self.action_items(id)?;
         Ok(MeetingDetail {
             action_items,
+            summary_edited,
             meeting,
             user_markdown,
             notes_revision,
@@ -584,10 +590,60 @@ impl Core {
         Ok(())
     }
 
+    /// Saves the user's edit of `base_id` as the newest version, keeping every earlier one. Refuses
+    /// when another version arrived since editing began, so neither side replaces the other silently.
+    pub fn save_summary_edit(
+        &mut self,
+        id: &str,
+        base_id: i64,
+        expected_latest_id: i64,
+        markdown: &str,
+    ) -> Result<()> {
+        if markdown.trim().is_empty() || markdown.len() > MAX_SUMMARY_EDIT_BYTES {
+            return Err(AppError::new(
+                "summary_edit",
+                "Enter summary text of at most 2 MiB.",
+            ));
+        }
+        let tx = self.db.transaction()?;
+        let latest: Option<i64> = tx.query_row(
+            "SELECT max(id) FROM summaries WHERE meeting_id=?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        if latest != Some(expected_latest_id) {
+            return Err(AppError::new(
+                "summary_conflict",
+                "A newer summary version was saved while you were editing. Your edit is still open; review the new version before saving.",
+            ));
+        }
+        let (base, template, model, provider): (String, String, String, String) = tx
+            .query_row(
+                "SELECT markdown, template_hash, model, provider FROM summaries WHERE id=?1 AND meeting_id=?2",
+                params![base_id, id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::new("not_found", "This summary version is not available."))?;
+        if base == markdown {
+            return Err(AppError::new(
+                "summary_edit",
+                "The summary is unchanged. Nothing was saved.",
+            ));
+        }
+        // Provenance of the edited AI output is kept; `edited_from` marks the text as the user's.
+        tx.execute(
+            "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown, edited_from) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, template, model, provider, markdown, base_id],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Every summary version, newest first. The table has no timestamp, so ids order them.
     pub fn list_summaries(&self, id: &str) -> Result<Vec<SummaryVersion>> {
         let mut query = self.db.prepare(
-            "SELECT id, provider, model, template_hash, markdown FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC",
+            "SELECT id, provider, model, template_hash, markdown, edited_from FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC",
         )?;
         let versions = query
             .query_map([id], |row| {
@@ -597,6 +653,7 @@ impl Core {
                     model: row.get(2)?,
                     template: row.get(3)?,
                     markdown: row.get(4)?,
+                    edited_from: row.get(5)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1225,6 +1282,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
 }
 
 pub const CUSTOM_TEMPLATE_PREFIX: &str = "custom-";
+const MAX_SUMMARY_EDIT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_CUSTOM_TEMPLATES: i64 = 50;
 const MAX_TEMPLATE_INSTRUCTIONS: usize = 4000;
 const MAX_SUMMARY_INSTRUCTIONS: usize = 2000;
@@ -1727,6 +1785,117 @@ mod tests {
             Some("two")
         );
         assert!(core.list_summaries("missing").unwrap().is_empty());
+    }
+
+    #[test]
+    fn summary_edits_append_versions_and_refuse_stale_or_empty_saves() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional edited summary").unwrap();
+        let other = core.create_note("Other fictional meeting").unwrap();
+        core.save_summary(&id, "p", "m", "## Summary\nOriginal output", "standup-v1")
+            .unwrap();
+        core.save_summary(&other, "p", "m", "## Summary\nElsewhere", "general-v1")
+            .unwrap();
+        let base = core.list_summaries(&id).unwrap()[0].id;
+        let foreign = core.list_summaries(&other).unwrap()[0].id;
+        for (base_id, latest, text, code) in [
+            (base, base, "   ", "summary_edit"),
+            (base, base, "## Summary\nOriginal output", "summary_edit"),
+            (foreign, base, "Edited", "not_found"),
+            (base, base + 99, "Edited", "summary_conflict"),
+        ] {
+            assert_eq!(
+                core.save_summary_edit(&id, base_id, latest, text)
+                    .unwrap_err()
+                    .code,
+                code
+            );
+        }
+        assert!(core
+            .save_summary_edit(&id, base, base, &"x".repeat(2 * 1024 * 1024 + 1))
+            .is_err());
+        core.save_summary_edit(&id, base, base, "## Summary\nQuinceEdited text")
+            .unwrap();
+        let versions = core.list_summaries(&id).unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(
+            (versions[0].edited_from, versions[0].template.as_str()),
+            (Some(base), "standup-v1")
+        );
+        assert_eq!(
+            (versions[1].markdown.as_str(), versions[1].edited_from),
+            ("## Summary\nOriginal output", None)
+        );
+        let detail = core.get_meeting(&id).unwrap();
+        assert!(detail.summary_edited);
+        assert_eq!(
+            core.search_meetings("QuinceEdited").unwrap()[0].meeting_id,
+            id
+        );
+        assert!(crate::export::render(
+            &detail,
+            &ExportOptions {
+                transcript: false,
+                summary: true,
+                filename: FilenamePattern::Title
+            }
+        )
+        .contains("summary_edited: true\n"));
+        // A newer generated version makes the old latest id stale; the edit stays in history.
+        core.save_summary(&id, "p", "m", "## Summary\nRegenerated", "standup-v1")
+            .unwrap();
+        assert_eq!(
+            core.save_summary_edit(&id, base, versions[0].id, "Another edit")
+                .unwrap_err()
+                .code,
+            "summary_conflict"
+        );
+        assert!(!core.get_meeting(&id).unwrap().summary_edited);
+        assert_eq!(core.list_summaries(&id).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn upgrade_from_populated_v16_keeps_summaries_tasks_and_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = test_v11_database(&path);
+            for script in [
+                include_str!("../migrations/012_saved_connections.sql"),
+                include_str!("../migrations/013_session_processing.sql"),
+                include_str!("../migrations/014_processing_workflow.sql"),
+                include_str!("../migrations/015_summary_templates.sql"),
+                include_str!("../migrations/016_action_items.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("INSERT INTO meetings(id,title,started_at,source,status) VALUES ('existing','Fictional upgrade','test','fixture','stopped');
+                INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('existing','Preserve the original notes',7);
+                INSERT INTO summaries(id,meeting_id,template_hash,model,provider,markdown) VALUES (5,'existing','general-v1','hand-written','fixture','Persimmon summary');
+                INSERT INTO action_items(meeting_id,text,source,summary_id,origin_text) VALUES ('existing','Kept task','summary',5,'Kept task');").unwrap();
+        }
+        for _ in 0..2 {
+            let core = Core::open(&path).unwrap();
+            let detail = core.get_meeting("existing").unwrap();
+            assert_eq!(detail.summary.as_deref(), Some("Persimmon summary"));
+            assert!(!detail.summary_edited);
+            assert_eq!(detail.action_items[0].summary_id, Some(5));
+            assert_eq!(
+                core.list_summaries("existing").unwrap()[0].edited_from,
+                None
+            );
+            assert_eq!(
+                core.search_meetings("Persimmon").unwrap()[0].meeting_id,
+                "existing"
+            );
+            let violations: i64 = core
+                .db
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(violations, 0);
+        }
     }
 
     #[test]

@@ -981,6 +981,20 @@ async fn generate_summary(
 }
 
 #[tauri::command]
+async fn save_summary_edit(
+    app: AppHandle,
+    meeting_id: String,
+    base_id: i64,
+    expected_latest_id: i64,
+    markdown: String,
+) -> Result<()> {
+    with_core(app, false, move |core, _| {
+        core.save_summary_edit(&meeting_id, base_id, expected_latest_id, &markdown)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn list_summaries(app: AppHandle, id: String) -> Result<Vec<SummaryVersion>> {
     with_core(app, false, move |core, _| core.list_summaries(&id)).await
 }
@@ -1491,6 +1505,7 @@ pub fn run() {
             search_meetings,
             plan_summary,
             list_summaries,
+            save_summary_edit,
             ask_meeting,
             rename_meeting,
             save_export_options,

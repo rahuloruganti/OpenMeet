@@ -74,6 +74,7 @@ vi.mock("./lib/api", async (original) => {
       searchMeetings: vi.fn(),
       planSummary: vi.fn(),
       listSummaries: vi.fn(),
+      saveSummaryEdit: vi.fn(),
       askMeeting: vi.fn(),
       renameMeeting: vi.fn(),
       saveExportOptions: vi.fn(),
@@ -107,6 +108,7 @@ const sample: MeetingDetail = {
   transcript_provider: null,
   transcript_model: null,
   action_items: [],
+  summary_edited: false,
 };
 
 const textPlan = {
@@ -1490,6 +1492,7 @@ describe("desktop foundation", () => {
         model: "m3",
         template: "standup-v1",
         markdown: "## Summary\nNewest.\n## Action items\n- Ship it",
+        edited_from: null,
       },
       {
         id: 2,
@@ -1497,6 +1500,7 @@ describe("desktop foundation", () => {
         model: "m2",
         template: "general-v1",
         markdown: "## Summary\nOlder.",
+        edited_from: null,
       },
       {
         id: 1,
@@ -1504,6 +1508,7 @@ describe("desktop foundation", () => {
         model: "hand-written",
         template: "fixture",
         markdown: "A fictional summary.",
+        edited_from: null,
       },
     ]);
     await ready();
@@ -1538,6 +1543,160 @@ describe("desktop foundation", () => {
     expect(screen.getByText("Copied summary.")).toBeTruthy();
     expect(api.saveNotes).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
+  });
+
+  const editableVersions = () => {
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...sample,
+      summary: "## Summary\nGenerated.",
+      summary_provider: "merge",
+      summary_model: "m1",
+    });
+    vi.mocked(api.listSummaries).mockResolvedValue([
+      {
+        id: 4,
+        provider: "merge",
+        model: "m1",
+        template: "general-v1",
+        markdown: "## Summary\nGenerated.",
+        edited_from: null,
+      },
+    ]);
+  };
+
+  it("saves a summary edit as a new version and keeps the draft on conflict or quit", async () => {
+    editableVersions();
+    vi.mocked(api.saveSummaryEdit).mockRejectedValueOnce({
+      code: "summary_conflict",
+      message: "A newer summary version was saved while you were editing.",
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Edit summary" }),
+    );
+    const editor = screen.getByRole("textbox", { name: "Edit summary" });
+    await userEvent.type(editor, " Corrected.");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save edited summary" }),
+    );
+    expect(api.saveSummaryEdit).toHaveBeenCalledWith(
+      "sample",
+      4,
+      4,
+      "## Summary\nGenerated. Corrected.",
+    );
+    expect(await screen.findByText(/newer summary version/)).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Edit summary",
+        }) as HTMLTextAreaElement
+      ).value,
+    ).toBe("## Summary\nGenerated. Corrected.");
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    expect(
+      await screen.findByRole("button", {
+        name: "Discard summary edits and quit",
+      }),
+    ).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
+    vi.mocked(api.saveSummaryEdit).mockResolvedValue(undefined);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save edited summary" }),
+    );
+    await screen.findByText(/Edited summary saved as a new version/);
+    expect(screen.queryByRole("textbox", { name: "Edit summary" })).toBeNull();
+    expect(api.saveNotes).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unsaved summary edit when switching meetings", async () => {
+    editableVersions();
+    const second = { ...sample.meeting, id: "second", title: "Second meeting" };
+    vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting, second]);
+    vi.mocked(api.getMeeting).mockImplementation(async (id) =>
+      id === "second"
+        ? { ...sample, meeting: second, summary: null }
+        : {
+            ...sample,
+            summary: "## Summary\nGenerated.",
+            summary_provider: "merge",
+            summary_model: "m1",
+          },
+    );
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Edit summary" }),
+    );
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Edit summary" }),
+      " Draft.",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Second meeting/ }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: "Edit summary" }),
+      ).toBeNull(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Sample sync/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(
+      (
+        (await screen.findByRole("textbox", {
+          name: "Edit summary",
+        })) as HTMLTextAreaElement
+      ).value,
+    ).toBe("## Summary\nGenerated. Draft.");
+  });
+
+  it("labels edited versions and warns before regenerating over an edit", async () => {
+    providerReady();
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...sample,
+      summary: "## Summary\nMine.",
+      summary_provider: "merge",
+      summary_model: "m1",
+      summary_edited: true,
+    });
+    vi.mocked(api.listSummaries).mockResolvedValue([
+      {
+        id: 5,
+        provider: "merge",
+        model: "m1",
+        template: "general-v1",
+        markdown: "## Summary\nMine.",
+        edited_from: 4,
+      },
+      {
+        id: 4,
+        provider: "merge",
+        model: "m1",
+        template: "general-v1",
+        markdown: "## Summary\nGenerated.",
+        edited_from: null,
+      },
+    ]);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(
+      await screen.findByText("Summary · edited by you, based on version 1"),
+    ).toBeTruthy();
+    expect(screen.getByText(/Edited by you from AI output/)).toBeTruthy();
+    expect(
+      Array.from(
+        (screen.getByRole("combobox", { name: "Version" }) as HTMLSelectElement)
+          .options,
+      ).map((option) => option.text)[0],
+    ).toBe("Version 2 · m1 · General · edited");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Enhance notes" }),
+    );
+    expect(
+      screen.getByRole("group", { name: "Confirm sending" }).textContent,
+    ).toContain("Your edited summary stays in history");
   });
 
   it("asks a question only after per-question consent and does not store the answer", async () => {

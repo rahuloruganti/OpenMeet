@@ -719,6 +719,10 @@ textarea.notes-editor {
 .summary-version {
   margin: 12px 0 20px;
 }
+.summary-edit textarea {
+  width: 100%;
+  min-height: 240px;
+}
 .action-items {
   margin-top: 24px;
 }

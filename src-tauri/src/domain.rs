@@ -94,6 +94,8 @@ pub struct MeetingDetail {
     pub transcript_provider: Option<String>,
     pub transcript_model: Option<String>,
     pub action_items: Vec<ActionItem>,
+    /// The latest summary is a user edit rather than unedited model output.
+    pub summary_edited: bool,
 }
 
 /// An editable meeting task. `owner` and `due_date` are None when not established.
@@ -256,6 +258,8 @@ pub struct SummaryVersion {
     pub model: String,
     pub template: String,
     pub markdown: String,
+    /// The version this one was edited from by the user; None for generated output.
+    pub edited_from: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]

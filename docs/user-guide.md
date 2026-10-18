@@ -104,6 +104,10 @@ Notes and transcript text leave the device after confirmation. Audio is never in
 
 Use the version picker to read earlier summaries. **Copy summary** and **Copy action items** write to the system clipboard, where other apps may read the text. Markdown export always uses the latest saved summary, regardless of the viewed version.
 
+### Edit a summary
+
+Click **Edit summary** to change the summary on screen. **Save edited summary** adds your text as a new version; the generated version and every earlier one stay in the version picker. Edited versions are labelled "edited by you", and Markdown export marks the summary with `summary_edited: true`. An unsaved edit stays open while you switch meetings. If you quit, OpenMeet warns you and asks before discarding it. If a newer summary arrived while you were editing, saving is refused and your edit stays open, so neither version replaces the other silently. Generating a summary when the current version is your edit tells you that the new summary becomes current while your edit stays in history. Editing a summary sends nothing.
+
 ### Tasks
 
 The **Tasks** list below the summary holds editable action items. Add a task by hand, or click **Add from summary** to copy the bullets in the shown summary version's "Action items" section. Importing skips bullets that an existing task of this meeting was imported from, from any summary version and even if you edited the task since. A deleted task can be imported again. If a bullet is too long or the meeting would exceed 200 tasks, nothing is added. Owners and due dates are never guessed; they stay "Unassigned" and empty until you set them. Tick a task to mark it done. Tasks are stored on this device and are included in every Markdown export as a "Tasks" checklist, whatever the summary option is set to.

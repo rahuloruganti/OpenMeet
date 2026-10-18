@@ -48,6 +48,9 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
         if let Some(model) = &detail.summary_model {
             output.push_str(&format!("model: {}\n", quote(model)));
         }
+        if detail.summary_edited {
+            output.push_str("summary_edited: true\n");
+        }
     }
     if options.transcript {
         if let Some(provider) = &detail.transcript_provider {

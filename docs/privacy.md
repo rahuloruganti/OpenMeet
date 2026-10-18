@@ -64,7 +64,7 @@ Each manual summary, question, and cloud transcription requires its own confirma
 
 Long summaries split transcript segments into bounded requests, then combine the partial results with the user's notes. The maximum plan is eight chunks plus one combination request. Oversized input is refused rather than truncated. Consent fingerprints bind the exact destination/configuration revision, selected model, content, action, and request plan. Cloud audio is prepared as frozen temporary PCM WAV chunks whose content and timing hashes enter the plan. These scratch files are unencrypted and removed when preparation or execution ends. No automatic capability-probing upload or billable retry occurs.
 
-Summary results are saved separately from user notes with provider, model, and template metadata. Older versions remain available; export uses the latest. Tasks are stored locally, unencrypted, and are included in Markdown exports. Importing tasks from a summary sends nothing. Question answers are shown in the interface and are not persisted. Summary copy buttons place text on the system clipboard, which other software may read.
+Summary results are saved separately from user notes with provider, model, and template metadata. Older versions remain available; export uses the latest. Tasks are stored locally, unencrypted, and are included in Markdown exports. Importing tasks from a summary sends nothing. Editing a summary sends nothing; edits are stored locally as new versions. Question answers are shown in the interface and are not persisted. Summary copy buttons place text on the system clipboard, which other software may read.
 
 ## Webview boundary
 

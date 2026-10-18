@@ -128,6 +128,8 @@ export type MeetingDetail = {
   transcript_provider: string | null;
   transcript_model: string | null;
   action_items: ActionItem[];
+  /** The latest summary is a user edit, not unedited model output. */
+  summary_edited: boolean;
   tracks: Array<{
     kind: string;
     path: string;
@@ -287,6 +289,8 @@ export type SummaryVersion = {
   /** Stored template id; older rows may hold "summary-v1" or "fixture". */
   template: string;
   markdown: string;
+  /** Version the user edited this one from; null for generated output. */
+  edited_from: number | null;
 };
 
 export const api = {
@@ -476,6 +480,19 @@ export const api = {
     invoke<ProcessingPlan>("plan_question", { id, question }),
   listSummaries: (id: string) =>
     invoke<SummaryVersion[]>("list_summaries", { id }),
+  /** Saves an edit of `baseId` as the newest version; refused if `expectedLatestId` is stale. */
+  saveSummaryEdit: (
+    meetingId: string,
+    baseId: number,
+    expectedLatestId: number,
+    markdown: string,
+  ) =>
+    invoke<void>("save_summary_edit", {
+      meetingId,
+      baseId,
+      expectedLatestId,
+      markdown,
+    }),
   askMeeting: (id: string, question: string, confirmation: string) =>
     invoke<string>("ask_meeting", { id, question, confirmation }),
   renameMeeting: (id: string, title: string) =>

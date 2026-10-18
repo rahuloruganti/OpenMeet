@@ -26,6 +26,7 @@ import {
   MeetingWorkspace,
   type Answer,
   type ContentTab,
+  type SummaryDraft,
 } from "./components/MeetingWorkspace";
 import { RecordingControls } from "./components/RecordingControls";
 import { SetupPanel } from "./components/SetupPanel";
@@ -117,6 +118,17 @@ export function App() {
   const [output, setOutput] = useState("");
   const [health, setHealth] = useState<AudioHealth | null>(null);
   const [closeRequested, setCloseRequested] = useState(false);
+  // Unsaved summary edits per meeting; quitting warns before discarding them.
+  const [summaryDrafts, setSummaryDrafts] = useState<
+    Record<string, SummaryDraft>
+  >({});
+  const setSummaryDraft = (id: string, draft: SummaryDraft | null) =>
+    setSummaryDrafts((drafts) => {
+      const next = { ...drafts };
+      if (draft) next[id] = draft;
+      else delete next[id];
+      return next;
+    });
   const [panel, setPanel] = useState<"setup" | "settings" | null>(null);
   const [settingsTab, setSettingsTab] = useState<"cloud" | "local" | "general">(
     "local",
@@ -1006,6 +1018,32 @@ export function App() {
           versions={summaryVersions}
           customTemplates={settings?.summary_templates ?? []}
           summaryInstructions={settings?.summary_instructions ?? ""}
+          summaryDraft={
+            selected ? summaryDrafts[selected.meeting.id] : undefined
+          }
+          onSummaryDraft={(draft) => {
+            if (selected) setSummaryDraft(selected.meeting.id, draft);
+          }}
+          onSaveSummaryEdit={async (draft) => {
+            const id = selected?.meeting.id;
+            let saved = false;
+            if (!id) return saved;
+            await run(async () => {
+              await api.saveSummaryEdit(
+                id,
+                draft.baseId,
+                draft.latestId,
+                draft.text,
+              );
+              saved = true;
+              setSummaryDraft(id, null);
+              await finishJob(id);
+              setNotice(
+                "Edited summary saved as a new version. Earlier versions are kept.",
+              );
+            });
+            return saved;
+          }}
           onActionItems={(id, items) =>
             // Patch only the tasks so an unsaved notes draft is untouched.
             setSelected((current) =>
@@ -1265,6 +1303,12 @@ export function App() {
               Your notes will be saved first. Any active recording will stop.
               Background processing will be cancelled.
             </p>
+            {Object.keys(summaryDrafts).length > 0 && (
+              <p role="alert">
+                You have an unsaved summary edit. Keep working to save it, or
+                quit to discard it.
+              </p>
+            )}
             <button
               autoFocus
               disabled={busy || controlBusy}
@@ -1275,7 +1319,9 @@ export function App() {
                 })
               }
             >
-              Save and quit
+              {Object.keys(summaryDrafts).length > 0
+                ? "Discard summary edits and quit"
+                : "Save and quit"}
             </button>
             <button
               disabled={busy || controlBusy}
