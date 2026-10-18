@@ -1029,12 +1029,26 @@ export function App() {
             let saved = false;
             if (!id) return saved;
             await run(async () => {
-              await api.saveSummaryEdit(
-                id,
-                draft.baseId,
-                draft.latestId,
-                draft.text,
-              );
+              try {
+                await api.saveSummaryEdit(
+                  id,
+                  draft.baseId,
+                  draft.latestId,
+                  draft.text,
+                );
+              } catch (failure) {
+                // Rebase onto the newer version so saving again is the user's explicit choice.
+                if (
+                  (failure as { code?: string } | null)?.code ===
+                  "summary_conflict"
+                ) {
+                  const newest = (await api.listSummaries(id))[0];
+                  if (newest)
+                    setSummaryDraft(id, { ...draft, latestId: newest.id });
+                  await finishJob(id);
+                }
+                throw failure;
+              }
               saved = true;
               setSummaryDraft(id, null);
               await finishJob(id);
@@ -1122,6 +1136,7 @@ export function App() {
               // The notes are being deleted; a failed final save must not block that.
               await writer.current?.flush().catch(() => {});
               await api.deleteMeeting(id);
+              setSummaryDraft(id, null);
               writer.current?.dispose();
               writer.current = null;
               selectedIdRef.current = null;

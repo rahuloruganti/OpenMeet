@@ -655,6 +655,7 @@ export function MeetingWorkspace(props: Props) {
               Version{" "}
               <select
                 value={shown?.id ?? versions[0].id}
+                disabled={draft !== undefined}
                 onChange={(event) => setVersionId(Number(event.target.value))}
               >
                 {versions.map((version, index) => (

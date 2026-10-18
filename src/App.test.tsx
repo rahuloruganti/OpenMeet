@@ -1577,6 +1577,17 @@ describe("desktop foundation", () => {
     );
     const editor = screen.getByRole("textbox", { name: "Edit summary" });
     await userEvent.type(editor, " Corrected.");
+    // An automatic summary lands while the user is editing.
+    vi.mocked(api.listSummaries).mockResolvedValue([
+      {
+        id: 6,
+        provider: "merge",
+        model: "m2",
+        template: "general-v1",
+        markdown: "Newer generated text.",
+        edited_from: null,
+      },
+    ]);
     await userEvent.click(
       screen.getByRole("button", { name: "Save edited summary" }),
     );
@@ -1604,6 +1615,12 @@ describe("desktop foundation", () => {
     vi.mocked(api.saveSummaryEdit).mockResolvedValue(undefined);
     await userEvent.click(
       screen.getByRole("button", { name: "Save edited summary" }),
+    );
+    expect(api.saveSummaryEdit).toHaveBeenLastCalledWith(
+      "sample",
+      4,
+      6,
+      "## Summary\nGenerated. Corrected.",
     );
     await screen.findByText(/Edited summary saved as a new version/);
     expect(screen.queryByRole("textbox", { name: "Edit summary" })).toBeNull();

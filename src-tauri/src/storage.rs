@@ -614,7 +614,7 @@ impl Core {
         if latest != Some(expected_latest_id) {
             return Err(AppError::new(
                 "summary_conflict",
-                "A newer summary version was saved while you were editing. Your edit is still open; review the new version before saving.",
+                "A newer summary version arrived while you were editing. Review it in the version picker; saving again puts your edit on top of it.",
             ));
         }
         let (base, template, model, provider): (String, String, String, String) = tx

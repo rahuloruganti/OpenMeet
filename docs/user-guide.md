@@ -106,7 +106,7 @@ Use the version picker to read earlier summaries. **Copy summary** and **Copy ac
 
 ### Edit a summary
 
-Click **Edit summary** to change the summary on screen. **Save edited summary** adds your text as a new version; the generated version and every earlier one stay in the version picker. Edited versions are labelled "edited by you", and Markdown export marks the summary with `summary_edited: true`. An unsaved edit stays open while you switch meetings. If you quit, OpenMeet warns you and asks before discarding it. If a newer summary arrived while you were editing, saving is refused and your edit stays open, so neither version replaces the other silently. Generating a summary when the current version is your edit tells you that the new summary becomes current while your edit stays in history. Editing a summary sends nothing.
+Click **Edit summary** to change the summary on screen. **Save edited summary** adds your text as a new version; the generated version and every earlier one stay in the version picker. Edited versions are labelled "edited by you", and Markdown export marks the summary with `summary_edited: true`. An unsaved edit stays open while you switch meetings. If you quit, OpenMeet warns you and asks before discarding it. If a newer summary arrived while you were editing, the first save is refused and your edit stays open, so neither version replaces the other silently. Review the newer version; saving again puts your edit on top of it. The version picker is locked while an edit is open, and deleting a meeting discards its unsaved edit. Generating a summary when the current version is your edit tells you that the new summary becomes current while your edit stays in history. Editing a summary sends nothing.
 
 ### Tasks
 
