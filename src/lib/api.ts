@@ -118,6 +118,14 @@ export type Segment = {
     { kind: "timed"; start_ms: number; end_ms: number } | { kind: "untimed" };
   text: string;
 };
+export type QuestionTurn = {
+  id: number;
+  question: string;
+  answer: string;
+  provider: string;
+  model: string;
+};
+export type QuestionThread = { id: number; turns: QuestionTurn[] };
 export type MeetingDetail = {
   meeting: Meeting;
   user_markdown: string;
@@ -138,6 +146,8 @@ export type MeetingDetail = {
   segment_meta: SegmentMeta[];
   /** Earlier transcripts, newest first. */
   transcript_versions: TranscriptVersion[];
+  /** Saved questions and answers, newest thread first, turns oldest first. */
+  question_threads: QuestionThread[];
   tracks: Array<{
     kind: string;
     path: string;
@@ -503,8 +513,9 @@ export const api = {
   /** Plans a summary without submitting meeting content. */
   planSummary: (id: string, template: string) =>
     invoke<ProcessingPlan>("plan_summary", { id, template }),
-  planQuestion: (id: string, question: string) =>
-    invoke<ProcessingPlan>("plan_question", { id, question }),
+  /** `threadId` continues a saved thread, sending its earlier turns; null starts a new one. */
+  planQuestion: (id: string, question: string, threadId: number | null) =>
+    invoke<ProcessingPlan>("plan_question", { id, question, threadId }),
   listSummaries: (id: string) =>
     invoke<SummaryVersion[]>("list_summaries", { id }),
   /** Saves an edit of `baseId` as the newest version; refused if `expectedLatestId` is stale. */
@@ -535,8 +546,22 @@ export const api = {
       expectedLatestId,
       markdown,
     }),
-  askMeeting: (id: string, question: string, confirmation: string) =>
-    invoke<string>("ask_meeting", { id, question, confirmation }),
+  /** Saves and returns the thread the answer joined. */
+  askMeeting: (
+    id: string,
+    question: string,
+    threadId: number | null,
+    confirmation: string,
+  ) =>
+    invoke<QuestionThread>("ask_meeting", {
+      id,
+      question,
+      threadId,
+      confirmation,
+    }),
+  /** Returns the remaining threads. */
+  deleteQuestionThread: (meetingId: string, threadId: number) =>
+    invoke<QuestionThread[]>("delete_question_thread", { meetingId, threadId }),
   renameMeeting: (id: string, title: string) =>
     invoke<string>("rename_meeting", { id, title }),
   setMeetingTags: (meetingId: string, tags: string[]) =>

@@ -104,6 +104,24 @@ pub struct MeetingDetail {
     pub segment_meta: Vec<SegmentMeta>,
     /// Earlier transcripts, newest first; segments load on request.
     pub transcript_versions: Vec<TranscriptVersion>,
+    /// Saved questions and answers, newest thread first, turns oldest first.
+    pub question_threads: Vec<QuestionThread>,
+}
+
+/// One saved question and the answer the provider returned for it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct QuestionTurn {
+    pub id: i64,
+    pub question: String,
+    pub answer: String,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct QuestionThread {
+    pub id: i64,
+    pub turns: Vec<QuestionTurn>,
 }
 
 /// Identity and edit state of one stored segment.

@@ -24,7 +24,6 @@ import { formatTimestamp } from "./lib/timestamps";
 import { MeetingSidebar } from "./components/MeetingSidebar";
 import {
   MeetingWorkspace,
-  type Answer,
   type ContentTab,
   type SegmentDraft,
   type SummaryDraft,
@@ -147,7 +146,6 @@ export function App() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [audioBytes, setAudioBytes] = useState<number | null>(null);
   const [summaryVersions, setSummaryVersions] = useState<SummaryVersion[]>([]);
-  const [answer, setAnswer] = useState<Answer | null>(null);
   const [processing, setProcessing] =
     useState<SessionProcessingSnapshot | null>(null);
   const processingRevisions = useRef(new Map<string, number>());
@@ -495,9 +493,6 @@ export function App() {
       current = false;
     };
   }, [desktop, selected]);
-  // Answers are never stored; leaving the meeting discards the shown one.
-  const selectedId = selected?.meeting.id;
-  useEffect(() => setAnswer(null), [selectedId]);
   useEffect(() => {
     setRetryPlan(null);
     setRetryConfirmed(false);
@@ -1113,25 +1108,54 @@ export function App() {
             });
             return plan;
           }}
-          answer={answer}
-          onPlanQuestion={async (question) => {
+          onPlanQuestion={async (question, threadId) => {
             const id = selected?.meeting.id;
             let plan: ProcessingPlan | null = null;
             if (!id) return plan;
             await run(async () => {
               await writer.current?.flush();
-              plan = await api.planQuestion(id, question);
+              plan = await api.planQuestion(id, question, threadId);
             });
             return plan;
           }}
-          onAsk={(question, confirmation) => {
+          onAsk={(question, threadId, confirmation) => {
             const id = selected?.meeting.id;
             if (!id) return;
             void runJob("ask", async () => {
               await writer.current?.flush();
-              const text = await api.askMeeting(id, question, confirmation);
-              if (selectedIdRef.current === id)
-                setAnswer({ meetingId: id, question, text });
+              const thread = await api.askMeeting(
+                id,
+                question,
+                threadId,
+                confirmation,
+              );
+              // Patch only the threads so an unsaved notes draft is untouched.
+              setSelected((current) =>
+                current?.meeting.id === id
+                  ? {
+                      ...current,
+                      question_threads: current.question_threads.some(
+                        (item) => item.id === thread.id,
+                      )
+                        ? current.question_threads.map((item) =>
+                            item.id === thread.id ? thread : item,
+                          )
+                        : [thread, ...current.question_threads],
+                    }
+                  : current,
+              );
+            });
+          }}
+          onDeleteThread={(threadId) => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void run(async () => {
+              const threads = await api.deleteQuestionThread(id, threadId);
+              setSelected((current) =>
+                current?.meeting.id === id
+                  ? { ...current, question_threads: threads }
+                  : current,
+              );
             });
           }}
           notes={notes}

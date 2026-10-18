@@ -2,7 +2,7 @@
 
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the session-consent records. Schema v15 adds custom summary templates and saved summary instructions. Schema v16 adds editable tasks. Schema v17 records user-edited summary versions. Schemas v18–v20 add speaker names, transcript edits with earlier transcripts, and summary freshness. This is a preview with open qualification gates, not a complete MVP.
+OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the session-consent records. Schema v15 adds custom summary templates and saved summary instructions. Schema v16 adds editable tasks. Schema v17 records user-edited summary versions. Schemas v18–v20 add speaker names, transcript edits with earlier transcripts, and summary freshness. Schema v22 adds saved question threads. This is a preview with open qualification gates, not a complete MVP.
 
 ## Phase 3 workflow implemented, qualification open
 
@@ -30,7 +30,7 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | Transcript corrections  | Per-meeting speaker names, segment edits with revert, read-only earlier transcripts kept on re-transcription, and out-of-date summary notices.                          |
 | Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision-bound consent.          |
 | Cloud transcription     | Explicit audio confirmation, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
-| Summaries and questions | Configured chat API, three built-in templates plus custom templates and saved instructions, history/copy, user edits saved as labelled versions, bounded chunked summaries, and per-meeting questions. |
+| Summaries and questions | Configured chat API, three built-in templates plus custom templates and saved instructions, history/copy, user edits saved as labelled versions, bounded chunked summaries, and per-meeting questions saved as threads with contextual follow-ups (schema v22). |
 | Tasks                   | Editable tasks with owner, done state, source, and optional due date; manual entry or explicit import from a summary's Action items; exported as a checklist.              |
 | Export                  | Folder picker, source-aware Markdown, optional transcript/summary, filename preferences, and non-overwriting snapshots.                                                    |
 | Recovery and retention  | Interrupted-recording detection, repaired copies preserving originals, typed-confirmation delete audio/meeting, and disk usage.                                            |

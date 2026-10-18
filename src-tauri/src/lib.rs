@@ -12,6 +12,7 @@ mod model_library;
 mod phase_three_tests;
 mod processing_control;
 mod providers;
+mod question_threads;
 mod session_processing;
 mod session_runtime;
 mod session_workflow;
@@ -1045,10 +1046,36 @@ async fn list_summaries(app: AppHandle, id: String) -> Result<Vec<SummaryVersion
 }
 
 #[tauri::command]
-async fn plan_question(app: AppHandle, id: String, question: String) -> Result<ProcessingPlan> {
+async fn plan_question(
+    app: AppHandle,
+    id: String,
+    question: String,
+    thread_id: Option<i64>,
+) -> Result<ProcessingPlan> {
     let (detail, config, lines) = text_snapshot(&app, &id).await?;
-    llm::validate_question(&detail.user_markdown, &lines, &question)?;
-    text_plan(&config, &detail, &lines, "question", &question, 1)
+    let earlier = earlier_turns(&detail.question_threads, thread_id)?;
+    llm::validate_question(&detail.user_markdown, &lines, &question, &earlier)?;
+    text_plan(
+        &config,
+        &detail,
+        &lines,
+        "question",
+        &llm::question_block(&question, &earlier),
+        1,
+    )
+}
+
+/// Turns of the thread being continued; a thread that is missing or belongs to another
+/// meeting is refused. Empty for a new question.
+fn earlier_turns(threads: &[QuestionThread], thread_id: Option<i64>) -> Result<Vec<QuestionTurn>> {
+    let Some(thread_id) = thread_id else {
+        return Ok(Vec::new());
+    };
+    threads
+        .iter()
+        .find(|thread| thread.id == thread_id)
+        .map(|thread| thread.turns.clone())
+        .ok_or_else(|| AppError::new("not_found", "This question thread no longer exists."))
 }
 
 #[tauri::command]
@@ -1056,14 +1083,21 @@ async fn ask_meeting(
     app: AppHandle,
     id: String,
     question: String,
+    thread_id: Option<i64>,
     confirmation: String,
-) -> Result<String> {
+) -> Result<QuestionThread> {
     let (detail, config, lines) = text_snapshot(&app, &id).await?;
-    llm::validate_question(&detail.user_markdown, &lines, &question)?;
-    confirm(
-        &text_plan(&config, &detail, &lines, "question", &question, 1)?,
-        Some(&confirmation),
+    let earlier = earlier_turns(&detail.question_threads, thread_id)?;
+    llm::validate_question(&detail.user_markdown, &lines, &question, &earlier)?;
+    let plan = text_plan(
+        &config,
+        &detail,
+        &lines,
+        "question",
+        &llm::question_block(&question, &earlier),
+        1,
     )?;
+    confirm(&plan, Some(&confirmation))?;
     blocking(move || {
         let owner = {
             let state = app.state::<AppState>();
@@ -1071,24 +1105,52 @@ async fn ask_meeting(
             core.processing_owner.clone()
         };
         let operation = owner.begin(&id)?;
+        // Content, provider, and the thread's turns must still match what was reviewed.
+        let unchanged = |core: &Core| -> Result<()> {
+            manual_text_check(core, &id, &config, detail.notes_revision, &lines)?;
+            if earlier_turns(&core.question_threads(&id)?, thread_id)? != earlier {
+                return Err(plan_changed());
+            }
+            Ok(())
+        };
         let answer = llm::ask(
             &providers::load_connection(&config)?,
             &detail.user_markdown,
             &lines,
             &question,
+            &earlier,
             operation.cancel(),
             |_| {
                 let state = app.state::<AppState>();
                 let core = state.core.lock().map_err(|_| plan_changed())?;
-                manual_text_check(&core, &id, &config, detail.notes_revision, &lines)
+                unchanged(&core)
             },
         )?;
         operation.finish(|| {
             let state = app.state::<AppState>();
-            let core = state.core.lock().map_err(|_| plan_changed())?;
-            manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
-            Ok(answer)
+            let mut core = state.core.lock().map_err(|_| plan_changed())?;
+            unchanged(&core)?;
+            core.save_question_turn(
+                &id,
+                thread_id,
+                question.trim(),
+                &answer,
+                &plan.base_url,
+                &plan.model,
+            )
         })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_question_thread(
+    app: AppHandle,
+    meeting_id: String,
+    thread_id: i64,
+) -> Result<Vec<QuestionThread>> {
+    with_core(app, false, move |core, _| {
+        core.delete_question_thread(&meeting_id, thread_id)
     })
     .await
 }
@@ -1567,6 +1629,7 @@ pub fn run() {
             edit_segment,
             get_transcript_version,
             ask_meeting,
+            delete_question_thread,
             rename_meeting,
             set_meeting_tags,
             save_export_options,
@@ -1653,6 +1716,50 @@ mod tests {
         assert_eq!(
             llm::resolve_summary(&deleted, &template).unwrap_err().code,
             "summary_template_missing"
+        );
+    }
+
+    #[test]
+    fn question_consent_binds_earlier_turns_and_refuses_other_meetings_threads() {
+        let mut core = Core::open(std::path::Path::new(":memory:")).unwrap();
+        let (id, other) = (
+            core.create_note("Fictional question consent").unwrap(),
+            core.create_note("Another fictional meeting").unwrap(),
+        );
+        core.save_notes(&id, "Fictional notes", 0).unwrap();
+        let config = ProviderConfig {
+            base_url: "https://provider.example/v1".into(),
+            model: Some("model-a".into()),
+            revision: 1,
+            credential_account: Some("private-reference".into()),
+        };
+        let thread = core
+            .save_question_turn(&id, None, "Budget?", "40k", "p", "m")
+            .unwrap();
+        let plan_for = |core: &Core, thread_id: Option<i64>| {
+            let detail = core.get_meeting(&id).unwrap();
+            let earlier = earlier_turns(&detail.question_threads, thread_id).unwrap();
+            let block = llm::question_block("Why?", &earlier);
+            text_plan(&config, &detail, &[], "question", &block, 1).unwrap()
+        };
+        let reviewed = plan_for(&core, Some(thread.id));
+        confirm(
+            &plan_for(&core, Some(thread.id)),
+            Some(&reviewed.fingerprint),
+        )
+        .unwrap();
+        assert!(confirm(&plan_for(&core, None), Some(&reviewed.fingerprint)).is_err());
+        core.save_question_turn(&id, Some(thread.id), "Owner?", "Rahul", "p", "m")
+            .unwrap();
+        assert!(confirm(
+            &plan_for(&core, Some(thread.id)),
+            Some(&reviewed.fingerprint)
+        )
+        .is_err());
+        let foreign = core.get_meeting(&other).unwrap().question_threads;
+        assert_eq!(
+            earlier_turns(&foreign, Some(thread.id)).unwrap_err().code,
+            "not_found"
         );
     }
 

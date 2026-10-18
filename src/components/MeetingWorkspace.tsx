@@ -43,7 +43,8 @@ const templateLabel = (id: string, custom: CustomTemplate[]) =>
   ] ??
   (id.startsWith("custom-") ? "Deleted custom template" : id);
 
-export type Answer = { meetingId: string; question: string; text: string };
+/** A follow-up sends this many of the thread's latest turns; keep equal to the backend limit. */
+const FOLLOW_UP_TURNS = 6;
 /** An unsaved summary edit: the version it edits and the newest version when editing began. */
 export type SummaryDraft = { baseId: number; latestId: number; text: string };
 /** An unsaved segment edit; `baseText` is the segment text when editing began. */
@@ -103,9 +104,17 @@ type Props = {
   onSaveSegment: (draft: SegmentDraft) => Promise<boolean>;
   /** Replaces the selected meeting's tasks after a backend change. */
   onActionItems: (meetingId: string, items: ActionItem[]) => void;
-  onPlanQuestion: (question: string) => Promise<ProcessingPlan | null>;
-  onAsk: (question: string, confirmation: string) => void;
-  answer: Answer | null;
+  /** `threadId` continues a saved thread; null starts a new one. */
+  onPlanQuestion: (
+    question: string,
+    threadId: number | null,
+  ) => Promise<ProcessingPlan | null>;
+  onAsk: (
+    question: string,
+    threadId: number | null,
+    confirmation: string,
+  ) => void;
+  onDeleteThread: (threadId: number) => void;
   /** The selected meeting is being recorded right now, so it cannot be deleted. */
   recordingThis: boolean;
   onDeleteMeeting: () => void;
@@ -143,6 +152,24 @@ export function MeetingWorkspace(props: Props) {
   const [copyStatus, setCopyStatus] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState<ProcessingPlan | null>(null);
+  // A thread id, "new" for the empty form, or null to show the newest thread.
+  const [chosenThread, setChosenThread] = useState<number | "new" | null>(null);
+  const [deletingThread, setDeletingThread] = useState(false);
+  const threads = selected?.question_threads ?? [];
+  const activeThread =
+    chosenThread === "new"
+      ? null
+      : (threads.find((thread) => thread.id === chosenThread) ??
+        threads[0] ??
+        null);
+  const earlierTurns = Math.min(
+    activeThread?.turns.length ?? 0,
+    FOLLOW_UP_TURNS,
+  );
+  const turnTotal = threads.reduce(
+    (sum, thread) => sum + thread.turns.length,
+    0,
+  );
   const planVersion = useRef(0);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [jumpHint, setJumpHint] = useState("");
@@ -163,6 +190,8 @@ export function MeetingWorkspace(props: Props) {
     setConfirming(null);
     setAsking(null);
     setQuestion("");
+    setChosenThread(null);
+    setDeletingThread(false);
     setDeleting(null);
     setTyped("");
     setTitleDraft(null);
@@ -183,9 +212,21 @@ export function MeetingWorkspace(props: Props) {
     props.sttMode,
     template,
     question,
+    activeThread?.id,
+    selected?.question_threads,
     customKey,
     props.summaryInstructions,
   ]);
+  // A saved answer clears the box and shows its thread; a deleted thread closes the prompt.
+  const newestThread = threads[0]?.id;
+  useEffect(() => {
+    setChosenThread(null);
+    setQuestion("");
+  }, [newestThread]);
+  useEffect(() => {
+    setQuestion("");
+  }, [turnTotal]);
+  useEffect(() => setDeletingThread(false), [activeThread?.id]);
   const reviewPlan = async (
     load: () => Promise<ProcessingPlan | null>,
     show: (plan: ProcessingPlan | null) => void,
@@ -853,18 +894,82 @@ export function MeetingWorkspace(props: Props) {
             onItems={(items) => props.onActionItems(selected.meeting.id, items)}
             reference={reference}
           />
+          {threads.length > 0 && (
+            <div className="panel-actions">
+              <select
+                aria-label="Question threads"
+                value={activeThread?.id ?? ""}
+                onChange={(event) =>
+                  setChosenThread(Number(event.target.value))
+                }
+              >
+                {!activeThread && <option value="">New question</option>}
+                {threads.map((thread) => (
+                  <option key={thread.id} value={thread.id}>
+                    {thread.turns[0]?.question.slice(0, 60)}
+                  </option>
+                ))}
+              </select>
+              <button
+                disabled={!activeThread}
+                onClick={() => setChosenThread("new")}
+              >
+                New question
+              </button>
+              {activeThread && (
+                <button
+                  disabled={disabled || job !== null}
+                  onClick={() => setDeletingThread(true)}
+                >
+                  Delete thread
+                </button>
+              )}
+            </div>
+          )}
+          {deletingThread && activeThread && (
+            <div
+              className="consent-card"
+              role="group"
+              aria-label="Confirm deleting question thread"
+            >
+              <p>
+                <strong>Delete this question thread?</strong> Its{" "}
+                {activeThread.turns.length} saved question
+                {activeThread.turns.length === 1 ? "" : "s"} and answers are
+                removed from this device. Your notes and transcript are kept.
+              </p>
+              <div className="panel-actions">
+                <button
+                  className="primary"
+                  onClick={() => {
+                    setDeletingThread(false);
+                    props.onDeleteThread(activeThread.id);
+                  }}
+                >
+                  Delete thread permanently
+                </button>
+                <button onClick={() => setDeletingThread(false)}>Keep</button>
+              </div>
+            </div>
+          )}
           <form
             className="ask-meeting"
             onSubmit={(event) => {
               event.preventDefault();
               if (question.trim())
                 void reviewPlan(
-                  () => props.onPlanQuestion(question.trim()),
+                  () =>
+                    props.onPlanQuestion(
+                      question.trim(),
+                      activeThread?.id ?? null,
+                    ),
                   setAsking,
                 );
             }}
           >
-            <label htmlFor="ask-question">Ask this meeting</label>
+            <label htmlFor="ask-question">
+              {activeThread ? "Ask a follow-up" : "Ask this meeting"}
+            </label>
             <textarea
               id="ask-question"
               rows={2}
@@ -900,12 +1005,20 @@ export function MeetingWorkspace(props: Props) {
                   Sent in {asking.requests} request(s): your question,{" "}
                   {contentScope} of this meeting only.
                 </li>
+                {earlierTurns > 0 && (
+                  <li>
+                    Includes {earlierTurns} earlier question
+                    {earlierTurns === 1 ? "" : "s"} and answer
+                    {earlierTurns === 1 ? "" : "s"} from this thread.
+                  </li>
+                )}
                 <li>Not sent: audio recordings or other meetings.</li>
                 <li>
                   {isLocalBase(asking.base_url)
                     ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
                     : "The text leaves this device and is handled under your provider's terms."}{" "}
-                  The answer is shown here and not saved.
+                  The question and answer are saved with this meeting on this
+                  device, unencrypted.
                 </li>
               </ul>
               <div className="panel-actions">
@@ -914,7 +1027,11 @@ export function MeetingWorkspace(props: Props) {
                   disabled={disabled || job !== null}
                   onClick={() => {
                     setAsking(null);
-                    props.onAsk(question.trim(), asking.fingerprint);
+                    props.onAsk(
+                      question.trim(),
+                      activeThread?.id ?? null,
+                      asking.fingerprint,
+                    );
                   }}
                 >
                   Send question
@@ -923,18 +1040,18 @@ export function MeetingWorkspace(props: Props) {
               </div>
             </div>
           )}
-          {props.answer?.meetingId === meeting.id && (
-            <div className="ask-answer" aria-label="Answer">
+          {activeThread?.turns.map((turn) => (
+            <div className="ask-answer" aria-label="Answer" key={turn.id}>
               <p>
-                <strong>Q: {props.answer.question}</strong>
+                <strong>Q: {turn.question}</strong>
               </p>
-              {renderMarkdown(props.answer.text, reference)}
+              {renderMarkdown(turn.answer, reference)}
               <p className="muted">
-                AI-generated from this meeting's notes and transcript. Not
-                saved; check it before relying on it.
+                AI-generated from this meeting's notes and transcript. Saved on
+                this device; check it before relying on it.
               </p>
             </div>
-          )}
+          ))}
         </section>
         <section
           className="reading-panel"

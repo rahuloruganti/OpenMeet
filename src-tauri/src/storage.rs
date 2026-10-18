@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 21;
+const LATEST_SCHEMA: i64 = 22;
 const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 40;
 
@@ -123,6 +123,11 @@ impl Core {
             (
                 21,
                 include_str!("../migrations/021_meeting_tags.sql"),
+                false,
+            ),
+            (
+                22,
+                include_str!("../migrations/022_question_threads.sql"),
                 false,
             ),
         ];
@@ -591,9 +596,11 @@ impl Core {
         let action_items = self.action_items(id)?;
         let speaker_names = self.speaker_names(id)?;
         let transcript_versions = self.transcript_versions(id)?;
+        let question_threads = self.question_threads(id)?;
         let summary_stale =
             summary_hash.is_some_and(|hash| hash != transcript_hash(&segments, &speaker_names));
         Ok(MeetingDetail {
+            question_threads,
             summary_stale,
             segment_meta,
             transcript_versions,

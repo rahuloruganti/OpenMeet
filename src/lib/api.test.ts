@@ -59,16 +59,23 @@ it("uses reviewed fingerprints for cloud actions and null for local transcriptio
     template: "standup-v1",
     confirmation: "reviewed-summary",
   });
-  await api.planQuestion("m", "What changed?");
+  await api.planQuestion("m", "What changed?", 7);
   expect(invoke).toHaveBeenLastCalledWith("plan_question", {
     id: "m",
     question: "What changed?",
+    threadId: 7,
   });
-  await api.askMeeting("m", "What changed?", "reviewed-question");
+  await api.askMeeting("m", "What changed?", null, "reviewed-question");
   expect(invoke).toHaveBeenLastCalledWith("ask_meeting", {
     id: "m",
     question: "What changed?",
+    threadId: null,
     confirmation: "reviewed-question",
+  });
+  await api.deleteQuestionThread("m", 7);
+  expect(invoke).toHaveBeenLastCalledWith("delete_question_thread", {
+    meetingId: "m",
+    threadId: 7,
   });
   await api.transcribeMeeting("m", null);
   expect(invoke).toHaveBeenLastCalledWith("transcribe_meeting", {

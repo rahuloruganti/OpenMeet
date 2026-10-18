@@ -78,6 +78,7 @@ vi.mock("./lib/api", async (original) => {
       editSegment: vi.fn(),
       getTranscriptVersion: vi.fn(),
       askMeeting: vi.fn(),
+      deleteQuestionThread: vi.fn(),
       renameMeeting: vi.fn(),
       saveExportOptions: vi.fn(),
       recoverAudio: vi.fn(),
@@ -116,6 +117,7 @@ const sample: MeetingDetail = {
   speaker_names: { you: null, others: null },
   segment_meta: [],
   transcript_versions: [],
+  question_threads: [],
 };
 
 const textPlan = {
@@ -1841,11 +1843,20 @@ describe("desktop foundation", () => {
     ).toContain("Your edited summary stays in history");
   });
 
-  it("asks a question only after per-question consent and does not store the answer", async () => {
+  const turn = (id: number, question: string, answer: string) => ({
+    id,
+    question,
+    answer,
+    provider: "https://provider.example/v1",
+    model: "test-chat",
+  });
+
+  it("asks a question only after per-question consent and shows the saved thread", async () => {
     providerReady();
-    vi.mocked(api.askMeeting).mockResolvedValue(
-      "The **budget** is 40k [1:05].",
-    );
+    vi.mocked(api.askMeeting).mockResolvedValue({
+      id: 4,
+      turns: [turn(1, "What is the budget?", "The **budget** is 40k [1:05].")],
+    });
     await ready();
     await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
     await userEvent.type(
@@ -1857,7 +1868,8 @@ describe("desktop foundation", () => {
       name: "Confirm sending question",
     });
     expect(card.textContent).toContain("of this meeting only");
-    expect(card.textContent).toContain("not saved");
+    expect(card.textContent).toContain("saved with this meeting");
+    expect(card.textContent).not.toContain("earlier question");
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(api.askMeeting).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Ask" }));
@@ -1867,11 +1879,122 @@ describe("desktop foundation", () => {
     expect(api.askMeeting).toHaveBeenCalledWith(
       "sample",
       "What is the budget?",
+      null,
       textPlan.fingerprint,
     );
     expect((await screen.findByText("budget")).tagName).toBe("STRONG");
+    expect(screen.getByText("Q: What is the budget?")).toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Question threads" }),
+    ).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Ask a follow-up",
+        }) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
     expect(api.generateSummary).not.toHaveBeenCalled();
     expect(api.saveNotes).not.toHaveBeenCalled();
+  });
+
+  it("sends a follow-up within the active thread and discloses the earlier turns", async () => {
+    providerReady();
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...sample,
+      question_threads: [
+        { id: 4, turns: [turn(1, "What is the budget?", "It is 40k.")] },
+      ],
+    });
+    vi.mocked(api.askMeeting).mockResolvedValue({
+      id: 4,
+      turns: [
+        turn(1, "What is the budget?", "It is 40k."),
+        turn(2, "Who approved it?", "Not stated."),
+      ],
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(screen.getByText("It is 40k.")).toBeTruthy();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Ask a follow-up" }),
+      "Who approved it?",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(api.planQuestion).toHaveBeenLastCalledWith(
+      "sample",
+      "Who approved it?",
+      4,
+    );
+    expect(
+      screen.getByRole("group", { name: "Confirm sending question" })
+        .textContent,
+    ).toContain("Includes 1 earlier question and answer from this thread.");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Send question" }),
+    );
+    expect(api.askMeeting).toHaveBeenCalledWith(
+      "sample",
+      "Who approved it?",
+      4,
+      textPlan.fingerprint,
+    );
+    expect(await screen.findByText("Not stated.")).toBeTruthy();
+    expect(screen.getByText("It is 40k.")).toBeTruthy();
+  });
+
+  it("switches between threads, starts a new question, and confirms before deleting", async () => {
+    providerReady();
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...sample,
+      question_threads: [
+        { id: 9, turns: [turn(3, "Who owns launch?", "Dana.")] },
+        { id: 4, turns: [turn(1, "What is the budget?", "It is 40k.")] },
+      ],
+    });
+    vi.mocked(api.deleteQuestionThread).mockResolvedValue([
+      { id: 4, turns: [turn(1, "What is the budget?", "It is 40k.")] },
+    ]);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    expect(screen.getByText("Dana.")).toBeTruthy();
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Question threads" }),
+      "4",
+    );
+    expect(screen.getByText("It is 40k.")).toBeTruthy();
+    expect(screen.queryByText("Dana.")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "New question" }));
+    expect(screen.queryByText("It is 40k.")).toBeNull();
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Ask this meeting" }),
+      "Anything else?",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(api.planQuestion).toHaveBeenLastCalledWith(
+      "sample",
+      "Anything else?",
+      null,
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Question threads" }),
+      "9",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete thread" }),
+    );
+    expect(api.deleteQuestionThread).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Keep" }));
+    expect(api.deleteQuestionThread).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete thread" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete thread permanently" }),
+    );
+    expect(api.deleteQuestionThread).toHaveBeenCalledWith("sample", 9);
+    expect(await screen.findByText("It is 40k.")).toBeTruthy();
+    expect(screen.queryByText("Dana.")).toBeNull();
   });
 
   it("does not pretend the web preview can persist meetings", () => {
