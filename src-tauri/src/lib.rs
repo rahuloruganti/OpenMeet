@@ -160,6 +160,20 @@ fn parse_shortcuts(pause: &str, stop: Option<&str>) -> Result<(Shortcut, Option<
     Ok((pause, stop))
 }
 
+/// Names every shortcut that failed to register, since another app may own each chord.
+fn shortcut_warning(pause: Option<&str>, stop: Option<&str>) -> Option<String> {
+    let failed: Vec<String> = [("Pause", pause), ("Stop", stop)]
+        .into_iter()
+        .filter_map(|(name, chord)| chord.map(|chord| format!("{name} ({chord})")))
+        .collect();
+    (!failed.is_empty()).then(|| {
+        format!(
+            "Shortcut unavailable: {}. Another app may be using it. Use the on-screen controls and choose another shortcut in Settings.",
+            failed.join(" and ")
+        )
+    })
+}
+
 #[tauri::command]
 async fn list_meetings(app: AppHandle) -> Result<Vec<Meeting>> {
     with_core(app, false, |core, _| core.list_meetings()).await
@@ -1245,22 +1259,45 @@ async fn audio_position(app: AppHandle, id: String, kind: String, session_ms: i6
 
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| show_window(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            show_window(app)
+        }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app, shortcut, event| {
-            if event.state == ShortcutState::Pressed { shortcut_action(app, *shortcut); }
-        }).build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        shortcut_action(app, *shortcut);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let folder = app.path().app_data_dir()?;
             std::fs::create_dir_all(&folder)?;
             let core = Core::open(&folder.join("meetings.db"))?;
             let settings = core.settings()?;
-            let pause_failed = app.global_shortcut().register(settings.pause_shortcut.as_str()).is_err();
-            let stop_failed = settings.stop_shortcut.as_deref().is_some_and(|stop| app.global_shortcut().register(stop).is_err());
-            let startup_warning = (pause_failed || stop_failed).then(|| format!("{} shortcut unavailable. Use the on-screen controls and choose another shortcut in Settings.", if pause_failed { "Pause" } else { "Stop" }));
-            app.manage(AppState { core: Mutex::new(core), provider_writes: Mutex::new(()), startup_warning, allow_exit: AtomicBool::new(false) });
+            let pause_failed = app
+                .global_shortcut()
+                .register(settings.pause_shortcut.as_str())
+                .is_err();
+            let stop_failed = settings
+                .stop_shortcut
+                .as_deref()
+                .is_some_and(|stop| app.global_shortcut().register(stop).is_err());
+            let startup_warning = shortcut_warning(
+                pause_failed.then_some(settings.pause_shortcut.as_str()),
+                settings.stop_shortcut.as_deref().filter(|_| stop_failed),
+            );
+            app.manage(AppState {
+                core: Mutex::new(core),
+                provider_writes: Mutex::new(()),
+                startup_warning,
+                allow_exit: AtomicBool::new(false),
+            });
             let show = MenuItem::with_id(app, "show", "Open OpenMeet", true, None::<&str>)?;
-            let pause = MenuItem::with_id(app, "pause", "Pause / resume recording", true, None::<&str>)?;
+            let pause =
+                MenuItem::with_id(app, "pause", "Pause / resume recording", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Stop recording", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Save notes and quit…", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &pause, &stop, &quit])?;
@@ -1272,28 +1309,56 @@ pub fn run() {
                     "show" => show_window(app),
                     "pause" => tray_action(app, Core::toggle_pause),
                     "stop" => tray_action(app, Core::stop),
-                    "quit" => { show_window(app); let _ = app.emit("request_close", ()); }
+                    "quit" => {
+                        show_window(app);
+                        let _ = app.emit("request_close", ());
+                    }
                     _ => {}
                 })
                 .build(app)?;
             let monitor_app = app.handle().clone();
-            std::thread::spawn(move || { let revisions=std::sync::Arc::new(Mutex::new(std::collections::HashMap::new())); loop {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                let result = tauri::async_runtime::block_on(with_core(
-                    monitor_app.clone(),
-                    false,
-                    {let revisions=revisions.clone();move |core, app| {
-                        let mut revisions=revisions.lock().unwrap_or_else(|p|p.into_inner());
-                        core.poll_audio()?;
-                        if let Some(health) = core.audio_health() { let _ = app.emit("audio_health", health); }
-                        let rows={ let mut query=core.db.prepare("SELECT meeting_id,revision FROM processing_sessions")?; let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?; rows.collect::<std::result::Result<Vec<_>,_>>()? };
-                        revisions.retain(|id,_|rows.iter().any(|(current,_)|current==id));
-                        for (id,revision) in rows { if revisions.get(&id)!=Some(&revision) { if let Some(snapshot)=core.session_processing(&id)? { revisions.insert(id,snapshot.revision);let _=app.emit("session_processing_changed",snapshot); } } }
-                        Ok(())
-                    }},
-                ));
-                if let Err(error) = result { let _ = monitor_app.emit("backend_error", error.message); }
-            }});
+            std::thread::spawn(move || {
+                let revisions = std::sync::Arc::new(Mutex::new(std::collections::HashMap::new()));
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let result =
+                        tauri::async_runtime::block_on(with_core(monitor_app.clone(), false, {
+                            let revisions = revisions.clone();
+                            move |core, app| {
+                                let mut revisions =
+                                    revisions.lock().unwrap_or_else(|p| p.into_inner());
+                                core.poll_audio()?;
+                                if let Some(health) = core.audio_health() {
+                                    let _ = app.emit("audio_health", health);
+                                }
+                                let rows = {
+                                    let mut query = core.db.prepare(
+                                        "SELECT meeting_id,revision FROM processing_sessions",
+                                    )?;
+                                    let rows = query.query_map([], |r| {
+                                        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                                    })?;
+                                    rows.collect::<std::result::Result<Vec<_>, _>>()?
+                                };
+                                revisions
+                                    .retain(|id, _| rows.iter().any(|(current, _)| current == id));
+                                for (id, revision) in rows {
+                                    if revisions.get(&id) != Some(&revision) {
+                                        if let Some(snapshot) = core.session_processing(&id)? {
+                                            revisions.insert(id, snapshot.revision);
+                                            let _ =
+                                                app.emit("session_processing_changed", snapshot);
+                                        }
+                                    }
+                                }
+                                Ok(())
+                            }
+                        }));
+                    if let Err(error) = result {
+                        let _ = monitor_app.emit("backend_error", error.message);
+                    }
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1303,21 +1368,61 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            list_meetings, get_meeting, get_recording_state, get_startup_warning,
-            start_recording, pause_recording, resume_recording, stop_recording,
-            prepare_session_processing, get_session_processing, cancel_session_processing,
-            acknowledge_processing_notes,prepare_session_retry,retry_session_processing,
-            save_notes, get_settings, save_settings,
-            choose_vault_folder, export_meeting, close_application, list_audio_devices,
-            provider_key_status, save_api_connection, delete_api_connection, api_connection_key_status, save_provider_assignment, list_api_connection_models,
-            save_stt_mode, plan_transcription, plan_question,
-            stt_status, stt_install, transcribe_meeting, generate_summary,
-            create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
-            plan_summary, list_summaries, ask_meeting,
-            rename_meeting, save_export_options, recover_audio,
-            cancel_transcription, save_stt_settings, audio_position,
-            choose_model_folder, scan_local_models, import_local_model,
-            search_hf_models, list_hf_files, download_hf_model, cancel_model_download,
+            list_meetings,
+            get_meeting,
+            get_recording_state,
+            get_startup_warning,
+            start_recording,
+            pause_recording,
+            resume_recording,
+            stop_recording,
+            prepare_session_processing,
+            get_session_processing,
+            cancel_session_processing,
+            acknowledge_processing_notes,
+            prepare_session_retry,
+            retry_session_processing,
+            save_notes,
+            get_settings,
+            save_settings,
+            choose_vault_folder,
+            export_meeting,
+            close_application,
+            list_audio_devices,
+            provider_key_status,
+            save_api_connection,
+            delete_api_connection,
+            api_connection_key_status,
+            save_provider_assignment,
+            list_api_connection_models,
+            save_stt_mode,
+            plan_transcription,
+            plan_question,
+            stt_status,
+            stt_install,
+            transcribe_meeting,
+            generate_summary,
+            create_note,
+            audio_usage,
+            delete_audio,
+            delete_meeting,
+            search_meetings,
+            plan_summary,
+            list_summaries,
+            ask_meeting,
+            rename_meeting,
+            save_export_options,
+            recover_audio,
+            cancel_transcription,
+            save_stt_settings,
+            audio_position,
+            choose_model_folder,
+            scan_local_models,
+            import_local_model,
+            search_hf_models,
+            list_hf_files,
+            download_hf_model,
+            cancel_model_download,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");
@@ -1336,6 +1441,19 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcut_warning_names_each_failed_shortcut() {
+        assert_eq!(shortcut_warning(None, None), None);
+        let pause = shortcut_warning(Some("Ctrl+Shift+Space"), None).unwrap();
+        assert!(pause.starts_with("Shortcut unavailable: Pause (Ctrl+Shift+Space). Another"));
+        let stop = shortcut_warning(None, Some("Alt+S")).unwrap();
+        assert!(stop.starts_with("Shortcut unavailable: Stop (Alt+S). Another"));
+        let both = shortcut_warning(Some("Ctrl+Shift+Space"), Some("Alt+S")).unwrap();
+        assert!(
+            both.starts_with("Shortcut unavailable: Pause (Ctrl+Shift+Space) and Stop (Alt+S).")
+        );
+    }
 
     #[test]
     fn consent_binds_destination_model_revision_and_content() {
