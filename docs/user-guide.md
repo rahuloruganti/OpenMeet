@@ -106,7 +106,7 @@ Use the version picker to read earlier summaries. **Copy summary** and **Copy ac
 
 ### Tasks
 
-The **Tasks** list below the summary holds editable action items. Add a task by hand, or click **Add from summary** to copy the bullets in the shown summary version's "Action items" section. Importing adds only bullets not already imported from that version, even if you edited them since. If a bullet is too long or the meeting would exceed 200 tasks, nothing is added. Owners and due dates are never guessed; they stay "Unassigned" and empty until you set them. Tick a task to mark it done. Tasks are stored on this device and are included in every Markdown export as a "Tasks" checklist, whatever the summary option is set to.
+The **Tasks** list below the summary holds editable action items. Add a task by hand, or click **Add from summary** to copy the bullets in the shown summary version's "Action items" section. Importing skips bullets that an existing task of this meeting was imported from, from any summary version and even if you edited the task since. A deleted task can be imported again. If a bullet is too long or the meeting would exceed 200 tasks, nothing is added. Owners and due dates are never guessed; they stay "Unassigned" and empty until you set them. Tick a task to mark it done. Tasks are stored on this device and are included in every Markdown export as a "Tasks" checklist, whatever the summary option is set to.
 
 **Ask this meeting** sends your question and that meeting's notes and transcript after a separate confirmation. The answer appears in the interface and is not saved or exported. Check AI output before relying on it. Live summary quality and long-meeting behavior remain unqualified.
 

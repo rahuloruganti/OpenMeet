@@ -168,8 +168,8 @@ impl Core {
         self.action_items(meeting_id)
     }
 
-    /// Adds the shown summary version's action items that were not imported from it before,
-    /// even if those tasks were edited since. Refuses rather than truncating at the task limit.
+    /// Adds the shown summary version's action items that no existing task of this meeting was
+    /// imported from, by any version and even if edited since; deleted tasks can be re-imported. Refuses rather than truncating at the task limit.
     pub fn import_action_items(
         &mut self,
         meeting_id: &str,
@@ -186,8 +186,8 @@ impl Core {
             .ok_or_else(|| AppError::new("not_found", "This summary version is not available."))?;
         let mut seen: std::collections::HashSet<String> = self
             .db
-            .prepare("SELECT origin_text FROM action_items WHERE meeting_id=?1 AND summary_id=?2 AND origin_text IS NOT NULL")?
-            .query_map(params![meeting_id, summary_id], |row| row.get(0))?
+            .prepare("SELECT origin_text FROM action_items WHERE meeting_id=?1 AND origin_text IS NOT NULL")?
+            .query_map([meeting_id], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let bullets = summary_bullets(&markdown)
             .into_iter()
@@ -307,6 +307,26 @@ mod tests {
             core.import_action_items(&id, summary).unwrap_err().code,
             "action_item"
         );
+        // A later version repeating "Book a room" adds only its new bullet.
+        core.save_summary(
+            &id,
+            "p",
+            "m",
+            "## Action items\n- Book a room\n- Order lunch",
+            "general-v1",
+        )
+        .unwrap();
+        let later = core.list_summaries(&id).unwrap()[0].id;
+        let imported = core.import_action_items(&id, later).unwrap();
+        assert_eq!(
+            imported
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Send the final deck", "Book a room", "Order lunch"]
+        );
+        let order_lunch = imported[2].id;
+        core.delete_action_item(&id, order_lunch).unwrap();
         assert_eq!(items[0].text, "Send the final deck");
         let items = core
             .save_action_item(
