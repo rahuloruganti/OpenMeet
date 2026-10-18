@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 18;
+const LATEST_SCHEMA: i64 = 19;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -106,6 +106,11 @@ impl Core {
             (
                 18,
                 include_str!("../migrations/018_speaker_names.sql"),
+                false,
+            ),
+            (
+                19,
+                include_str!("../migrations/019_transcript_edits.sql"),
                 false,
             ),
         ];
@@ -495,22 +500,30 @@ impl Core {
             [id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let mut query = self.db.prepare("SELECT speaker, start_ms, end_ms, text FROM segments WHERE meeting_id = ?1 ORDER BY start_ms IS NULL, start_ms, id")?;
-        let segments = query
+        let mut query = self.db.prepare("SELECT speaker, start_ms, end_ms, text, id, original_text FROM segments WHERE meeting_id = ?1 ORDER BY start_ms IS NULL, start_ms, id")?;
+        let (segments, segment_meta): (Vec<_>, Vec<_>) = query
             .query_map([id], |row| {
-                Ok(Segment {
-                    speaker: row.get(0)?,
-                    timing: match row.get::<_, Option<i64>>(1)? {
-                        Some(start_ms) => SegmentTiming::Timed {
-                            start_ms,
-                            end_ms: row.get(2)?,
+                Ok((
+                    Segment {
+                        speaker: row.get(0)?,
+                        timing: match row.get::<_, Option<i64>>(1)? {
+                            Some(start_ms) => SegmentTiming::Timed {
+                                start_ms,
+                                end_ms: row.get(2)?,
+                            },
+                            None => SegmentTiming::Untimed,
                         },
-                        None => SegmentTiming::Untimed,
+                        text: row.get(3)?,
                     },
-                    text: row.get(3)?,
-                })
+                    SegmentMeta {
+                        id: row.get(4)?,
+                        original_text: row.get(5)?,
+                    },
+                ))
             })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            .collect::<std::result::Result<Vec<_>, _>>()?
+            .into_iter()
+            .unzip();
         let (summary, summary_provider, summary_model, summary_template, summary_edited) = self
             .db
             .query_row(
@@ -549,7 +562,10 @@ impl Core {
             .unwrap_or((None, None));
         let action_items = self.action_items(id)?;
         let speaker_names = self.speaker_names(id)?;
+        let transcript_versions = self.transcript_versions(id)?;
         Ok(MeetingDetail {
+            segment_meta,
+            transcript_versions,
             speaker_names,
             action_items,
             summary_edited,
@@ -1402,6 +1418,7 @@ pub(crate) fn replace_transcript_in(
     provider: &str,
     model: &str,
 ) -> Result<()> {
+    crate::transcript_edits::snapshot(tx, id)?;
     tx.execute(
         "DELETE FROM segments WHERE meeting_id = ?1 AND source IN ('whisper', 'cloud_stt')",
         [id],

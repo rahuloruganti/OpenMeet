@@ -97,6 +97,28 @@ pub struct MeetingDetail {
     /// The latest summary is a user edit rather than unedited model output.
     pub summary_edited: bool,
     pub speaker_names: SpeakerNames,
+    /// Aligned by index with `segments`, from the same query.
+    pub segment_meta: Vec<SegmentMeta>,
+    /// Earlier transcripts, newest first; segments load on request.
+    pub transcript_versions: Vec<TranscriptVersion>,
+}
+
+/// Identity and edit state of one stored segment.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SegmentMeta {
+    pub id: i64,
+    /// The engine's text when the user edited the segment; None when unedited.
+    pub original_text: Option<String>,
+}
+
+/// A transcript kept before a later transcription replaced it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TranscriptVersion {
+    pub id: i64,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub edited: bool,
+    pub segment_count: i64,
 }
 
 /// Optional display names for the "You" (microphone) and "Others" (system audio) labels.

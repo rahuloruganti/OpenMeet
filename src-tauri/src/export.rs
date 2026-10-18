@@ -53,6 +53,13 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
         }
     }
     if options.transcript {
+        if detail
+            .segment_meta
+            .iter()
+            .any(|meta| meta.original_text.is_some())
+        {
+            output.push_str("transcript_edited: true\n");
+        }
         if let Some(provider) = &detail.transcript_provider {
             output.push_str(&format!("transcript_provider: {}\n", quote(provider)));
         }

@@ -75,6 +75,8 @@ vi.mock("./lib/api", async (original) => {
       planSummary: vi.fn(),
       listSummaries: vi.fn(),
       saveSummaryEdit: vi.fn(),
+      editSegment: vi.fn(),
+      getTranscriptVersion: vi.fn(),
       askMeeting: vi.fn(),
       renameMeeting: vi.fn(),
       saveExportOptions: vi.fn(),
@@ -110,6 +112,8 @@ const sample: MeetingDetail = {
   action_items: [],
   summary_edited: false,
   speaker_names: { you: null, others: null },
+  segment_meta: [],
+  transcript_versions: [],
 };
 
 const textPlan = {
@@ -1609,7 +1613,7 @@ describe("desktop foundation", () => {
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
     expect(
       await screen.findByRole("button", {
-        name: "Discard summary edits and quit",
+        name: "Discard unsaved edits and quit",
       }),
     ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
@@ -1626,6 +1630,97 @@ describe("desktop foundation", () => {
     await screen.findByText(/Edited summary saved as a new version/);
     expect(screen.queryByRole("textbox", { name: "Edit summary" })).toBeNull();
     expect(api.saveNotes).not.toHaveBeenCalled();
+  });
+
+  const transcribed = {
+    ...sample,
+    segments: [
+      {
+        speaker: "You" as const,
+        timing: { kind: "timed" as const, start_ms: 1000, end_ms: 2000 },
+        text: "Persimon budget",
+      },
+      {
+        speaker: "Others" as const,
+        timing: { kind: "untimed" as const },
+        text: "Agreed",
+      },
+    ],
+    segment_meta: [
+      { id: 11, original_text: null },
+      { id: 12, original_text: "Agred" },
+    ],
+    transcript_versions: [
+      {
+        id: 3,
+        provider: "whisper",
+        model: "small",
+        edited: true,
+        segment_count: 1,
+      },
+    ],
+  };
+
+  it("edits, reverts, and guards transcript segments and shows earlier transcripts", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue(transcribed);
+    vi.mocked(api.editSegment).mockRejectedValueOnce({
+      code: "segment_conflict",
+      message: "This transcript segment changed or no longer exists.",
+    });
+    vi.mocked(api.getTranscriptVersion).mockResolvedValue([
+      {
+        speaker: "You",
+        timing: { kind: "untimed" },
+        text: "Kept earlier words",
+      },
+    ]);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(screen.getByText("(edited)")).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Edit segment at 1.0s" }),
+    );
+    const input = screen.getByRole("textbox", { name: "Edit segment at 1.0s" });
+    await userEvent.clear(input);
+    await userEvent.type(input, "Persimmon budget");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(api.editSegment).toHaveBeenCalledWith(
+      "sample",
+      11,
+      "Persimon budget",
+      "Persimmon budget",
+    );
+    expect(await screen.findByText(/changed or no longer exists/)).toBeTruthy();
+    expect(screen.getByDisplayValue("Persimmon budget")).toBeTruthy();
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    expect(
+      await screen.findByRole("button", {
+        name: "Discard unsaved edits and quit",
+      }),
+    ).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
+    vi.mocked(api.editSegment).mockResolvedValue(undefined);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("textbox", { name: "Edit segment at 1.0s" }),
+      ).toBeNull(),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Revert segment at Untimed" }),
+    );
+    expect(api.editSegment).toHaveBeenLastCalledWith(
+      "sample",
+      12,
+      "Agreed",
+      "Agred",
+    );
+    await userEvent.selectOptions(
+      screen.getByRole("combobox", { name: "Earlier transcripts" }),
+      "3",
+    );
+    expect(api.getTranscriptVersion).toHaveBeenCalledWith("sample", 3);
+    expect(await screen.findByText(/Kept earlier words/)).toBeTruthy();
   });
 
   it("keeps an unsaved summary edit when switching meetings", async () => {

@@ -15,6 +15,7 @@ import {
 import { extractSection, renderMarkdown } from "../lib/markdown";
 import { ActionItems } from "./ActionItems";
 import { SpeakerNamesForm } from "./SpeakerNames";
+import { TranscriptVersions } from "./TranscriptVersions";
 import { formatBytes, sourceLabels } from "../lib/meeting-labels";
 import { formatTimestamp, timestampAtCaret } from "../lib/timestamps";
 
@@ -39,6 +40,13 @@ const templateLabel = (id: string, custom: CustomTemplate[]) =>
 export type Answer = { meetingId: string; question: string; text: string };
 /** An unsaved summary edit: the version it edits and the newest version when editing began. */
 export type SummaryDraft = { baseId: number; latestId: number; text: string };
+/** An unsaved segment edit; `baseText` is the segment text when editing began. */
+export type SegmentDraft = {
+  meetingId: string;
+  segmentId: number;
+  baseText: string;
+  text: string;
+};
 
 export const contentTabs = [
   { id: "notes", label: "My notes" },
@@ -82,6 +90,11 @@ type Props = {
   /** Resolves true once saved; a failure keeps the draft. */
   onSaveSummaryEdit: (draft: SummaryDraft) => Promise<boolean>;
   onSpeakerNames: (meetingId: string, names: SpeakerNames) => void;
+  /** The open segment edit, kept by App across meeting switches. */
+  segmentDraft: SegmentDraft | null;
+  onSegmentDraft: (draft: SegmentDraft | null) => void;
+  /** Resolves true once saved; a failure keeps the draft. */
+  onSaveSegment: (draft: SegmentDraft) => Promise<boolean>;
   /** Replaces the selected meeting's tasks after a backend change. */
   onActionItems: (meetingId: string, items: ActionItem[]) => void;
   onPlanQuestion: (question: string) => Promise<ProcessingPlan | null>;
@@ -927,6 +940,15 @@ export function MeetingWorkspace(props: Props) {
                     ? "Re-transcribe audio"
                     : "Transcribe audio"}
               </button>
+              {hasTranscript && (
+                <span className="muted">
+                  Re-transcribing keeps the current transcript
+                  {selected.segment_meta.some((meta) => meta.original_text)
+                    ? ", including your edits,"
+                    : ""}{" "}
+                  as an earlier transcript.
+                </span>
+              )}
               {!props.speechReady && (
                 <span className="muted">
                   {props.sttMode === "cloud"
@@ -985,7 +1007,8 @@ export function MeetingWorkspace(props: Props) {
                   remotely.
                 </li>
                 <li>
-                  A successful run replaces the generated transcript. Notes and
+                  A successful run replaces the current transcript and keeps it,
+                  including any edits, as an earlier transcript. Notes and
                   original audio are kept.
                 </li>
               </ul>
@@ -1031,6 +1054,12 @@ export function MeetingWorkspace(props: Props) {
               onNames={(names) => props.onSpeakerNames(meeting.id, names)}
             />
           )}
+          <TranscriptVersions
+            key={meeting.id}
+            meetingId={meeting.id}
+            versions={selected.transcript_versions}
+            names={selected.speaker_names}
+          />
           {selected.segments.some(
             (segment) => segment.timing.kind === "untimed",
           ) && (
@@ -1045,6 +1074,14 @@ export function MeetingWorkspace(props: Props) {
               selected.speaker_names,
               segment.speaker,
             );
+            const meta = selected.segment_meta[index];
+            const draft =
+              meta &&
+              props.segmentDraft?.meetingId === meeting.id &&
+              props.segmentDraft.segmentId === meta.id
+                ? props.segmentDraft
+                : null;
+            const editLocked = disabled || job !== null;
             const timing = segment.timing;
             const time =
               timing.kind === "timed"
@@ -1071,7 +1108,80 @@ export function MeetingWorkspace(props: Props) {
                 ) : (
                   <span className="muted">{time}</span>
                 )}{" "}
-                — {segment.text}
+                —{" "}
+                {draft ? (
+                  <span className="segment-edit">
+                    <input
+                      aria-label={`Edit segment at ${time}`}
+                      value={draft.text}
+                      maxLength={20000}
+                      onChange={(event) =>
+                        props.onSegmentDraft({
+                          ...draft,
+                          text: event.target.value,
+                        })
+                      }
+                    />
+                    <button
+                      disabled={editLocked || !draft.text.trim()}
+                      onClick={() => void props.onSaveSegment(draft)}
+                    >
+                      Save
+                    </button>
+                    <button onClick={() => props.onSegmentDraft(null)}>
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <>
+                    {segment.text}
+                    {meta && (
+                      <>
+                        {" "}
+                        {meta.original_text !== null && (
+                          <span
+                            className="muted"
+                            title={`Original: ${meta.original_text}`}
+                          >
+                            (edited)
+                          </span>
+                        )}{" "}
+                        <button
+                          className="seek-button"
+                          aria-label={`Edit segment at ${time}`}
+                          disabled={editLocked || props.segmentDraft !== null}
+                          onClick={() =>
+                            props.onSegmentDraft({
+                              meetingId: meeting.id,
+                              segmentId: meta.id,
+                              baseText: segment.text,
+                              text: segment.text,
+                            })
+                          }
+                        >
+                          Edit
+                        </button>
+                        {meta.original_text !== null && (
+                          <button
+                            className="seek-button"
+                            aria-label={`Revert segment at ${time}`}
+                            disabled={editLocked || props.segmentDraft !== null}
+                            onClick={() =>
+                              void props.onSaveSegment({
+                                meetingId: meeting.id,
+                                segmentId: meta.id,
+                                baseText: segment.text,
+                                text: meta.original_text ?? segment.text,
+                              })
+                            }
+                          >
+                            Revert
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
               </p>
             );
           })}

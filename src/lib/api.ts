@@ -131,6 +131,10 @@ export type MeetingDetail = {
   /** The latest summary is a user edit, not unedited model output. */
   summary_edited: boolean;
   speaker_names: SpeakerNames;
+  /** Aligned by index with `segments`. */
+  segment_meta: SegmentMeta[];
+  /** Earlier transcripts, newest first. */
+  transcript_versions: TranscriptVersion[];
   tracks: Array<{
     kind: string;
     path: string;
@@ -178,6 +182,15 @@ export type Settings = {
   export: ExportOptions;
   summary_instructions: string;
   summary_templates: CustomTemplate[];
+};
+/** `original_text` holds the engine's text once the user edited a segment. */
+export type SegmentMeta = { id: number; original_text: string | null };
+export type TranscriptVersion = {
+  id: number;
+  provider: string | null;
+  model: string | null;
+  edited: boolean;
+  segment_count: number;
 };
 /** Display names for the "You" (microphone) and "Others" (system audio) labels. */
 export type SpeakerNames = { you: string | null; others: string | null };
@@ -490,6 +503,15 @@ export const api = {
   listSummaries: (id: string) =>
     invoke<SummaryVersion[]>("list_summaries", { id }),
   /** Saves an edit of `baseId` as the newest version; refused if `expectedLatestId` is stale. */
+  /** `baseText` is the text the edit started from; a changed segment is refused. */
+  editSegment: (
+    meetingId: string,
+    segmentId: number,
+    baseText: string,
+    text: string,
+  ) => invoke<void>("edit_segment", { meetingId, segmentId, baseText, text }),
+  getTranscriptVersion: (meetingId: string, versionId: number) =>
+    invoke<Segment[]>("get_transcript_version", { meetingId, versionId }),
   /** Empty names clear back to "You"/"Others". */
   saveSpeakerNames: (
     meetingId: string,

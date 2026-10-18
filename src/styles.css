@@ -719,6 +719,16 @@ textarea.notes-editor {
 .summary-version {
   margin: 12px 0 20px;
 }
+.segment-edit {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+.segment-edit input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
 .summary-edit textarea {
   width: 100%;
   min-height: 240px;

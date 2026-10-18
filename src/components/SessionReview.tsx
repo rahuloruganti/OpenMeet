@@ -38,7 +38,7 @@ export function SessionReview({
             ? " Your saved summary instructions will also be sent."
             : ""}
           {plan.meeting_id
-            ? " The new summary becomes current; earlier versions, including your edits, stay in history."
+            ? " The new summary becomes current; earlier versions, including your edits, stay in history. If the transcript is redone, the current one is kept as an earlier transcript."
             : ""}
         </p>
       )}

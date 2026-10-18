@@ -195,6 +195,7 @@ fn accepted_audio_provisional_isolation_and_atomic_final_publication() {
     let unchanged = core.get_meeting(&id).unwrap();
     assert_eq!(unchanged.segments, [old_segment()]);
     assert_eq!(unchanged.transcript_model.as_deref(), Some("earlier-model"));
+    assert!(core.transcript_versions(&id).unwrap().is_empty());
     let workflow = core.processing_workflow(&id).unwrap().unwrap();
     assert_eq!(
         (
@@ -213,6 +214,11 @@ fn accepted_audio_provisional_isolation_and_atomic_final_publication() {
     assert_eq!(detail.segments, final_segments);
     assert_eq!(detail.user_markdown, "Preserved synthetic notes");
     assert_eq!(detail.transcript_model.as_deref(), Some("final-model"));
+    let versions = core.transcript_versions(&id).unwrap();
+    assert_eq!(
+        (versions.len(), versions[0].model.as_deref()),
+        (1, Some("earlier-model"))
+    );
     let workflow = core.processing_workflow(&id).unwrap().unwrap();
     assert_eq!(
         (

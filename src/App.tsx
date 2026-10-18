@@ -26,6 +26,7 @@ import {
   MeetingWorkspace,
   type Answer,
   type ContentTab,
+  type SegmentDraft,
   type SummaryDraft,
 } from "./components/MeetingWorkspace";
 import { RecordingControls } from "./components/RecordingControls";
@@ -122,6 +123,9 @@ export function App() {
   const [summaryDrafts, setSummaryDrafts] = useState<
     Record<string, SummaryDraft>
   >({});
+  const [segmentDraft, setSegmentDraft] = useState<SegmentDraft | null>(null);
+  const unsavedEdits =
+    Object.keys(summaryDrafts).length > 0 || segmentDraft !== null;
   const setSummaryDraft = (id: string, draft: SummaryDraft | null) =>
     setSummaryDrafts((drafts) => {
       const next = { ...drafts };
@@ -1058,6 +1062,23 @@ export function App() {
             });
             return saved;
           }}
+          segmentDraft={segmentDraft}
+          onSegmentDraft={setSegmentDraft}
+          onSaveSegment={async (draft) => {
+            let saved = false;
+            await run(async () => {
+              await api.editSegment(
+                draft.meetingId,
+                draft.segmentId,
+                draft.baseText,
+                draft.text,
+              );
+              saved = true;
+              setSegmentDraft(null);
+              await finishJob(draft.meetingId);
+            });
+            return saved;
+          }}
           onSpeakerNames={(id, names) =>
             setSelected((current) =>
               current?.meeting.id === id
@@ -1144,6 +1165,9 @@ export function App() {
               await writer.current?.flush().catch(() => {});
               await api.deleteMeeting(id);
               setSummaryDraft(id, null);
+              setSegmentDraft((draft) =>
+                draft?.meetingId === id ? null : draft,
+              );
               writer.current?.dispose();
               writer.current = null;
               selectedIdRef.current = null;
@@ -1325,10 +1349,10 @@ export function App() {
               Your notes will be saved first. Any active recording will stop.
               Background processing will be cancelled.
             </p>
-            {Object.keys(summaryDrafts).length > 0 && (
+            {unsavedEdits && (
               <p role="alert">
-                You have an unsaved summary edit. Keep working to save it, or
-                quit to discard it.
+                You have an unsaved summary or transcript edit. Keep working to
+                save it, or quit to discard it.
               </p>
             )}
             <button
@@ -1341,8 +1365,8 @@ export function App() {
                 })
               }
             >
-              {Object.keys(summaryDrafts).length > 0
-                ? "Discard summary edits and quit"
+              {unsavedEdits
+                ? "Discard unsaved edits and quit"
                 : "Save and quit"}
             </button>
             <button

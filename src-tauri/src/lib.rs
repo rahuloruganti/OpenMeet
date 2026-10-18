@@ -17,6 +17,7 @@ mod session_runtime;
 mod session_workflow;
 mod storage;
 mod stt;
+mod transcript_edits;
 
 use domain::*;
 use sha2::{Digest, Sha256};
@@ -986,6 +987,32 @@ async fn generate_summary(
 }
 
 #[tauri::command]
+async fn edit_segment(
+    app: AppHandle,
+    meeting_id: String,
+    segment_id: i64,
+    base_text: String,
+    text: String,
+) -> Result<()> {
+    with_core(app, false, move |core, _| {
+        core.edit_segment(&meeting_id, segment_id, &base_text, &text)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_transcript_version(
+    app: AppHandle,
+    meeting_id: String,
+    version_id: i64,
+) -> Result<Vec<Segment>> {
+    with_core(app, false, move |core, _| {
+        core.transcript_version(&meeting_id, version_id)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_speaker_names(
     app: AppHandle,
     meeting_id: String,
@@ -1525,6 +1552,8 @@ pub fn run() {
             list_summaries,
             save_summary_edit,
             save_speaker_names,
+            edit_segment,
+            get_transcript_version,
             ask_meeting,
             rename_meeting,
             save_export_options,
