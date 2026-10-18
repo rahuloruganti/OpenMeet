@@ -14,6 +14,7 @@ import {
 } from "../lib/api";
 import { extractSection, renderMarkdown } from "../lib/markdown";
 import { ActionItems } from "./ActionItems";
+import { MeetingTagsForm } from "./MeetingTags";
 import { SpeakerNamesForm } from "./SpeakerNames";
 import { TranscriptVersions } from "./TranscriptVersions";
 import { formatBytes, sourceLabels } from "../lib/meeting-labels";
@@ -110,6 +111,7 @@ type Props = {
   onDeleteMeeting: () => void;
   onDeleteAudio: () => void;
   onRename: (title: string) => void;
+  onTags: (meetingId: string, tags: string[]) => void;
   onRecover: () => void;
   /** The selected meeting is the active real recording. */
   live: boolean;
@@ -456,6 +458,13 @@ export function MeetingWorkspace(props: Props) {
           </details>
         </div>
       </div>
+      <MeetingTagsForm
+        key={`${meeting.id}:${meeting.tags.join(",")}`}
+        meetingId={meeting.id}
+        tags={meeting.tags}
+        disabled={disabled}
+        onTags={(tags) => props.onTags(meeting.id, tags)}
+      />
       {deleting && !props.recordingThis && (
         <div
           className="consent-card delete-card"

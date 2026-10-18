@@ -51,7 +51,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/cloud_stt.rs`                               | Frozen bounded WAV preparation, pause-aware chunks, multipart uploads, and timed/untimed parsing.       |
 | `src-tauri/src/export.rs`                                  | Markdown rendering, safe filenames, and non-overwriting publication.                                    |
 | `src-tauri/src/action_items.rs`                            | Editable meeting tasks, validation, and explicit imports from a summary's Action items section.         |
-| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v20.                                                             |
+| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v21.                                                             |
 | `fixtures/`                                                | Fictional test resources, excluded from production creation paths.                                      |
 
 ## State and concurrency
@@ -125,6 +125,7 @@ The Rust `model_library` module owns bounded scans, verified catalog imports, pu
 | `summary_templates`        | Custom summary template names and structure text; IDs are `custom-<uuid>`.            |
 | `transcript_versions`      | Read-only copies of replaced transcripts, including edits, with engine provenance.    |
 | `speaker_names`            | Optional per-meeting display names for the You/Others labels.                         |
+| `meeting_tags`             | User-created tags per meeting, case-insensitive, cascading with the meeting.          |
 | `action_items`             | Tasks with nullable owner/due date, done state, source, and original summary bullet.  |
 | `saved_connections`        | Named nonsecret endpoint/revision and OS-keychain account reference.                  |
 | `provider_assignments`     | Independent task connection/model selection and monotonic revision.                   |

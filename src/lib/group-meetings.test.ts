@@ -10,6 +10,7 @@ const make = (id: string, started_at: string): Meeting => ({
   status: "stopped",
   source: "fixture",
   capture_error: null,
+  tags: [],
 });
 
 describe("groupMeetings", () => {

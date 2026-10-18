@@ -22,7 +22,7 @@ macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. I
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Workspace               | Collapsible meeting library, source labels, notes/summary/transcript tabs, dedicated setup/settings panels, and persistent recording controls.                             |
 | Notes                   | Notes-only entries, rename, Markdown textarea, 400 ms serialized autosave, revision checks, save-before-switch/export/quit, and failed-draft preservation.                 |
-| Search                  | Title filtering and SQLite FTS5 matches across notes, transcript segments, and summaries.                                                                                  |
+| Search                  | Title filtering and SQLite FTS5 matches across notes, transcript segments, and summaries; user tags filter both and export in frontmatter.                                                                                  |
 | Capture                 | Windows selected microphone and output loopback, separate WAVs, timing JSONL, bounded queues, pause/resume/stop, tray controls, level meters, and configurable shortcuts.  |
 | Local transcription     | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
 | Automatic processing    | Reviewed session scopes, bounded live previews, final transcription, optional summary, saved-note acknowledgement, cancellation, and explicit retry.                       |

@@ -1264,6 +1264,18 @@ async fn rename_meeting(app: AppHandle, id: String, title: String) -> Result<Str
 }
 
 #[tauri::command]
+async fn set_meeting_tags(
+    app: AppHandle,
+    meeting_id: String,
+    tags: Vec<String>,
+) -> Result<Vec<String>> {
+    with_core(app, false, move |core, _| {
+        core.set_meeting_tags(&meeting_id, &tags)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<Settings> {
     with_core(app, false, move |core, _| {
         core.save_export_options(&options)
@@ -1556,6 +1568,7 @@ pub fn run() {
             get_transcript_version,
             ask_meeting,
             rename_meeting,
+            set_meeting_tags,
             save_export_options,
             save_summary_instructions,
             save_summary_template,

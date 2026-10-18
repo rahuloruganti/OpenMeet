@@ -110,6 +110,7 @@ export type Meeting = {
   status: "recording" | "paused" | "stopped" | "interrupted";
   source: "simulation" | "fixture" | "desktop" | "note";
   capture_error: string | null;
+  tags: string[];
 };
 export type Segment = {
   speaker: "You" | "Others";
@@ -538,6 +539,8 @@ export const api = {
     invoke<string>("ask_meeting", { id, question, confirmation }),
   renameMeeting: (id: string, title: string) =>
     invoke<string>("rename_meeting", { id, title }),
+  setMeetingTags: (meetingId: string, tags: string[]) =>
+    invoke<string[]>("set_meeting_tags", { meetingId, tags }),
   saveExportOptions: (options: ExportOptions) =>
     invoke<Settings>("save_export_options", { options }),
   recoverAudio: (id: string) => invoke<void>("recover_audio", { id }),

@@ -13,6 +13,8 @@ Notes autosave after 400 ms without another edit. Saves run in order, and the ba
 
 Use the sidebar search to find meeting titles. Queries of at least two characters also search notes, transcript segments, and summaries. Selecting a content match opens the corresponding tab. Settings and setup preserve the mounted note draft.
 
+Add tags in the box under the meeting title (comma-separated, up to 20 per meeting, 40 characters each, case-insensitive) and click **Save tags**. Once any meeting has a tag, the sidebar **Filter by tag** menu limits both the meeting list and content matches to that tag. Tags are listed in the sidebar and in the exported Markdown frontmatter after `meeting`.
+
 The **Meetings** button collapses or opens the sidebar. Use **Tab** to move between controls. When a content tab has focus, **Left**, **Right**, **Home**, and **End** navigate the tabs.
 
 ## Distinguish meeting sources

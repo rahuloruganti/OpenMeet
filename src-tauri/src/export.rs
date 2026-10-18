@@ -67,8 +67,14 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
             output.push_str(&format!("transcript_model: {}\n", quote(model)));
         }
     }
+    let user_tags: String = detail
+        .meeting
+        .tags
+        .iter()
+        .map(|tag| format!(", {}", quote(tag)))
+        .collect();
     output.push_str(&format!(
-        "tags: [meeting]\n---\n\n> {}\n\n",
+        "tags: [meeting{user_tags}]\n---\n\n> {}\n\n",
         banner(&detail.meeting.source)
     ));
     if options.summary {
@@ -311,6 +317,18 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM speaker_names", [], |row| row.get(0))
             .unwrap();
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn user_tags_follow_meeting_in_frontmatter_and_are_quoted() {
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional tagged export").unwrap();
+        let plain = render(&core.get_meeting(&id).unwrap(), &ALL);
+        assert!(plain.contains("tags: [meeting]\n---"));
+        core.set_meeting_tags(&id, &["Client".into(), "Q4 \"plan\"".into()])
+            .unwrap();
+        let tagged = render(&core.get_meeting(&id).unwrap(), &ALL);
+        assert!(tagged.contains("tags: [meeting, \"Client\", \"Q4 \\\"plan\\\"\"]\n---"));
     }
 
     #[test]

@@ -64,6 +64,7 @@ pub struct Meeting {
     pub status: String,
     pub source: String,
     pub capture_error: Option<String>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

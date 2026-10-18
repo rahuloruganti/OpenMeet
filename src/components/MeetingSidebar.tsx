@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Meeting, SearchHit } from "../lib/api";
 import { groupMeetings } from "../lib/group-meetings";
 import { formatBytes, sourceLabels } from "../lib/meeting-labels";
@@ -31,13 +32,33 @@ type Props = {
 export function MeetingSidebar(props: Props) {
   const { meetings, search, selectedId, disabled } = props;
   const needle = search.trim().toLocaleLowerCase();
-  const visible = meetings.filter((meeting) =>
-    meeting.title.toLocaleLowerCase().includes(needle),
+  const [tag, setTag] = useState("");
+  // Tags match case-insensitively, so list each spelling-insensitive tag once.
+  const tagChoices = [
+    ...new Map(
+      meetings.flatMap((meeting) =>
+        meeting.tags.map((name) => [name.toLocaleLowerCase(), name] as const),
+      ),
+    ).values(),
+  ].sort((a, b) => a.localeCompare(b));
+  // A tag that no meeting has any more stops filtering instead of hiding everything.
+  const active =
+    tagChoices.find(
+      (name) => name.toLocaleLowerCase() === tag.toLocaleLowerCase(),
+    ) ?? "";
+  const tagged = (meeting: Meeting) =>
+    active === "" ||
+    meeting.tags.some(
+      (name) => name.toLocaleLowerCase() === active.toLocaleLowerCase(),
+    );
+  const visible = meetings.filter(
+    (meeting) =>
+      tagged(meeting) && meeting.title.toLocaleLowerCase().includes(needle),
   );
   const titles = new Map(
-    meetings.map((meeting) => [meeting.id, meeting.title]),
+    meetings.filter(tagged).map((meeting) => [meeting.id, meeting.title]),
   );
-  // Title matches are already in the instant list above; skip hits for meetings not loaded yet.
+  // Title matches are already in the instant list above; skip hits for meetings not loaded or filtered out.
   const matches = props.hits.filter(
     (hit) => hit.kind !== "title" && titles.has(hit.meeting_id),
   );
@@ -89,6 +110,20 @@ export function MeetingSidebar(props: Props) {
             placeholder="Search notes & meetings…"
           />
         </label>
+        {tagChoices.length > 0 && (
+          <select
+            aria-label="Filter by tag"
+            value={active}
+            onChange={(event) => setTag(event.target.value)}
+          >
+            <option value="">All tags</option>
+            {tagChoices.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       <h2 className="sidebar-section-title">Recent meetings</h2>
       <div className="meeting-scroll">
@@ -115,6 +150,8 @@ export function MeetingSidebar(props: Props) {
                         {meeting.status === "stopped"
                           ? ""
                           : ` · ${meeting.status}`}
+                        {meeting.tags.length > 0 &&
+                          ` · ${meeting.tags.join(", ")}`}
                       </span>
                       <time dateTime={meeting.started_at}>
                         {new Date(meeting.started_at).toLocaleDateString(

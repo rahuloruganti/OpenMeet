@@ -1079,6 +1079,15 @@ export function App() {
             });
             return saved;
           }}
+          onTags={(id, tags) => {
+            // Patch only the tags so an unsaved notes draft is untouched; the list needs a fresh read.
+            setSelected((current) =>
+              current?.meeting.id === id
+                ? { ...current, meeting: { ...current.meeting, tags } }
+                : current,
+            );
+            void refreshList().catch(() => undefined);
+          }}
           onSpeakerNames={(id, names) =>
             setSelected((current) =>
               current?.meeting.id === id

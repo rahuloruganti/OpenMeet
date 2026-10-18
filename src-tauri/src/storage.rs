@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 20;
+const LATEST_SCHEMA: i64 = 21;
+const MAX_TAGS: usize = 20;
+const MAX_TAG_CHARS: usize = 40;
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -116,6 +118,11 @@ impl Core {
             (
                 20,
                 include_str!("../migrations/020_summary_freshness.sql"),
+                false,
+            ),
+            (
+                21,
+                include_str!("../migrations/021_meeting_tags.sql"),
                 false,
             ),
         ];
@@ -491,15 +498,31 @@ impl Core {
 
     pub fn list_meetings(&self) -> Result<Vec<Meeting>> {
         let mut query = self.db.prepare("SELECT id, title, started_at, ended_at, status, source, capture_error FROM meetings ORDER BY started_at DESC, id DESC")?;
-        let rows = query.query_map([], meeting_row)?;
-        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+        let mut meetings = query
+            .query_map([], meeting_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut tags = self
+            .db
+            .prepare("SELECT meeting_id, tag FROM meeting_tags ORDER BY tag")?;
+        let mut by_meeting = std::collections::HashMap::<String, Vec<String>>::new();
+        for row in tags.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })? {
+            let (meeting_id, tag) = row?;
+            by_meeting.entry(meeting_id).or_default().push(tag);
+        }
+        for meeting in &mut meetings {
+            meeting.tags = by_meeting.remove(&meeting.id).unwrap_or_default();
+        }
+        Ok(meetings)
     }
 
     pub fn get_meeting(&self, id: &str) -> Result<MeetingDetail> {
-        let meeting = self.db.query_row(
+        let mut meeting = self.db.query_row(
             "SELECT id, title, started_at, ended_at, status, source, capture_error FROM meetings WHERE id = ?1",
             [id], meeting_row,
         ).optional()?.ok_or_else(|| AppError::new("not_found", "Meeting not found."))?;
+        meeting.tags = self.meeting_tags(id)?;
         let (user_markdown, notes_revision) = self.db.query_row(
             "SELECT user_markdown, revision FROM notes WHERE meeting_id = ?1",
             [id],
@@ -1168,6 +1191,60 @@ impl Core {
         Ok(title.to_string())
     }
 
+    fn meeting_tags(&self, id: &str) -> Result<Vec<String>> {
+        let mut query = self
+            .db
+            .prepare("SELECT tag FROM meeting_tags WHERE meeting_id = ?1 ORDER BY tag")?;
+        let tags = query
+            .query_map([id], |row| row.get(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        Ok(tags)
+    }
+
+    /// Replaces a meeting's tags with the validated, case-insensitively deduplicated list and returns it sorted.
+    pub fn set_meeting_tags(&mut self, id: &str, tags: &[String]) -> Result<Vec<String>> {
+        let mut clean: Vec<String> = Vec::new();
+        for tag in tags {
+            let tag = tag.trim();
+            if tag.is_empty() {
+                continue;
+            }
+            if tag.chars().count() > MAX_TAG_CHARS || tag.chars().any(char::is_control) {
+                return Err(AppError::new(
+                    "meeting_tag",
+                    "Use tags of 1 to 40 characters on one line.",
+                ));
+            }
+            if !clean.iter().any(|t| t.to_lowercase() == tag.to_lowercase()) {
+                clean.push(tag.to_string());
+            }
+        }
+        if clean.len() > MAX_TAGS {
+            return Err(AppError::new(
+                "meeting_tag",
+                "Use at most 20 tags per meeting.",
+            ));
+        }
+        let tx = self.db.transaction()?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1)",
+            [id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(AppError::new("not_found", "Meeting not found."));
+        }
+        tx.execute("DELETE FROM meeting_tags WHERE meeting_id = ?1", [id])?;
+        for tag in &clean {
+            tx.execute(
+                "INSERT INTO meeting_tags (meeting_id, tag) VALUES (?1, ?2)",
+                params![id, tag],
+            )?;
+        }
+        tx.commit()?;
+        self.meeting_tags(id)
+    }
+
     pub fn save_export_options(&mut self, options: &ExportOptions) -> Result<Settings> {
         let filename = match options.filename {
             FilenamePattern::Title => "title",
@@ -1425,6 +1502,7 @@ fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
         status: row.get(4)?,
         source: row.get(5)?,
         capture_error: row.get(6)?,
+        tags: Vec::new(),
     })
 }
 
@@ -3308,5 +3386,105 @@ mod tests {
         assert_eq!(settings.stt_model, "large-v3-turbo");
         assert_eq!(settings.pause_shortcut, "Alt+P");
         assert_eq!(settings.stop_shortcut.as_deref(), Some("Alt+S"));
+    }
+
+    #[test]
+    fn meeting_tags_validate_dedupe_persist_and_cascade() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        let id = core.create_note("Fictional tagged meeting").unwrap();
+        let other = core.create_note("Fictional untagged meeting").unwrap();
+        let strings = |tags: &[&str]| tags.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let long = "x".repeat(41);
+        let many: Vec<String> = (0..21).map(|n| format!("tag{n}")).collect();
+        for bad in [
+            strings(&[long.as_str()]),
+            strings(&["line\nbreak"]),
+            strings(&["tab\there"]),
+            many,
+        ] {
+            assert_eq!(
+                core.set_meeting_tags(&id, &bad).unwrap_err().code,
+                "meeting_tag"
+            );
+        }
+        assert_eq!(
+            core.set_meeting_tags("missing", &strings(&["a"]))
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        // Empty entries drop out, case-insensitive duplicates keep the first spelling.
+        let stored = core
+            .set_meeting_tags(&id, &strings(&[" Q4 ", "", "client", "CLIENT", "Client"]))
+            .unwrap();
+        assert_eq!(stored, strings(&["client", "Q4"]));
+        assert_eq!(core.get_meeting(&id).unwrap().meeting.tags, stored);
+        let listed = core.list_meetings().unwrap();
+        assert_eq!(listed.iter().find(|m| m.id == id).unwrap().tags, stored);
+        assert!(listed
+            .iter()
+            .find(|m| m.id == other)
+            .unwrap()
+            .tags
+            .is_empty());
+        // A rejected replacement leaves the earlier tags intact.
+        core.set_meeting_tags(&id, &strings(&[long.as_str()]))
+            .unwrap_err();
+        drop(core);
+        let mut core = Core::open(&path).unwrap();
+        assert_eq!(core.get_meeting(&id).unwrap().meeting.tags, stored);
+        assert!(core.set_meeting_tags(&id, &[]).unwrap().is_empty());
+        core.set_meeting_tags(&id, &strings(&["Again"])).unwrap();
+        core.delete_meeting(&id).unwrap();
+        let rows: i64 = core
+            .db
+            .query_row("SELECT COUNT(*) FROM meeting_tags", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn upgrade_from_populated_v20_adds_empty_tags_and_keeps_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = test_v11_database(&path);
+            for script in [
+                include_str!("../migrations/012_saved_connections.sql"),
+                include_str!("../migrations/013_session_processing.sql"),
+                include_str!("../migrations/014_processing_workflow.sql"),
+                include_str!("../migrations/015_summary_templates.sql"),
+                include_str!("../migrations/016_action_items.sql"),
+                include_str!("../migrations/017_summary_edits.sql"),
+                include_str!("../migrations/018_speaker_names.sql"),
+                include_str!("../migrations/019_transcript_edits.sql"),
+                include_str!("../migrations/020_summary_freshness.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("INSERT INTO meetings(id,title,started_at,source,status) VALUES ('existing','Fictional upgrade','test','desktop','stopped');
+                INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('existing','Persimmon notes kept',3);
+                INSERT INTO summaries(id,meeting_id,template_hash,model,provider,markdown) VALUES (5,'existing','general-v1','m','p','Kept summary');").unwrap();
+        }
+        for _ in 0..2 {
+            let core = Core::open(&path).unwrap();
+            let detail = core.get_meeting("existing").unwrap();
+            assert_eq!(detail.user_markdown, "Persimmon notes kept");
+            assert_eq!(detail.summary.as_deref(), Some("Kept summary"));
+            assert!(detail.meeting.tags.is_empty());
+            assert_eq!(
+                core.search_meetings("Persimmon").unwrap()[0].meeting_id,
+                "existing"
+            );
+            let violations: i64 = core
+                .db
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(violations, 0);
+        }
     }
 }

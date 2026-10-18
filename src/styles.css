@@ -1298,3 +1298,14 @@ textarea.notes-editor {
   display: grid;
   gap: 12px;
 }
+.meeting-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 880px;
+  margin: 8px auto 0;
+}
+.meeting-tags input {
+  flex: 1 1 220px;
+}

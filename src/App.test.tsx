@@ -98,6 +98,7 @@ const sample: MeetingDetail = {
     status: "stopped",
     source: "fixture",
     capture_error: null,
+    tags: [],
   },
   user_markdown: "Original notes",
   notes_revision: 0,
