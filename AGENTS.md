@@ -99,7 +99,7 @@ Capture qualification still requires real-machine checks: distinct tracks, audib
 ## Repository and handoff
 
 - Preserve unrelated user changes. Never force-push, rewrite history, or change repository visibility.
-- Commit work directly to `main` and push it. Do not create feature branches or open pull requests.
+- Commit work directly to `main` and push it. Do not create feature branches, pull requests, or GitHub issues unless the user asks.
 - Keep build output, `node_modules`, local databases/audio, credentials, and environment files out of commits. Keep both dependency lockfiles tracked.
 - Track new dependency/model licenses in `THIRD_PARTY_LICENSES.md`; do not treat the initial inventory as a completed release audit.
 - Update affected documentation when behavior changes, especially consent/privacy wording and simulation-only claims. Append significant user requests and brief outcomes to `log.md` without secrets or invented timestamps.
