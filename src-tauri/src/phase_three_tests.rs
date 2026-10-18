@@ -519,24 +519,24 @@ fn restart_interrupts_unfinished_work_and_preserves_saved_content() {
         .is_err());
 }
 
-#[test]
-fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive_restart() {
-    use crate::{cloud_stt, domain::SttMode, llm, providers::Connection};
-    use sha2::{Digest, Sha256};
+type Observed = std::sync::Arc<std::sync::Mutex<(Vec<i16>, Vec<u8>)>>;
+
+/// Loopback speech/chat engine that serves exactly `requests` calls, routed by path, and
+/// records uploaded PCM markers and the last chat body.
+fn loopback_engines(requests: usize) -> (String, Observed, std::thread::JoinHandle<()>) {
     use std::{
         io::{BufRead, BufReader, Cursor, Read, Write},
         net::TcpListener,
-        sync::{Arc, Mutex},
         thread,
         time::{Duration, Instant},
     };
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
-    let observed = Arc::new(Mutex::new((Vec::new(), Vec::new())));
+    let observed = Observed::default();
     let server_observed = observed.clone();
     let server = thread::spawn(move || {
-        for index in 0..5 {
+        for index in 0..requests {
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut stream = loop {
                 match listener.accept() {
@@ -575,8 +575,7 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
             assert!(length < 1_048_576);
             let mut body = vec![0; length];
             reader.read_exact(&mut body).unwrap();
-            let reply = if index < 4 {
-                assert!(headers.starts_with("post /v1/audio/transcriptions "));
+            let reply = if headers.starts_with("post /v1/audio/transcriptions ") {
                 let offset = body.windows(4).position(|window| window == b"RIFF").unwrap();
                 let mut wav = hound::WavReader::new(Cursor::new(&body[offset..])).unwrap();
                 assert_eq!((wav.spec().sample_rate, wav.spec().channels, wav.spec().bits_per_sample), (16000, 1, 16));
@@ -605,13 +604,13 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
             write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",reply.len()).unwrap();
         }
     });
-    let folder = tempfile::tempdir().unwrap();
-    let database = folder.path().join("openmeet.sqlite");
-    let (tracks, chunks) = audio::synthetic_pause_recording_for_test(&folder.path().join("audio"));
-    let expected_segments = segments_from_chunks(&chunks);
-    let mut core = Core::open(&database).unwrap();
+    (base, observed, server)
+}
+
+/// Assigns the loopback engine to cloud speech and text, then reviews live plus final with a summary.
+fn loopback_plan(core: &mut Core, base: &str) -> Plan {
     let settings = core
-        .save_api_connection(None, "Synthetic loopback engines", &base, None, None)
+        .save_api_connection(None, "Synthetic loopback engines", base, None, None)
         .unwrap();
     let connection_id = settings.saved_connections[0].id.clone();
     for (role, model) in [
@@ -628,13 +627,25 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
         )
         .unwrap();
     }
-    core.save_stt_mode(SttMode::Cloud).unwrap();
-    let plan = core
-        .prepare_session_processing(Request::Final {
-            live: true,
-            summary: Some(Template::General),
-        })
-        .unwrap();
+    core.save_stt_mode(crate::domain::SttMode::Cloud).unwrap();
+    core.prepare_session_processing(Request::Final {
+        live: true,
+        summary: Some(Template::General),
+    })
+    .unwrap()
+}
+
+#[test]
+fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive_restart() {
+    use crate::{cloud_stt, llm, providers::Connection};
+    use sha2::{Digest, Sha256};
+    let (base, observed, server) = loopback_engines(5);
+    let folder = tempfile::tempdir().unwrap();
+    let database = folder.path().join("openmeet.sqlite");
+    let (tracks, chunks) = audio::synthetic_pause_recording_for_test(&folder.path().join("audio"));
+    let expected_segments = segments_from_chunks(&chunks);
+    let mut core = Core::open(&database).unwrap();
+    let plan = loopback_plan(&mut core, &base);
     let id = attach(&mut core, &plan, &tracks);
     for chunk in &chunks {
         core.publish_provisional(
@@ -777,4 +788,212 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
     assert_eq!(detail.segments, expected_segments);
     assert_eq!(detail.user_markdown, "Frozen reviewed notes");
     assert_eq!(detail.summary.as_deref(), Some(summary.as_str()));
+}
+
+#[test]
+fn cancel_during_final_upload_survives_restart_and_reviewed_retry_completes() {
+    use crate::{cloud_stt, llm, providers::Connection};
+    // One upload before cancellation, then four uploads and one summary after retry.
+    let (base, observed, server) = loopback_engines(6);
+    let folder = tempfile::tempdir().unwrap();
+    let database = folder.path().join("openmeet.sqlite");
+    let (tracks, chunks) = audio::synthetic_pause_recording_for_test(&folder.path().join("audio"));
+    let expected_segments = segments_from_chunks(&chunks);
+    let mut core = Core::open(&database).unwrap();
+    let plan = loopback_plan(&mut core, &base);
+    let id = attach(&mut core, &plan, &tracks);
+    core.replace_transcript(&id, &[old_segment()], "whisper", "earlier-model")
+        .unwrap();
+    for chunk in &chunks {
+        core.publish_provisional(
+            &id,
+            &plan.id,
+            &chunk.kind,
+            chunk.chunk_id,
+            &segments_from_chunks(std::slice::from_ref(chunk)),
+        )
+        .unwrap();
+    }
+    let revision = core.save_notes(&id, "Frozen reviewed notes", 0).unwrap();
+    stop(&mut core, &id);
+    let barrier = core
+        .processing_workflow(&id)
+        .unwrap()
+        .unwrap()
+        .notes_barrier
+        .unwrap();
+    core.acknowledge_processing_notes(&id, &plan.id, &barrier, revision)
+        .unwrap();
+    core.processing_stage(&id, &plan.id, Stage::FinalizingAudio, Stage::Transcribing)
+        .unwrap();
+    let audio_plan = cloud_stt::plan(&tracks).unwrap();
+    let owner = core.processing_owner.clone();
+    let guard = owner.begin_session(&id, &plan.id).unwrap();
+    let mut reserved = 0;
+    // The user cancels while the second upload is about to be sent.
+    let result = cloud_stt::transcribe(
+        &Connection::for_test(&base, "synthetic-speech"),
+        &tracks,
+        "auto",
+        "",
+        &audio_plan,
+        guard.cancel(),
+        |_, _| {},
+        |fingerprint, bytes| {
+            if reserved == 1 {
+                let revision = core.session_processing(&id)?.unwrap().revision;
+                owner.cancel_session_with(&id, || {
+                    let snapshot = core.cancel_session_processing(&id, revision)?;
+                    Ok(((), snapshot.plan.id))
+                })?;
+            }
+            reserved += 1;
+            core.reserve_processing_request(
+                &id,
+                &plan.id,
+                Stage::Transcribing,
+                fingerprint,
+                bytes,
+                0,
+            )
+        },
+    );
+    assert!(result.is_err());
+    assert!(guard.cancel().load(std::sync::atomic::Ordering::SeqCst));
+    assert!(guard
+        .finish(|| core.publish_final(&id, &plan.id, &expected_segments, &base, "late"))
+        .is_err());
+    drop(guard);
+    assert_eq!(observed.lock().unwrap().0, [8192]);
+    let workflow = core.processing_workflow(&id).unwrap().unwrap();
+    assert_eq!(
+        (
+            workflow.stage,
+            workflow.requests_used,
+            workflow.transcript_done
+        ),
+        (Stage::Cancelled, 1, false)
+    );
+    let detail = core.get_meeting(&id).unwrap();
+    assert_eq!(detail.segments, [old_segment()]);
+    assert_eq!(detail.user_markdown, "Frozen reviewed notes");
+
+    // Restart keeps the cancellation, replays nothing, and keeps audio and earlier output.
+    drop(core);
+    let mut core = Core::open(&database).unwrap();
+    let snapshot = core.session_processing(&id).unwrap().unwrap();
+    assert_eq!(snapshot.state, State::Cancelled);
+    let workflow = snapshot.workflow.unwrap();
+    assert_eq!(
+        (workflow.stage, workflow.requests_used),
+        (Stage::Cancelled, 1)
+    );
+    let detail = core.get_meeting(&id).unwrap();
+    assert_eq!(detail.segments, [old_segment()]);
+    assert!(detail
+        .tracks
+        .iter()
+        .all(|track| Path::new(&track.path).exists()));
+    assert_eq!(observed.lock().unwrap().0.len(), 1);
+
+    // Another billable attempt needs a fresh review and a new run identity.
+    let retry = core.prepare_session_retry(&id).unwrap();
+    let workflow = core
+        .retry_session_processing(&id, &retry.fingerprint)
+        .unwrap()
+        .workflow
+        .unwrap();
+    assert_ne!(workflow.run_id, plan.id);
+    assert_eq!(
+        (workflow.attempt, workflow.stage, workflow.requests_used),
+        (2, Stage::FinalizingAudio, 0)
+    );
+    assert!(workflow.provisional.is_empty());
+    assert_eq!(
+        core.reserve_processing_request(&id, &plan.id, Stage::Transcribing, "old-run", 0, 0)
+            .unwrap_err()
+            .code,
+        "processing_cancelled"
+    );
+    let run = workflow.run_id.clone();
+    core.acknowledge_processing_notes(
+        &id,
+        &run,
+        workflow.notes_barrier.as_deref().unwrap(),
+        revision,
+    )
+    .unwrap();
+    core.processing_stage(&id, &run, Stage::FinalizingAudio, Stage::Transcribing)
+        .unwrap();
+    let guard = core.processing_owner.begin_session(&id, &run).unwrap();
+    let segments = cloud_stt::transcribe(
+        &Connection::for_test(&base, "synthetic-speech"),
+        &tracks,
+        "auto",
+        "",
+        &audio_plan,
+        guard.cancel(),
+        |_, _| {},
+        |fingerprint, bytes| {
+            core.reserve_processing_request(&id, &run, Stage::Transcribing, fingerprint, bytes, 0)
+        },
+    )
+    .unwrap();
+    assert_eq!(segments, expected_segments);
+    guard
+        .finish(|| core.publish_final(&id, &run, &segments, &base, "synthetic-speech"))
+        .unwrap();
+    drop(guard);
+    core.processing_stage(&id, &run, Stage::AwaitingNotes, Stage::Summarizing)
+        .unwrap();
+    let (notes, frozen_revision) = core.frozen_processing_notes(&id, &run).unwrap();
+    let lines = crate::transcript_lines(&core.get_meeting(&id).unwrap().segments);
+    let guard = core.processing_owner.begin_session(&id, &run).unwrap();
+    let summary = llm::summarize(
+        &Connection::for_test(&base, "synthetic-text"),
+        &crate::llm::summary_system(crate::llm::Structure::Builtin(Template::General), ""),
+        &notes,
+        &lines,
+        guard.cancel(),
+        |body| {
+            core.reserve_processing_request(&id, &run, Stage::Summarizing, "summary", 0, body.len())
+        },
+    )
+    .unwrap();
+    guard
+        .finish(|| {
+            core.publish_session_summary(
+                &id,
+                &run,
+                frozen_revision,
+                &segments,
+                &base,
+                "synthetic-text",
+                &summary,
+                Template::General.id(),
+            )
+        })
+        .unwrap();
+    drop(guard);
+    server.join().unwrap();
+    assert_eq!(
+        observed.lock().unwrap().0,
+        [8192, 8192, 16384, -8192, -16384]
+    );
+    let workflow = core.processing_workflow(&id).unwrap().unwrap();
+    assert_eq!(
+        (workflow.stage, workflow.attempt, workflow.requests_used),
+        (Stage::Completed, 2, 5)
+    );
+    let detail = core.get_meeting(&id).unwrap();
+    assert_eq!(detail.segments, expected_segments);
+    assert_eq!(detail.summary.as_deref(), Some(summary.as_str()));
+    let markdown = std::fs::read_to_string(
+        export::write_snapshot(&detail, folder.path(), &export_options())
+            .unwrap()
+            .path,
+    )
+    .unwrap();
+    assert!(markdown.contains("Microphone after pause"));
+    assert!(!markdown.contains("EarlierFinalOutput"));
 }
