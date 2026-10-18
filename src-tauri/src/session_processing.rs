@@ -39,6 +39,10 @@ pub enum Destination {
 pub struct SummaryScope {
     pub destination: Destination,
     pub template: Template,
+    /// Saved personal instructions frozen at review. Omitted when empty so plans sealed
+    /// before this field existed keep their fingerprints.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub instructions: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -172,6 +176,7 @@ impl Core {
                         Ok(SummaryScope {
                             destination: api_destination(&settings, ProviderRole::Llm)?,
                             template,
+                            instructions: settings.summary_instructions.clone(),
                         })
                     })
                     .transpose()?,
@@ -816,6 +821,85 @@ mod tests {
                 ("Retain legacy notes", 9)
             );
             assert!(core.processing_owner.is_idle());
+        }
+    }
+
+    #[test]
+    fn summary_scope_freezes_instructions_and_old_plans_keep_fingerprints() {
+        let mut core = core();
+        cloud_settings(&mut core);
+        let plan = core
+            .prepare_session_processing(Request::Final {
+                live: false,
+                summary: Some(Template::General),
+            })
+            .unwrap();
+        let json = serde_json::to_value(&plan).unwrap();
+        assert!(json["scope"]["summary"].get("instructions").is_none());
+        let mut resealed: Plan = serde_json::from_value(json).unwrap();
+        seal(&mut resealed).unwrap();
+        assert_eq!(resealed.fingerprint, plan.fingerprint);
+        core.save_summary_instructions("Use British English.")
+            .unwrap();
+        let plan = core
+            .prepare_session_processing(Request::Final {
+                live: false,
+                summary: Some(Template::General),
+            })
+            .unwrap();
+        let Scope::Final {
+            summary: Some(summary),
+            ..
+        } = &plan.scope
+        else {
+            panic!("summary scope expected");
+        };
+        assert_eq!(summary.instructions, "Use British English.");
+        core.save_summary_instructions("Changed later").unwrap();
+        let snapshot_json = serde_json::to_string(&plan).unwrap();
+        assert!(snapshot_json.contains("Use British English."));
+    }
+
+    #[test]
+    fn upgrade_from_populated_v14_adds_empty_templates_and_keeps_summaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        {
+            let db = crate::storage::test_v11_database(&path);
+            for script in [
+                include_str!("../migrations/012_saved_connections.sql"),
+                include_str!("../migrations/013_session_processing.sql"),
+                include_str!("../migrations/014_processing_workflow.sql"),
+            ] {
+                db.execute_batch(script).unwrap();
+            }
+            db.execute_batch("INSERT INTO meetings(id,title,started_at,source,status) VALUES ('existing','Fictional upgrade','test','fixture','stopped');
+                INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('existing','Preserve the original notes',7);
+                INSERT INTO segments(id,meeting_id,speaker,start_ms,end_ms,text,source,pass) VALUES (42,'existing','You',0,1000,'Persimmon original','fixture','final');
+                INSERT INTO summaries(meeting_id,template_hash,model,provider,markdown) VALUES ('existing','standup-v1','hand-written','fixture','Original summary');").unwrap();
+        }
+        for _ in 0..2 {
+            let core = Core::open(&path).unwrap();
+            let detail = core.get_meeting("existing").unwrap();
+            assert_eq!(
+                (detail.user_markdown.as_str(), detail.notes_revision),
+                ("Preserve the original notes", 7)
+            );
+            assert_eq!(detail.summary_template.as_deref(), Some("standup-v1"));
+            assert_eq!(
+                core.search_meetings("Persimmon").unwrap()[0].meeting_id,
+                "existing"
+            );
+            let settings = core.settings().unwrap();
+            assert_eq!(settings.summary_instructions, "");
+            assert!(settings.summary_templates.is_empty());
+            let violations: i64 = core
+                .db
+                .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(violations, 0);
         }
     }
 

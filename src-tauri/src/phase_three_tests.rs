@@ -714,7 +714,7 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
     let guard = core.processing_owner.begin(&id).unwrap();
     let summary = llm::summarize(
         &Connection::for_test(&base, "synthetic-text"),
-        Template::General,
+        &crate::llm::summary_system(crate::llm::Structure::Builtin(Template::General), ""),
         &notes,
         &lines,
         guard.cancel(),

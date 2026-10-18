@@ -9,6 +9,7 @@ import type {
 } from "../lib/api";
 import { ModelLibrary } from "./ModelLibrary";
 import { ProviderSettings } from "./ProviderSettings";
+import { SummaryTemplates } from "./SummaryTemplates";
 import type { ProcessingChoice } from "../lib/processing";
 
 /** Engines other apps (such as Handy) offer that OpenMeet cannot run yet. Listed, never selectable. */
@@ -69,11 +70,14 @@ type Props = {
   onImported: () => Promise<void>;
   processing: ProcessingChoice;
   onProcessing: (choice: ProcessingChoice) => void;
+  initialTab?: "cloud" | "local" | "general";
 };
 
 export function SettingsPanel(props: Props) {
   const { settings, disabled } = props;
-  const [tab, setTab] = useState<"cloud" | "local" | "general">("local");
+  const [tab, setTab] = useState<"cloud" | "local" | "general">(
+    props.initialTab ?? "local",
+  );
   // Catalog models a scan found on disk but that are not imported yet.
   const [found, setFound] = useState<string[]>([]);
   return (
@@ -385,6 +389,11 @@ export function SettingsPanel(props: Props) {
             confirmation before it starts.
           </p>
         </section>
+        <SummaryTemplates
+          settings={settings}
+          disabled={disabled}
+          onSettings={props.onSettings}
+        />
         <section
           className="settings-section"
           aria-label="Storage and export settings"

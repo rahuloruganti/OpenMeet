@@ -1097,6 +1097,41 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_hub_and_size_mismatch_never_publish() {
+        let _serial = TEST_OPERATIONS.lock().unwrap();
+        let bytes = b"GGUFsynthetic";
+        let metadata = metadata_for(bytes);
+        let proposed = parse_files(
+            serde_json::from_value(metadata.clone()).unwrap(),
+            "team/model",
+            None,
+        )
+        .unwrap()
+        .remove(0);
+        let client = providers::client(Duration::from_secs(2)).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        // Bind then drop the listener so the port refuses connections.
+        let closed = format!(
+            "http://{}",
+            TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+        );
+        assert!(search_at(&closed, "fixture").is_err());
+        assert!(download_at(root.path(), proposed.clone(), |_| {}, &closed, &client).is_err());
+        let (base, task) = mock_hub(vec![
+            serde_json::to_vec(&metadata).unwrap(),
+            b"GGUFsynthetic-longer".to_vec(),
+        ]);
+        let error = download_at(root.path(), proposed, |_| {}, &base, &client).unwrap_err();
+        assert!(error.message.contains("size differs"));
+        task.join().unwrap();
+        assert!(scan(vec![root.path().into()]).models.is_empty());
+        assert!(ArtifactOperation::begin().is_ok());
+    }
+
+    #[test]
     fn stalled_body_releases_the_operation_after_cancel_and_read_timeout() {
         let _serial = TEST_OPERATIONS.lock().unwrap();
         let bytes = b"GGUFsynthetic";

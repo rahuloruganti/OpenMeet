@@ -160,6 +160,20 @@ fn parse_shortcuts(pause: &str, stop: Option<&str>) -> Result<(Shortcut, Option<
     Ok((pause, stop))
 }
 
+/// Names every shortcut that failed to register, since another app may own each chord.
+fn shortcut_warning(pause: Option<&str>, stop: Option<&str>) -> Option<String> {
+    let failed: Vec<String> = [("Pause", pause), ("Stop", stop)]
+        .into_iter()
+        .filter_map(|(name, chord)| chord.map(|chord| format!("{name} ({chord})")))
+        .collect();
+    (!failed.is_empty()).then(|| {
+        format!(
+            "Shortcut unavailable: {}. Another app may be using it. Use the on-screen controls and choose another shortcut in Settings.",
+            failed.join(" and ")
+        )
+    })
+}
+
 #[tauri::command]
 async fn list_meetings(app: AppHandle) -> Result<Vec<Meeting>> {
     with_core(app, false, |core, _| core.list_meetings()).await
@@ -868,19 +882,26 @@ fn text_plan(
     )
 }
 
+/// The full system prompt is part of the consent fingerprint, so editing the template or
+/// saved instructions after review requires a new confirmation.
+async fn summary_prompt(app: &AppHandle, template: &str) -> Result<String> {
+    let template = template.to_string();
+    with_core(app.clone(), false, move |core, _| {
+        llm::resolve_summary(&core.settings()?, &template)
+    })
+    .await
+}
+
 #[tauri::command]
-async fn plan_summary(
-    app: AppHandle,
-    id: String,
-    template: llm::Template,
-) -> Result<ProcessingPlan> {
+async fn plan_summary(app: AppHandle, id: String, template: String) -> Result<ProcessingPlan> {
+    let system = summary_prompt(&app, &template).await?;
     let (detail, config, lines) = text_snapshot(&app, &id).await?;
     text_plan(
         &config,
         &detail,
         &lines,
         "summary",
-        template.id(),
+        &system,
         llm::summary_requests(&detail.user_markdown, &lines)?,
     )
 }
@@ -907,16 +928,17 @@ fn manual_text_check(
 async fn generate_summary(
     app: AppHandle,
     id: String,
-    template: llm::Template,
+    template: String,
     confirmation: String,
 ) -> Result<()> {
+    let system = summary_prompt(&app, &template).await?;
     let (detail, config, lines) = text_snapshot(&app, &id).await?;
     let plan = text_plan(
         &config,
         &detail,
         &lines,
         "summary",
-        template.id(),
+        &system,
         llm::summary_requests(&detail.user_markdown, &lines)?,
     )?;
     confirm(&plan, Some(&confirmation))?;
@@ -930,7 +952,7 @@ async fn generate_summary(
         let mut sent = 0;
         let markdown = llm::summarize(
             &providers::load_connection(&config)?,
-            template,
+            &system,
             &detail.user_markdown,
             &lines,
             operation.cancel(),
@@ -949,7 +971,7 @@ async fn generate_summary(
             let state = app.state::<AppState>();
             let mut core = state.core.lock().map_err(|_| plan_changed())?;
             manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
-            core.save_summary(&id, &plan.base_url, &plan.model, &markdown, template.id())?;
+            core.save_summary(&id, &plan.base_url, &plan.model, &markdown, &template)?;
             publish(&app, &core.recording_state());
             Ok(())
         })
@@ -1190,6 +1212,32 @@ async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<S
 }
 
 #[tauri::command]
+async fn save_summary_instructions(app: AppHandle, instructions: String) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_summary_instructions(&instructions)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_summary_template(
+    app: AppHandle,
+    id: Option<String>,
+    name: String,
+    instructions: String,
+) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_summary_template(id.as_deref(), &name, &instructions)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_summary_template(app: AppHandle, id: String) -> Result<Settings> {
+    with_core(app, false, move |core, _| core.delete_summary_template(&id)).await
+}
+
+#[tauri::command]
 async fn cancel_transcription(app: AppHandle) -> Result<bool> {
     let owner = with_core(app, false, |core, _| Ok(core.processing_owner.clone())).await?;
     Ok(owner.cancel_active())
@@ -1245,22 +1293,45 @@ async fn audio_position(app: AppHandle, id: String, kind: String, session_ms: i6
 
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| show_window(app)))
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            show_window(app)
+        }))
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app, shortcut, event| {
-            if event.state == ShortcutState::Pressed { shortcut_action(app, *shortcut); }
-        }).build())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        shortcut_action(app, *shortcut);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let folder = app.path().app_data_dir()?;
             std::fs::create_dir_all(&folder)?;
             let core = Core::open(&folder.join("meetings.db"))?;
             let settings = core.settings()?;
-            let pause_failed = app.global_shortcut().register(settings.pause_shortcut.as_str()).is_err();
-            let stop_failed = settings.stop_shortcut.as_deref().is_some_and(|stop| app.global_shortcut().register(stop).is_err());
-            let startup_warning = (pause_failed || stop_failed).then(|| format!("{} shortcut unavailable. Use the on-screen controls and choose another shortcut in Settings.", if pause_failed { "Pause" } else { "Stop" }));
-            app.manage(AppState { core: Mutex::new(core), provider_writes: Mutex::new(()), startup_warning, allow_exit: AtomicBool::new(false) });
+            let pause_failed = app
+                .global_shortcut()
+                .register(settings.pause_shortcut.as_str())
+                .is_err();
+            let stop_failed = settings
+                .stop_shortcut
+                .as_deref()
+                .is_some_and(|stop| app.global_shortcut().register(stop).is_err());
+            let startup_warning = shortcut_warning(
+                pause_failed.then_some(settings.pause_shortcut.as_str()),
+                settings.stop_shortcut.as_deref().filter(|_| stop_failed),
+            );
+            app.manage(AppState {
+                core: Mutex::new(core),
+                provider_writes: Mutex::new(()),
+                startup_warning,
+                allow_exit: AtomicBool::new(false),
+            });
             let show = MenuItem::with_id(app, "show", "Open OpenMeet", true, None::<&str>)?;
-            let pause = MenuItem::with_id(app, "pause", "Pause / resume recording", true, None::<&str>)?;
+            let pause =
+                MenuItem::with_id(app, "pause", "Pause / resume recording", true, None::<&str>)?;
             let stop = MenuItem::with_id(app, "stop", "Stop recording", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Save notes and quit…", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &pause, &stop, &quit])?;
@@ -1272,28 +1343,56 @@ pub fn run() {
                     "show" => show_window(app),
                     "pause" => tray_action(app, Core::toggle_pause),
                     "stop" => tray_action(app, Core::stop),
-                    "quit" => { show_window(app); let _ = app.emit("request_close", ()); }
+                    "quit" => {
+                        show_window(app);
+                        let _ = app.emit("request_close", ());
+                    }
                     _ => {}
                 })
                 .build(app)?;
             let monitor_app = app.handle().clone();
-            std::thread::spawn(move || { let revisions=std::sync::Arc::new(Mutex::new(std::collections::HashMap::new())); loop {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                let result = tauri::async_runtime::block_on(with_core(
-                    monitor_app.clone(),
-                    false,
-                    {let revisions=revisions.clone();move |core, app| {
-                        let mut revisions=revisions.lock().unwrap_or_else(|p|p.into_inner());
-                        core.poll_audio()?;
-                        if let Some(health) = core.audio_health() { let _ = app.emit("audio_health", health); }
-                        let rows={ let mut query=core.db.prepare("SELECT meeting_id,revision FROM processing_sessions")?; let rows=query.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?)))?; rows.collect::<std::result::Result<Vec<_>,_>>()? };
-                        revisions.retain(|id,_|rows.iter().any(|(current,_)|current==id));
-                        for (id,revision) in rows { if revisions.get(&id)!=Some(&revision) { if let Some(snapshot)=core.session_processing(&id)? { revisions.insert(id,snapshot.revision);let _=app.emit("session_processing_changed",snapshot); } } }
-                        Ok(())
-                    }},
-                ));
-                if let Err(error) = result { let _ = monitor_app.emit("backend_error", error.message); }
-            }});
+            std::thread::spawn(move || {
+                let revisions = std::sync::Arc::new(Mutex::new(std::collections::HashMap::new()));
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let result =
+                        tauri::async_runtime::block_on(with_core(monitor_app.clone(), false, {
+                            let revisions = revisions.clone();
+                            move |core, app| {
+                                let mut revisions =
+                                    revisions.lock().unwrap_or_else(|p| p.into_inner());
+                                core.poll_audio()?;
+                                if let Some(health) = core.audio_health() {
+                                    let _ = app.emit("audio_health", health);
+                                }
+                                let rows = {
+                                    let mut query = core.db.prepare(
+                                        "SELECT meeting_id,revision FROM processing_sessions",
+                                    )?;
+                                    let rows = query.query_map([], |r| {
+                                        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                                    })?;
+                                    rows.collect::<std::result::Result<Vec<_>, _>>()?
+                                };
+                                revisions
+                                    .retain(|id, _| rows.iter().any(|(current, _)| current == id));
+                                for (id, revision) in rows {
+                                    if revisions.get(&id) != Some(&revision) {
+                                        if let Some(snapshot) = core.session_processing(&id)? {
+                                            revisions.insert(id, snapshot.revision);
+                                            let _ =
+                                                app.emit("session_processing_changed", snapshot);
+                                        }
+                                    }
+                                }
+                                Ok(())
+                            }
+                        }));
+                    if let Err(error) = result {
+                        let _ = monitor_app.emit("backend_error", error.message);
+                    }
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1303,21 +1402,64 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            list_meetings, get_meeting, get_recording_state, get_startup_warning,
-            start_recording, pause_recording, resume_recording, stop_recording,
-            prepare_session_processing, get_session_processing, cancel_session_processing,
-            acknowledge_processing_notes,prepare_session_retry,retry_session_processing,
-            save_notes, get_settings, save_settings,
-            choose_vault_folder, export_meeting, close_application, list_audio_devices,
-            provider_key_status, save_api_connection, delete_api_connection, api_connection_key_status, save_provider_assignment, list_api_connection_models,
-            save_stt_mode, plan_transcription, plan_question,
-            stt_status, stt_install, transcribe_meeting, generate_summary,
-            create_note, audio_usage, delete_audio, delete_meeting, search_meetings,
-            plan_summary, list_summaries, ask_meeting,
-            rename_meeting, save_export_options, recover_audio,
-            cancel_transcription, save_stt_settings, audio_position,
-            choose_model_folder, scan_local_models, import_local_model,
-            search_hf_models, list_hf_files, download_hf_model, cancel_model_download,
+            list_meetings,
+            get_meeting,
+            get_recording_state,
+            get_startup_warning,
+            start_recording,
+            pause_recording,
+            resume_recording,
+            stop_recording,
+            prepare_session_processing,
+            get_session_processing,
+            cancel_session_processing,
+            acknowledge_processing_notes,
+            prepare_session_retry,
+            retry_session_processing,
+            save_notes,
+            get_settings,
+            save_settings,
+            choose_vault_folder,
+            export_meeting,
+            close_application,
+            list_audio_devices,
+            provider_key_status,
+            save_api_connection,
+            delete_api_connection,
+            api_connection_key_status,
+            save_provider_assignment,
+            list_api_connection_models,
+            save_stt_mode,
+            plan_transcription,
+            plan_question,
+            stt_status,
+            stt_install,
+            transcribe_meeting,
+            generate_summary,
+            create_note,
+            audio_usage,
+            delete_audio,
+            delete_meeting,
+            search_meetings,
+            plan_summary,
+            list_summaries,
+            ask_meeting,
+            rename_meeting,
+            save_export_options,
+            save_summary_instructions,
+            save_summary_template,
+            delete_summary_template,
+            recover_audio,
+            cancel_transcription,
+            save_stt_settings,
+            audio_position,
+            choose_model_folder,
+            scan_local_models,
+            import_local_model,
+            search_hf_models,
+            list_hf_files,
+            download_hf_model,
+            cancel_model_download,
         ])
         .build(tauri::generate_context!())
         .expect("OpenMeet could not start. Check the local database and desktop permissions.");
@@ -1336,6 +1478,56 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcut_warning_names_each_failed_shortcut() {
+        assert_eq!(shortcut_warning(None, None), None);
+        let pause = shortcut_warning(Some("Ctrl+Shift+Space"), None).unwrap();
+        assert!(pause.starts_with("Shortcut unavailable: Pause (Ctrl+Shift+Space). Another"));
+        let stop = shortcut_warning(None, Some("Alt+S")).unwrap();
+        assert!(stop.starts_with("Shortcut unavailable: Stop (Alt+S). Another"));
+        let both = shortcut_warning(Some("Ctrl+Shift+Space"), Some("Alt+S")).unwrap();
+        assert!(
+            both.starts_with("Shortcut unavailable: Pause (Ctrl+Shift+Space) and Stop (Alt+S).")
+        );
+    }
+
+    #[test]
+    fn summary_consent_binds_the_resolved_template_and_instructions() {
+        let mut core = Core::open(std::path::Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional summary consent").unwrap();
+        core.save_notes(&id, "Fictional notes", 0).unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        let config = ProviderConfig {
+            base_url: "https://provider.example/v1".into(),
+            model: Some("model-a".into()),
+            revision: 1,
+            credential_account: Some("private-reference".into()),
+        };
+        let settings = core
+            .save_summary_template(None, "Retro", "## Went well")
+            .unwrap();
+        let template = settings.summary_templates[0].id.clone();
+        let plan_for = |settings: &Settings| {
+            let system = llm::resolve_summary(settings, &template).unwrap();
+            text_plan(&config, &detail, &[], "summary", &system, 1).unwrap()
+        };
+        let reviewed = plan_for(&settings);
+        confirm(&plan_for(&settings), Some(&reviewed.fingerprint)).unwrap();
+        let edited = core
+            .save_summary_template(Some(&template), "Retro", "## Changed")
+            .unwrap();
+        assert!(confirm(&plan_for(&edited), Some(&reviewed.fingerprint)).is_err());
+        let instructed = core.save_summary_instructions("Be brief.").unwrap();
+        let reviewed = plan_for(&instructed);
+        let changed = core.save_summary_instructions("Be detailed.").unwrap();
+        assert!(confirm(&plan_for(&changed), Some(&reviewed.fingerprint)).is_err());
+        let deleted = core.delete_summary_template(&template).unwrap();
+        assert_eq!(
+            llm::resolve_summary(&deleted, &template).unwrap_err().code,
+            "summary_template_missing"
+        );
+    }
 
     #[test]
     fn consent_binds_destination_model_revision_and_content() {
