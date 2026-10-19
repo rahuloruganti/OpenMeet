@@ -31,6 +31,13 @@ export function ProviderSettings(props: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Results render below the task assignments; bring them into view so a long
+  // settings page never hides the outcome of the button just pressed.
+  const outcome = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (notice || error)
+      outcome.current?.scrollIntoView?.({ block: "nearest" });
+  }, [notice, error]);
   const password = useRef<HTMLInputElement>(null);
   const lock = useRef(false);
   const current = useRef(connection);
@@ -332,12 +339,14 @@ export function ProviderSettings(props: Props) {
           }
         />
       ))}
-      {notice && <p role="status">{notice}</p>}
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+      <div ref={outcome}>
+        {notice && <p role="status">{notice}</p>}
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+      </div>
     </section>
   );
 }

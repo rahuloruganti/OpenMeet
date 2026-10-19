@@ -84,7 +84,7 @@ button:disabled {
   outline: 3px solid #527cba;
   outline-offset: 3px;
 }
-input:not([type="checkbox"]),
+input:not([type="checkbox"]):not([type="radio"]),
 textarea,
 select {
   display: block;
@@ -102,7 +102,8 @@ textarea::placeholder {
   color: #757e8c;
   opacity: 1;
 }
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="radio"] {
   width: 17px;
   height: 17px;
   flex: 0 0 auto;
@@ -756,6 +757,9 @@ textarea.notes-editor {
 .action-items li input:not([type]) {
   flex: 1 1 160px;
   min-width: 0;
+}
+.action-items li input[type="date"] {
+  width: auto;
 }
 .ask-meeting {
   display: grid;
