@@ -1227,8 +1227,12 @@ export function App() {
                 if (!updated.vault_folder) return;
               }
               const result = await api.exportMeeting(selected.meeting.id);
+              const extras =
+                result.transcript_paths.length > 0
+                  ? ` Also wrote ${result.transcript_paths.length} transcript file${result.transcript_paths.length === 1 ? "" : "s"}.`
+                  : "";
               setNotice(
-                `${result.created_copy ? "Existing file preserved; created a new snapshot" : "Exported"}: ${result.path}`,
+                `${result.created_copy ? "Existing file preserved; created a new snapshot" : "Exported"}: ${result.path}${extras}`,
               );
             })
           }

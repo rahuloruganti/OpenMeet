@@ -51,7 +51,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/llm.rs`                                     | Summary/question/library prompts, input limits, and chunked text requests.                              |
 | `src-tauri/src/retrieval.rs`                               | Pure keyword retrieval for questions over content too long for one request: terms, quoted FTS5 query, excerpt selection. |
 | `src-tauri/src/cloud_stt.rs`                               | Frozen bounded WAV preparation, pause-aware chunks, multipart uploads, and timed/untimed parsing.       |
-| `src-tauri/src/export.rs`                                  | Markdown rendering, safe filenames, and non-overwriting publication.                                    |
+| `src-tauri/src/export.rs`                                  | Markdown rendering, optional TXT/SRT/VTT transcripts, safe filenames, and non-overwriting publication.  |
 | `src-tauri/src/action_items.rs`                            | Editable meeting tasks, validation, and explicit imports from a summary's Action items section.         |
 | `src-tauri/src/question_threads.rs` | Saved question threads and turns: store, append, list, and delete. |
 | `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v22.                                                             |

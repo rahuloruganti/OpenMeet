@@ -132,6 +132,107 @@ pub fn render(detail: &MeetingDetail, options: &ExportOptions) -> String {
     output
 }
 
+/// `HH:MM:SS,mmm` (SRT) or `HH:MM:SS.mmm` (VTT) from a session time.
+fn cue_time(ms: i64, separator: char) -> String {
+    let ms = ms.max(0);
+    format!(
+        "{:02}:{:02}:{:02}{}{:03}",
+        ms / 3_600_000,
+        ms / 60_000 % 60,
+        ms / 1000 % 60,
+        separator,
+        ms % 1000
+    )
+}
+
+/// `HH:MM:SS` for the plain-text transcript, or `untimed` when the engine gave no timing.
+fn plain_time(ms: i64) -> String {
+    let seconds = ms.max(0) / 1000;
+    format!(
+        "{:02}:{:02}:{:02}",
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    )
+}
+
+/// A transcript file written beside the Markdown snapshot. SRT and VTT need a timestamp on every
+/// segment, so an untimed transcript is refused instead of being given invented times.
+pub fn render_transcript(detail: &MeetingDetail, format: TranscriptFormat) -> Result<String> {
+    let untimed = || {
+        AppError::new(
+            "untimed_transcript",
+            "This transcript has no engine timestamps, so it cannot be written as SRT or VTT. Export it as text, or re-transcribe with an engine that reports timings.",
+        )
+    };
+    let mut output = String::new();
+    match format {
+        TranscriptFormat::Txt => {
+            for segment in &detail.segments {
+                let time = match segment.timing {
+                    SegmentTiming::Timed { start_ms, .. } => plain_time(start_ms),
+                    SegmentTiming::Untimed => "untimed".into(),
+                };
+                output.push_str(&format!(
+                    "[{time}] {}: {}\n",
+                    detail.speaker_names.label(&segment.speaker),
+                    segment.text.trim()
+                ));
+            }
+        }
+        TranscriptFormat::Srt => {
+            for (index, segment) in detail.segments.iter().enumerate() {
+                let SegmentTiming::Timed { start_ms, end_ms } = segment.timing else {
+                    return Err(untimed());
+                };
+                let end = if end_ms > start_ms {
+                    end_ms
+                } else {
+                    start_ms + 1
+                };
+                output.push_str(&format!(
+                    "{}\n{} --> {}\n{}: {}\n\n",
+                    index + 1,
+                    cue_time(start_ms, ','),
+                    cue_time(end, ','),
+                    detail.speaker_names.label(&segment.speaker),
+                    segment.text.trim()
+                ));
+            }
+        }
+        TranscriptFormat::Vtt => {
+            output.push_str("WEBVTT\n\n");
+            for segment in &detail.segments {
+                let SegmentTiming::Timed { start_ms, end_ms } = segment.timing else {
+                    return Err(untimed());
+                };
+                let end = if end_ms > start_ms {
+                    end_ms
+                } else {
+                    start_ms + 1
+                };
+                output.push_str(&format!(
+                    "{} --> {}\n<v {}>{}\n\n",
+                    cue_time(start_ms, '.'),
+                    cue_time(end, '.'),
+                    detail.speaker_names.label(&segment.speaker),
+                    segment.text.trim()
+                ));
+            }
+        }
+    }
+    Ok(output)
+}
+
+/// The Markdown snapshot's stem, so every file for one export shares a name.
+fn extension(format: TranscriptFormat) -> &'static str {
+    match format {
+        TranscriptFormat::Txt => "txt",
+        TranscriptFormat::Srt => "srt",
+        TranscriptFormat::Vtt => "vtt",
+    }
+}
+
 fn safe_name(text: &str, max: usize) -> String {
     text.chars()
         .take(max)
@@ -178,40 +279,63 @@ pub fn write_snapshot(
         ));
     }
     let output = render(detail, options);
+    // Render every requested transcript before publishing anything, so an untimed transcript
+    // refuses the export instead of leaving a partial set of files behind.
+    let mut transcripts = Vec::new();
+    for format in &options.transcript_formats {
+        transcripts.push((*format, render_transcript(detail, *format)?));
+    }
     let original = folder.join(filename(detail, options)?);
+    let (markdown, created_copy) = publish(&folder, original, output.as_bytes())?;
+    let mut transcript_paths = Vec::new();
+    for (format, content) in transcripts {
+        let target = markdown.with_extension(extension(format));
+        let (path, _) = publish(&folder, target, content.as_bytes())?;
+        transcript_paths.push(path.to_string_lossy().into_owned());
+    }
+    Ok(ExportResult {
+        path: markdown.to_string_lossy().into_owned(),
+        created_copy,
+        transcript_paths,
+    })
+}
+
+/// Writes `content` to `original` without overwriting: an identical file is reused, and any other
+/// existing file pushes the write to a fresh copy name.
+fn publish(
+    folder: &Path,
+    original: std::path::PathBuf,
+    content: &[u8],
+) -> Result<(std::path::PathBuf, bool)> {
     match fs::symlink_metadata(&original) {
         Ok(metadata)
             if metadata.file_type().is_file()
-                && metadata.len() == output.len() as u64
-                && fs::read(&original)? == output.as_bytes() =>
+                && metadata.len() == content.len() as u64
+                && fs::read(&original)? == content =>
         {
-            return Ok(ExportResult {
-                path: original.to_string_lossy().into_owned(),
-                created_copy: false,
-            });
+            return Ok((original, false));
         }
         _ => {}
     }
     // shortcut: export immutable snapshots; add AI-block merging only with Phase 1D conflict tests.
     // persist_noclobber also protects files created between our check and publish.
+    let stem = original
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Meeting".into());
+    let suffix = original
+        .extension()
+        .map(|extension| extension.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut target = original.clone();
     for _ in 0..3 {
-        let mut temp = tempfile::NamedTempFile::new_in(&folder)?;
-        temp.write_all(output.as_bytes())?;
+        let mut temp = tempfile::NamedTempFile::new_in(folder)?;
+        temp.write_all(content)?;
         temp.as_file().sync_all()?;
         match temp.persist_noclobber(&target) {
-            Ok(_) => {
-                return Ok(ExportResult {
-                    path: target.to_string_lossy().into_owned(),
-                    created_copy: target != original,
-                })
-            }
+            Ok(_) => return Ok((target.clone(), target != original)),
             Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                target = folder.join(format!(
-                    "Meeting {} - copy-{}.md",
-                    detail.meeting.id,
-                    Uuid::new_v4()
-                ));
+                target = folder.join(format!("{stem} - copy-{}.{suffix}", Uuid::new_v4()));
             }
             Err(error) => return Err(error.error.into()),
         }
@@ -231,6 +355,7 @@ mod tests {
         transcript: true,
         summary: true,
         filename: FilenamePattern::Title,
+        transcript_formats: Vec::new(),
     };
 
     #[test]
@@ -255,6 +380,129 @@ mod tests {
         assert!(fs::read_to_string(second.path)
             .unwrap()
             .contains(&detail.user_markdown));
+    }
+
+    #[test]
+    fn transcript_files_are_written_beside_the_markdown_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional subtitle export").unwrap();
+        core.replace_transcript(
+            &id,
+            &[
+                Segment {
+                    speaker: "You".into(),
+                    timing: SegmentTiming::Timed {
+                        start_ms: 1200,
+                        end_ms: 2500,
+                    },
+                    text: " Hello ".into(),
+                },
+                Segment {
+                    speaker: "Others".into(),
+                    timing: SegmentTiming::Timed {
+                        start_ms: 3_605_000,
+                        end_ms: 3_606_500,
+                    },
+                    text: "World".into(),
+                },
+            ],
+            "whisper",
+            "small",
+        )
+        .unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        let options = ExportOptions {
+            transcript: true,
+            summary: false,
+            filename: FilenamePattern::Title,
+            transcript_formats: vec![
+                TranscriptFormat::Txt,
+                TranscriptFormat::Srt,
+                TranscriptFormat::Vtt,
+            ],
+        };
+        let result = write_snapshot(&detail, dir.path(), &options).unwrap();
+        assert_eq!(result.transcript_paths.len(), 3);
+        assert!(result.path.ends_with(".md"));
+        assert!(result.transcript_paths[0].ends_with(".txt"));
+        assert!(result.transcript_paths[1].ends_with(".srt"));
+        assert!(result.transcript_paths[2].ends_with(".vtt"));
+        // Same stem as the snapshot, so one export is one set of files.
+        let stem = Path::new(&result.path).file_stem().unwrap().to_owned();
+        for path in &result.transcript_paths {
+            assert_eq!(Path::new(path).file_stem().unwrap(), stem);
+        }
+        assert_eq!(
+            fs::read_to_string(&result.transcript_paths[0]).unwrap(),
+            "[00:00:01] You: Hello\n[01:00:05] Others: World\n"
+        );
+        let srt = fs::read_to_string(&result.transcript_paths[1]).unwrap();
+        assert!(
+            srt.starts_with("1\n00:00:01,200 --> 00:00:02,500\nYou: Hello\n\n"),
+            "{srt}"
+        );
+        assert!(
+            srt.contains("2\n01:00:05,000 --> 01:00:06,500\nOthers: World\n\n"),
+            "{srt}"
+        );
+        let vtt = fs::read_to_string(&result.transcript_paths[2]).unwrap();
+        assert!(
+            vtt.starts_with("WEBVTT\n\n00:00:01.200 --> 00:00:02.500\n<v You>Hello\n\n"),
+            "{vtt}"
+        );
+        // A repeated export reuses the same files instead of piling up copies.
+        assert_eq!(
+            write_snapshot(&detail, dir.path(), &options)
+                .unwrap()
+                .transcript_paths,
+            result.transcript_paths
+        );
+    }
+
+    #[test]
+    fn untimed_transcripts_refuse_srt_and_vtt_and_write_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut core = Core::open(Path::new(":memory:")).unwrap();
+        let id = core.create_note("Fictional untimed export").unwrap();
+        core.replace_transcript(
+            &id,
+            &[Segment {
+                speaker: "You".into(),
+                timing: SegmentTiming::Untimed,
+                text: "No timing".into(),
+            }],
+            "cloud",
+            "whisper-1",
+        )
+        .unwrap();
+        let detail = core.get_meeting(&id).unwrap();
+        let options = ExportOptions {
+            transcript: true,
+            summary: false,
+            filename: FilenamePattern::Title,
+            transcript_formats: vec![TranscriptFormat::Txt, TranscriptFormat::Srt],
+        };
+        let failure = write_snapshot(&detail, dir.path(), &options).unwrap_err();
+        assert_eq!(failure.code, "untimed_transcript");
+        let meetings = dir.path().join("Meetings");
+        let written = fs::read_dir(&meetings)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(
+            written, 0,
+            "a refused export writes neither the snapshot nor a transcript file"
+        );
+        // Text alone is still allowed, and says which lines carry no timing.
+        let text = ExportOptions {
+            transcript_formats: vec![TranscriptFormat::Txt],
+            ..options
+        };
+        let result = write_snapshot(&detail, dir.path(), &text).unwrap();
+        assert_eq!(
+            fs::read_to_string(&result.transcript_paths[0]).unwrap(),
+            "[untimed] You: No timing\n"
+        );
     }
 
     #[test]
@@ -441,6 +689,7 @@ mod tests {
                         transcript,
                         summary,
                         filename: pattern,
+                        transcript_formats: Vec::new(),
                     };
                     let text = render(&detail, &options);
                     let case = format!("{options:?}");

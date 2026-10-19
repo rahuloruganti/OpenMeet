@@ -46,7 +46,12 @@ const settings: Settings = {
   stop_shortcut: null,
   microphone_id: null,
   output_id: null,
-  export: { transcript: true, summary: true, filename: "title" },
+  export: {
+    transcript: true,
+    summary: true,
+    filename: "title",
+    transcript_formats: [],
+  },
   summary_instructions: "",
   summary_templates: [],
 };

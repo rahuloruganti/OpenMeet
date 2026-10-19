@@ -11,6 +11,7 @@ import { App } from "./App";
 import {
   api,
   type AudioHealth,
+  type ExportResult,
   type MeetingDetail,
   type Settings,
   type SttProgress,
@@ -201,7 +202,12 @@ const initialSettings: Settings = {
   llm: null,
   cloud_stt: null,
   stt_mode: "local",
-  export: { transcript: true, summary: true, filename: "title" },
+  export: {
+    transcript: true,
+    summary: true,
+    filename: "title",
+    transcript_formats: [],
+  },
   stt_language: "auto",
   stt_prompt: "",
   stt_model: "small",
@@ -847,13 +853,10 @@ describe("desktop foundation", () => {
       error: null,
       recording_offset_ms: null,
     });
-    let finishExport!: (result: {
-      path: string;
-      created_copy: boolean;
-    }) => void;
+    let finishExport!: (result: ExportResult) => void;
     vi.mocked(api.exportMeeting).mockImplementation(
       () =>
-        new Promise((resolve) => {
+        new Promise<ExportResult>((resolve) => {
           finishExport = resolve;
         }),
     );
@@ -878,7 +881,11 @@ describe("desktop foundation", () => {
     await screen.findByText("Recording: paused");
     await screen.findByText("Capture: Device stopped responding");
     await act(async () =>
-      finishExport({ path: "sample.md", created_copy: false }),
+      finishExport({
+        path: "sample.md",
+        created_copy: false,
+        transcript_paths: [],
+      }),
     );
   });
 
@@ -887,6 +894,7 @@ describe("desktop foundation", () => {
     vi.mocked(api.exportMeeting).mockResolvedValue({
       path: "C:/notes/sample.md",
       created_copy: false,
+      transcript_paths: [],
     });
     fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
       target: { value: "Unsaved edits" },
@@ -923,6 +931,7 @@ describe("desktop foundation", () => {
     vi.mocked(api.exportMeeting).mockResolvedValue({
       path: "C:/notes/sample.md",
       created_copy: false,
+      transcript_paths: [],
     });
     await ready();
     await userEvent.click(
@@ -2622,6 +2631,7 @@ describe("notes-first polish", () => {
       transcript: false,
       summary: true,
       filename: "title",
+      transcript_formats: [],
     });
     await waitFor(() =>
       expect(
@@ -2640,6 +2650,44 @@ describe("notes-first polish", () => {
       transcript: false,
       summary: true,
       filename: "date_title",
+      transcript_formats: [],
+    });
+  });
+
+  it("saves transcript file formats and reports them after an export", async () => {
+    vi.mocked(api.saveExportOptions).mockImplementation(async (options) => ({
+      ...initialSettings,
+      export: options,
+    }));
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "General" }));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Subtitles (.srt)" }),
+    );
+    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
+      transcript: true,
+      summary: true,
+      filename: "title",
+      transcript_formats: ["srt"],
+    });
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Plain text (.txt)" }),
+    );
+    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
+      transcript: true,
+      summary: true,
+      filename: "title",
+      transcript_formats: ["srt", "txt"],
+    });
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Subtitles (.srt)" }),
+    );
+    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
+      transcript: true,
+      summary: true,
+      filename: "title",
+      transcript_formats: ["txt"],
     });
   });
 
