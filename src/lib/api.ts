@@ -229,10 +229,13 @@ export type CustomTemplate = {
   name: string;
   instructions: string;
 };
+export type TranscriptFormat = "txt" | "srt" | "vtt";
 export type ExportOptions = {
   transcript: boolean;
   summary: boolean;
   filename: "title" | "date_title";
+  /** Extra transcript files written beside the Markdown snapshot. */
+  transcript_formats: TranscriptFormat[];
 };
 export type ProviderRole = "llm" | "cloud_stt";
 export type ProviderConfig = {
@@ -311,7 +314,11 @@ export type SttTranscribeProgress = {
   percent: number;
 };
 export type SttProgress = SttDownloadProgress | SttTranscribeProgress;
-export type ExportResult = { path: string; created_copy: boolean };
+export type ExportResult = {
+  path: string;
+  created_copy: boolean;
+  transcript_paths: string[];
+};
 export type SearchHit = {
   meeting_id: string;
   kind: "title" | "notes" | "transcript" | "summary";

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 22;
+const LATEST_SCHEMA: i64 = 23;
 const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 40;
 
@@ -128,6 +128,11 @@ impl Core {
             (
                 22,
                 include_str!("../migrations/022_question_threads.sql"),
+                false,
+            ),
+            (
+                23,
+                include_str!("../migrations/023_export_transcript_formats.sql"),
                 false,
             ),
         ];
@@ -1274,8 +1279,13 @@ impl Core {
             FilenamePattern::DateTitle => "date_title",
         };
         self.db.execute(
-            "UPDATE settings SET export_transcript = ?1, export_summary = ?2, export_filename = ?3 WHERE id = 1",
-            params![options.transcript, options.summary, filename],
+            "UPDATE settings SET export_transcript = ?1, export_summary = ?2, export_filename = ?3, export_transcript_formats = ?4 WHERE id = 1",
+            params![
+                options.transcript,
+                options.summary,
+                filename,
+                transcript_formats_value(&options.transcript_formats)
+            ],
         )?;
         self.settings()
     }
@@ -1409,6 +1419,39 @@ fn provider_conflict() -> AppError {
     AppError::new("provider_conflict", "Provider settings changed elsewhere. Reload Settings and try again; nothing was overwritten.")
 }
 
+/// Stored as a comma-separated subset in a fixed order, so the same choice always serializes the
+/// same way; anything unknown is dropped rather than guessed.
+fn parse_transcript_formats(value: &str) -> Vec<TranscriptFormat> {
+    let wanted = |name: &str| value.split(',').any(|token| token.trim() == name);
+    [
+        ("txt", TranscriptFormat::Txt),
+        ("srt", TranscriptFormat::Srt),
+        ("vtt", TranscriptFormat::Vtt),
+    ]
+    .into_iter()
+    .filter(|(name, _)| wanted(name))
+    .map(|(_, format)| format)
+    .collect()
+}
+
+fn transcript_formats_value(formats: &[TranscriptFormat]) -> String {
+    let name = |format: TranscriptFormat| match format {
+        TranscriptFormat::Txt => "txt",
+        TranscriptFormat::Srt => "srt",
+        TranscriptFormat::Vtt => "vtt",
+    };
+    [
+        TranscriptFormat::Txt,
+        TranscriptFormat::Srt,
+        TranscriptFormat::Vtt,
+    ]
+    .into_iter()
+    .filter(|format| formats.contains(format))
+    .map(name)
+    .collect::<Vec<_>>()
+    .join(",")
+}
+
 fn read_settings(db: &Connection) -> Result<Settings> {
     let connection = |role: ProviderRole| {
         db.query_row(
@@ -1439,7 +1482,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -1463,6 +1506,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                             "date_title" => FilenamePattern::DateTitle,
                             _ => FilenamePattern::Title,
                         },
+                        transcript_formats: parse_transcript_formats(&row.get::<_, String>(13)?),
                     },
                     stt_language: row.get(8)?,
                     stt_prompt: row.get(9)?,
@@ -2042,7 +2086,8 @@ mod tests {
             &ExportOptions {
                 transcript: false,
                 summary: true,
-                filename: FilenamePattern::Title
+                filename: FilenamePattern::Title,
+                transcript_formats: Vec::new(),
             }
         )
         .contains("summary_edited: true\n"));
@@ -3130,19 +3175,62 @@ mod tests {
             ExportOptions {
                 transcript: true,
                 summary: true,
-                filename: FilenamePattern::Title
+                filename: FilenamePattern::Title,
+                transcript_formats: Vec::new(),
             }
         );
         let chosen = ExportOptions {
             transcript: false,
             summary: true,
             filename: FilenamePattern::DateTitle,
+            transcript_formats: vec![TranscriptFormat::Srt, TranscriptFormat::Vtt],
         };
         assert_eq!(core.save_export_options(&chosen).unwrap().export, chosen);
         drop(core);
         assert_eq!(
             Core::open(&path).unwrap().settings().unwrap().export,
             chosen
+        );
+    }
+
+    #[test]
+    fn export_transcript_formats_default_to_none_and_persist_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let mut core = Core::open(&path).unwrap();
+        assert!(
+            core.settings()
+                .unwrap()
+                .export
+                .transcript_formats
+                .is_empty(),
+            "an upgrade keeps the Markdown-only default"
+        );
+        let chosen = ExportOptions {
+            transcript: true,
+            summary: false,
+            filename: FilenamePattern::DateTitle,
+            // Requested out of order and with a duplicate: storage keeps one each, in a fixed order.
+            transcript_formats: vec![
+                TranscriptFormat::Vtt,
+                TranscriptFormat::Txt,
+                TranscriptFormat::Vtt,
+            ],
+        };
+        let saved = core.save_export_options(&chosen).unwrap().export;
+        assert_eq!(
+            saved.transcript_formats,
+            vec![TranscriptFormat::Txt, TranscriptFormat::Vtt]
+        );
+        drop(core);
+        assert_eq!(
+            Core::open(&path)
+                .unwrap()
+                .settings()
+                .unwrap()
+                .export
+                .transcript_formats,
+            vec![TranscriptFormat::Txt, TranscriptFormat::Vtt]
         );
     }
 

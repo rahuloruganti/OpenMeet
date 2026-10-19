@@ -106,6 +106,7 @@ fn export_options() -> ExportOptions {
         transcript: true,
         summary: true,
         filename: FilenamePattern::Title,
+        transcript_formats: Vec::new(),
     }
 }
 fn old_segment() -> Segment {

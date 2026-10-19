@@ -492,6 +492,45 @@ export function SettingsPanel(props: Props) {
                 <option value="date_title">Date, then meeting title</option>
               </select>
             </label>
+            <fieldset disabled={disabled}>
+              <legend>Transcript files</legend>
+              {(["txt", "srt", "vtt"] as const).map((format) => (
+                <label key={format}>
+                  <input
+                    type="checkbox"
+                    checked={settings.export.transcript_formats.includes(
+                      format,
+                    )}
+                    onChange={(event) =>
+                      props.onExportOptions({
+                        ...settings.export,
+                        transcript_formats: event.target.checked
+                          ? [
+                              ...settings.export.transcript_formats,
+                              format,
+                            ].filter(
+                              (chosen, index, all) =>
+                                all.indexOf(chosen) === index,
+                            )
+                          : settings.export.transcript_formats.filter(
+                              (chosen) => chosen !== format,
+                            ),
+                      })
+                    }
+                  />
+                  {format === "txt"
+                    ? "Plain text (.txt)"
+                    : format === "srt"
+                      ? "Subtitles (.srt)"
+                      : "WebVTT (.vtt)"}
+                </label>
+              ))}
+              <p className="muted">
+                Written next to the Markdown snapshot with the same name. SRT
+                and VTT need engine timestamps, so a meeting with untimed
+                segments cannot be exported while either is selected.
+              </p>
+            </fieldset>
             <p className="muted">
               Applies to new exports. Earlier snapshots are never renamed or
               overwritten.

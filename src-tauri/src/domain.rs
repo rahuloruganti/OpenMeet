@@ -340,6 +340,8 @@ pub struct SummaryVersion {
 pub struct ExportResult {
     pub path: String,
     pub created_copy: bool,
+    /// Transcript files written beside the Markdown snapshot, in the order requested.
+    pub transcript_paths: Vec<String>,
 }
 
 /// Markdown export choices; the filename pattern is a closed set so untrusted input cannot pick one.
@@ -348,6 +350,20 @@ pub struct ExportOptions {
     pub transcript: bool,
     pub summary: bool,
     pub filename: FilenamePattern,
+    /// Extra transcript files written beside the Markdown snapshot. Empty by default so older
+    /// stored settings keep their fingerprints.
+    #[serde(default)]
+    pub transcript_formats: Vec<TranscriptFormat>,
+}
+
+/// A transcript file written next to the Markdown snapshot. SRT and VTT need every segment to
+/// carry engine timestamps, so an untimed transcript is refused for them.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptFormat {
+    Txt,
+    Srt,
+    Vtt,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]

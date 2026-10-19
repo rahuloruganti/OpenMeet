@@ -130,13 +130,15 @@ The **Tasks** list below the summary holds editable action items. Add a task by 
 
 **Ask across meetings** (sidebar) answers one question over meetings you choose: tick up to 20 meetings, or pick a tag to select every meeting with it. Press **Review** to see the destination, model, and the titles of the meetings whose notes and transcript text (with speaker names) will be sent in a single request; nothing is sent until you press **Send question**. Changing the meetings or the question discards the review. The answer cites sources as `[M2 1:01]` (meeting 2 at that transcript time) or `[M2]` (notes or untimed text). A citation becomes a link only if that meeting was in the scope you reviewed and a timed transcript line starts at that second; the link opens the meeting and jumps to that line. Anything else shows "(unverified)". A link shows that a line exists at that time, not that it supports the claim, so check it. The answer stays in the panel until you ask again or quit, and is never saved. If the selected meetings are too long for one request, only transcript excerpts that match your question's keywords, plus each meeting's notes when they mention a keyword, are sent from them (the card says how many excerpts from how many meetings; every selected meeting's title and start date still go with them). If nothing matches, you see "No passages in the selected content matched your question. Nothing was sent." instead of a card.
 
-## Export Markdown
+## Export Markdown and transcripts
 
 1. Click **Export Markdown**.
 2. On the first export, choose a destination folder. Cancel to leave the destination unset.
 3. Read the notification for the saved file path.
 
 Files are written under the destination's `Meetings` directory. **Settings → General → Markdown export** controls transcript inclusion, summary inclusion, and title or date-and-title filenames. The date prefix uses the stored UTC start date.
+
+**Settings → General → Transcript files** can also write **.txt**, **.srt**, or **.vtt** beside the snapshot, with the same file name. The plain-text file keeps one line per segment with its start time and speaker. SRT and VTT need engine timestamps: if any segment is untimed while SRT or VTT is selected, the whole export is refused and nothing is written (any earlier snapshot is left alone); turn those formats off to export that meeting with the text file only. Line breaks inside a segment are joined into one line, and a meeting without a transcript gets no transcript files. The notification after an export says how many transcript files were written.
 
 Exports contain source metadata, user notes, and the selected sections. They do not include audio. An identical existing snapshot is reused. A differing file produces a new snapshot instead of overwriting external edits. Renaming a meeting does not rename older exports. Exported files are not synchronized back into the database.
 
