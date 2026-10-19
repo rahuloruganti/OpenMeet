@@ -2062,6 +2062,22 @@ describe("desktop foundation", () => {
 });
 
 describe("automatic session processing", () => {
+  it("warns before recording when the chosen speech engine is not ready", async () => {
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
+    );
+    expect(screen.queryByText(/speech engine is not downloaded/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    await chooseProcessing("final");
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
+    );
+    expect(
+      (await screen.findByText(/speech engine is not downloaded/)).textContent,
+    ).toContain("The recording itself is still kept.");
+  });
+
   it.each([
     "failed",
     "completed",
