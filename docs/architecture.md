@@ -54,7 +54,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/export.rs`                                  | Markdown rendering, optional TXT/SRT/VTT transcripts, safe filenames, and non-overwriting publication.  |
 | `src-tauri/src/action_items.rs`                            | Editable meeting tasks, validation, and explicit imports from a summary's Action items section.         |
 | `src-tauri/src/question_threads.rs` | Saved question threads and turns: store, append, list, and delete. |
-| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v22.                                                             |
+| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v23.                                                             |
 | `fixtures/`                                                | Fictional test resources, excluded from production creation paths.                                      |
 
 ## State and concurrency

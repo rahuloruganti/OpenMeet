@@ -527,8 +527,8 @@ export function SettingsPanel(props: Props) {
               ))}
               <p className="muted">
                 Written next to the Markdown snapshot with the same name. SRT
-                and VTT need engine timestamps, so an untimed transcript is
-                exported as text only.
+                and VTT need engine timestamps, so a meeting with untimed
+                segments cannot be exported while either is selected.
               </p>
             </fieldset>
             <p className="muted">

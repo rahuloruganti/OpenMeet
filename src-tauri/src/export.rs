@@ -156,15 +156,29 @@ fn plain_time(ms: i64) -> String {
     )
 }
 
+/// Collapses line breaks and runs of whitespace: a blank line inside an edited segment would
+/// otherwise end an SRT/VTT cue early or split one text line in two.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// VTT cue text is markup, so `&`, `<` and `>` (which also rules out `-->`) are escaped.
+fn vtt_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 /// A transcript file written beside the Markdown snapshot. SRT and VTT need a timestamp on every
 /// segment, so an untimed transcript is refused instead of being given invented times.
 pub fn render_transcript(detail: &MeetingDetail, format: TranscriptFormat) -> Result<String> {
     let untimed = || {
         AppError::new(
             "untimed_transcript",
-            "This transcript has no engine timestamps, so it cannot be written as SRT or VTT. Export it as text, or re-transcribe with an engine that reports timings.",
+            "This transcript has no engine timestamps, so it cannot be written as SRT or VTT. Nothing was exported. Turn off SRT and VTT in Settings → General → Transcript files to export this meeting, or re-transcribe with an engine that reports timings.",
         )
     };
+    let speaker = |segment: &Segment| one_line(&detail.speaker_names.label(&segment.speaker));
     let mut output = String::new();
     match format {
         TranscriptFormat::Txt => {
@@ -175,8 +189,8 @@ pub fn render_transcript(detail: &MeetingDetail, format: TranscriptFormat) -> Re
                 };
                 output.push_str(&format!(
                     "[{time}] {}: {}\n",
-                    detail.speaker_names.label(&segment.speaker),
-                    segment.text.trim()
+                    speaker(segment),
+                    one_line(&segment.text)
                 ));
             }
         }
@@ -195,8 +209,8 @@ pub fn render_transcript(detail: &MeetingDetail, format: TranscriptFormat) -> Re
                     index + 1,
                     cue_time(start_ms, ','),
                     cue_time(end, ','),
-                    detail.speaker_names.label(&segment.speaker),
-                    segment.text.trim()
+                    speaker(segment),
+                    one_line(&segment.text)
                 ));
             }
         }
@@ -215,8 +229,8 @@ pub fn render_transcript(detail: &MeetingDetail, format: TranscriptFormat) -> Re
                     "{} --> {}\n<v {}>{}\n\n",
                     cue_time(start_ms, '.'),
                     cue_time(end, '.'),
-                    detail.speaker_names.label(&segment.speaker),
-                    segment.text.trim()
+                    vtt_escape(&speaker(segment)),
+                    vtt_escape(&one_line(&segment.text))
                 ));
             }
         }
@@ -224,7 +238,7 @@ pub fn render_transcript(detail: &MeetingDetail, format: TranscriptFormat) -> Re
     Ok(output)
 }
 
-/// The Markdown snapshot's stem, so every file for one export shares a name.
+/// The transcript file extension; the stem is the Markdown snapshot's, so one export shares a name.
 fn extension(format: TranscriptFormat) -> &'static str {
     match format {
         TranscriptFormat::Txt => "txt",
@@ -280,9 +294,14 @@ pub fn write_snapshot(
     }
     let output = render(detail, options);
     // Render every requested transcript before publishing anything, so an untimed transcript
-    // refuses the export instead of leaving a partial set of files behind.
+    // refuses the export instead of leaving a partial set of files behind. A meeting with no
+    // transcript gets no empty transcript files.
     let mut transcripts = Vec::new();
-    for format in &options.transcript_formats {
+    for format in options
+        .transcript_formats
+        .iter()
+        .filter(|_| !detail.segments.is_empty())
+    {
         transcripts.push((*format, render_transcript(detail, *format)?));
     }
     let original = folder.join(filename(detail, options)?);
@@ -404,7 +423,8 @@ mod tests {
                         start_ms: 3_605_000,
                         end_ms: 3_606_500,
                     },
-                    text: "World".into(),
+                    // An edited segment can carry blank lines and markup characters.
+                    text: "World <b> &\n\nagain".into(),
                 },
             ],
             "whisper",
@@ -435,7 +455,7 @@ mod tests {
         }
         assert_eq!(
             fs::read_to_string(&result.transcript_paths[0]).unwrap(),
-            "[00:00:01] You: Hello\n[01:00:05] Others: World\n"
+            "[00:00:01] You: Hello\n[01:00:05] Others: World <b> & again\n"
         );
         let srt = fs::read_to_string(&result.transcript_paths[1]).unwrap();
         assert!(
@@ -443,12 +463,16 @@ mod tests {
             "{srt}"
         );
         assert!(
-            srt.contains("2\n01:00:05,000 --> 01:00:06,500\nOthers: World\n\n"),
+            srt.contains("2\n01:00:05,000 --> 01:00:06,500\nOthers: World <b> & again\n\n"),
             "{srt}"
         );
         let vtt = fs::read_to_string(&result.transcript_paths[2]).unwrap();
         assert!(
             vtt.starts_with("WEBVTT\n\n00:00:01.200 --> 00:00:02.500\n<v You>Hello\n\n"),
+            "{vtt}"
+        );
+        assert!(
+            vtt.ends_with("<v Others>World &lt;b&gt; &amp; again\n\n"),
             "{vtt}"
         );
         // A repeated export reuses the same files instead of piling up copies.
@@ -458,6 +482,13 @@ mod tests {
                 .transcript_paths,
             result.transcript_paths
         );
+        // A meeting without a transcript gets no empty transcript files.
+        let empty = core.create_note("Fictional notes only").unwrap();
+        let detail = core.get_meeting(&empty).unwrap();
+        assert!(write_snapshot(&detail, dir.path(), &options)
+            .unwrap()
+            .transcript_paths
+            .is_empty());
     }
 
     #[test]
