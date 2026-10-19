@@ -27,6 +27,9 @@ type Props = {
   processing: ProcessingChoice;
   onOpenSettings: () => void;
   onStartCapture: (confirmation: string | null) => void;
+  /** Whether the selected speech engine or API can run now. */
+  speechReady: boolean;
+  sttMode: "local" | "cloud";
 };
 
 const modeLabels = {
@@ -173,6 +176,15 @@ export function SetupPanel(props: Props) {
           Change in Settings
         </button>
       </p>
+      {mode !== "recording" && !props.speechReady && (
+        <p role="alert" className="error">
+          {props.sttMode === "cloud"
+            ? "No cloud speech connection and model are ready."
+            : "The local speech engine is not downloaded."}{" "}
+          Transcription for this recording will fail until you set it up in
+          Settings. The recording itself is still kept.
+        </p>
+      )}
       {mode !== "recording" && (
         <button
           disabled={disabled || active || reviewing}

@@ -119,6 +119,12 @@ export function App() {
   const [output, setOutput] = useState("");
   const [health, setHealth] = useState<AudioHealth | null>(null);
   const [closeRequested, setCloseRequested] = useState(false);
+  const speechReady =
+    settings?.stt_mode === "cloud"
+      ? (keyStatus.cloud_stt === "present" ||
+          isLocalBase(settings.cloud_stt?.base_url ?? "")) &&
+        !!settings.cloud_stt?.model
+      : stt?.installed === true;
   // Unsaved summary edits per meeting; quitting warns before discarding them.
   const [summaryDrafts, setSummaryDrafts] = useState<
     Record<string, SummaryDraft>
@@ -900,6 +906,8 @@ export function App() {
         {panel === "setup" && (
           <SetupPanel
             panelRef={panelRef}
+            speechReady={speechReady}
+            sttMode={settings?.stt_mode ?? "local"}
             devices={devices}
             title={title}
             consent={consent}
@@ -963,13 +971,7 @@ export function App() {
           selected={selected}
           firstRun={ready && meetings.length === 0}
           job={job}
-          speechReady={
-            settings?.stt_mode === "cloud"
-              ? (keyStatus.cloud_stt === "present" ||
-                  isLocalBase(settings.cloud_stt?.base_url ?? "")) &&
-                !!settings.cloud_stt?.model
-              : stt?.installed === true
-          }
+          speechReady={speechReady}
           sttMode={settings?.stt_mode ?? "local"}
           connectionRevision={`${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`}
           enhanceBlocked={enhanceBlocked}

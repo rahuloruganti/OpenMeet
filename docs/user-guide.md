@@ -41,6 +41,8 @@ Capture remains a preview. On Apple Silicon macOS 14.2 or newer, choose an outpu
 
 Saved device choices are not silently replaced when a device is unavailable. A missing device or capture failure must be resolved before trying again. A silent output can produce no loopback frames; the two track files can therefore have different lengths.
 
+The New recording panel warns before you start when the selected speech engine cannot run: a local engine that is not downloaded, or a cloud speech connection missing either a stored key (or loopback destination) or a model. The warning does not block recording; the audio is kept and transcription fails visibly until the engine is set up in Settings.
+
 In **My notes**, **Insert timestamp** adds the current backend recording offset. **Ctrl+Shift+T** performs the same action while the editor has focus. Settings provide a pause/resume shortcut and an optional stop shortcut. There is no global start shortcut. If registration fails, use the on-screen controls and choose another shortcut.
 
 The code excludes paused audio, but real-device pause privacy, device failures, and long-run timing remain unqualified. A meter signal or two WAV files does not establish a successful recording.
