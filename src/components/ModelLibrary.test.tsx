@@ -159,3 +159,12 @@ it("cancels an active transfer when Settings unmounts", async () => {
   view.unmount();
   expect(api.cancelModelDownload).toHaveBeenCalledOnce();
 });
+it("shows why the automatic common-folder scan failed", async () => {
+  vi.mocked(api.scanLocalModels).mockRejectedValue(
+    new Error("The model folder could not be read."),
+  );
+  render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "The model folder could not be read.",
+  );
+});
