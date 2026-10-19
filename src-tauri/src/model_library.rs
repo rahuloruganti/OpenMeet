@@ -165,6 +165,7 @@ fn scan_with_limits(
             continue;
         }
         let mut pending = VecDeque::from([(root.clone(), 0)]);
+        let mut visited = BTreeSet::from([root.clone()]);
         while let Some((directory, depth)) = pending.pop_front() {
             let Ok(children) = fs::read_dir(&directory) else {
                 status = "Some folders inaccessible";
@@ -182,20 +183,36 @@ fn scan_with_limits(
                     continue;
                 };
                 let path = child.path();
-                let Ok(kind) = child.file_type() else {
-                    continue;
+                let kind = child.file_type();
+                // Windows reports a junction as a link, not a directory, so decide by what the
+                // entry resolves to. Hugging Face snapshots also link each file to a blob.
+                let resolved = fs::canonicalize(&path).ok();
+                let is_folder = match (&resolved, &kind) {
+                    (Some(target), _) => target.is_dir(),
+                    (None, Ok(kind)) => kind.is_dir(),
+                    (None, Err(_)) => false,
                 };
-                if kind.is_dir() {
+                if is_folder {
+                    // Only a folder that resolves inside the approved root is read, and each one is
+                    // walked once, so a link that leaves the root or points back at a parent costs
+                    // nothing.
+                    let Some(target) = resolved else {
+                        status = "Some folders inaccessible";
+                        continue;
+                    };
+                    if !target.starts_with(&root) || !visited.insert(target.clone()) {
+                        continue;
+                    }
                     if depth < max_depth {
-                        pending.push_back((path, depth + 1));
+                        pending.push_back((target, depth + 1));
                     } else {
                         result.truncated = true;
                         status = "Depth limit reached";
                     }
                     continue;
                 }
-                // Hugging Face snapshots link to blobs. Follow files only inside the approved root.
-                let Ok(resolved) = fs::canonicalize(&path) else {
+                // Follow files only inside the approved root.
+                let Some(resolved) = resolved else {
                     continue;
                 };
                 if !resolved.starts_with(&root) || !resolved.is_file() {
@@ -851,6 +868,83 @@ mod tests {
         let limited = scan_with_limits(vec![tree.path().into()], 1, 1, 0);
         assert!(limited.truncated);
         assert!(limited.models.len() <= 1);
+    }
+
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) {
+        // cmd.exe rejects forward slashes inside a path as switches.
+        let windows_path = |path: &Path| path.to_string_lossy().replace('/', "\\");
+        let output = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(windows_path(link))
+            .arg(windows_path(target))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "junction {link:?} -> {target:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scan_follows_directory_junctions_inside_the_root_and_never_outside() {
+        let inside = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let deep = inside.path().join("a/b/moved");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("model.gguf"), b"GGUFinside").unwrap();
+        fs::write(outside.path().join("secret.gguf"), b"GGUFoutside").unwrap();
+        junction(&inside.path().join("cache"), &deep);
+        junction(&inside.path().join("other"), outside.path());
+        // A depth limit hides the real folder, so only the junction at the root can reach the model.
+        let result = scan_with_limits(vec![inside.path().into()], 100, 100, 1);
+        assert_eq!(
+            result.models.len(),
+            1,
+            "the junction inside the root is followed once; the one outside is refused"
+        );
+        assert_eq!(result.models[0].format, ModelFormat::Gguf);
+        assert!(
+            result.models[0].path.ends_with("model.gguf"),
+            "{}",
+            result.models[0].path
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scan_does_not_descend_into_a_link_that_leaves_the_root() {
+        let inside = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        for index in 0..20 {
+            fs::write(outside.path().join(format!("f{index}.txt")), b"x").unwrap();
+        }
+        junction(&inside.path().join("other"), outside.path());
+        let result = scan_with_limits(vec![inside.path().into()], 10, 10, 6);
+        assert!(result.models.is_empty());
+        assert!(
+            !result.truncated,
+            "a linked folder outside the root is not read at all"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn scan_of_a_junctioned_root_and_a_junction_loop_terminates() {
+        let tree = tempfile::tempdir().unwrap();
+        let real = tree.path().join("real");
+        fs::create_dir_all(real.join("models")).unwrap();
+        fs::write(real.join("models/model.gguf"), b"GGUFinside").unwrap();
+        junction(&real.join("loop"), &real);
+        junction(&tree.path().join("root"), &real);
+        let result = scan(vec![tree.path().join("root")]);
+        assert_eq!(
+            result.models.len(),
+            1,
+            "a selected junctioned root is scanned, and a loop is walked once"
+        );
     }
 
     #[cfg(unix)]
