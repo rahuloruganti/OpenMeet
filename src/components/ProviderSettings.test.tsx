@@ -260,3 +260,26 @@ it("clears transient keys and retains assignment drafts after revision-only upda
     "keep-this-draft",
   );
 });
+it("brings the save result into view on a long settings page", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  try {
+    render(<ProviderSettings {...props()} />);
+    await userEvent.selectOptions(
+      screen.getByLabelText("Speech API connection"),
+      "remote",
+    );
+    await userEvent.type(
+      screen.getByLabelText("Speech API model ID"),
+      "speech-custom",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save speech api assignment" }),
+    );
+    await screen.findByText(/Task assignment saved/);
+    expect(scroll).toHaveBeenCalled();
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
