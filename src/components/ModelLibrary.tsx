@@ -67,7 +67,9 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
   };
   // Opening Settings scans the common model folders once. The scan is local and read-only.
   useEffect(() => {
-    void scanCommon().catch(() => {});
+    void scanCommon().catch((failure: unknown) => {
+      if (live.current) setError(errorMessage(failure));
+    });
   }, []);
   const run = async (task: () => Promise<void>) => {
     if (lock.current) return;
