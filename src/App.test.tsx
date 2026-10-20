@@ -81,6 +81,7 @@ vi.mock("./lib/api", async (original) => {
       askMeeting: vi.fn(),
       planLibraryQuestion: vi.fn(),
       askLibrary: vi.fn(),
+      listLibraryAnswers: vi.fn(),
       deleteQuestionThread: vi.fn(),
       renameMeeting: vi.fn(),
       saveExportOptions: vi.fn(),
@@ -214,6 +215,7 @@ const initialSettings: Settings = {
   stop_shortcut: null,
   summary_instructions: "",
   summary_templates: [],
+  recipes: [],
 };
 
 const notInstalled = {
@@ -264,6 +266,7 @@ beforeEach(() => {
   vi.mocked(api.isDesktop).mockReturnValue(true);
   vi.mocked(api.getSessionProcessing).mockResolvedValue(null);
   vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting]);
+  vi.mocked(api.listLibraryAnswers).mockResolvedValue([]);
   vi.mocked(api.getMeeting).mockResolvedValue(sample);
   vi.mocked(api.getRecordingState).mockResolvedValue({
     revision: 0,
@@ -2959,9 +2962,15 @@ describe("transcript and audio", () => {
       id === "rec" ? withMeta : sample,
     );
     vi.mocked(api.planLibraryQuestion).mockResolvedValue(textPlan);
-    vi.mocked(api.askLibrary).mockResolvedValue(
-      "Moved [M1 0:08] and [M2 0:08].",
-    );
+    vi.mocked(api.askLibrary).mockResolvedValue({
+      id: 1,
+      question: "What moved?",
+      answer: "Moved [M1 0:08] and [M2 0:08].",
+      provider: "https://provider.example/v1",
+      model: "test-chat",
+      created_at: "2026-10-20T10:00:00Z",
+      meeting_ids: ["rec"],
+    });
     vi.mocked(api.audioPosition).mockResolvedValue(2250);
     await ready();
     await userEvent.click(

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 23;
+const LATEST_SCHEMA: i64 = 24;
 const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 40;
 
@@ -133,6 +133,11 @@ impl Core {
             (
                 23,
                 include_str!("../migrations/023_export_transcript_formats.sql"),
+                false,
+            ),
+            (
+                24,
+                include_str!("../migrations/024_recipes_library_answers.sql"),
                 false,
             ),
         ];
@@ -1481,6 +1486,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let recipes = crate::recipes::read(db)?;
     Ok(db.query_row(
             "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats FROM settings WHERE id = 1",
             [],
@@ -1514,6 +1520,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                     stop_shortcut: row.get(11)?,
                     summary_instructions: row.get(12)?,
                     summary_templates,
+                    recipes,
                 })
             },
         )?)

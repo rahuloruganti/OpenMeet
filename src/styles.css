@@ -780,6 +780,54 @@ textarea.notes-editor {
 .ask-answer {
   margin-top: 16px;
 }
+.recipe-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+.recipe-chip {
+  min-height: 28px;
+  padding: 2px 10px;
+  border-color: var(--control-border);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: 0.75rem;
+}
+.recipe-chip:hover:not(:disabled),
+.recipe-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--selection);
+}
+.rewrite-card {
+  display: grid;
+  flex-basis: 100%;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  background: #f8f9fb;
+  font-size: 0.8125rem;
+}
+.rewrite-card p {
+  margin: 0;
+}
+.rewrite-source {
+  margin: 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--divider);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.rewrite-result {
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--paper);
+  white-space: pre-wrap;
+  font-size: 0.9375rem;
+}
 .library-meetings {
   max-height: 240px;
   margin: 8px 0;

@@ -303,6 +303,27 @@ pub struct Settings {
     pub export: ExportOptions,
     pub summary_instructions: String,
     pub summary_templates: Vec<CustomTemplate>,
+    pub recipes: Vec<Recipe>,
+}
+
+/// A saved, reusable question prompt; `id` is `recipe-<uuid>`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Recipe {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+}
+
+/// An answer to a question over several meetings. `meetings` are in the order sent (M1 first).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LibraryAnswer {
+    pub id: i64,
+    pub question: String,
+    pub answer: String,
+    pub provider: String,
+    pub model: String,
+    pub created_at: String,
+    pub meeting_ids: Vec<String>,
 }
 
 /// A user-defined summary structure; `id` is `custom-<uuid>` and is stored with each summary.

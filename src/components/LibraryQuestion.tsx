@@ -3,18 +3,22 @@ import {
   api,
   errorMessage,
   isLocalBase,
+  type LibraryAnswer,
   type Meeting,
   type MeetingDetail,
   type ProcessingPlan,
+  type Recipe,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import { parseTimestamp, segmentsAt } from "../lib/timestamps";
+import { RecipePicker } from "./Recipes";
 
 type Props = {
   panelRef: Ref<HTMLElement>;
   /** The panel stays mounted while hidden, so an answer survives following a link. */
   hidden: boolean;
   meetings: Meeting[];
+  recipes: Recipe[];
   /** Changes when the summary/question provider settings change. */
   connectionRevision: string;
   disabled: boolean;
@@ -23,11 +27,9 @@ type Props = {
   onOpen: (meetingId: string, ms: number | null) => void;
 };
 
-/** What was sent, kept with the answer so its citations are checked against exactly that scope. */
+/** The shown saved answer with the stored meetings its citations are checked against. */
 type Answered = {
-  text: string;
-  /** M1, M2, ... in the order sent. */
-  scope: { id: string; title: string }[];
+  answer: LibraryAnswer;
   details: Map<string, MeetingDetail>;
 };
 
@@ -50,7 +52,11 @@ export function LibraryQuestion(props: Props) {
   // Nothing matched, so nothing was sent: a result, not a failure.
   const [notice, setNotice] = useState("");
   const [answered, setAnswered] = useState<Answered | null>(null);
+  const [answers, setAnswers] = useState<LibraryAnswer[]>([]);
+  const [deletingAnswer, setDeletingAnswer] = useState(false);
   const version = useRef(0);
+  const title = (id: string) =>
+    meetings.find((meeting) => meeting.id === id)?.title ?? id;
 
   const tags = [
     ...new Map(
@@ -72,6 +78,44 @@ export function LibraryQuestion(props: Props) {
     setNotice("");
     setWorking(false);
   }, [scopeKey, question, props.connectionRevision]);
+
+  // Saved answers are deleted with any of their meetings, so reload when the library changes.
+  const meetingsKey = meetings.map((meeting) => meeting.id).join(",");
+  useEffect(() => {
+    let live = true;
+    api.listLibraryAnswers().then(
+      (saved) => {
+        if (!live) return;
+        setAnswers(saved);
+        setAnswered((open) =>
+          open && saved.some((answer) => answer.id === open.answer.id)
+            ? open
+            : null,
+        );
+      },
+      (failure) => {
+        if (live) setError(errorMessage(failure));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [meetingsKey]);
+
+  // Citations are checked against the stored transcripts of exactly the meetings asked about.
+  const show = async (answer: LibraryAnswer) => {
+    const details = new Map<string, MeetingDetail>();
+    await Promise.all(
+      answer.meeting_ids.map((id) =>
+        api.getMeeting(id).then(
+          (detail) => void details.set(id, detail),
+          () => undefined,
+        ),
+      ),
+    );
+    setDeletingAnswer(false);
+    setAnswered({ answer, details });
+  };
 
   const plan = async () => {
     const current = ++version.current;
@@ -101,30 +145,16 @@ export function LibraryQuestion(props: Props) {
     setError("");
     setWorking(true);
     try {
-      const text = await api.askLibrary(
+      const saved = await api.askLibrary(
         ids,
         review.question,
         reviewed.fingerprint,
       );
-      // Citations are checked against the stored transcripts of exactly the meetings asked about.
-      const details = new Map<string, MeetingDetail>();
-      await Promise.all(
-        ids.map((id) =>
-          api.getMeeting(id).then(
-            (detail) => void details.set(id, detail),
-            () => undefined,
-          ),
-        ),
-      );
+      // Saved even if the form changed meanwhile, so it always joins the list.
+      setAnswers((list) => [saved, ...list]);
       if (current !== version.current) return;
-      setAnswered({
-        text,
-        scope: ids.map((id) => ({
-          id,
-          title: meetings.find((meeting) => meeting.id === id)?.title ?? id,
-        })),
-        details,
-      });
+      setQuestion("");
+      await show(saved);
     } catch (failure) {
       if (current === version.current) setError(errorMessage(failure));
     } finally {
@@ -134,14 +164,16 @@ export function LibraryQuestion(props: Props) {
 
   const reference = (token: string) => {
     const match = /^\[M([1-9]\d*)(?: ([^\]]+))?\]$/.exec(token);
-    const meeting = match ? answered?.scope[Number(match[1]) - 1] : undefined;
+    const id = match
+      ? answered?.answer.meeting_ids[Number(match[1]) - 1]
+      : undefined;
     const time = match?.[2];
     const ms = time === undefined ? null : parseTimestamp(`[${time}]`);
-    const detail = meeting && answered?.details.get(meeting.id);
+    const detail = id === undefined ? undefined : answered?.details.get(id);
     const valid =
       time === undefined ||
       (ms !== null && !!detail && segmentsAt(detail.segments, ms).length > 0);
-    if (!meeting || !valid)
+    if (id === undefined || !valid)
       return (
         <span className="unverified-reference">
           {token} <span className="muted">(unverified)</span>
@@ -152,10 +184,10 @@ export function LibraryQuestion(props: Props) {
         className="seek-button"
         aria-label={
           time === undefined
-            ? `Open ${meeting.title}`
-            : `Open ${meeting.title} at ${time}`
+            ? `Open ${title(id)}`
+            : `Open ${title(id)} at ${time}`
         }
-        onClick={() => props.onOpen(meeting.id, ms)}
+        onClick={() => props.onOpen(id, ms)}
       >
         {token}
       </button>
@@ -267,6 +299,11 @@ export function LibraryQuestion(props: Props) {
         }}
       >
         <label htmlFor="library-question">Question</label>
+        <RecipePicker
+          recipes={props.recipes}
+          disabled={working}
+          onPick={setQuestion}
+        />
         <textarea
           id="library-question"
           rows={2}
@@ -309,9 +346,7 @@ export function LibraryQuestion(props: Props) {
               :
               <ol>
                 {review.ids.map((id) => (
-                  <li key={id}>
-                    {meetings.find((meeting) => meeting.id === id)?.title ?? id}
-                  </li>
+                  <li key={id}>{title(id)}</li>
                 ))}
               </ol>
             </li>
@@ -320,7 +355,8 @@ export function LibraryQuestion(props: Props) {
               {isLocalBase(review.plan.base_url)
                 ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
                 : "The text leaves this device and is handled under your provider's terms."}{" "}
-              The answer is shown here and is not saved.
+              The question and answer are saved on this device, unencrypted,
+              until you delete them or any of these meetings.
             </li>
           </ul>
           <div className="panel-actions">
@@ -336,17 +372,81 @@ export function LibraryQuestion(props: Props) {
         </div>
       )}
       {working && !review && <p role="status">Working…</p>}
+      {answers.length > 0 && (
+        <div className="panel-actions">
+          <select
+            aria-label="Saved answers"
+            value={answered?.answer.id ?? ""}
+            onChange={(event) => {
+              const chosen = answers.find(
+                (answer) => answer.id === Number(event.target.value),
+              );
+              if (chosen) void show(chosen);
+            }}
+          >
+            {!answered && <option value="">Saved answers</option>}
+            {answers.map((answer) => (
+              <option key={answer.id} value={answer.id}>
+                {answer.question.slice(0, 60)}
+              </option>
+            ))}
+          </select>
+          {answered && (
+            <button
+              disabled={disabled || working}
+              onClick={() => setDeletingAnswer(true)}
+            >
+              Delete answer
+            </button>
+          )}
+        </div>
+      )}
+      {deletingAnswer && answered && (
+        <div
+          className="consent-card"
+          role="group"
+          aria-label="Confirm deleting saved answer"
+        >
+          <p>
+            <strong>Delete this saved answer?</strong> The question and answer
+            are removed from this device. The meetings are kept.
+          </p>
+          <div className="panel-actions">
+            <button
+              className="primary"
+              onClick={() => {
+                const id = answered.answer.id;
+                setDeletingAnswer(false);
+                api.deleteLibraryAnswer(id).then(
+                  (rest) => {
+                    setAnswers(rest);
+                    setAnswered(null);
+                  },
+                  (failure) => setError(errorMessage(failure)),
+                );
+              }}
+            >
+              Delete answer permanently
+            </button>
+            <button onClick={() => setDeletingAnswer(false)}>Keep</button>
+          </div>
+        </div>
+      )}
       {answered && (
         <div className="ask-answer" aria-label="Library answer">
-          {renderMarkdown(answered.text, reference)}
+          <p>
+            <strong>Q: {answered.answer.question}</strong>
+          </p>
+          {renderMarkdown(answered.answer.answer, reference)}
           <p className="muted">
-            AI-generated from {answered.scope.length} meeting
-            {answered.scope.length === 1 ? "" : "s"}:{" "}
-            {answered.scope
-              .map((meeting, index) => `M${index + 1} ${meeting.title}`)
+            AI-generated from {answered.answer.meeting_ids.length} meeting
+            {answered.answer.meeting_ids.length === 1 ? "" : "s"}:{" "}
+            {answered.answer.meeting_ids
+              .map((id, index) => `M${index + 1} ${title(id)}`)
               .join("; ")}
-            . Not saved. A link shows that a transcript line exists at that
-            time, not that it supports the claim; check it before relying on it.
+            . Saved on this device. A link shows that a transcript line exists
+            at that time, not that it supports the claim; check it before
+            relying on it.
           </p>
         </div>
       )}

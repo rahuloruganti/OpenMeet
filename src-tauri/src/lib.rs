@@ -5,6 +5,7 @@ mod capture_gate;
 mod cloud_stt;
 mod domain;
 mod export;
+mod library_answers;
 mod live_audio;
 mod llm;
 mod model_library;
@@ -13,6 +14,7 @@ mod phase_three_tests;
 mod processing_control;
 mod providers;
 mod question_threads;
+mod recipes;
 mod retrieval;
 mod session_processing;
 mod session_runtime;
@@ -1473,14 +1475,14 @@ async fn plan_library_question(
     library_plan(&config, &scope, &question)
 }
 
-/// One request over the chosen meetings; the answer is returned, never stored.
+/// One request over the chosen meetings; the answer is saved with its scope and returned.
 #[tauri::command]
 async fn ask_library(
     app: AppHandle,
     meeting_ids: Vec<String>,
     question: String,
     confirmation: String,
-) -> Result<String> {
+) -> Result<LibraryAnswer> {
     let (ids, scope, config) = library_snapshot(&app, meeting_ids, &question).await?;
     llm::validate_library(&scope.items, &question)?;
     let plan = library_plan(&config, &scope, &question)?;
@@ -1506,11 +1508,100 @@ async fn ask_library(
             |_| unchanged(),
         )?;
         operation.finish(|| {
-            unchanged()?;
-            Ok(answer)
+            let state = app.state::<AppState>();
+            let mut core = state.core.lock().map_err(|_| plan_changed())?;
+            library_check(&core, &ids, &config, &question, &scope)?;
+            core.save_library_answer(&ids, question.trim(), &answer, &plan.base_url, &plan.model)
         })
     })
     .await
+}
+
+#[tauri::command]
+async fn list_library_answers(app: AppHandle) -> Result<Vec<LibraryAnswer>> {
+    with_core(app, false, |core, _| core.library_answers()).await
+}
+
+#[tauri::command]
+async fn delete_library_answer(app: AppHandle, id: i64) -> Result<Vec<LibraryAnswer>> {
+    with_core(app, false, move |core, _| core.delete_library_answer(id)).await
+}
+
+/// The consent fingerprint binds the provider, the selected text and the request.
+fn rewrite_plan(config: &ProviderConfig, text: &str, request: &str) -> Result<ProcessingPlan> {
+    llm::check_rewrite(text, request)?;
+    processing_plan(config, &("rewrite", text, request.trim()), 1, 0, Vec::new())
+}
+
+#[tauri::command]
+async fn plan_rewrite(app: AppHandle, text: String, request: String) -> Result<ProcessingPlan> {
+    let config = with_core(app, false, |core, _| {
+        require_connection(&core.settings()?, ProviderRole::Llm)
+    })
+    .await?;
+    rewrite_plan(&config, &text, &request)
+}
+
+/// Sends only the selected text and request; the rewrite is returned for the user to accept.
+#[tauri::command]
+async fn rewrite_text(
+    app: AppHandle,
+    text: String,
+    request: String,
+    confirmation: String,
+) -> Result<String> {
+    let (config, owner) = with_core(app.clone(), false, |core, _| {
+        Ok((
+            require_connection(&core.settings()?, ProviderRole::Llm)?,
+            core.processing_owner.clone(),
+        ))
+    })
+    .await?;
+    confirm(
+        &rewrite_plan(&config, &text, &request)?,
+        Some(&confirmation),
+    )?;
+    blocking(move || {
+        let operation = owner.begin("rewrite")?;
+        let unchanged = || {
+            let state = app.state::<AppState>();
+            let core = state.core.lock().map_err(|_| plan_changed())?;
+            if core.quitting || core.settings()?.connection(ProviderRole::Llm) != Some(&config) {
+                return Err(plan_changed());
+            }
+            Ok(())
+        };
+        let rewritten = llm::rewrite(
+            &providers::load_connection(&config)?,
+            &text,
+            &request,
+            operation.cancel(),
+            |_| unchanged(),
+        )?;
+        operation.finish(|| {
+            unchanged()?;
+            Ok(rewritten)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_recipe(
+    app: AppHandle,
+    id: Option<String>,
+    name: String,
+    prompt: String,
+) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_recipe(id.as_deref(), &name, &prompt)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_recipe(app: AppHandle, id: String) -> Result<Settings> {
+    with_core(app, false, move |core, _| core.delete_recipe(&id)).await
 }
 
 #[tauri::command]
@@ -2008,6 +2099,12 @@ pub fn run() {
             save_summary_instructions,
             save_summary_template,
             delete_summary_template,
+            save_recipe,
+            delete_recipe,
+            list_library_answers,
+            delete_library_answer,
+            plan_rewrite,
+            rewrite_text,
             save_action_item,
             delete_action_item,
             import_action_items,

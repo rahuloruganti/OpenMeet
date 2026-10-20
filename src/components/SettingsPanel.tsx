@@ -9,6 +9,7 @@ import type {
 } from "../lib/api";
 import { ModelLibrary } from "./ModelLibrary";
 import { ProviderSettings } from "./ProviderSettings";
+import { RecipeSettings } from "./Recipes";
 import { SummaryTemplates } from "./SummaryTemplates";
 import type { ProcessingChoice } from "../lib/processing";
 
@@ -390,6 +391,11 @@ export function SettingsPanel(props: Props) {
           </p>
         </section>
         <SummaryTemplates
+          settings={settings}
+          disabled={disabled}
+          onSettings={props.onSettings}
+        />
+        <RecipeSettings
           settings={settings}
           disabled={disabled}
           onSettings={props.onSettings}

@@ -4,6 +4,18 @@ Checked on October 14, 2026. Scope: the core workflow before, during, and after 
 
 Use the [implementation checklist](implementation-checklist.md) to track the remaining work.
 
+## Update: October 20, 2026
+
+Most gaps in the table below have since been implemented (implemented, not qualified): live transcript previews and automatic post-stop processing (Phase 3), You/Others speaker names, transcript editing with earlier transcripts, editable summary versions, custom templates and saved instructions, structured tasks, validated `[m:ss]` source links, tags, saved question threads with follow-ups, questions across 1 to 20 meetings with keyword retrieval for long content, and TXT/SRT/VTT transcript files. The "OpenMeet today" column reflects October 14 and is kept for history.
+
+Granola's current help-center index (`docs.granola.ai/llms.txt`, read October 20) also lists Recipes, follow-up email drafts, profile context, pre-meeting briefs, People and Companies, deleted-note restore, CSV export, screen snapshots, an API/MCP server, Zapier/CRM/Slack/Notion integrations, workspaces, and mobile/Apple Watch clients. This update added:
+
+- **Recipes**: five built-in saved questions (including a follow-up email draft) plus user-saved ones, usable in both question boxes. Choosing one only fills the box; review and consent are unchanged.
+- **Saved answers across meetings**: stored with their ordered scope and deleted with any source meeting.
+- **Selected-text rewrite** in notes: only the selection and request are sent after consent; the result replaces the selection only when accepted.
+
+Still not built: separate remote speakers (#26), calendar sync, reminders and detection (#39), pre-meeting briefs, deleted-meeting restore, a local API/MCP server, sharing/workspaces (#44), and integrations or bots (#45). The first two remain deferred under AGENTS.md rule 8; the rest are later-phase product decisions. A separate profile field was not added because saved summary instructions already carry user context for summaries; questions do not use them. The desktop app was not decompiled for this update; REA was not rerun.
+
 OpenMeet already implements a substantial personal meeting notebook. The largest gaps are live transcription, automatic post-meeting processing, named speakers, editable AI notes, and questions across multiple meetings. Capture reliability remains an unfinished qualification requirement.
 
 ## Evidence and limits

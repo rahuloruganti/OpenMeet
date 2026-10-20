@@ -951,6 +951,7 @@ export function App() {
             hidden={panel !== "library"}
             panelRef={panel === "library" ? panelRef : null}
             meetings={meetings}
+            recipes={settings?.recipes ?? []}
             connectionRevision={`${settings?.llm?.revision ?? 0}`}
             disabled={disabled}
             onClose={() => setPanel(null)}
@@ -1054,6 +1055,7 @@ export function App() {
           }}
           versions={summaryVersions}
           customTemplates={settings?.summary_templates ?? []}
+          recipes={settings?.recipes ?? []}
           summaryInstructions={settings?.summary_instructions ?? ""}
           summaryDraft={
             selected ? summaryDrafts[selected.meeting.id] : undefined

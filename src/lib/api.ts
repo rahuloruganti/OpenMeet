@@ -195,6 +195,19 @@ export type Settings = {
   export: ExportOptions;
   summary_instructions: string;
   summary_templates: CustomTemplate[];
+  recipes: Recipe[];
+};
+/** A saved question prompt; `id` is `recipe-<uuid>`. */
+export type Recipe = { id: string; name: string; prompt: string };
+/** A saved answer over several meetings; `meeting_ids` are in the order sent (M1 first). */
+export type LibraryAnswer = {
+  id: number;
+  question: string;
+  answer: string;
+  provider: string;
+  model: string;
+  created_at: string;
+  meeting_ids: string[];
 };
 /** `original_text` holds the engine's text once the user edited a segment. */
 export type SegmentMeta = { id: number; original_text: string | null };
@@ -571,9 +584,28 @@ export const api = {
   /** Plans one question over 1 to 20 meetings, in this order; nothing is sent. */
   planLibraryQuestion: (meetingIds: string[], question: string) =>
     invoke<ProcessingPlan>("plan_library_question", { meetingIds, question }),
-  /** One request over the reviewed meetings; the answer is returned, not stored. */
+  /** One request over the reviewed meetings; the answer is saved and returned. */
   askLibrary: (meetingIds: string[], question: string, confirmation: string) =>
-    invoke<string>("ask_library", { meetingIds, question, confirmation }),
+    invoke<LibraryAnswer>("ask_library", {
+      meetingIds,
+      question,
+      confirmation,
+    }),
+  /** Saved library answers, newest first. */
+  listLibraryAnswers: () => invoke<LibraryAnswer[]>("list_library_answers"),
+  /** Returns the remaining answers. */
+  deleteLibraryAnswer: (id: number) =>
+    invoke<LibraryAnswer[]>("delete_library_answer", { id }),
+  /** Plans a rewrite of selected text; nothing is sent. */
+  planRewrite: (text: string, request: string) =>
+    invoke<ProcessingPlan>("plan_rewrite", { text, request }),
+  /** Sends only the selected text and request; the result is returned, never stored. */
+  rewriteText: (text: string, request: string, confirmation: string) =>
+    invoke<string>("rewrite_text", { text, request, confirmation }),
+  /** Creates a recipe when `id` is null; otherwise edits it. */
+  saveRecipe: (id: string | null, name: string, prompt: string) =>
+    invoke<Settings>("save_recipe", { id, name, prompt }),
+  deleteRecipe: (id: string) => invoke<Settings>("delete_recipe", { id }),
   /** Returns the remaining threads. */
   deleteQuestionThread: (meetingId: string, threadId: number) =>
     invoke<QuestionThread[]>("delete_question_thread", { meetingId, threadId }),

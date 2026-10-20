@@ -54,6 +54,7 @@ const settings: Settings = {
   },
   summary_instructions: "",
   summary_templates: [],
+  recipes: [],
 };
 const props = () => ({
   settings,

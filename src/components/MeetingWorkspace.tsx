@@ -4,6 +4,7 @@ import {
   isLocalBase,
   type ActionItem,
   type CustomTemplate,
+  type Recipe,
   type SpeakerNames,
   speakerLabel,
   type MeetingDetail,
@@ -14,6 +15,8 @@ import {
 } from "../lib/api";
 import { extractSection, renderMarkdown } from "../lib/markdown";
 import { ActionItems } from "./ActionItems";
+import { RecipePicker } from "./Recipes";
+import { RewriteSelection } from "./RewriteSelection";
 import { MeetingTagsForm } from "./MeetingTags";
 import { SpeakerNamesForm } from "./SpeakerNames";
 import { TranscriptVersions } from "./TranscriptVersions";
@@ -121,6 +124,8 @@ type Props = {
   /** Stored summaries, newest first. */
   versions: SummaryVersion[];
   customTemplates: CustomTemplate[];
+  /** Saved question prompts; built-in recipes are added by the picker. */
+  recipes: Recipe[];
   /** Saved personal instructions sent with every summary. */
   summaryInstructions: string;
   onPlanSummary: (template: string) => Promise<ProcessingPlan | null>;
@@ -557,7 +562,7 @@ export function MeetingWorkspace(props: Props) {
           </p>
           <p>
             {deleting === "meeting"
-              ? "Removes its notes, transcript, summaries and audio files from this device."
+              ? "Removes its notes, transcript, summaries, audio files and any saved cross-meeting answers that used it from this device."
               : `Removes ${selected.tracks.length} audio track${selected.tracks.length === 1 ? "" : "s"} (${formatBytes(audioBytes)}) and their timing files. Notes, transcript and summaries are kept.`}{" "}
             Exported Markdown snapshots are not touched. This cannot be undone.
           </p>
@@ -685,6 +690,16 @@ export function MeetingWorkspace(props: Props) {
             <button disabled={disabled} onClick={props.onSaveNow}>
               Save notes now
             </button>
+            <RewriteSelection
+              key={meeting.id}
+              editor={editor}
+              notes={props.notes}
+              disabled={disabled}
+              blocked={
+                job !== null ? "Another task is running." : props.enhanceBlocked
+              }
+              onApply={props.onNotes}
+            />
             {props.live && (
               <button
                 disabled={disabled}
@@ -1002,6 +1017,14 @@ export function MeetingWorkspace(props: Props) {
             <label htmlFor="ask-question">
               {activeThread ? "Ask a follow-up" : "Ask this meeting"}
             </label>
+            <RecipePicker
+              recipes={props.recipes}
+              disabled={blocked}
+              onPick={(prompt) => {
+                setQuestion(prompt);
+                setAsking(null);
+              }}
+            />
             <textarea
               id="ask-question"
               rows={2}

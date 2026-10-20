@@ -1,7 +1,12 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { api, type Meeting, type MeetingDetail } from "../lib/api";
+import {
+  api,
+  type LibraryAnswer,
+  type Meeting,
+  type MeetingDetail,
+} from "../lib/api";
 import { LibraryQuestion } from "./LibraryQuestion";
 
 vi.mock("../lib/api", async (original) => ({
@@ -10,6 +15,8 @@ vi.mock("../lib/api", async (original) => ({
     planLibraryQuestion: vi.fn(),
     askLibrary: vi.fn(),
     getMeeting: vi.fn(),
+    listLibraryAnswers: vi.fn(),
+    deleteLibraryAnswer: vi.fn(),
   },
 }));
 
@@ -55,6 +62,9 @@ function show(onOpen = vi.fn()) {
       hidden={false}
       panelRef={{ current: null }}
       meetings={meetings}
+      recipes={[
+        { id: "recipe-1", name: "Risks", prompt: "What risks came up?" },
+      ]}
       connectionRevision="1"
       disabled={false}
       onClose={vi.fn()}
@@ -72,6 +82,21 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.planLibraryQuestion).mockResolvedValue(plan);
   vi.mocked(api.getMeeting).mockImplementation(async (id) => detail(id));
+  vi.mocked(api.listLibraryAnswers).mockResolvedValue([]);
+});
+const saved = (
+  id: number,
+  meetingIds: string[],
+  answer: string,
+  question = "What was decided?",
+): LibraryAnswer => ({
+  id,
+  question,
+  answer,
+  provider: plan.base_url,
+  model: plan.model,
+  created_at: "2026-10-20T10:00:00Z",
+  meeting_ids: meetingIds,
 });
 
 it("resolves a tag to its meetings, lists them in the consent card, and sends the reviewed scope", async () => {
@@ -95,7 +120,9 @@ it("resolves a tag to its meetings, lists them in the consent card, and sends th
   expect(card.textContent).not.toContain("Beta review");
   expect(card.textContent).toContain("Not sent: audio recordings");
   expect(card.textContent).toContain("leaves this device");
-  vi.mocked(api.askLibrary).mockResolvedValue("Ship it [M1 0:08].");
+  vi.mocked(api.askLibrary).mockResolvedValue(
+    saved(1, ["a", "c"], "Ship it [M1 0:08]."),
+  );
   expect(api.askLibrary).not.toHaveBeenCalled();
   await userEvent.click(
     within(card).getByRole("button", { name: "Send question" }),
@@ -137,7 +164,11 @@ it("links only in-scope citations that match a stored segment and marks the rest
   await userEvent.click(screen.getByLabelText(/Alpha sync/));
   await ask();
   vi.mocked(api.askLibrary).mockResolvedValue(
-    "Launch is Friday [M1 0:08]. Budget [M1 9:59], other [M2 0:08], plan [M1], bare [0:08].",
+    saved(
+      1,
+      ["a"],
+      "Launch is Friday [M1 0:08]. Budget [M1 9:59], other [M2 0:08], plan [M1], bare [0:08].",
+    ),
   );
   await userEvent.click(
     await screen.findByRole("button", { name: "Send question" }),
@@ -200,4 +231,76 @@ it("shows no matching passages as a status message, not an error, and sends noth
   // Changing the question clears the message.
   await userEvent.type(screen.getByLabelText("Question"), "?");
   expect(screen.queryByText(message)).toBeNull();
+});
+
+it("fills the question from a recipe without sending anything", async () => {
+  show();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Follow-up email" }),
+  );
+  expect(
+    (screen.getByLabelText("Question") as HTMLTextAreaElement).value,
+  ).toContain("follow-up email");
+  await userEvent.click(screen.getByRole("button", { name: "Risks" }));
+  expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe(
+    "What risks came up?",
+  );
+  expect(api.planLibraryQuestion).not.toHaveBeenCalled();
+  expect(api.askLibrary).not.toHaveBeenCalled();
+});
+
+it("lists saved answers with their scope, and deletes one only after confirmation", async () => {
+  vi.mocked(api.listLibraryAnswers).mockResolvedValue([
+    saved(2, ["c", "a"], "Gamma first [M1 0:08].", "Newest?"),
+    saved(1, ["b"], "Older answer.", "Older?"),
+  ]);
+  vi.mocked(api.deleteLibraryAnswer).mockResolvedValue([
+    saved(1, ["b"], "Older answer.", "Older?"),
+  ]);
+  const onOpen = show();
+  await userEvent.selectOptions(
+    await screen.findByLabelText("Saved answers"),
+    "2",
+  );
+  const answer = await screen.findByLabelText("Library answer");
+  expect(answer.textContent).toContain("Q: Newest?");
+  expect(answer.textContent).toContain("M1 Gamma plan; M2 Alpha sync");
+  // M1 is the first meeting sent, not the first in the library.
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Open Gamma plan at 0:08" }),
+  );
+  expect(onOpen).toHaveBeenLastCalledWith("c", 8000);
+  await userEvent.click(screen.getByRole("button", { name: "Delete answer" }));
+  expect(api.deleteLibraryAnswer).not.toHaveBeenCalled();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Delete answer permanently" }),
+  );
+  expect(api.deleteLibraryAnswer).toHaveBeenCalledWith(2);
+  expect(screen.queryByLabelText("Library answer")).toBeNull();
+  expect(
+    within(screen.getByLabelText("Saved answers")).queryByText("Newest?"),
+  ).toBeNull();
+});
+
+it("shows a sent answer as saved and adds it to the saved list", async () => {
+  vi.mocked(api.askLibrary).mockResolvedValue(saved(7, ["a"], "Done."));
+  show();
+  await userEvent.click(screen.getByLabelText(/Alpha sync/));
+  await ask();
+  const card = await screen.findByRole("group", {
+    name: "Confirm sending library question",
+  });
+  expect(card.textContent).toContain("saved on this device, unencrypted");
+  await userEvent.click(
+    within(card).getByRole("button", { name: "Send question" }),
+  );
+  expect(
+    (await screen.findByLabelText("Library answer")).textContent,
+  ).toContain("Saved on this device");
+  expect(
+    (screen.getByLabelText("Saved answers") as HTMLSelectElement).value,
+  ).toBe("7");
+  expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe(
+    "",
+  );
 });
