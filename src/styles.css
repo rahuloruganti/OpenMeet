@@ -669,7 +669,7 @@ textarea.notes-editor {
 .editor-footer > .muted:last-child {
   margin-left: auto;
 }
-.editor-footer button {
+.editor-footer > button {
   font-size: 0.75rem;
   min-height: 30px;
   border-color: var(--divider);
@@ -800,8 +800,10 @@ textarea.notes-editor {
   border-color: var(--accent);
   background: var(--selection);
 }
+/* Opens below the whole footer row, so footer buttons keep their places. */
 .rewrite-card {
   display: grid;
+  order: 1;
   flex-basis: 100%;
   gap: 10px;
   padding: 16px;

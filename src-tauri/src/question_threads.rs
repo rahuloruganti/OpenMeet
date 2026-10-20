@@ -252,5 +252,18 @@ mod tests {
             core.get_meeting("existing").unwrap().question_threads,
             [thread]
         );
+        // v24 on the upgraded database: a saved library answer goes with its meeting.
+        assert!(core.settings().unwrap().recipes.is_empty());
+        core.save_library_answer(&["existing".into()], "Q", "A", "p", "m")
+            .unwrap();
+        core.delete_meeting("existing").unwrap();
+        assert!(core.library_answers().unwrap().is_empty());
+        let violations: i64 = core
+            .db
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
     }
 }

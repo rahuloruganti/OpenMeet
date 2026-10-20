@@ -129,8 +129,32 @@ it("refuses to replace when the notes changed around the selection", async () =>
     screen.getByRole("button", { name: "Replace selection" }),
   );
   expect(onApply).not.toHaveBeenCalled();
-  expect(screen.getByRole("status").textContent).toContain(
+  expect(screen.getByRole("alert").textContent).toContain(
     "nothing was replaced",
   );
   expect(notes().value).toBe("XAlpha beta gamma");
+});
+
+it("shows a failed rewrite as an alert and leaves the notes unchanged", async () => {
+  vi.mocked(api.rewriteText).mockRejectedValue({
+    code: "provider_unreachable",
+    message: "Cannot reach the selected provider.",
+  });
+  render(<Harness initial="Alpha beta" />);
+  select(0, 5);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Rewrite selection…" }),
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Make it clearer" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Review" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Send for rewrite" }),
+  );
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "Cannot reach",
+  );
+  expect(screen.queryByLabelText("Rewritten text")).toBeNull();
+  expect(notes().value).toBe("Alpha beta");
 });

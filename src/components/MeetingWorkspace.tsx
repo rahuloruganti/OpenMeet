@@ -111,6 +111,8 @@ type Props = {
   speechReady: boolean;
   /** Why summary generation is unavailable, or null when it can run. */
   enhanceBlocked: string | null;
+  /** Why the summary/question provider cannot be used at all, or null. */
+  llmBlocked: string | null;
   sttMode: Settings["stt_mode"];
   connectionRevision: string;
   onTab: (tab: ContentTab) => void;
@@ -696,7 +698,7 @@ export function MeetingWorkspace(props: Props) {
               notes={props.notes}
               disabled={disabled}
               blocked={
-                job !== null ? "Another task is running." : props.enhanceBlocked
+                job !== null ? "Another task is running." : props.llmBlocked
               }
               onApply={props.onNotes}
             />

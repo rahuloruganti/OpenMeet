@@ -579,15 +579,17 @@ export function App() {
   const disabled = !ready || busy || controlBusy;
   const hasSummaryInput =
     notes.trim().length > 0 || (selected?.segments.length ?? 0) > 0;
-  const enhanceBlocked = !selected
-    ? "Select a meeting first."
-    : keyStatus.llm !== "present" && !isLocalBase(settings?.llm?.base_url ?? "")
+  // Why the summary/question provider cannot be used; rewrites need nothing more.
+  const llmBlocked =
+    keyStatus.llm !== "present" && !isLocalBase(settings?.llm?.base_url ?? "")
       ? "Save a summary API key in Settings first."
       : !settings?.llm?.model
         ? "Choose and save a summary model in Settings first."
-        : !hasSummaryInput
-          ? "Add notes or transcribe the audio first."
-          : null;
+        : null;
+  const enhanceBlocked = !selected
+    ? "Select a meeting first."
+    : (llmBlocked ??
+      (!hasSummaryInput ? "Add notes or transcribe the audio first." : null));
 
   return (
     <div className={`app${sidebarOpen ? "" : " sidebar-collapsed"}`}>
@@ -976,6 +978,7 @@ export function App() {
           sttMode={settings?.stt_mode ?? "local"}
           connectionRevision={`${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`}
           enhanceBlocked={enhanceBlocked}
+          llmBlocked={llmBlocked}
           onPlanTranscription={async () => {
             const id = selected?.meeting.id;
             let plan: ProcessingPlan | null = null;
