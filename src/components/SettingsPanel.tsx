@@ -75,7 +75,19 @@ type Props = {
   output: string;
   onDefaultDevices: (microphone: string, output: string) => void;
   audioBytes: number | null;
+  detectionSupported: boolean;
+  onDetection: (enabled: boolean) => void;
+  onDetectionIgnored: (appId: string, ignored: boolean) => void;
   initialSection?: SettingsSection;
+};
+
+/** A readable name for a microphone privacy-store key; matches Rust `display_name`. */
+const appName = (id: string) => {
+  const file = id.includes("#") ? id.slice(id.lastIndexOf("#") + 1) : null;
+  const name = file
+    ? file.replace(/\.exe$/i, "")
+    : (id.split("_")[0].split(".").pop() ?? id);
+  return name.charAt(0).toUpperCase() + name.slice(1);
 };
 
 /** A keyboard chord as a shortcut accelerator, or null for a lone modifier or a key without
@@ -288,6 +300,55 @@ export function SettingsPanel(props: Props) {
                   devices(settings?.microphone_id ?? props.microphone, id)
                 }
               />
+            </section>
+            <section
+              className="settings-section"
+              aria-label="Meeting detection"
+            >
+              <h3>Meeting detection</h3>
+              {props.detectionSupported ? (
+                <>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={settings?.detection_enabled ?? false}
+                      disabled={disabled || !settings}
+                      onChange={(event) =>
+                        props.onDetection(event.target.checked)
+                      }
+                    />
+                    <span>
+                      Offer to record when another app uses the microphone
+                    </span>
+                  </label>
+                  <p className="muted">
+                    Every few seconds OpenMeet reads which apps Windows reports
+                    as using the microphone. It reads app names only, never
+                    audio, and nothing leaves this device. A prompt never starts
+                    recording: you still choose devices and confirm consent.
+                  </p>
+                  {settings && settings.detection_ignored.length > 0 && (
+                    <ul
+                      className="ignored-apps"
+                      aria-label="Apps never prompted about"
+                    >
+                      {settings.detection_ignored.map((id) => (
+                        <li key={id}>
+                          <span title={id}>{appName(id)}</span>
+                          <button
+                            disabled={disabled}
+                            onClick={() => props.onDetectionIgnored(id, false)}
+                          >
+                            Prompt again
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              ) : (
+                <p className="muted">Not available on this platform yet.</p>
+              )}
             </section>
             <section
               className="settings-section"
@@ -612,6 +673,10 @@ export function SettingsPanel(props: Props) {
                 <li>
                   <strong>Summaries, questions and rewrites:</strong> only the
                   text shown on each confirmation card.
+                </li>
+                <li>
+                  <strong>Meeting detection (off by default):</strong> reads
+                  which apps use the microphone, on this device only.
                 </li>
                 <li>
                   <strong>Model downloads:</strong> requests to github.com and

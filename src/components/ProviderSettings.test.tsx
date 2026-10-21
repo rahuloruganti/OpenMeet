@@ -59,6 +59,8 @@ const settings: Settings = {
   processing_mode: "recording",
   processing_summary: null,
   summary_default: "general-v1",
+  detection_enabled: false,
+  detection_ignored: [],
 };
 const props = () => ({
   settings,

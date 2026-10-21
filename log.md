@@ -604,3 +604,15 @@ A review of the settings revamp before pushing found four regressions, all fixed
 - Deleting the custom template that was the default resets the default to General.
 
 Default device selects now show the saved defaults instead of the working selection. Regression tests cover each fix. Full checks passed: 164 frontend tests and 181 Rust tests (two native tests ignored), plus typecheck, lint, formatting, both builds and Clippy.
+
+User asked to work on automatic meeting detection. That overrides the earlier rule-8 deferral for detection only, as opt-in prompts that never start capture; AGENTS.md rule 8 now records this.
+
+Behaviour:
+- On Windows, a thread reads the microphone privacy store (`CapabilityAccessManager\ConsentStore\microphone`, packaged and NonPackaged keys) every 3 s while detection is on. An app counts as in use when `LastUsedTimeStart` is greater than `LastUsedTimeStop`, which was checked read-only against an idle app. OpenMeet's own exe is excluded.
+- An app must be in use for two polls before it is reported, and `microphone_apps` is emitted only when the list changes.
+- The frontend shows a "Meeting detected" card (Set up recording / Not now / Never for <app>) once per microphone session per app, not while OpenMeet records. It flashes the taskbar through a Rust command.
+- Set up recording only opens New recording with consent unchecked and the title prefilled.
+
+Storage and dependencies: schema v26 adds the opt-in `detection_enabled` flag and `detection_ignored_apps`, and Settings → Recording has the toggle, a disclosure and the ignored list. `winreg` 0.56 is a new direct Windows-only dependency. It was already in the lockfile, so only an edge was added, and it is listed in THIRD_PARTY_LICENSES.md.
+
+Full checks passed: typecheck, lint, formatting, 167 frontend tests, frontend build, Rust formatting, all-target Clippy, 184 Rust tests with two native tests ignored, and Cargo build. A one-off read-only poll of the real registry ran without error and found no app in use. Not verified: a prompt during a real Zoom/Teams/browser call, and behaviour when the window is hidden to the tray (the prompt is only seen after switching to OpenMeet). macOS detection is not implemented.

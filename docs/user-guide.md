@@ -47,6 +47,12 @@ In **My notes**, **Insert timestamp** adds the current backend recording offset.
 
 The code excludes paused audio, but real-device pause privacy, device failures, and long-run timing remain unqualified. A meter signal or two WAV files does not establish a successful recording.
 
+### Meeting detection (Windows, opt-in)
+
+Turn on **Settings → Recording → Meeting detection** to be offered a recording when another app, such as Zoom, Teams or a browser, starts using your microphone. OpenMeet then reads every 3 seconds which apps Windows reports as using the microphone. It reads app names only, never audio, and nothing leaves this device. An app must hold the microphone for two checks in a row before a prompt appears, and OpenMeet's own recording is ignored.
+
+The prompt names the app and offers **Set up recording**, **Not now**, or **Never for** that app. **Set up recording** only opens New recording with the title prefilled: you still choose devices and confirm consent before anything is captured. Each app prompts once per microphone session and again the next time it starts using the microphone. Prompts are not shown while OpenMeet is recording. Ignored apps are listed in Settings with **Prompt again**. The prompt flashes the taskbar entry but does not open a hidden window, so it is only visible once you switch to OpenMeet. Dictation and captioning tools that hold the microphone also trigger it; choose **Never for** them. Detection is not available on macOS yet and has not been qualified on a real call.
+
 ## Choose automatic processing
 
 1. In **New recording**, choose **Live transcription only**, **Final transcription after stop**, or **Live and final transcription**.

@@ -14,7 +14,9 @@ Granola's current help-center index (`docs.granola.ai/llms.txt`, read October 20
 - **Saved answers across meetings**: stored with their ordered scope and deleted with any source meeting.
 - **Selected-text rewrite** in notes: only the selection and request are sent after consent; the result replaces the selection only when accepted.
 
-Still not built: separate remote speakers (#26), calendar sync, reminders and detection (#39), pre-meeting briefs, deleted-meeting restore, a local API/MCP server, sharing/workspaces (#44), and integrations or bots (#45). The first two remain deferred under AGENTS.md rule 8; the rest are later-phase product decisions. A separate profile field was not added because saved summary instructions already carry user context for summaries; questions do not use them. The desktop app was not decompiled for this update; REA was not rerun.
+Opt-in meeting detection was added on October 21 at the user's request: on Windows, OpenMeet watches which apps the microphone privacy store reports as using the microphone and offers to open the recording setup, never starting a recording itself.
+
+Still not built: separate remote speakers (#26), calendar sync and reminders (#39), pre-meeting briefs, deleted-meeting restore, a local API/MCP server, sharing/workspaces (#44), and integrations or bots (#45). The first two remain deferred under AGENTS.md rule 8; the rest are later-phase product decisions. A separate profile field was not added because saved summary instructions already carry user context for summaries; questions do not use them. The desktop app was not decompiled for this update; REA was not rerun.
 
 OpenMeet already implements a substantial personal meeting notebook. The largest gaps are live transcription, automatic post-meeting processing, named speakers, editable AI notes, and questions across multiple meetings. Capture reliability remains an unfinished qualification requirement.
 

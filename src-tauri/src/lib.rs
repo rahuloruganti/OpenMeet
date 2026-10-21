@@ -8,6 +8,7 @@ mod export;
 mod library_answers;
 mod live_audio;
 mod llm;
+mod meeting_detection;
 mod model_library;
 #[cfg(test)]
 mod phase_three_tests;
@@ -43,6 +44,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct AppState {
     core: Mutex<Core>,
+    /// Read by the detection thread without taking the core lock.
+    detection: std::sync::Arc<AtomicBool>,
     provider_writes: Mutex<()>,
     startup_warning: Option<String>,
     allow_exit: AtomicBool,
@@ -1819,6 +1822,66 @@ async fn save_summary_default(app: AppHandle, template: String) -> Result<Settin
 }
 
 #[tauri::command]
+async fn save_detection(app: AppHandle, enabled: bool) -> Result<Settings> {
+    let flag = app.state::<AppState>().detection.clone();
+    let settings = with_core(app, false, move |core, _| core.save_detection(enabled)).await?;
+    flag.store(
+        settings.detection_enabled && meeting_detection::SUPPORTED,
+        Ordering::SeqCst,
+    );
+    Ok(settings)
+}
+
+#[tauri::command]
+async fn set_detection_ignored(app: AppHandle, app_id: String, ignored: bool) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.set_detection_ignored(&app_id, ignored)
+    })
+    .await
+}
+
+#[tauri::command]
+fn detection_supported() -> bool {
+    meeting_detection::SUPPORTED
+}
+
+/// Flashes the taskbar entry so a detection prompt is noticed; it never shows or focuses the window.
+#[tauri::command]
+fn request_attention(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+    }
+}
+
+/// Polls the microphone privacy store while detection is on and reports stable changes.
+fn spawn_detection(app: AppHandle, enabled: std::sync::Arc<AtomicBool>) {
+    if !meeting_detection::SUPPORTED {
+        return;
+    }
+    std::thread::spawn(move || {
+        let mut debounce = meeting_detection::Debounce::default();
+        loop {
+            std::thread::sleep(meeting_detection::POLL);
+            let now = if enabled.load(Ordering::SeqCst) {
+                meeting_detection::poll()
+            } else {
+                Default::default()
+            };
+            if let Some(ids) = debounce.update(now) {
+                let apps: Vec<_> = ids
+                    .into_iter()
+                    .map(|id| meeting_detection::MicApp {
+                        name: meeting_detection::display_name(&id),
+                        id,
+                    })
+                    .collect();
+                let _ = app.emit("microphone_apps", apps);
+            }
+        }
+    });
+}
+
+#[tauri::command]
 async fn save_default_devices(
     app: AppHandle,
     microphone_id: String,
@@ -1997,8 +2060,13 @@ pub fn run() {
                 pause_failed.then_some(settings.pause_shortcut.as_str()),
                 settings.stop_shortcut.as_deref().filter(|_| stop_failed),
             );
+            let detection = std::sync::Arc::new(AtomicBool::new(
+                settings.detection_enabled && meeting_detection::SUPPORTED,
+            ));
+            spawn_detection(app.handle().clone(), detection.clone());
             app.manage(AppState {
                 core: Mutex::new(core),
+                detection,
                 provider_writes: Mutex::new(()),
                 startup_warning,
                 allow_exit: AtomicBool::new(false),
@@ -2131,6 +2199,10 @@ pub fn run() {
             save_processing_default,
             save_summary_default,
             save_default_devices,
+            save_detection,
+            set_detection_ignored,
+            detection_supported,
+            request_attention,
             save_summary_instructions,
             save_summary_template,
             delete_summary_template,

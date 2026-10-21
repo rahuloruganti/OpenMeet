@@ -201,7 +201,13 @@ export type Settings = {
   processing_summary: string | null;
   /** The template the Enhance picker starts at. */
   summary_default: string;
+  /** Opt-in: prompt when another app starts using the microphone. Never starts recording. */
+  detection_enabled: boolean;
+  /** Microphone privacy-store keys of apps never to prompt about. */
+  detection_ignored: string[];
 };
+/** An app Windows reports as using the microphone; `id` is its privacy-store key. */
+export type MicApp = { id: string; name: string };
 /** A saved question prompt; `id` is `recipe-<uuid>`. */
 export type Recipe = { id: string; name: string; prompt: string };
 /** A saved answer over several meetings; `meeting_ids` are in the order sent (M1 first). */
@@ -457,6 +463,16 @@ export const api = {
       file,
     }),
   cancelModelDownload: () => invoke<void>("cancel_model_download"),
+  /** Apps holding the microphone, reported when the stable list changes while detection is on. */
+  onMicrophoneApps: (callback: (apps: MicApp[]) => void) =>
+    listen<MicApp[]>("microphone_apps", (event) => callback(event.payload)),
+  saveDetection: (enabled: boolean) =>
+    invoke<Settings>("save_detection", { enabled }),
+  setDetectionIgnored: (appId: string, ignored: boolean) =>
+    invoke<Settings>("set_detection_ignored", { appId, ignored }),
+  detectionSupported: () => invoke<boolean>("detection_supported"),
+  /** Flashes the taskbar entry; never shows or focuses the window. */
+  requestAttention: () => invoke<void>("request_attention"),
   onModelLibraryProgress: (
     callback: (progress: ModelLibraryProgress) => void,
   ) =>

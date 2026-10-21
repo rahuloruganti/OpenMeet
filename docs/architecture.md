@@ -57,10 +57,11 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/cloud_stt.rs`                               | Frozen bounded WAV preparation, pause-aware chunks, multipart uploads, and timed/untimed parsing.       |
 | `src-tauri/src/export.rs`                                  | Markdown rendering, optional TXT/SRT/VTT transcripts, safe filenames, and non-overwriting publication.  |
 | `src-tauri/src/action_items.rs`                            | Editable meeting tasks, validation, and explicit imports from a summary's Action items section.         |
+| `src-tauri/src/meeting_detection.rs` | Opt-in Windows meeting detection: reads the microphone privacy store every 3 s on a thread gated by an `AtomicBool`, debounces over two polls, and emits `microphone_apps`. Never starts capture. |
 | `src-tauri/src/question_threads.rs` | Saved question threads and turns: store, append, list, and delete. |
 | `src-tauri/src/library_answers.rs` | Saved answers across meetings: store with ordered scope, list, and delete. |
 | `src-tauri/src/recipes.rs` | Saved question recipes: validate, store, edit, and delete. |
-| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v25.                                                             |
+| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v26.                                                             |
 | `fixtures/`                                                | Fictional test resources, excluded from production creation paths.                                      |
 
 ## State and concurrency

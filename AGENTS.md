@@ -81,7 +81,7 @@ Capture qualification still requires real-machine checks: distinct tracks, audib
 5. Keep the backend authoritative for recording state. Preserve revision ordering and use events as notifications; handle errors even when an operation partially changes state.
 6. Never silently change the selected device or sample format, fall back to one-track capture, or substitute fixture output for failed capture. Fail visibly and preserve recoverable data.
 7. Add a small regression test for nontrivial behavior. Use synthetic samples for routine audio tests; native-device tests must be explicit and separate.
-8. Do not widen scope to detection, bots, SharePoint, diarization, or speculative integrations before their planned phase. Record unmet gates rather than marking a phase complete.
+8. Do not widen scope to bots, SharePoint, diarization, calendar, or speculative integrations before their planned phase. Record unmet gates rather than marking a phase complete. The user authorized opt-in meeting detection on 2026-10-21: it may only offer a prompt that opens the recording setup, and must never start capture, check consent, or pick devices by itself.
 
 ## Data, consent, and privacy
 

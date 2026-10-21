@@ -5,6 +5,7 @@ import {
   isLocalBase,
   type Meeting,
   type MeetingDetail,
+  type MicApp,
   type KeyStatus,
   type ProviderRole,
   type ProcessingPlan,
@@ -117,6 +118,10 @@ export function App() {
     setStt(status);
   }, []);
   const [title, setTitle] = useState("Untitled meeting");
+  // Meeting detection: apps holding the microphone, and ones already answered this session.
+  const [micApps, setMicApps] = useState<MicApp[]>([]);
+  const [dismissedApps, setDismissedApps] = useState<string[]>([]);
+  const [detectionSupported, setDetectionSupported] = useState(false);
   const [consent, setConsent] = useState(false);
   const [devices, setDevices] = useState<AudioDevices | null>(null);
   const [microphone, setMicrophone] = useState("");
@@ -372,6 +377,16 @@ export function App() {
       // Listen before reading state so startup cannot miss tray/shortcut changes.
       await register(api.onRecordingState(updateRecording));
       await register(
+        api.onMicrophoneApps((apps) => {
+          setMicApps(apps);
+          // An app that stopped and starts again later prompts again.
+          setDismissedApps((ids) =>
+            ids.filter((id) => apps.some((app) => app.id === id)),
+          );
+        }),
+      );
+      void api.detectionSupported().then(setDetectionSupported, () => {});
+      await register(
         api.onSessionProcessingChanged((notification) => {
           void refreshProcessing(notification.meeting_id).catch(
             (failure: unknown) => setError(errorMessage(failure)),
@@ -566,6 +581,20 @@ export function App() {
   const active =
     recording.status === "recording" || recording.status === "paused";
   useEffect(() => setHealth(null), [recording.meeting_id, active]);
+  // Never while OpenMeet itself records; a prompt only opens setup, it never starts capture.
+  const detectedApp =
+    settings?.detection_enabled && !active
+      ? micApps.find(
+          (app) =>
+            !settings.detection_ignored.includes(app.id) &&
+            !dismissedApps.includes(app.id),
+        )
+      : undefined;
+  useEffect(() => {
+    if (detectedApp) void api.requestAttention().catch(() => {});
+  }, [detectedApp?.id]);
+  const dismissApp = (id: string) =>
+    setDismissedApps((ids) => (ids.includes(id) ? ids : [...ids, id]));
   const openPanel = (
     next: "setup" | "settings" | "library",
     trigger: HTMLButtonElement,
@@ -712,6 +741,48 @@ export function App() {
           </details>
         </header>
         <div className="feedback-stack">
+          {detectedApp && (
+            <div
+              className="detection-card"
+              role="group"
+              aria-label="Meeting detected"
+            >
+              <span>
+                <strong>{detectedApp.name}</strong> is using your microphone.
+                Record this meeting?
+              </span>
+              <div className="panel-actions">
+                <button
+                  className="primary"
+                  disabled={disabled}
+                  onClick={(event) => {
+                    dismissApp(detectedApp.id);
+                    setConsent(false);
+                    if (title === "Untitled meeting")
+                      setTitle(`${detectedApp.name} meeting`);
+                    openPanel("setup", event.currentTarget);
+                  }}
+                >
+                  Set up recording
+                </button>
+                <button onClick={() => dismissApp(detectedApp.id)}>
+                  Not now
+                </button>
+                <button
+                  onClick={() => {
+                    dismissApp(detectedApp.id);
+                    void run(async () =>
+                      setSettings(
+                        await api.setDetectionIgnored(detectedApp.id, true),
+                      ),
+                    );
+                  }}
+                >
+                  Never for {detectedApp.name}
+                </button>
+              </div>
+            </div>
+          )}
           {!desktop && (
             <p role="alert">
               Open this app with <code>corepack pnpm tauri dev</code>. The
@@ -1346,6 +1417,17 @@ export function App() {
               })
             }
             audioBytes={audioBytes}
+            detectionSupported={detectionSupported}
+            onDetection={(enabled) =>
+              void run(async () =>
+                setSettings(await api.saveDetection(enabled)),
+              )
+            }
+            onDetectionIgnored={(id, ignored) =>
+              void run(async () =>
+                setSettings(await api.setDetectionIgnored(id, ignored)),
+              )
+            }
             onSummaryDefault={(template) =>
               void run(async () =>
                 setSettings(await api.saveSummaryDefault(template)),

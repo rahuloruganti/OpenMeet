@@ -90,6 +90,11 @@ vi.mock("./lib/api", async (original) => {
       saveProcessingDefault: vi.fn(),
       saveSummaryDefault: vi.fn(),
       saveDefaultDevices: vi.fn(),
+      onMicrophoneApps: vi.fn(),
+      saveDetection: vi.fn(),
+      setDetectionIgnored: vi.fn(),
+      detectionSupported: vi.fn(),
+      requestAttention: vi.fn(),
       recoverAudio: vi.fn(),
       cancelTranscription: vi.fn(),
       saveSttSettings: vi.fn(),
@@ -224,6 +229,8 @@ const initialSettings: Settings = {
   processing_mode: "recording",
   processing_summary: null,
   summary_default: "general-v1",
+  detection_enabled: false,
+  detection_ignored: [],
 };
 
 const notInstalled = {
@@ -308,6 +315,8 @@ beforeEach(() => {
   vi.mocked(api.providerKeyStatus).mockResolvedValue("missing");
   vi.mocked(api.sttStatus).mockResolvedValue(notInstalled);
   vi.mocked(api.audioUsage).mockResolvedValue(0);
+  vi.mocked(api.detectionSupported).mockResolvedValue(true);
+  vi.mocked(api.requestAttention).mockResolvedValue();
   vi.mocked(api.searchMeetings).mockResolvedValue([]);
   vi.mocked(api.listSummaries).mockResolvedValue([]);
   vi.mocked(api.planSummary).mockResolvedValue(textPlan);
@@ -320,6 +329,7 @@ beforeEach(() => {
     api.onError,
     api.onAudioHealth,
     api.onSttProgress,
+    api.onMicrophoneApps,
   ]) {
     vi.mocked(method).mockResolvedValue(vi.fn());
   }
@@ -3630,5 +3640,97 @@ describe("settings defaults", () => {
     fireEvent(details, new Event("toggle"));
     expect(await screen.findByText("Model folder unreadable")).toBeTruthy();
     expect(api.scanLocalModels).toHaveBeenCalledWith(null);
+  });
+});
+
+describe("meeting detection", () => {
+  const zoom = { id: "C:#Apps#zoom.exe", name: "Zoom" };
+  const detecting = { ...initialSettings, detection_enabled: true };
+  const deliver = (apps: { id: string; name: string }[]) =>
+    act(() => vi.mocked(api.onMicrophoneApps).mock.calls[0][0](apps));
+
+  it("prompts once per microphone session and only opens setup", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(detecting);
+    await ready();
+    deliver([zoom]);
+    const card = await screen.findByRole("group", { name: "Meeting detected" });
+    expect(card.textContent).toContain("Zoom is using your microphone");
+    expect(api.requestAttention).toHaveBeenCalled();
+    await userEvent.click(
+      within(card).getByRole("button", { name: "Set up recording" }),
+    );
+    expect(screen.getByRole("dialog", { name: "New recording" })).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: /I have informed participants/,
+        }) as HTMLInputElement
+      ).checked,
+    ).toBe(false);
+    expect(screen.getByDisplayValue("Zoom meeting")).toBeTruthy();
+    expect(api.startCapture).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("group", { name: "Meeting detected" }),
+    ).toBeNull();
+    // Still the same session: no second prompt. A new session prompts again.
+    deliver([zoom]);
+    expect(
+      screen.queryByRole("group", { name: "Meeting detected" }),
+    ).toBeNull();
+    deliver([]);
+    deliver([zoom]);
+    expect(
+      await screen.findByRole("group", { name: "Meeting detected" }),
+    ).toBeTruthy();
+  });
+
+  it("stops prompting for an app the user chose to ignore", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue(detecting);
+    vi.mocked(api.setDetectionIgnored).mockResolvedValue({
+      ...detecting,
+      detection_ignored: [zoom.id],
+    });
+    await ready();
+    deliver([zoom]);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Never for Zoom" }),
+    );
+    expect(api.setDetectionIgnored).toHaveBeenCalledWith(zoom.id, true);
+    deliver([]);
+    deliver([zoom]);
+    expect(
+      screen.queryByRole("group", { name: "Meeting detected" }),
+    ).toBeNull();
+  });
+
+  it("does not prompt while detection is off or OpenMeet is recording", async () => {
+    await ready();
+    deliver([zoom]);
+    expect(
+      screen.queryByRole("group", { name: "Meeting detected" }),
+    ).toBeNull();
+    vi.mocked(api.saveDetection).mockResolvedValue(detecting);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    await userEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Offer to record when another app uses the microphone",
+      }),
+    );
+    expect(api.saveDetection).toHaveBeenCalledWith(true);
+    await screen.findByRole("group", { name: "Meeting detected" });
+    act(() =>
+      vi.mocked(api.onRecordingState).mock.calls[0][0]({
+        revision: 5,
+        status: "recording",
+        meeting_id: "sample",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: null,
+      }),
+    );
+    expect(
+      screen.queryByRole("group", { name: "Meeting detected" }),
+    ).toBeNull();
   });
 });

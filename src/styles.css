@@ -472,6 +472,33 @@ pre {
 .feedback-stack:empty {
   padding: 0;
 }
+.detection-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--selection);
+}
+.detection-card .panel-actions {
+  margin: 0;
+}
+.ignored-apps {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.ignored-apps li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
 .error,
 .notice {
   margin: 0 0 8px;

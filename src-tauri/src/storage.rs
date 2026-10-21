@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 25;
+const LATEST_SCHEMA: i64 = 26;
 const MAX_TAGS: usize = 20;
 // Each script sets its own `user_version`, so migration N runs for databases below N.
 // Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
 // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
 // (only switchable outside a transaction) and must pass foreign_key_check before commit.
-const MIGRATIONS: [(i64, &str, bool); 24] = [
+const MIGRATIONS: [(i64, &str, bool); 25] = [
     (2, include_str!("../migrations/002_capture.sql"), true),
     (3, include_str!("../migrations/003_local_model.sql"), false),
     (4, include_str!("../migrations/004_merge_model.sql"), false),
@@ -103,6 +103,11 @@ const MIGRATIONS: [(i64, &str, bool); 24] = [
     (
         25,
         include_str!("../migrations/025_settings_defaults.sql"),
+        false,
+    ),
+    (
+        26,
+        include_str!("../migrations/026_meeting_detection.sql"),
         false,
     ),
 ];
@@ -1325,6 +1330,34 @@ impl Core {
         self.settings()
     }
 
+    /// Turns opt-in meeting detection on or off. Detection only ever offers a prompt.
+    pub fn save_detection(&mut self, enabled: bool) -> Result<Settings> {
+        self.db.execute(
+            "UPDATE settings SET detection_enabled = ?1 WHERE id = 1",
+            [enabled],
+        )?;
+        self.settings()
+    }
+
+    /// Stops or resumes prompts for one app, by its microphone privacy-store key.
+    pub fn set_detection_ignored(&mut self, app_id: &str, ignored: bool) -> Result<Settings> {
+        if app_id.is_empty() || app_id.len() > 1024 {
+            return Err(AppError::new("detection_app", "Unknown app."));
+        }
+        if ignored {
+            self.db.execute(
+                "INSERT OR IGNORE INTO detection_ignored_apps(app_id) VALUES (?1)",
+                [app_id],
+            )?;
+        } else {
+            self.db.execute(
+                "DELETE FROM detection_ignored_apps WHERE app_id = ?1",
+                [app_id],
+            )?;
+        }
+        self.settings()
+    }
+
     /// Devices New recording starts with; chosen explicitly, never substituted.
     pub fn save_default_devices(&mut self, microphone: &str, output: &str) -> Result<Settings> {
         if microphone.is_empty() || output.is_empty() {
@@ -1562,8 +1595,12 @@ fn read_settings(db: &Connection) -> Result<Settings> {
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let recipes = crate::recipes::read(db)?;
+    let detection_ignored = db
+        .prepare("SELECT app_id FROM detection_ignored_apps ORDER BY app_id")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
     Ok(db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats, processing_mode, processing_summary, summary_default FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats, processing_mode, processing_summary, summary_default, detection_enabled FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -1599,6 +1636,8 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                     processing_mode: row.get(14)?,
                     processing_summary: row.get(15)?,
                     summary_default: row.get(16)?,
+                    detection_enabled: row.get(17)?,
+                    detection_ignored,
                 })
             },
         )?)
@@ -1879,6 +1918,21 @@ mod tests {
             (Some("mic"), Some("out"))
         );
         assert!(core.save_default_devices("", "out").is_err());
+        // Detection is off until turned on; ignored apps round-trip.
+        assert!(!devices.detection_enabled);
+        assert!(core.save_detection(true).unwrap().detection_enabled);
+        let ignored = core
+            .set_detection_ignored("C:#Apps#zoom.exe", true)
+            .unwrap();
+        assert_eq!(ignored.detection_ignored, ["C:#Apps#zoom.exe"]);
+        core.set_detection_ignored("C:#Apps#zoom.exe", true)
+            .unwrap();
+        assert!(core
+            .set_detection_ignored("C:#Apps#zoom.exe", false)
+            .unwrap()
+            .detection_ignored
+            .is_empty());
+        assert!(core.set_detection_ignored("", true).is_err());
     }
 
     #[test]

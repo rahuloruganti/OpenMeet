@@ -78,7 +78,7 @@ The automatic workflow implementation is now present. The acceptance items below
 
 These are broader parity gaps, not prerequisites for the personal desktop workflow. Keep them deferred until their planned phase is selected.
 
-- [ ] Calendar-linked meetings, titles, participants, and opt-in recording reminders/detection. Detection alone must not authorize recording. ([#39](https://github.com/rahuloruganti/OpenMeet/issues/39))
+- [ ] Calendar-linked meetings, titles, participants, and opt-in recording reminders/detection. Detection alone must not authorize recording. Opt-in microphone-use detection prompts are implemented on Windows (schema v26) and not yet qualified on a real call; calendar work is still open. ([#39](https://github.com/rahuloruganti/OpenMeet/issues/39))
 - [ ] Existing audio/video file import, primarily for Otter-style use cases. ([#40](https://github.com/rahuloruganti/OpenMeet/issues/40))
 - [ ] Additional transcript exports such as TXT, SRT, and VTT. Keep the current safe Markdown snapshots. ([#41](https://github.com/rahuloruganti/OpenMeet/issues/41))
 - [ ] Selected-text AI rewrites, pre-meeting briefs, and follow-up email drafts. ([#42](https://github.com/rahuloruganti/OpenMeet/issues/42))

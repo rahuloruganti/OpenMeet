@@ -310,6 +310,10 @@ pub struct Settings {
     pub processing_summary: Option<String>,
     /// The template the Enhance picker starts at.
     pub summary_default: String,
+    /// Opt-in: prompt when another app starts using the microphone. Never starts recording.
+    pub detection_enabled: bool,
+    /// Microphone privacy-store keys of apps never to prompt about.
+    pub detection_ignored: Vec<String>,
 }
 
 /// A saved, reusable question prompt; `id` is `recipe-<uuid>`.

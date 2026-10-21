@@ -160,7 +160,7 @@ M0 matters because M5 rewrites the export renderer, and the README is what the n
 
 ## Explicitly not planned
 
-These stay out of scope per `AGENTS.md` until their phase: live transcription, automatic meeting detection, meeting bots, speaker separation beyond You/Others, calendar integration, cross-meeting chat, sharing links, and team/cloud sync.
+These stay out of scope per `AGENTS.md` until their phase: live transcription, meeting bots, speaker separation beyond You/Others, calendar integration, cross-meeting chat, sharing links, and team/cloud sync.
 
 ## Order and dependencies
 
