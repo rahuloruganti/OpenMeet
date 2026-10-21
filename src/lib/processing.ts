@@ -1,4 +1,4 @@
-import type { SummaryTemplate } from "./api";
+import type { Settings, SummaryTemplate } from "./api";
 
 export type ProcessingMode = "recording" | "live" | "final" | "both";
 export type ProcessingChoice = {
@@ -6,7 +6,6 @@ export type ProcessingChoice = {
   summary: SummaryTemplate | null;
 };
 
-const KEY = "openmeet.automaticProcessing";
 const modes: ProcessingMode[] = ["recording", "live", "final", "both"];
 const templates: SummaryTemplate[] = [
   "general-v1",
@@ -14,28 +13,32 @@ const templates: SummaryTemplate[] = [
   "one-to-one-v1",
 ];
 
-/** A per-device choice only. Starting a recording still needs a reviewed, confirmed plan. */
-export function loadProcessing(): ProcessingChoice {
-  try {
-    const value = JSON.parse(localStorage.getItem(KEY) ?? "null") as {
-      mode?: unknown;
-      summary?: unknown;
-    } | null;
-    const mode = modes.find((item) => item === value?.mode) ?? "recording";
-    const summary = templates.find((item) => item === value?.summary) ?? null;
-    return {
-      mode,
-      summary: mode === "final" || mode === "both" ? summary : null,
-    };
-  } catch {
-    return { mode: "recording", summary: null };
-  }
+function choice(mode: unknown, summary: unknown): ProcessingChoice {
+  const chosen = modes.find((item) => item === mode) ?? "recording";
+  return {
+    mode: chosen,
+    summary:
+      chosen === "final" || chosen === "both"
+        ? (templates.find((item) => item === summary) ?? null)
+        : null,
+  };
 }
 
-export function saveProcessing(choice: ProcessingChoice) {
+/** The saved default. Starting a recording still needs a reviewed, confirmed plan. */
+export const processingDefault = (settings: Settings | null) =>
+  choice(settings?.processing_mode, settings?.processing_summary);
+
+const LEGACY_KEY = "openmeet.automaticProcessing";
+
+/** Reads and removes the default that earlier versions kept in webview storage. */
+export function takeLegacyProcessing(): ProcessingChoice | null {
   try {
-    localStorage.setItem(KEY, JSON.stringify(choice));
+    const raw = localStorage.getItem(LEGACY_KEY);
+    if (raw === null) return null;
+    localStorage.removeItem(LEGACY_KEY);
+    const value = JSON.parse(raw) as { mode?: unknown; summary?: unknown };
+    return choice(value?.mode, value?.summary);
   } catch {
-    // Storage may be unavailable; the choice then lasts for this session only.
+    return null;
   }
 }

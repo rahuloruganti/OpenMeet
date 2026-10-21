@@ -10,16 +10,37 @@ import {
   type Settings,
 } from "../lib/api";
 
-type Props = {
-  settings: Settings;
-  local: boolean;
-  active: boolean;
-  disabled: boolean;
+type Publish = {
   onSaved: (settings: Settings) => void;
   onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
 };
 
-export function ProviderSettings(props: Props) {
+/** Hands saved settings to App and refreshes both tasks' key status. */
+async function publishSettings(settings: Settings, to: Publish) {
+  to.onSaved(settings);
+  for (const role of ["llm", "cloud_stt"] satisfies ProviderRole[]) {
+    try {
+      to.onKeyStatus(role, await api.providerKeyStatus(role));
+    } catch {
+      to.onKeyStatus(role, "unavailable");
+    }
+  }
+}
+
+/** Badge text for a connection: loopback stays on this device. */
+export const destination = (baseUrl: string) =>
+  isLocalBase(baseUrl) ? "This device" : "Leaves this device";
+
+type Props = Publish & {
+  settings: Settings;
+  active: boolean;
+  disabled: boolean;
+  /** Model IDs fetched for a saved connection, for the task assignments. */
+  onModels: (connectionId: string, models: ProviderModel[]) => void;
+};
+
+/** Saved OpenAI-compatible connections, local and remote in one list. */
+export function Connections(props: Props) {
   const [selected, setSelected] = useState("");
   const connection =
     props.settings.saved_connections.find((item) => item.id === selected) ??
@@ -98,16 +119,7 @@ export function ProviderSettings(props: Props) {
       setBusy(false);
     }
   };
-  const publish = async (settings: Settings) => {
-    props.onSaved(settings);
-    for (const role of ["llm", "cloud_stt"] satisfies ProviderRole[]) {
-      try {
-        props.onKeyStatus(role, await api.providerKeyStatus(role));
-      } catch {
-        props.onKeyStatus(role, "unavailable");
-      }
-    }
-  };
+  const publish = (settings: Settings) => publishSettings(settings, props);
   const save = async (keyChange: KeyChange) => {
     const updated = await api.saveApiConnection({
       id: connection?.id ?? null,
@@ -134,14 +146,10 @@ export function ProviderSettings(props: Props) {
   };
   return (
     <section
-      className="provider-settings"
-      aria-label={
-        props.local ? "Local API connections" : "Cloud API connections"
-      }
+      className="settings-section provider-settings"
+      aria-label="API connections"
     >
-      <h3>
-        {props.local ? "Local server connections" : "Saved API connections"}
-      </h3>
+      <h3>API connections</h3>
       <p className="muted">
         Reusable OpenAI-compatible connections. Refresh models sends saved
         credentials to the saved destination. It sends no meeting content. Model
@@ -166,13 +174,11 @@ export function ProviderSettings(props: Props) {
             }}
           >
             <option value="">New connection</option>
-            {props.settings.saved_connections
-              .filter((item) => isLocalBase(item.base_url) === props.local)
-              .map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
+            {props.settings.saved_connections.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name} · {destination(item.base_url)}
+              </option>
+            ))}
           </select>
         </label>
         <label>
@@ -188,11 +194,7 @@ export function ProviderSettings(props: Props) {
           <input
             type="url"
             value={baseUrl}
-            placeholder={
-              props.local
-                ? "http://127.0.0.1:1234/v1"
-                : "https://provider.example/v1"
-            }
+            placeholder="https://provider.example/v1 or http://127.0.0.1:1234/v1"
             onChange={(event) => setBaseUrl(event.target.value)}
           />
         </label>
@@ -214,19 +216,14 @@ export function ProviderSettings(props: Props) {
           {status === "present"
             ? "API key saved in the OS keychain"
             : status === "missing"
-              ? props.local
+              ? isLocalBase(baseUrl)
                 ? "Local server. API key optional."
                 : "No API key saved"
               : "API key status unavailable"}
         </p>
         <div className="panel-actions">
           <button
-            disabled={
-              disabled ||
-              !name.trim() ||
-              !baseUrl.trim() ||
-              isLocalBase(baseUrl) !== props.local
-            }
+            disabled={disabled || !name.trim() || !baseUrl.trim()}
             onClick={() => {
               if (lock.current) return;
               const key = password.current?.value ?? "";
@@ -276,7 +273,7 @@ export function ProviderSettings(props: Props) {
             disabled ||
             !connection ||
             dirty ||
-            (!props.local && status !== "present")
+            (!isLocalBase(connection.base_url) && status !== "present")
           }
           onClick={() =>
             void run(async () => {
@@ -291,6 +288,7 @@ export function ProviderSettings(props: Props) {
               )
                 return;
               setModels(choices);
+              props.onModels(connection.id, choices);
               setNotice(
                 "Model IDs fetched. Compatibility with each task is unverified.",
               );
@@ -311,34 +309,6 @@ export function ProviderSettings(props: Props) {
         Unassign both tasks before deleting a connection. Saving a connection
         updates every task that uses it.
       </p>
-      {(["llm", "cloud_stt"] satisfies ProviderRole[]).map((role) => (
-        <Assignment
-          key={role}
-          role={role}
-          settings={props.settings}
-          disabled={disabled}
-          models={models}
-          modelConnectionId={connection?.id ?? null}
-          onSave={(id, model) =>
-            void run(async () => {
-              await publish(
-                await api.saveProviderAssignment(
-                  role,
-                  id
-                    ? {
-                        kind: "assigned",
-                        connection_id: id,
-                        model: model.trim(),
-                      }
-                    : { kind: "unassigned" },
-                  props.settings[role]?.revision ?? null,
-                ),
-              );
-              setNotice("Task assignment saved. No meeting content was sent.");
-            })
-          }
-        />
-      ))}
       <div ref={outcome}>
         {notice && <p role="status">{notice}</p>}
         {error && (
@@ -351,32 +321,60 @@ export function ProviderSettings(props: Props) {
   );
 }
 
-function Assignment({
+/** Which saved connection and model one task uses. */
+export function Assignment({
   role,
   settings,
   disabled,
   models,
-  modelConnectionId,
-  onSave,
-}: {
+  ...publish
+}: Publish & {
   role: ProviderRole;
   settings: Settings;
   disabled: boolean;
-  models: ProviderModel[];
-  modelConnectionId: string | null;
-  onSave: (id: string, model: string) => void;
+  /** Fetched model IDs as suggestions, with the connection they came from. */
+  models: { connectionId: string; models: ProviderModel[] } | null;
 }) {
   const modelListId = useId();
   const assignment = settings.provider_assignments[role];
   const [id, setId] = useState(assignment?.connection_id ?? "");
   const [model, setModel] = useState(assignment?.model ?? "");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
   useEffect(() => {
     setId(assignment?.connection_id ?? "");
     setModel(assignment?.model ?? "");
   }, [assignment?.connection_id, assignment?.model]);
   const label = role === "llm" ? "Summary" : "Speech API";
+  const save = async () => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await publishSettings(
+        await api.saveProviderAssignment(
+          role,
+          id
+            ? { kind: "assigned", connection_id: id, model: model.trim() }
+            : { kind: "unassigned" },
+          settings[role]?.revision ?? null,
+        ),
+        publish,
+      );
+      setNotice("Task assignment saved. No meeting content was sent.");
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const unchanged =
+    id === (assignment?.connection_id ?? "") &&
+    model.trim() === (assignment?.model ?? "");
+  const chosen = settings.saved_connections.find((item) => item.id === id);
   return (
-    <fieldset disabled={disabled}>
+    <fieldset disabled={disabled || busy}>
       <legend>{label} task</legend>
       <label>
         {label} connection
@@ -390,36 +388,48 @@ function Assignment({
           <option value="">Unassigned</option>
           {settings.saved_connections.map((item) => (
             <option key={item.id} value={item.id}>
-              {item.name}
+              {item.name} · {destination(item.base_url)}
             </option>
           ))}
         </select>
       </label>
+      {settings.saved_connections.length === 0 && (
+        <p className="muted">Add a connection under Connections first.</p>
+      )}
       <label>
         {label} model ID
         <input
           value={model}
-          disabled={disabled || !id}
+          disabled={disabled || busy || !id}
           list={modelListId}
           maxLength={200}
           onChange={(event) => setModel(event.target.value)}
         />
       </label>
       <datalist id={modelListId}>
-        {(id === modelConnectionId ? models : []).map((item) => (
+        {(models?.connectionId === id ? models.models : []).map((item) => (
           <option key={item.id} value={item.id} />
         ))}
       </datalist>
       <p className="muted">
-        Saved model: {assignment?.model ?? "Not selected"}. Model IDs are
-        unverified until used successfully.
+        {chosen ? `${destination(chosen.base_url)}. ` : ""}Saved model:{" "}
+        {assignment?.model ?? "Not selected"}. Model IDs are unverified until
+        used successfully.
       </p>
-      <button
-        disabled={disabled || (!!id && !model.trim())}
-        onClick={() => onSave(id, model)}
-      >
-        Save {label.toLowerCase()} assignment
-      </button>
+      {!unchanged && (
+        <button
+          disabled={disabled || busy || (!!id && !model.trim())}
+          onClick={() => void save()}
+        >
+          Save {label.toLowerCase()} assignment
+        </button>
+      )}
+      {notice && <p role="status">{notice}</p>}
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
     </fieldset>
   );
 }

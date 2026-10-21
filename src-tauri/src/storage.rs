@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 24;
+const LATEST_SCHEMA: i64 = 25;
 const MAX_TAGS: usize = 20;
 // Each script sets its own `user_version`, so migration N runs for databases below N.
 // Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
 // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
 // (only switchable outside a transaction) and must pass foreign_key_check before commit.
-const MIGRATIONS: [(i64, &str, bool); 23] = [
+const MIGRATIONS: [(i64, &str, bool); 24] = [
     (2, include_str!("../migrations/002_capture.sql"), true),
     (3, include_str!("../migrations/003_local_model.sql"), false),
     (4, include_str!("../migrations/004_merge_model.sql"), false),
@@ -98,6 +98,11 @@ const MIGRATIONS: [(i64, &str, bool); 23] = [
     (
         24,
         include_str!("../migrations/024_recipes_library_answers.sql"),
+        false,
+    ),
+    (
+        25,
+        include_str!("../migrations/025_settings_defaults.sql"),
         false,
     ),
 ];
@@ -1279,6 +1284,62 @@ impl Core {
         self.meeting_tags(id)
     }
 
+    /// Only preselects the recording review; each recording still needs its own consent.
+    /// The summary is a built-in template, because automatic sessions take only those.
+    pub fn save_processing_default(
+        &mut self,
+        mode: &str,
+        summary: Option<&str>,
+    ) -> Result<Settings> {
+        let summary = summary.filter(|_| matches!(mode, "final" | "both"));
+        if !["recording", "live", "final", "both"].contains(&mode)
+            || summary.is_some_and(|id| !BUILTIN_TEMPLATES.contains(&id))
+        {
+            return Err(AppError::new(
+                "processing_default",
+                "Choose a listed processing mode and built-in summary template.",
+            ));
+        }
+        self.db.execute(
+            "UPDATE settings SET processing_mode = ?1, processing_summary = ?2 WHERE id = 1",
+            params![mode, summary],
+        )?;
+        self.settings()
+    }
+
+    /// The template the Enhance picker starts at: a built-in or an existing custom template.
+    pub fn save_summary_default(&mut self, template: &str) -> Result<Settings> {
+        if !BUILTIN_TEMPLATES.contains(&template)
+            && !self
+                .settings()?
+                .summary_templates
+                .iter()
+                .any(|custom| custom.id == template)
+        {
+            return Err(missing_template());
+        }
+        self.db.execute(
+            "UPDATE settings SET summary_default = ?1 WHERE id = 1",
+            [template],
+        )?;
+        self.settings()
+    }
+
+    /// Devices New recording starts with; chosen explicitly, never substituted.
+    pub fn save_default_devices(&mut self, microphone: &str, output: &str) -> Result<Settings> {
+        if microphone.is_empty() || output.is_empty() {
+            return Err(AppError::new(
+                "audio_devices",
+                "Select both a microphone and a system-output device.",
+            ));
+        }
+        self.db.execute(
+            "UPDATE settings SET microphone_id = ?1, output_id = ?2 WHERE id = 1",
+            params![microphone, output],
+        )?;
+        self.settings()
+    }
+
     pub fn save_export_options(&mut self, options: &ExportOptions) -> Result<Settings> {
         let filename = match options.filename {
             FilenamePattern::Title => "title",
@@ -1496,7 +1557,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let recipes = crate::recipes::read(db)?;
     Ok(db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats, processing_mode, processing_summary, summary_default FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -1529,10 +1590,15 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                     summary_instructions: row.get(12)?,
                     summary_templates,
                     recipes,
+                    processing_mode: row.get(14)?,
+                    processing_summary: row.get(15)?,
+                    summary_default: row.get(16)?,
                 })
             },
         )?)
 }
+
+const BUILTIN_TEMPLATES: [&str; 3] = ["general-v1", "standup-v1", "one-to-one-v1"];
 
 /// SHA-256 of the exact transcript lines a summary reads, speaker names included.
 pub(crate) fn transcript_hash(segments: &[Segment], names: &SpeakerNames) -> String {
@@ -1723,6 +1789,84 @@ pub(crate) fn test_v11_database(path: &Path) -> Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_defaults_upgrade_from_v24_and_validate() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("meetings.db");
+        {
+            let db = test_v11_database(&path);
+            for (number, script, _) in MIGRATIONS {
+                if (12..=24).contains(&number) {
+                    db.execute_batch(script).unwrap();
+                }
+            }
+            db.execute_batch(
+                "UPDATE settings SET microphone_id='kept-mic', summary_instructions='Kept' WHERE id=1",
+            )
+            .unwrap();
+        }
+        let mut core = Core::open(&path).unwrap();
+        let settings = core.settings().unwrap();
+        assert_eq!(
+            (
+                settings.processing_mode.as_str(),
+                settings.processing_summary,
+                settings.summary_default.as_str(),
+                settings.microphone_id.as_deref(),
+                settings.summary_instructions.as_str(),
+            ),
+            ("recording", None, "general-v1", Some("kept-mic"), "Kept")
+        );
+        // A summary only goes with a final pass, and only a built-in one.
+        let saved = core
+            .save_processing_default("live", Some("standup-v1"))
+            .unwrap();
+        assert_eq!(saved.processing_summary, None);
+        let saved = core
+            .save_processing_default("both", Some("standup-v1"))
+            .unwrap();
+        assert_eq!(
+            (
+                saved.processing_mode.as_str(),
+                saved.processing_summary.as_deref()
+            ),
+            ("both", Some("standup-v1"))
+        );
+        for (mode, summary) in [("always", None), ("final", Some("custom-x"))] {
+            assert_eq!(
+                core.save_processing_default(mode, summary)
+                    .unwrap_err()
+                    .code,
+                "processing_default"
+            );
+        }
+        let custom = core
+            .save_summary_template(None, "Board", "## Risks")
+            .unwrap()
+            .summary_templates[0]
+            .id
+            .clone();
+        assert_eq!(
+            core.save_summary_default(&custom).unwrap().summary_default,
+            custom
+        );
+        assert_eq!(
+            core.save_summary_default("custom-missing")
+                .unwrap_err()
+                .code,
+            "summary_template_missing"
+        );
+        let devices = core.save_default_devices("mic", "out").unwrap();
+        assert_eq!(
+            (
+                devices.microphone_id.as_deref(),
+                devices.output_id.as_deref()
+            ),
+            (Some("mic"), Some("out"))
+        );
+        assert!(core.save_default_devices("", "out").is_err());
+    }
 
     #[test]
     fn open_names_a_table_or_column_a_skipped_migration_left_out() {

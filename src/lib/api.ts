@@ -196,6 +196,11 @@ export type Settings = {
   summary_instructions: string;
   summary_templates: CustomTemplate[];
   recipes: Recipe[];
+  /** "recording", "live", "final" or "both"; preselects the recording review only. */
+  processing_mode: string;
+  processing_summary: string | null;
+  /** The template the Enhance picker starts at. */
+  summary_default: string;
 };
 /** A saved question prompt; `id` is `recipe-<uuid>`. */
 export type Recipe = { id: string; name: string; prompt: string };
@@ -614,6 +619,12 @@ export const api = {
     invoke<string[]>("set_meeting_tags", { meetingId, tags }),
   saveExportOptions: (options: ExportOptions) =>
     invoke<Settings>("save_export_options", { options }),
+  saveProcessingDefault: (mode: string, summary: string | null) =>
+    invoke<Settings>("save_processing_default", { mode, summary }),
+  saveSummaryDefault: (template: string) =>
+    invoke<Settings>("save_summary_default", { template }),
+  saveDefaultDevices: (microphoneId: string, outputId: string) =>
+    invoke<Settings>("save_default_devices", { microphoneId, outputId }),
   recoverAudio: (id: string) => invoke<void>("recover_audio", { id }),
 };
 

@@ -35,7 +35,9 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src/components/Recipes.tsx` | Built-in and saved recipes: question-box chips and the Settings editor. |
 | `src/components/RewriteSelection.tsx` | Rewrite selected note text: presets, consent card, and accept-to-replace result. |
 | `src/components/SetupPanel.tsx`, `SessionReview.tsx`        | Device selection, independent recording consent, and reviewed session processing.                                                                   |
-| `src/components/SettingsPanel.tsx`, `ProviderSettings.tsx` | Independent provider/key/model setup, speech mode/downloads, shortcuts, and export preferences.         |
+| `src/components/SettingsPanel.tsx` | Settings left navigation and sections: recording defaults and shortcut capture, AI notes, export and storage, privacy and about. |
+| `src/components/TranscriptionSettings.tsx` | Engine choice cards, local Whisper setup and downloads, speech API assignment, language and vocabulary. |
+| `src/components/ProviderSettings.tsx` | One list of saved connections (badged This device / Leaves this device) and the per-task `Assignment`. |
 | `src/components/RecordingControls.tsx`                     | Backend capture state, pause/resume/stop, and audio meters.                                             |
 | `src/lib/api.ts`                                           | TypeScript command bindings, response types, events, and asset URLs.                                    |
 | `src/lib/note-writer.ts`                                   | Debounced and serialized note writes with flush and error handling.                                     |
@@ -58,7 +60,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/question_threads.rs` | Saved question threads and turns: store, append, list, and delete. |
 | `src-tauri/src/library_answers.rs` | Saved answers across meetings: store with ordered scope, list, and delete. |
 | `src-tauri/src/recipes.rs` | Saved question recipes: validate, store, edit, and delete. |
-| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v24.                                                             |
+| `src-tauri/migrations/`                                    | Ordered SQLite upgrades through schema v25.                                                             |
 | `fixtures/`                                                | Fictional test resources, excluded from production creation paths.                                      |
 
 ## State and concurrency

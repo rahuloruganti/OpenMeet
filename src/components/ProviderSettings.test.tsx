@@ -1,8 +1,9 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, type ProviderModel, type Settings } from "../lib/api";
-import { ProviderSettings } from "./ProviderSettings";
+import { Assignment, Connections } from "./ProviderSettings";
 vi.mock("../lib/api", async (original) => ({
   ...(await original<typeof import("../lib/api")>()),
   api: {
@@ -55,15 +56,43 @@ const settings: Settings = {
   summary_instructions: "",
   summary_templates: [],
   recipes: [],
+  processing_mode: "recording",
+  processing_summary: null,
+  summary_default: "general-v1",
 };
 const props = () => ({
   settings,
-  local: false,
   active: true,
   disabled: false,
   onSaved: vi.fn(),
   onKeyStatus: vi.fn(),
 });
+/** Connections plus both task assignments, sharing fetched model IDs as Settings does. */
+function Both(input: ReturnType<typeof props>) {
+  const [models, setModels] = useState<{
+    connectionId: string;
+    models: ProviderModel[];
+  } | null>(null);
+  const task = {
+    settings: input.settings,
+    disabled: input.disabled,
+    models,
+    onSaved: input.onSaved,
+    onKeyStatus: input.onKeyStatus,
+  };
+  return (
+    <>
+      <Connections
+        {...input}
+        onModels={(connectionId, list) =>
+          setModels({ connectionId, models: list })
+        }
+      />
+      <Assignment role="llm" {...task} />
+      <Assignment role="cloud_stt" {...task} />
+    </>
+  );
+}
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.getSettings).mockResolvedValue(settings);
@@ -76,7 +105,13 @@ it("does not discover automatically and supports local discovery without a key",
   vi.mocked(api.listApiConnectionModels).mockResolvedValue([
     { id: "local-model" },
   ]);
-  render(<ProviderSettings {...props()} local />);
+  render(<Both {...props()} />);
+  expect(
+    screen.getAllByRole("option", { name: "Local · This device" })[0],
+  ).toBeTruthy();
+  expect(
+    screen.getAllByRole("option", { name: "Remote · Leaves this device" })[0],
+  ).toBeTruthy();
   expect(api.listApiConnectionModels).not.toHaveBeenCalled();
   await userEvent.selectOptions(
     screen.getByLabelText("Saved connection"),
@@ -91,7 +126,7 @@ it("clears passwords immediately on failed save and reloads partial publications
   vi.mocked(api.saveApiConnection).mockRejectedValue(
     new Error("Previous credential cleanup failed."),
   );
-  render(<ProviderSettings {...input} />);
+  render(<Both {...input} />);
   await userEvent.selectOptions(
     screen.getByLabelText("Saved connection"),
     "remote",
@@ -114,23 +149,23 @@ it("clears passwords immediately on failed save and reloads partial publications
 });
 it("preserves nonsecret drafts but clears keys when a tab hides and on unmount", async () => {
   const input = props();
-  const view = render(<ProviderSettings {...input} />);
+  const view = render(<Both {...input} />);
   await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
   const key = screen.getByLabelText("API key");
   await userEvent.type(key, "secret");
-  view.rerender(<ProviderSettings {...input} active={false} />);
+  view.rerender(<Both {...input} active={false} />);
   expect(key).toHaveProperty("value", "");
   expect(screen.getByLabelText("Connection name")).toHaveProperty(
     "value",
     "Draft",
   );
-  view.rerender(<ProviderSettings {...input} active />);
+  view.rerender(<Both {...input} active />);
   await userEvent.type(key, "secret-again");
   view.unmount();
   expect(key).toHaveProperty("value", "");
 });
 it("saves each task independently even when they share a connection", async () => {
-  render(<ProviderSettings {...props()} />);
+  render(<Both {...props()} />);
   await userEvent.clear(screen.getByLabelText("Summary model ID"));
   await userEvent.type(
     screen.getByLabelText("Summary model ID"),
@@ -169,7 +204,7 @@ it("retains manual assignments after failed discovery and blocks an unsaved dest
   vi.mocked(api.listApiConnectionModels).mockRejectedValue(
     new Error("Discovery unavailable"),
   );
-  render(<ProviderSettings {...props()} />);
+  render(<Both {...props()} />);
   await userEvent.selectOptions(
     screen.getByLabelText("Saved connection"),
     "remote",
@@ -202,7 +237,7 @@ it("discards discovery from an older connection revision", async () => {
     }),
   );
   const input = props();
-  const view = render(<ProviderSettings {...input} />);
+  const view = render(<Both {...input} />);
   await userEvent.selectOptions(
     screen.getByLabelText("Saved connection"),
     "remote",
@@ -214,7 +249,7 @@ it("discards discovery from an older connection revision", async () => {
   );
   await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
   view.rerender(
-    <ProviderSettings
+    <Both
       {...input}
       settings={{
         ...settings,
@@ -228,7 +263,7 @@ it("discards discovery from an older connection revision", async () => {
 
 it("clears transient keys and retains assignment drafts after revision-only updates", async () => {
   const input = props();
-  const view = render(<ProviderSettings {...input} />);
+  const view = render(<Both {...input} />);
   await userEvent.selectOptions(
     screen.getByLabelText("Saved connection"),
     "remote",
@@ -243,7 +278,7 @@ it("clears transient keys and retains assignment drafts after revision-only upda
     "keep-this-draft",
   );
   view.rerender(
-    <ProviderSettings
+    <Both
       {...input}
       settings={{
         ...settings,
@@ -271,21 +306,47 @@ it("brings the save result into view on a long settings page", async () => {
   const original = Element.prototype.scrollIntoView;
   Element.prototype.scrollIntoView = scroll;
   try {
-    render(<ProviderSettings {...props()} />);
+    vi.mocked(api.saveApiConnection).mockResolvedValue(settings);
+    render(<Both {...props()} />);
     await userEvent.selectOptions(
-      screen.getByLabelText("Speech API connection"),
+      screen.getByLabelText("Saved connection"),
       "remote",
     );
-    await userEvent.type(
-      screen.getByLabelText("Speech API model ID"),
-      "speech-custom",
-    );
     await userEvent.click(
-      screen.getByRole("button", { name: "Save speech api assignment" }),
+      screen.getByRole("button", { name: "Save connection" }),
     );
-    await screen.findByText(/Task assignment saved/);
+    await screen.findByText(/Connection saved/);
     expect(scroll).toHaveBeenCalled();
   } finally {
     Element.prototype.scrollIntoView = original;
   }
+});
+
+it("hides an assignment's save button until it differs and offers fetched model IDs", async () => {
+  vi.mocked(api.listApiConnectionModels).mockResolvedValue([
+    { id: "fetched-model" },
+  ]);
+  render(<Both {...props()} />);
+  expect(
+    screen.queryByRole("button", { name: "Save summary assignment" }),
+  ).toBeNull();
+  await userEvent.selectOptions(
+    screen.getByLabelText("Saved connection"),
+    "remote",
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Refresh models" }),
+    ).toHaveProperty("disabled", false),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  await screen.findByText("fetched-model");
+  const input = screen.getByLabelText("Summary model ID") as HTMLInputElement;
+  expect(
+    input.list?.querySelector('option[value="fetched-model"]'),
+  ).toBeTruthy();
+  await userEvent.type(input, "-2");
+  expect(
+    screen.getByRole("button", { name: "Save summary assignment" }),
+  ).toBeTruthy();
 });

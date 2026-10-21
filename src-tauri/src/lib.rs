@@ -1799,6 +1799,38 @@ async fn set_meeting_tags(
 }
 
 #[tauri::command]
+async fn save_processing_default(
+    app: AppHandle,
+    mode: String,
+    summary: Option<String>,
+) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_processing_default(&mode, summary.as_deref())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_summary_default(app: AppHandle, template: String) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_summary_default(&template)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_default_devices(
+    app: AppHandle,
+    microphone_id: String,
+    output_id: String,
+) -> Result<Settings> {
+    with_core(app, false, move |core, _| {
+        core.save_default_devices(&microphone_id, &output_id)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_export_options(app: AppHandle, options: ExportOptions) -> Result<Settings> {
     with_core(app, false, move |core, _| {
         core.save_export_options(&options)
@@ -2096,6 +2128,9 @@ pub fn run() {
             rename_meeting,
             set_meeting_tags,
             save_export_options,
+            save_processing_default,
+            save_summary_default,
+            save_default_devices,
             save_summary_instructions,
             save_summary_template,
             delete_summary_template,

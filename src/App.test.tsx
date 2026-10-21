@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,6 +86,9 @@ vi.mock("./lib/api", async (original) => {
       deleteQuestionThread: vi.fn(),
       renameMeeting: vi.fn(),
       saveExportOptions: vi.fn(),
+      saveProcessingDefault: vi.fn(),
+      saveSummaryDefault: vi.fn(),
+      saveDefaultDevices: vi.fn(),
       recoverAudio: vi.fn(),
       cancelTranscription: vi.fn(),
       saveSttSettings: vi.fn(),
@@ -216,6 +220,9 @@ const initialSettings: Settings = {
   summary_instructions: "",
   summary_templates: [],
   recipes: [],
+  processing_mode: "recording",
+  processing_summary: null,
+  summary_default: "general-v1",
 };
 
 const notInstalled = {
@@ -247,7 +254,7 @@ const installed = {
 
 async function chooseProcessing(mode: string, summary?: string) {
   await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-  await userEvent.click(screen.getByRole("tab", { name: "General" }));
+  await userEvent.click(screen.getByRole("tab", { name: "AI notes" }));
   await userEvent.selectOptions(
     screen.getByLabelText("Automatic processing"),
     mode,
@@ -267,6 +274,13 @@ beforeEach(() => {
   vi.mocked(api.getSessionProcessing).mockResolvedValue(null);
   vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting]);
   vi.mocked(api.listLibraryAnswers).mockResolvedValue([]);
+  vi.mocked(api.saveProcessingDefault).mockImplementation(
+    async (mode, summary) => ({
+      ...initialSettings,
+      processing_mode: mode,
+      processing_summary: summary,
+    }),
+  );
   vi.mocked(api.getMeeting).mockResolvedValue(sample);
   vi.mocked(api.getRecordingState).mockResolvedValue({
     revision: 0,
@@ -422,6 +436,13 @@ describe("desktop foundation", () => {
     vi.mocked(api.saveSttSettings).mockResolvedValue(initialSettings);
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(
+      screen.queryByRole("button", { name: "Save transcription settings" }),
+    ).toBeNull();
+    await userEvent.type(screen.getByLabelText(/Vocabulary hint/), "Okta");
+    expect(
+      screen.getByRole("tab", { name: /Transcription.*unsaved changes/ }),
+    ).toBeTruthy();
     await userEvent.click(
       screen.getByRole("button", { name: "Save transcription settings" }),
     );
@@ -432,24 +453,26 @@ describe("desktop foundation", () => {
     ).toBeTruthy();
   });
 
-  it("supports arrow and Home keys across settings tabs", async () => {
+  it("supports arrow, Home and End keys across settings sections", async () => {
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const local = screen.getByRole("tab", { name: "Local" });
-    fireEvent.keyDown(local, { key: "ArrowRight" });
-    const general = screen.getByRole("tab", { name: "General" });
-    expect(document.activeElement).toBe(general);
-    expect(general.getAttribute("aria-selected")).toBe("true");
-    expect(
-      screen.getByRole("button", { name: "Choose export folder" }),
-    ).toBeTruthy();
-    fireEvent.keyDown(general, { key: "Home" });
-    const cloud = screen.getByRole("tab", { name: "Cloud API" });
-    expect(document.activeElement).toBe(cloud);
-    expect(cloud.getAttribute("aria-selected")).toBe("true");
-    expect(local.getAttribute("tabindex")).toBe("-1");
-    fireEvent.keyDown(cloud, { key: "End", ctrlKey: true });
-    expect(cloud.getAttribute("aria-selected")).toBe("true");
+    const transcription = screen.getByRole("tab", { name: "Transcription" });
+    expect(transcription.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(transcription, { key: "ArrowDown" });
+    const ai = screen.getByRole("tab", { name: "AI notes" });
+    expect(document.activeElement).toBe(ai);
+    expect(ai.getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tabpanel", { name: "AI notes" })).toBeTruthy();
+    fireEvent.keyDown(ai, { key: "End" });
+    const about = screen.getByRole("tab", { name: "Privacy & about" });
+    expect(document.activeElement).toBe(about);
+    expect(screen.getByText(/Version 0\.1\.0/)).toBeTruthy();
+    fireEvent.keyDown(about, { key: "Home" });
+    const recording = screen.getByRole("tab", { name: "Recording" });
+    expect(document.activeElement).toBe(recording);
+    expect(transcription.getAttribute("tabindex")).toBe("-1");
+    fireEvent.keyDown(recording, { key: "End", ctrlKey: true });
+    expect(recording.getAttribute("aria-selected")).toBe("true");
   });
 
   it("does not enable capture or silently replace an unavailable saved microphone", async () => {
@@ -603,9 +626,9 @@ describe("desktop foundation", () => {
         .getAttribute("aria-modal"),
     ).toBe("false");
     expect(
-      screen.getByRole("tab", { name: "Local", selected: true }),
+      screen.getByRole("tab", { name: "Transcription", selected: true }),
     ).toBeTruthy();
-    expect(screen.getAllByLabelText("API key")[1]).toHaveProperty("value", "");
+    expect(screen.getByLabelText("API key")).toHaveProperty("value", "");
     expect(api.listApiConnectionModels).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     await screen.findByText(/Notes not saved: Disk full/);
@@ -2270,7 +2293,7 @@ describe("automatic session processing", () => {
     );
     expect(
       screen
-        .getByRole("tab", { name: "General" })
+        .getByRole("tab", { name: "AI notes" })
         .getAttribute("aria-selected"),
     ).toBe("true");
     await chooseProcessing("both", "general-v1");
@@ -2626,7 +2649,9 @@ describe("notes-first polish", () => {
     }));
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "General" }));
+    await userEvent.click(
+      screen.getByRole("tab", { name: "Export & storage" }),
+    );
     await userEvent.click(
       screen.getByRole("checkbox", { name: "Include transcript" }),
     );
@@ -2664,7 +2689,9 @@ describe("notes-first polish", () => {
     }));
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "General" }));
+    await userEvent.click(
+      screen.getByRole("tab", { name: "Export & storage" }),
+    );
     await userEvent.click(
       screen.getByRole("checkbox", { name: "Subtitles (.srt)" }),
     );
@@ -3227,12 +3254,12 @@ describe("transcript and audio", () => {
       screen.getByRole("button", { name: "Save transcription settings" }),
     );
     expect(api.saveSttSettings).toHaveBeenCalledWith("de", "Okta", "base");
-    await userEvent.click(screen.getByRole("tab", { name: "General" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    expect(screen.queryByRole("button", { name: "Save shortcuts" })).toBeNull();
     await userEvent.type(
       screen.getByLabelText("Stop recording shortcut (optional)"),
       "Alt+Shift+S",
     );
-    await userEvent.click(screen.getByRole("tab", { name: "General" }));
     await userEvent.click(
       screen.getByRole("button", { name: "Save shortcuts" }),
     );
@@ -3289,7 +3316,7 @@ describe("saved connections settings tabs", () => {
     });
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Cloud API" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
     await userEvent.selectOptions(
       screen.getAllByLabelText("Saved connection")[0],
       "remote",
@@ -3308,32 +3335,19 @@ describe("saved connections settings tabs", () => {
       screen.getByRole("button", { name: "Enhance notes" }),
     ).toHaveProperty("disabled", false);
   });
-  it("keeps local and cloud drafts separate without changing saved settings", async () => {
+  it("keeps a connection draft across sections but clears its key", async () => {
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const localPanel = screen.getByRole("tabpanel", { name: "Local" });
-    const localName = localPanel.querySelector("input");
-    expect(localName).toBeTruthy();
-    await userEvent.type(
-      screen.getAllByLabelText("Connection name")[1],
-      "Local draft",
-    );
-    await userEvent.type(screen.getAllByLabelText("API key")[1], "local-key");
-    await userEvent.click(screen.getByRole("tab", { name: "Cloud API" }));
-    expect(screen.getAllByLabelText("API key")[1]).toHaveProperty("value", "");
-    await userEvent.type(
-      screen.getAllByLabelText("Connection name")[0],
-      "Cloud draft",
-    );
-    await userEvent.click(screen.getByRole("tab", { name: "Local" }));
-    expect(screen.getAllByLabelText("Connection name")[1]).toHaveProperty(
+    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
+    await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
+    await userEvent.type(screen.getByLabelText("API key"), "draft-key");
+    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
+    expect(screen.getByLabelText("Connection name")).toHaveProperty(
       "value",
-      "Local draft",
+      "Draft",
     );
-    expect(screen.getAllByLabelText("Connection name")[0]).toHaveProperty(
-      "value",
-      "Cloud draft",
-    );
+    expect(screen.getByLabelText("API key")).toHaveProperty("value", "");
     expect(api.saveApiConnection).not.toHaveBeenCalled();
     expect(api.saveSttMode).not.toHaveBeenCalled();
     expect(api.listApiConnectionModels).not.toHaveBeenCalled();
@@ -3500,5 +3514,81 @@ describe("provider workflows", () => {
     expect(
       screen.getByRole("button", { name: "Start recording" }),
     ).toHaveProperty("disabled", true);
+  });
+});
+
+describe("settings defaults", () => {
+  it("saves the automatic-processing default and imports the old browser value once", async () => {
+    localStorage.setItem(
+      "openmeet.automaticProcessing",
+      JSON.stringify({ mode: "final", summary: "standup-v1" }),
+    );
+    await ready();
+    await waitFor(() =>
+      expect(api.saveProcessingDefault).toHaveBeenCalledWith(
+        "final",
+        "standup-v1",
+      ),
+    );
+    expect(localStorage.getItem("openmeet.automaticProcessing")).toBeNull();
+    await chooseProcessing("live");
+    expect(api.saveProcessingDefault).toHaveBeenLastCalledWith("live", null);
+  });
+
+  it("saves default devices only when both are chosen and keeps a missing one visible", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      microphone_id: "missing-mic",
+    });
+    vi.mocked(api.saveDefaultDevices).mockImplementation(async (mic, out) => ({
+      ...initialSettings,
+      microphone_id: mic,
+      output_id: out,
+    }));
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    const microphone = screen.getByLabelText(
+      "Default microphone",
+    ) as HTMLSelectElement;
+    expect(microphone.value).toBe("missing-mic");
+    expect(
+      within(microphone).getByRole("option", { name: "Not connected" }),
+    ).toBeTruthy();
+    expect(api.saveDefaultDevices).not.toHaveBeenCalled();
+    const real = within(microphone).getAllByRole(
+      "option",
+    )[1] as HTMLOptionElement;
+    await userEvent.selectOptions(microphone, real.value);
+    const output = (
+      screen.getByLabelText("Default system output") as HTMLSelectElement
+    ).value;
+    expect(api.saveDefaultDevices).toHaveBeenCalledWith(real.value, output);
+  });
+
+  it("records a shortcut from a key press", async () => {
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    const capture = screen.getByRole("button", {
+      name: "Press keys for stop recording shortcut (optional)",
+    });
+    await userEvent.click(capture);
+    fireEvent.keyDown(capture, {
+      key: "Shift",
+      code: "ShiftLeft",
+      shiftKey: true,
+    });
+    fireEvent.keyDown(capture, {
+      key: "S",
+      code: "KeyS",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    expect(
+      screen.getByLabelText("Stop recording shortcut (optional)"),
+    ).toHaveProperty("value", "CommandOrControl+Shift+S");
+    expect(screen.getByRole("button", { name: "Save shortcuts" })).toBeTruthy();
+    expect(screen.queryByText("Other engines (not supported yet)")).toBeNull();
   });
 });

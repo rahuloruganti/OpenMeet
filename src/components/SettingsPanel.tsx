@@ -1,48 +1,46 @@
-import { useState, type Ref } from "react";
+import { useState, type KeyboardEvent, type Ref } from "react";
+import { version } from "../../package.json";
 import type {
+  AudioDevice,
+  AudioDevices,
   ExportOptions,
   KeyStatus,
+  ProviderModel,
   ProviderRole,
   Settings,
   SttDownloadProgress,
   SttStatus,
 } from "../lib/api";
+import { formatBytes } from "../lib/meeting-labels";
+import type { ProcessingChoice } from "../lib/processing";
 import { ModelLibrary } from "./ModelLibrary";
-import { ProviderSettings } from "./ProviderSettings";
+import { Assignment, Connections } from "./ProviderSettings";
 import { RecipeSettings } from "./Recipes";
 import { SummaryTemplates } from "./SummaryTemplates";
-import type { ProcessingChoice } from "../lib/processing";
+import {
+  TranscriptionSettings,
+  sttDirty,
+  type SttDraft,
+} from "./TranscriptionSettings";
 
-/** Engines other apps (such as Handy) offer that OpenMeet cannot run yet. Listed, never selectable. */
-const otherEngines = [
-  "Parakeet V2",
-  "Parakeet V3",
-  "Moonshine Base",
-  "Moonshine V2 Tiny (streaming)",
-  "Moonshine V2 Small (streaming)",
-  "Moonshine V2 Medium (streaming)",
-  "SenseVoice (int8)",
-  "GigaAM v3",
-  "Canary 180M Flash",
-  "Canary 1B v2",
-  "Cohere (int8)",
-];
+export type { SttDraft };
 
-export type SttDraft = Pick<
-  Settings,
-  "stt_language" | "stt_prompt" | "stt_model"
->;
+export const settingsSections = [
+  ["recording", "Recording"],
+  ["transcription", "Transcription"],
+  ["ai", "AI notes"],
+  ["connections", "Connections"],
+  ["models", "Models"],
+  ["export", "Export & storage"],
+  ["about", "Privacy & about"],
+] as const;
+export type SettingsSection = (typeof settingsSections)[number][0];
 
-const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
-const settingsTabs = ["cloud", "local", "general"] as const;
-const languageName = (code: string) => {
-  if (code === "auto") return "Detect automatically";
-  try {
-    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
-  } catch {
-    return code;
-  }
-};
+const builtinTemplates = [
+  ["general-v1", "General"],
+  ["standup-v1", "Stand-up"],
+  ["one-to-one-v1", "One-to-one"],
+] as const;
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -71,16 +69,134 @@ type Props = {
   onImported: () => Promise<void>;
   processing: ProcessingChoice;
   onProcessing: (choice: ProcessingChoice) => void;
-  initialTab?: "cloud" | "local" | "general";
+  onSummaryDefault: (template: string) => void;
+  devices: AudioDevices | null;
+  microphone: string;
+  output: string;
+  onDefaultDevices: (microphone: string, output: string) => void;
+  audioBytes: number | null;
+  initialSection?: SettingsSection;
 };
+
+/** A keyboard chord as a shortcut accelerator, or null for a lone modifier. */
+function accelerator(event: KeyboardEvent): string | null {
+  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return null;
+  const key =
+    event.code === "Space"
+      ? "Space"
+      : event.code.replace(/^(Key|Digit|Arrow)/, "") || event.key;
+  return [
+    (event.ctrlKey || event.metaKey) && "CommandOrControl",
+    event.altKey && "Alt",
+    event.shiftKey && "Shift",
+    key,
+  ]
+    .filter(Boolean)
+    .join("+");
+}
+
+function ShortcutField(props: {
+  label: string;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [capturing, setCapturing] = useState(false);
+  return (
+    <div className="shortcut-field">
+      <label>
+        {props.label}
+        <input
+          value={props.value}
+          disabled={props.disabled}
+          placeholder={props.placeholder}
+          onChange={(event) => props.onChange(event.target.value)}
+        />
+      </label>
+      <button
+        type="button"
+        aria-label={`Press keys for ${props.label.toLowerCase()}`}
+        disabled={props.disabled}
+        onClick={() => setCapturing(true)}
+        onBlur={() => setCapturing(false)}
+        onKeyDown={(event) => {
+          if (!capturing) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key === "Escape") return setCapturing(false);
+          const chord = accelerator(event);
+          if (chord) {
+            props.onChange(chord);
+            setCapturing(false);
+          }
+        }}
+      >
+        {capturing ? "Press a key combination…" : "Press keys…"}
+      </button>
+    </div>
+  );
+}
+
+function DeviceSelect(props: {
+  label: string;
+  value: string;
+  devices: AudioDevice[];
+  disabled: boolean;
+  onChange: (id: string) => void;
+}) {
+  const missing =
+    props.value !== "" && !props.devices.some((d) => d.id === props.value);
+  return (
+    <label>
+      {props.label}
+      <select
+        value={props.value}
+        disabled={props.disabled || props.devices.length === 0}
+        onChange={(event) => props.onChange(event.target.value)}
+      >
+        {props.value === "" && <option value="">Choose a device</option>}
+        {missing && <option value={props.value}>Not connected</option>}
+        {props.devices.map((device) => (
+          <option key={device.id} value={device.id}>
+            {device.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 export function SettingsPanel(props: Props) {
   const { settings, disabled } = props;
-  const [tab, setTab] = useState<"cloud" | "local" | "general">(
-    props.initialTab ?? "local",
+  const [section, setSection] = useState<SettingsSection>(
+    props.initialSection ?? "transcription",
   );
   // Catalog models a scan found on disk but that are not imported yet.
   const [found, setFound] = useState<string[]>([]);
+  const [models, setModels] = useState<{
+    connectionId: string;
+    models: ProviderModel[];
+  } | null>(null);
+  const shortcutsDirty =
+    !!settings &&
+    (props.shortcut !== settings.pause_shortcut ||
+      props.stopShortcut !== (settings.stop_shortcut ?? ""));
+  const unsaved: Partial<Record<SettingsSection, boolean>> = {
+    recording: shortcutsDirty,
+    transcription: sttDirty(settings, props.sttDraft),
+  };
+  const panel = (id: SettingsSection) => ({
+    id: `settings-${id}`,
+    role: "tabpanel",
+    "aria-labelledby": `settings-tab-${id}`,
+    hidden: section !== id,
+    className: "settings-page",
+  });
+  const publish = { onSaved: props.onSettings, onKeyStatus: props.onKeyStatus };
+  const devices = (microphone: string, output: string) => {
+    if (microphone && output) props.onDefaultDevices(microphone, output);
+  };
   return (
     <section
       className="workspace-panel settings"
@@ -95,454 +211,416 @@ export function SettingsPanel(props: Props) {
           Close
         </button>
       </div>
-      <p className="panel-description">Make OpenMeet work the way you do.</p>
-      <label>
-        Transcription mode
-        <select
-          value={settings?.stt_mode ?? "local"}
-          disabled={disabled}
-          onChange={(event) =>
-            props.onSttMode(event.target.value === "cloud" ? "cloud" : "local")
-          }
+      <div className="settings-layout">
+        <div
+          role="tablist"
+          aria-label="Settings sections"
+          aria-orientation="vertical"
+          className="settings-nav"
         >
-          <option value="local">Local Whisper</option>
-          <option value="cloud">API connection</option>
-        </select>
-      </label>
-      <div
-        role="tablist"
-        aria-label="Settings sections"
-        className="settings-tabs"
-      >
-        {settingsTabs.map((value, index) => (
-          <button
-            key={value}
-            id={`settings-tab-${value}`}
-            role="tab"
-            aria-selected={tab === value}
-            aria-controls={`settings-${value}`}
-            tabIndex={tab === value ? 0 : -1}
-            onClick={() => setTab(value)}
-            onKeyDown={(event) => {
-              if (event.ctrlKey || event.altKey || event.metaKey) return;
-              const nextIndex =
-                event.key === "Home"
-                  ? 0
-                  : event.key === "End"
-                    ? settingsTabs.length - 1
-                    : event.key === "ArrowRight"
-                      ? (index + 1) % settingsTabs.length
-                      : event.key === "ArrowLeft"
-                        ? (index + settingsTabs.length - 1) %
-                          settingsTabs.length
-                        : null;
-              if (nextIndex === null) return;
-              const next = settingsTabs[nextIndex];
-              if (!next) return;
-              event.preventDefault();
-              setTab(next);
-              document.getElementById(`settings-tab-${next}`)?.focus();
-            }}
-          >
-            {value === "cloud"
-              ? "Cloud API"
-              : value === "local"
-                ? "Local"
-                : "General"}
-          </button>
-        ))}
-      </div>
-      <div
-        id="settings-cloud"
-        role="tabpanel"
-        aria-labelledby="settings-tab-cloud"
-        hidden={tab !== "cloud"}
-      >
-        {settings && (
-          <ProviderSettings
-            settings={settings}
-            local={false}
-            active={tab === "cloud"}
-            disabled={disabled}
-            onSaved={props.onSettings}
-            onKeyStatus={props.onKeyStatus}
-          />
-        )}
-        <p className="muted">
-          Cloud speech uploads audio only after separate confirmation. Summaries
-          and questions send text after separate confirmation.
-        </p>
-      </div>
-      <div
-        id="settings-local"
-        role="tabpanel"
-        aria-labelledby="settings-tab-local"
-        hidden={tab !== "local"}
-        className="settings-grid"
-      >
-        <div className="settings-column">
-          <section
-            className="settings-section"
-            aria-label="Transcription settings"
-          >
-            <h3>Speech to text</h3>
-            <>
-              <p className="muted">Local Whisper keeps audio on this device.</p>
-              <p>
-                <strong>
-                  {!props.stt
-                    ? "Status unavailable"
-                    : !props.stt.supported
-                      ? "Not supported on this platform yet"
-                      : props.stt.installed
-                        ? "Installed and verified"
-                        : "Not installed"}
-                </strong>
-              </p>
+          {settingsSections.map(([id, label], index) => (
+            <button
+              key={id}
+              id={`settings-tab-${id}`}
+              role="tab"
+              aria-selected={section === id}
+              aria-controls={`settings-${id}`}
+              tabIndex={section === id ? 0 : -1}
+              onClick={() => setSection(id)}
+              onKeyDown={(event) => {
+                if (event.ctrlKey || event.altKey || event.metaKey) return;
+                const count = settingsSections.length;
+                const next =
+                  event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? count - 1
+                      : event.key === "ArrowDown"
+                        ? (index + 1) % count
+                        : event.key === "ArrowUp"
+                          ? (index + count - 1) % count
+                          : null;
+                if (next === null) return;
+                event.preventDefault();
+                const target = settingsSections[next][0];
+                setSection(target);
+                document.getElementById(`settings-tab-${target}`)?.focus();
+              }}
+            >
+              {label}
+              {unsaved[id] && (
+                <span className="unsaved-mark" title="Unsaved changes">
+                  <span aria-hidden="true"> •</span>
+                  <span className="sr-only"> (unsaved changes)</span>
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="settings-pages">
+          <div {...panel("recording")}>
+            <section className="settings-section" aria-label="Default devices">
+              <h3>Default devices</h3>
               <p className="muted">
-                Transcribe on your computer with Whisper. Audio stays here.
-                Windows uses the published engine. Apple Silicon requires the
-                separately pinned local whisper.cpp build.
+                New recording starts with these. A device that is not connected
+                is never replaced automatically.
               </p>
-              <details className="help-details">
-                <summary>About model downloads</summary>
-                <p>
-                  Whisper and Silero models come from huggingface.co; the engine
-                  comes from github.com. Downloads are checked against pinned
-                  SHA-256 checksums. Switching models keeps existing downloads.
-                </p>
-              </details>
-              <label>
-                Available speech models
-                <select
-                  value={props.sttDraft.stt_model}
+              <DeviceSelect
+                label="Default microphone"
+                value={props.microphone}
+                devices={props.devices?.microphones ?? []}
+                disabled={disabled}
+                onChange={(id) => devices(id, props.output)}
+              />
+              <DeviceSelect
+                label="Default system output"
+                value={props.output}
+                devices={props.devices?.outputs ?? []}
+                disabled={disabled}
+                onChange={(id) => devices(props.microphone, id)}
+              />
+            </section>
+            <section
+              className="settings-section"
+              aria-label="Keyboard shortcuts"
+            >
+              <h3>Keyboard shortcuts</h3>
+              <ShortcutField
+                label="Pause / resume shortcut"
+                value={props.shortcut}
+                placeholder="CommandOrControl+Shift+Space"
+                disabled={disabled}
+                onChange={props.onShortcut}
+              />
+              <ShortcutField
+                label="Stop recording shortcut (optional)"
+                value={props.stopShortcut}
+                placeholder="Leave empty for none"
+                disabled={disabled}
+                onChange={props.onStopShortcut}
+              />
+              <p className="muted">
+                There is no shortcut to start recording: starting always goes
+                through setup and consent.
+              </p>
+              {shortcutsDirty && (
+                <button
+                  disabled={disabled || !props.shortcut.trim()}
+                  onClick={props.onSaveShortcut}
+                >
+                  Save shortcuts
+                </button>
+              )}
+            </section>
+          </div>
+          <div {...panel("transcription")}>
+            <TranscriptionSettings
+              settings={settings}
+              disabled={disabled}
+              stt={props.stt}
+              sttProgress={props.sttProgress}
+              installing={props.installing}
+              found={found}
+              models={models}
+              sttDraft={props.sttDraft}
+              onStt={props.onStt}
+              onSaveStt={props.onSaveStt}
+              onSttMode={props.onSttMode}
+              onInstallStt={props.onInstallStt}
+              onCancelStt={props.onCancelStt}
+              onSettings={props.onSettings}
+              onKeyStatus={props.onKeyStatus}
+            />
+          </div>
+          <div {...panel("ai")}>
+            <section
+              className="settings-section"
+              aria-label="Summaries and questions"
+            >
+              <h3>Summaries and questions</h3>
+              {settings && (
+                <Assignment
+                  role="llm"
+                  settings={settings}
                   disabled={disabled}
+                  models={models}
+                  {...publish}
+                />
+              )}
+              <label>
+                Default summary template
+                <select
+                  value={settings?.summary_default ?? "general-v1"}
+                  disabled={disabled || !settings}
                   onChange={(event) =>
-                    props.onStt({ stt_model: event.target.value })
+                    props.onSummaryDefault(event.target.value)
                   }
                 >
-                  <optgroup label="Whisper (verified catalog)">
-                    {props.stt?.models.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.id} ({mb(item.size)} MB
-                        {item.installed
-                          ? ", downloaded"
-                          : found.includes(item.id)
-                            ? ", found on this computer"
-                            : ""}
-                        )
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="Other engines (not supported yet)">
-                    {otherEngines.map((name) => (
-                      <option key={name} value={"unsupported:" + name} disabled>
-                        {name}
-                      </option>
-                    ))}
-                  </optgroup>
+                  {builtinTemplates.map(([id, label]) => (
+                    <option key={id} value={id}>
+                      {label}
+                    </option>
+                  ))}
+                  {settings?.summary_templates.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
                 </select>
               </label>
-            </>
-            <label>
-              Spoken language
-              <select
-                value={props.sttDraft.stt_language}
-                disabled={disabled}
-                onChange={(event) =>
-                  props.onStt({ stt_language: event.target.value })
-                }
-              >
-                {(props.stt?.languages ?? [props.sttDraft.stt_language]).map(
-                  (code) => (
-                    <option key={code} value={code}>
-                      {languageName(code)}
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
-            <label>
-              Vocabulary hint (names, jargon; optional)
-              <input
-                value={props.sttDraft.stt_prompt}
-                disabled={disabled}
-                maxLength={500}
-                placeholder="e.g. Priya, Okta, Kubernetes"
-                onChange={(event) =>
-                  props.onStt({ stt_prompt: event.target.value })
-                }
-              />
-            </label>
-            <button disabled={disabled} onClick={props.onSaveStt}>
-              Save transcription settings
-            </button>
-            {settings?.stt_mode !== "cloud" && (
-              <>
-                {props.sttProgress && (
-                  <p role="status">
-                    Downloading {props.sttProgress.stage}:{" "}
-                    {mb(props.sttProgress.downloaded)} /{" "}
-                    {mb(props.sttProgress.total)} MB
-                  </p>
-                )}
-                {props.installing && (
-                  <button onClick={props.onCancelStt}>
-                    Cancel speech download
-                  </button>
-                )}
-                <button
-                  disabled={
-                    disabled ||
-                    props.installing ||
-                    !props.stt?.supported ||
-                    props.stt.installed
-                  }
-                  onClick={props.onInstallStt}
-                >
-                  {props.stt?.installed
-                    ? "Speech engine installed"
-                    : `Download speech engine and models (≈ ${mb(props.stt?.missing_bytes ?? 0)} MB)`}
-                </button>
-              </>
-            )}
-          </section>
-          <ModelLibrary
-            disabled={disabled}
-            onImported={props.onImported}
-            onFound={setFound}
-          />
-        </div>
-        {settings && (
-          <ProviderSettings
-            settings={settings}
-            local
-            active={tab === "local"}
-            disabled={disabled}
-            onSaved={props.onSettings}
-            onKeyStatus={props.onKeyStatus}
-          />
-        )}
-      </div>
-      <div
-        id="settings-general"
-        role="tabpanel"
-        aria-labelledby="settings-tab-general"
-        hidden={tab !== "general"}
-        className="settings-grid"
-      >
-        <section
-          className="settings-section"
-          aria-label="Automatic processing settings"
-        >
-          <h3>Automatic processing</h3>
-          <label>
-            Automatic processing
-            <select
-              value={props.processing.mode}
-              disabled={disabled}
-              onChange={(event) =>
-                props.onProcessing({
-                  mode: event.target.value as ProcessingChoice["mode"],
-                  summary:
-                    event.target.value === "final" ||
-                    event.target.value === "both"
-                      ? props.processing.summary
-                      : null,
-                })
-              }
+            </section>
+            <section
+              className="settings-section"
+              aria-label="Automatic processing settings"
             >
-              <option value="recording">Recording only</option>
-              <option value="live">Live transcription only</option>
-              <option value="final">Final transcription after stop</option>
-              <option value="both">Live and final transcription</option>
-            </select>
-          </label>
-          {(props.processing.mode === "final" ||
-            props.processing.mode === "both") && (
-            <label>
-              Automatic summary
-              <select
-                value={props.processing.summary ?? ""}
+              <h3>Automatic processing</h3>
+              <label>
+                Automatic processing
+                <select
+                  value={props.processing.mode}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    props.onProcessing({
+                      mode: event.target.value as ProcessingChoice["mode"],
+                      summary:
+                        event.target.value === "final" ||
+                        event.target.value === "both"
+                          ? props.processing.summary
+                          : null,
+                    })
+                  }
+                >
+                  <option value="recording">Recording only</option>
+                  <option value="live">Live transcription only</option>
+                  <option value="final">Final transcription after stop</option>
+                  <option value="both">Live and final transcription</option>
+                </select>
+              </label>
+              {(props.processing.mode === "final" ||
+                props.processing.mode === "both") && (
+                <label>
+                  Automatic summary
+                  <select
+                    value={props.processing.summary ?? ""}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      props.onProcessing({
+                        ...props.processing,
+                        summary:
+                          builtinTemplates.find(
+                            ([id]) => id === event.target.value,
+                          )?.[0] ?? null,
+                      })
+                    }
+                  >
+                    <option value="">No automatic summary</option>
+                    {builtinTemplates.map(([id, label]) => (
+                      <option key={id} value={id}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <p className="muted">
+                This is only your default. Every recording still shows a review
+                of what will be processed and where it goes, and needs your
+                confirmation before it starts.
+              </p>
+            </section>
+            <SummaryTemplates
+              settings={settings}
+              disabled={disabled}
+              onSettings={props.onSettings}
+            />
+            <RecipeSettings
+              settings={settings}
+              disabled={disabled}
+              onSettings={props.onSettings}
+            />
+          </div>
+          <div {...panel("connections")}>
+            {settings && (
+              <Connections
+                settings={settings}
+                active={section === "connections"}
                 disabled={disabled}
-                onChange={(event) =>
-                  props.onProcessing({
-                    ...props.processing,
-                    summary:
-                      event.target.value === "general-v1" ||
-                      event.target.value === "standup-v1" ||
-                      event.target.value === "one-to-one-v1"
-                        ? event.target.value
-                        : null,
-                  })
+                onModels={(connectionId, list) =>
+                  setModels({ connectionId, models: list })
                 }
-              >
-                <option value="">No automatic summary</option>
-                <option value="general-v1">General</option>
-                <option value="standup-v1">Stand-up</option>
-                <option value="one-to-one-v1">One-to-one</option>
-              </select>
-            </label>
-          )}
-          <p className="muted">
-            This is only your default. Every recording still shows a review of
-            what will be processed and where it goes, and needs your
-            confirmation before it starts.
-          </p>
-        </section>
-        <SummaryTemplates
-          settings={settings}
-          disabled={disabled}
-          onSettings={props.onSettings}
-        />
-        <RecipeSettings
-          settings={settings}
-          disabled={disabled}
-          onSettings={props.onSettings}
-        />
-        <section
-          className="settings-section"
-          aria-label="Storage and export settings"
-        >
-          <h3>Storage & export</h3>
-          <p className="muted">
-            Notes and audio are stored on this device, unencrypted. Exported
-            snapshots keep your earlier files intact.
-          </p>
-          <label>
-            Export folder
-            <output>{settings?.vault_folder ?? "Not selected"}</output>
-          </label>
-          <button disabled={disabled} onClick={props.onChooseFolder}>
-            Choose export folder
-          </button>
-        </section>
-        <section className="settings-section" aria-label="Keyboard shortcuts">
-          <h3>Keyboard shortcuts</h3>
-          <label>
-            Pause / resume shortcut
-            <input
-              value={props.shortcut}
-              disabled={disabled}
-              onChange={(event) => props.onShortcut(event.target.value)}
-              placeholder="CommandOrControl+Shift+Space"
-            />
-          </label>
-          <label>
-            Stop recording shortcut (optional)
-            <input
-              value={props.stopShortcut}
-              disabled={disabled}
-              onChange={(event) => props.onStopShortcut(event.target.value)}
-              placeholder="Leave empty for none"
-            />
-          </label>
-          <p className="muted">
-            There is no shortcut to start recording: starting always goes
-            through setup and consent.
-          </p>
-          <button
-            disabled={disabled || !props.shortcut.trim()}
-            onClick={props.onSaveShortcut}
-          >
-            Save shortcuts
-          </button>
-        </section>
-        {settings && (
-          <fieldset
-            className="export-options settings-section"
-            disabled={disabled}
-          >
-            <legend>Markdown export</legend>
-            <label>
-              <input
-                type="checkbox"
-                checked={settings.export.summary}
-                onChange={(event) =>
-                  props.onExportOptions({
-                    ...settings.export,
-                    summary: event.target.checked,
-                  })
-                }
+                {...publish}
               />
-              Include summary
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={settings.export.transcript}
-                onChange={(event) =>
-                  props.onExportOptions({
-                    ...settings.export,
-                    transcript: event.target.checked,
-                  })
-                }
+            )}
+          </div>
+          <div {...panel("models")}>
+            <details className="settings-section advanced">
+              <summary>Advanced: local model library</summary>
+              <ModelLibrary
+                disabled={disabled}
+                onImported={props.onImported}
+                onFound={setFound}
               />
-              Include transcript
-            </label>
-            <label>
-              File name
-              <select
-                value={settings.export.filename}
-                onChange={(event) =>
-                  props.onExportOptions({
-                    ...settings.export,
-                    filename:
-                      event.target.value === "date_title"
-                        ? "date_title"
-                        : "title",
-                  })
-                }
+            </details>
+          </div>
+          <div {...panel("export")}>
+            <section
+              className="settings-section"
+              aria-label="Storage and export settings"
+            >
+              <h3>Storage & export</h3>
+              <label>
+                Export folder
+                <output>{settings?.vault_folder ?? "Not selected"}</output>
+              </label>
+              <button disabled={disabled} onClick={props.onChooseFolder}>
+                Choose export folder
+              </button>
+              <p className="muted">
+                Audio recordings use{" "}
+                {props.audioBytes === null
+                  ? "an unknown amount of space"
+                  : formatBytes(props.audioBytes)}{" "}
+                on this device. Notes, audio and exports are unencrypted.
+              </p>
+            </section>
+            {settings && (
+              <fieldset
+                className="export-options settings-section"
+                disabled={disabled}
               >
-                <option value="title">Meeting title</option>
-                <option value="date_title">Date, then meeting title</option>
-              </select>
-            </label>
-            <fieldset disabled={disabled}>
-              <legend>Transcript files</legend>
-              {(["txt", "srt", "vtt"] as const).map((format) => (
-                <label key={format}>
+                <legend>Markdown export</legend>
+                <label>
                   <input
                     type="checkbox"
-                    checked={settings.export.transcript_formats.includes(
-                      format,
-                    )}
+                    checked={settings.export.summary}
                     onChange={(event) =>
                       props.onExportOptions({
                         ...settings.export,
-                        transcript_formats: event.target.checked
-                          ? [
-                              ...settings.export.transcript_formats,
-                              format,
-                            ].filter(
-                              (chosen, index, all) =>
-                                all.indexOf(chosen) === index,
-                            )
-                          : settings.export.transcript_formats.filter(
-                              (chosen) => chosen !== format,
-                            ),
+                        summary: event.target.checked,
                       })
                     }
                   />
-                  {format === "txt"
-                    ? "Plain text (.txt)"
-                    : format === "srt"
-                      ? "Subtitles (.srt)"
-                      : "WebVTT (.vtt)"}
+                  Include summary
                 </label>
-              ))}
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={settings.export.transcript}
+                    onChange={(event) =>
+                      props.onExportOptions({
+                        ...settings.export,
+                        transcript: event.target.checked,
+                      })
+                    }
+                  />
+                  Include transcript
+                </label>
+                <label>
+                  File name
+                  <select
+                    value={settings.export.filename}
+                    onChange={(event) =>
+                      props.onExportOptions({
+                        ...settings.export,
+                        filename:
+                          event.target.value === "date_title"
+                            ? "date_title"
+                            : "title",
+                      })
+                    }
+                  >
+                    <option value="title">Meeting title</option>
+                    <option value="date_title">Date, then meeting title</option>
+                  </select>
+                </label>
+                <fieldset disabled={disabled}>
+                  <legend>Transcript files</legend>
+                  {(["txt", "srt", "vtt"] as const).map((format) => (
+                    <label key={format}>
+                      <input
+                        type="checkbox"
+                        checked={settings.export.transcript_formats.includes(
+                          format,
+                        )}
+                        onChange={(event) =>
+                          props.onExportOptions({
+                            ...settings.export,
+                            transcript_formats: event.target.checked
+                              ? [
+                                  ...settings.export.transcript_formats,
+                                  format,
+                                ].filter(
+                                  (chosen, index, all) =>
+                                    all.indexOf(chosen) === index,
+                                )
+                              : settings.export.transcript_formats.filter(
+                                  (chosen) => chosen !== format,
+                                ),
+                          })
+                        }
+                      />
+                      {format === "txt"
+                        ? "Plain text (.txt)"
+                        : format === "srt"
+                          ? "Subtitles (.srt)"
+                          : "WebVTT (.vtt)"}
+                    </label>
+                  ))}
+                  <p className="muted">
+                    Written next to the Markdown snapshot with the same name.
+                    SRT and VTT need engine timestamps, so a meeting with
+                    untimed segments cannot be exported while either is
+                    selected.
+                  </p>
+                </fieldset>
+                <p className="muted">
+                  Applies to new exports. Earlier snapshots are never renamed or
+                  overwritten.
+                </p>
+              </fieldset>
+            )}
+          </div>
+          <div {...panel("about")}>
+            <section className="settings-section" aria-label="Privacy">
+              <h3>What leaves this device</h3>
+              <ul className="privacy-list">
+                <li>
+                  <strong>Recording and local transcription:</strong> nothing.
+                  Audio, notes and transcripts are stored here, unencrypted.
+                </li>
+                <li>
+                  <strong>API transcription:</strong> audio, after a separate
+                  confirmation naming the destination.
+                </li>
+                <li>
+                  <strong>Summaries, questions and rewrites:</strong> only the
+                  text shown on each confirmation card.
+                </li>
+                <li>
+                  <strong>Model downloads:</strong> requests to github.com and
+                  huggingface.co. No meeting content.
+                </li>
+                <li>
+                  <strong>Exports:</strong> files in your export folder, which
+                  may itself be synced by other software.
+                </li>
+              </ul>
               <p className="muted">
-                Written next to the Markdown snapshot with the same name. SRT
-                and VTT need engine timestamps, so a meeting with untimed
-                segments cannot be exported while either is selected.
+                Connections marked "This device" use a local server; its own
+                configuration decides whether it forwards requests. API keys are
+                kept in the OS keychain.
               </p>
-            </fieldset>
-            <p className="muted">
-              Applies to new exports. Earlier snapshots are never renamed or
-              overwritten.
-            </p>
-          </fieldset>
-        )}
+            </section>
+            <section className="settings-section" aria-label="About">
+              <h3>About OpenMeet</h3>
+              <p>Version {version} (preview)</p>
+              <p className="muted">
+                Capture is not yet hardware-qualified. Third-party licenses are
+                listed in THIRD_PARTY_LICENSES.md in the source repository.
+              </p>
+            </section>
+          </div>
+        </div>
       </div>
     </section>
   );

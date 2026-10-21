@@ -304,6 +304,12 @@ pub struct Settings {
     pub summary_instructions: String,
     pub summary_templates: Vec<CustomTemplate>,
     pub recipes: Vec<Recipe>,
+    /// "recording", "live", "final" or "both"; preselects the recording review only.
+    pub processing_mode: String,
+    /// Built-in template for the automatic summary, when the mode includes a final pass.
+    pub processing_summary: Option<String>,
+    /// The template the Enhance picker starts at.
+    pub summary_default: String,
 }
 
 /// A saved, reusable question prompt; `id` is `recipe-<uuid>`.

@@ -70,7 +70,7 @@ Exported files appear in the chosen folder's `Meetings` directory. Export create
 
 Local Whisper keeps audio and transcription on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
 
-For cloud transcription, choose **Settings → Speech to text → Cloud API**. Save its own HTTPS API base URL/key, then select a discovered model or enter a custom model ID. Each transcription asks before uploading audio and shows the destination, model, tracks, bytes, and request count. Text-only model results have no fabricated timestamps or playback links. Provider retention and charges apply; cancellation cannot recall audio already uploaded.
+For cloud transcription, add a connection under **Settings → Connections**, then choose **API connection** under **Settings → Transcription** and assign that connection and a model ID. Each transcription asks before uploading audio and shows the destination, model, tracks, bytes, and request count. Text-only model results have no fabricated timestamps or playback links. Provider retention and charges apply; cancellation cannot recall audio already uploaded.
 
 Sample and simulation creation has been removed. Existing historical samples remain labeled and accessible to preserve edited notes. Use **New note** without opening audio devices.
 
@@ -78,9 +78,9 @@ Sample and simulation creation has been removed. Existing historical samples rem
 
 Notes, recording, and local transcription work without a cloud key. Summaries and **Ask this meeting** use your provider's OpenAI-compatible chat API.
 
-1. Open **Settings → Cloud API** (or **Local** for your local server).
+1. Open **Settings → Connections**. Remote and local servers share one list; each is marked **This device** or **Leaves this device**.
 2. Name the connection, enter its API base URL including the API path, and paste its key into the masked field. Save the connection. Local loopback HTTP supports optional keys.
-3. Under the summary assignment, select the saved connection and a discovered or custom model ID. Save the assignment. Refresh models explicitly when needed.
+3. Under **Settings → AI notes**, select the saved connection and a discovered or custom model ID for summaries, then save. Use **Refresh models** in Connections to fetch model IDs when needed.
 
 Keys pass briefly through the password field and IPC to Rust, then live in the OS keychain. They are not read back into Settings. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; refreshing models sends credentials only. Environment-key import has been removed.
 

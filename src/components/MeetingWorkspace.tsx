@@ -126,6 +126,8 @@ type Props = {
   /** Stored summaries, newest first. */
   versions: SummaryVersion[];
   customTemplates: CustomTemplate[];
+  /** The template the picker starts at, from Settings. */
+  defaultTemplate: string;
   /** Saved question prompts; built-in recipes are added by the picker. */
   recipes: Recipe[];
   /** Saved personal instructions sent with every summary. */
@@ -182,7 +184,8 @@ export function MeetingWorkspace(props: Props) {
   const [confirmingAudio, setConfirmingAudio] = useState<ProcessingPlan | null>(
     null,
   );
-  const [chosenTemplate, setTemplate] = useState<string>("general-v1");
+  const [chosenTemplate, setTemplate] = useState(props.defaultTemplate);
+  useEffect(() => setTemplate(props.defaultTemplate), [props.defaultTemplate]);
   // A deleted custom template falls back to General instead of failing at send time.
   const template =
     templates.some((item) => item.id === chosenTemplate) ||

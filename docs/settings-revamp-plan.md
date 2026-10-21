@@ -1,6 +1,6 @@
 # Settings revamp plan
 
-Status: plan only, October 21, 2026. Nothing here is implemented yet.
+Status: implemented October 21, 2026, except section search (deferred by the user). The left navigation and a collapsed Models section were chosen. Steps 1–5 landed together because they rewrite the same panel and tests. Native visual inspection is still open.
 
 ## Why
 

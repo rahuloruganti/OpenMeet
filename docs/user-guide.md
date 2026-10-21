@@ -34,7 +34,7 @@ Capture remains a preview. On Apple Silicon macOS 14.2 or newer, choose an outpu
 
 1. Click **New recording** and enter a title.
 2. Choose the microphone and system-output device you intend to capture.
-3. Choose the default **Automatic processing** under Settings → General (**Recording only** by default). The New recording panel shows it and still requires a reviewed, confirmed plan before any processing starts.
+3. Choose the default **Automatic processing** under **Settings → AI notes** (**Recording only** by default; it is saved in the database). The New recording panel shows it and still requires a reviewed, confirmed plan before any processing starts.
 4. Acknowledge participant recording consent, then click **Start recording**.
 5. Use the microphone and system meters to check for incoming signals.
 6. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.
@@ -71,8 +71,8 @@ Use **Cancel session processing** to stop further work without stopping capture 
 
 ## Transcribe and play audio
 
-1. Open **Settings → Local → Speech to text** and choose **Local Whisper**.
-2. Choose a speech model, language, and optional vocabulary hint. Click **Save transcription settings**.
+1. Open **Settings → Transcription** and choose **Local Whisper**.
+2. Choose a speech model, language, and optional vocabulary hint. **Save transcription settings** appears once something differs from the saved values, and the section is marked as having unsaved changes until you save.
 3. Click **Download speech engine and models** if the selected model is missing.
 4. Stop the recording, open its **Transcript** tab, and click **Transcribe audio**.
 5. Monitor progress or click **Cancel transcription**.
@@ -89,13 +89,13 @@ When the transcript or speaker names change after a summary was made, the Summar
 
 The Transcript tab provides one player for each playable track. Select a transcript timestamp to seek the corresponding track. Timestamp links inserted in notes can jump to audio; system-track seeking is approximate. Leaving the Transcript tab or opening settings pauses playback. Missing or incomplete files produce a visible error.
 
-For API transcription, choose **API connection** as the transcription mode. Create a named connection under **Cloud API** or **Local**, then select it and a model under the **Speech API** assignment and save. Local loopback HTTP permits optional keys; remote APIs require HTTPS and a key. Explicit refresh lists model IDs; custom IDs also work. Local engine downloads are not needed for cloud mode. Language/vocabulary settings remain available, but a provider may reject unsupported options visibly.
+For API transcription, create a named connection under **Settings → Connections**, then choose **API connection** under **Settings → Transcription**, select the connection and a model for the **Speech API** task and save. Local loopback HTTP permits optional keys; remote APIs require HTTPS and a key. Explicit refresh lists model IDs; custom IDs also work. Local engine downloads are not needed for cloud mode. Language/vocabulary settings remain available, but a provider may reject unsupported options visibly.
 
 **Transcribe audio** in cloud mode first shows an audio-upload confirmation with destination, model, tracks, bytes, and request count. Cancelling the review sends nothing. Cancelling an active run prevents further chunks and preserves the old transcript, but audio already uploaded cannot be recalled and in-flight work may still be billed. JSON results without timing are explicitly untimed and grouped by track; their text supports search, summaries, and export, without timestamp links.
 
 ## Find and download local models
 
-Open **Settings → Local**. Scan common folders or choose a folder explicitly. The scan reports examined folders and truncation; it reads file headers within limits of 4,096 entries, six levels, and 200 files. Discovery alone does not verify or activate a model. Import matching Whisper catalog candidates to verify their full hash and copy them into managed storage; the source remains untouched. Select and save the Whisper model separately.
+Open **Settings → Models** and expand **Advanced: local model library**. Scan common folders or choose a folder explicitly. The scan reports examined folders and truncation; it reads file headers within limits of 4,096 entries, six levels, and 200 files. Discovery alone does not verify or activate a model. Import matching Whisper catalog candidates to verify their full hash and copy them into managed storage; the source remains untouched. Select and save the Whisper model separately.
 
 Search Hugging Face explicitly to see up to 20 public results. Review the repository, revision, size, and license before downloading a supported file. Downloads verify the pinned size and SHA-256 and preserve existing files. Cancel stops transfer and prevents publication at the cancellation boundary. Complete single-file GGUF models require a separately managed compatible server; downloading does not launch one. Private/gated repositories and split models are unsupported.
 
@@ -108,7 +108,7 @@ Configure your independent LLM base URL, key, and model using the [README setup]
 3. Review the destination, model, template, saved-instructions notice, text scope, and request count.
 4. Confirm the send, or cancel to send nothing.
 
-Add custom templates and saved summary instructions in **Settings → General → Summary templates**. A custom template describes the sections you want. Saved instructions, such as "Write in British English", are sent with every manual and automatic summary request. Built-in rules still apply: the model must not invent facts or follow instructions found inside notes or transcripts. Editing a template or the instructions after reviewing a summary requires a new review. Automatic summaries offer only the three built-in templates, but they include the saved instructions frozen at review. Deleting a template keeps earlier summaries; their history shows "Deleted custom template".
+Add custom templates and saved summary instructions in **Settings → AI notes → Summary templates**. **Default summary template** there sets the template the Summary tab starts at. A custom template describes the sections you want. Saved instructions, such as "Write in British English", are sent with every manual and automatic summary request. Built-in rules still apply: the model must not invent facts or follow instructions found inside notes or transcripts. Editing a template or the instructions after reviewing a summary requires a new review. Automatic summaries offer only the three built-in templates, but they include the saved instructions frozen at review. Deleting a template keeps earlier summaries; their history shows "Deleted custom template".
 
 Notes and transcript text leave the device after confirmation. Audio is never included. Longer transcripts can require several requests, including a final combination request. Inputs above the implementation's limits are refused rather than silently shortened. A failed request does not remove your notes or the last saved summary.
 
@@ -132,7 +132,7 @@ The **Tasks** list below the summary holds editable action items. Add a task by 
 
 ### Recipes
 
-Recipes are saved questions. Both question boxes show them as buttons: **Catch me up**, **Follow-up email**, **Action items**, **Decisions** and **Open questions** are built in, and you can add, edit or delete your own under Settings → **Recipes**. Choosing a recipe only fills the question box; you can edit it, and nothing is sent until you review and confirm as usual.
+Recipes are saved questions. Both question boxes show them as buttons: **Catch me up**, **Follow-up email**, **Action items**, **Decisions** and **Open questions** are built in, and you can add, edit or delete your own under **Settings → AI notes → Recipes**. Choosing a recipe only fills the question box; you can edit it, and nothing is sent until you review and confirm as usual.
 
 ### Rewrite selected notes
 
@@ -144,9 +144,9 @@ Select text in **My notes** and click **Rewrite selection…**. Choose a preset 
 2. On the first export, choose a destination folder. Cancel to leave the destination unset.
 3. Read the notification for the saved file path.
 
-Files are written under the destination's `Meetings` directory. **Settings → General → Markdown export** controls transcript inclusion, summary inclusion, and title or date-and-title filenames. The date prefix uses the stored UTC start date.
+Files are written under the destination's `Meetings` directory. **Settings → Export & storage → Markdown export** controls transcript inclusion, summary inclusion, and title or date-and-title filenames. The date prefix uses the stored UTC start date.
 
-**Settings → General → Transcript files** can also write **.txt**, **.srt**, or **.vtt** beside the snapshot, with the same file name. The plain-text file keeps one line per segment with its start time and speaker. SRT and VTT need engine timestamps: if any segment is untimed while SRT or VTT is selected, the whole export is refused and nothing is written (any earlier snapshot is left alone); turn those formats off to export that meeting with the text file only. Line breaks inside a segment are joined into one line, and a meeting without a transcript gets no transcript files. The notification after an export says how many transcript files were written.
+**Settings → Export & storage → Transcript files** can also write **.txt**, **.srt**, or **.vtt** beside the snapshot, with the same file name. The plain-text file keeps one line per segment with its start time and speaker. SRT and VTT need engine timestamps: if any segment is untimed while SRT or VTT is selected, the whole export is refused and nothing is written (any earlier snapshot is left alone); turn those formats off to export that meeting with the text file only. Line breaks inside a segment are joined into one line, and a meeting without a transcript gets no transcript files. The notification after an export says how many transcript files were written.
 
 Exports contain source metadata, user notes, and the selected sections. They do not include audio. An identical existing snapshot is reused. A differing file produces a new snapshot instead of overwriting external edits. Renaming a meeting does not rename older exports. Exported files are not synchronized back into the database.
 

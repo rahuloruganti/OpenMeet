@@ -32,12 +32,16 @@ import { RecordingControls } from "./components/RecordingControls";
 import { LibraryQuestion } from "./components/LibraryQuestion";
 import { SetupPanel } from "./components/SetupPanel";
 import {
-  loadProcessing,
-  saveProcessing,
+  processingDefault,
+  takeLegacyProcessing,
   type ProcessingChoice,
 } from "./lib/processing";
 import { SessionReview } from "./components/SessionReview";
-import { SettingsPanel, type SttDraft } from "./components/SettingsPanel";
+import {
+  SettingsPanel,
+  type SettingsSection,
+  type SttDraft,
+} from "./components/SettingsPanel";
 
 type Writer = ReturnType<typeof createNoteWriter>;
 
@@ -71,12 +75,11 @@ export function App() {
     recording_offset_ms: null,
   });
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [autoProcessing, setAutoProcessing] =
-    useState<ProcessingChoice>(loadProcessing);
-  const chooseAutoProcessing = (choice: ProcessingChoice) => {
-    saveProcessing(choice);
-    setAutoProcessing(choice);
-  };
+  const autoProcessing = processingDefault(settings);
+  const chooseAutoProcessing = (choice: ProcessingChoice) =>
+    void run(async () =>
+      setSettings(await api.saveProcessingDefault(choice.mode, choice.summary)),
+    );
   const [shortcut, setShortcut] = useState("");
   const [stopShortcut, setStopShortcut] = useState("");
   const [sttDraft, setSttDraft] = useState<SttDraft>({
@@ -149,9 +152,8 @@ export function App() {
     meetingId: string;
     ms: number | null;
   } | null>(null);
-  const [settingsTab, setSettingsTab] = useState<"cloud" | "local" | "general">(
-    "local",
-  );
+  const [settingsTab, setSettingsTab] =
+    useState<SettingsSection>("transcription");
   const panelRef = useRef<HTMLElement | null>(null);
   const panelTrigger = useRef<HTMLButtonElement | null>(null);
   const listRequest = useRef(0);
@@ -408,6 +410,15 @@ export function App() {
       if (disposed) return;
       updateRecording(state);
       setSettings(preferences);
+      // One-time move of the default earlier versions kept in webview storage.
+      const legacy = takeLegacyProcessing();
+      if (legacy && preferences.processing_mode === "recording")
+        void api
+          .saveProcessingDefault(legacy.mode, legacy.summary)
+          .then((saved) => {
+            if (!disposed) setSettings(saved);
+          })
+          .catch(() => undefined);
       setShortcut(preferences.pause_shortcut);
       setStopShortcut(preferences.stop_shortcut ?? "");
       setSttDraft(preferences);
@@ -606,7 +617,7 @@ export function App() {
           openPanel("setup", trigger);
         }}
         onSettings={(trigger) => {
-          setSettingsTab("local");
+          setSettingsTab("transcription");
           openPanel("settings", trigger);
         }}
         onLibrary={(trigger) => {
@@ -920,7 +931,7 @@ export function App() {
             configurationRevision={JSON.stringify(settings)}
             processing={autoProcessing}
             onOpenSettings={() => {
-              setSettingsTab("general");
+              setSettingsTab("ai");
               setPanel("settings");
             }}
             onTitle={setTitle}
@@ -1058,6 +1069,7 @@ export function App() {
           }}
           versions={summaryVersions}
           customTemplates={settings?.summary_templates ?? []}
+          defaultTemplate={settings?.summary_default ?? "general-v1"}
           recipes={settings?.recipes ?? []}
           summaryInstructions={settings?.summary_instructions ?? ""}
           summaryDraft={
@@ -1315,7 +1327,24 @@ export function App() {
         {panel === "settings" && (
           <SettingsPanel
             panelRef={panelRef}
-            initialTab={settingsTab}
+            initialSection={settingsTab}
+            devices={devices}
+            microphone={microphone}
+            output={output}
+            onDefaultDevices={(mic, out) =>
+              void run(async () => {
+                const saved = await api.saveDefaultDevices(mic, out);
+                setSettings(saved);
+                setMicrophone(mic);
+                setOutput(out);
+              })
+            }
+            audioBytes={audioBytes}
+            onSummaryDefault={(template) =>
+              void run(async () =>
+                setSettings(await api.saveSummaryDefault(template)),
+              )
+            }
             processing={autoProcessing}
             onProcessing={chooseAutoProcessing}
             settings={settings}
