@@ -3688,14 +3688,14 @@ describe("meeting detection", () => {
     vi.mocked(api.getSettings).mockResolvedValue(detecting);
     vi.mocked(api.setDetectionIgnored).mockResolvedValue({
       ...detecting,
-      detection_ignored: [zoom.id],
+      detection_ignored: [zoom],
     });
     await ready();
     deliver([zoom]);
     await userEvent.click(
       await screen.findByRole("button", { name: "Never for Zoom" }),
     );
-    expect(api.setDetectionIgnored).toHaveBeenCalledWith(zoom.id, true);
+    expect(api.setDetectionIgnored).toHaveBeenCalledWith(zoom.id, "Zoom", true);
     deliver([]);
     deliver([zoom]);
     expect(
@@ -3732,5 +3732,68 @@ describe("meeting detection", () => {
     expect(
       screen.queryByRole("group", { name: "Meeting detected" }),
     ).toBeNull();
+  });
+});
+
+describe("device refresh", () => {
+  it("lists a device connected after startup without replacing the chosen one", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      microphone_id: "headset",
+    });
+    vi.mocked(api.listDevices)
+      .mockResolvedValueOnce({
+        capture_supported: true,
+        microphones: [{ id: "mic", name: "Microphone" }],
+        outputs: [{ id: "out", name: "Speakers" }],
+      })
+      .mockResolvedValue({
+        capture_supported: true,
+        microphones: [
+          { id: "mic", name: "Microphone" },
+          { id: "headset", name: "Headset" },
+        ],
+        outputs: [{ id: "out", name: "Speakers" }],
+      });
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
+    );
+    expect(screen.getByText(/Selected microphone is unavailable/)).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Refresh devices" }),
+    );
+    expect(
+      await screen.findByText(/Devices refreshed: 2 microphones/),
+    ).toBeTruthy();
+    const microphone = screen.getByRole("combobox", {
+      name: "Microphone",
+    }) as HTMLSelectElement;
+    expect(microphone.value).toBe("headset");
+    expect(screen.queryByText(/Selected microphone is unavailable/)).toBeNull();
+    expect(api.listDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an unavailable chosen microphone after a refresh that still lacks it", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      microphone_id: "missing-mic",
+    });
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Refresh devices" }),
+    );
+    await screen.findByText(/Devices refreshed/);
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: "Microphone",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("missing-mic");
+    expect(screen.getByText(/Selected microphone is unavailable/)).toBeTruthy();
   });
 });

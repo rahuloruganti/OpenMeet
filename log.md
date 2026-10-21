@@ -616,3 +616,15 @@ Behaviour:
 Storage and dependencies: schema v26 adds the opt-in `detection_enabled` flag and `detection_ignored_apps`, and Settings → Recording has the toggle, a disclosure and the ignored list. `winreg` 0.56 is a new direct Windows-only dependency. It was already in the lockfile, so only an edge was added, and it is listed in THIRD_PARTY_LICENSES.md.
 
 Full checks passed: typecheck, lint, formatting, 167 frontend tests, frontend build, Rust formatting, all-target Clippy, 184 Rust tests with two native tests ignored, and Cargo build. A one-off read-only poll of the real registry ran without error and found no app in use. Not verified: a prompt during a real Zoom/Teams/browser call, and behaviour when the window is hidden to the tray (the prompt is only seen after switching to OpenMeet). macOS detection is not implemented.
+
+User asked to add macOS meeting detection and a refresh for microphones that are not available.
+
+macOS detection:
+- It reads CoreAudio process objects every 3 s while detection is on: `kAudioHardwarePropertyProcessObjectList`, then each process's running-input flag, PID and bundle ID, through direct CoreAudio/CoreFoundation FFI in the style of `capture_gate.rs`, so no new dependency.
+- OpenMeet's own PID is excluded. Apps are keyed by bundle ID and named after the outermost `.app` in `proc_pidpath`, so a browser helper reads as the browser. Processes without a bundle ID are skipped.
+- It is supported where recording is (Apple Silicon, macOS 14.2+, via `capture_gate::supported`).
+- `poll` now returns ids with names. Schema v27 stores the name of an ignored app, because bundle IDs do not read as names.
+
+Device refresh: a **Refresh devices** button in New recording and Settings → Recording lists audio devices again. It fills only an empty selection and never replaces a chosen, unavailable device. Backend errors already told users to "refresh devices", but no such control existed.
+
+Checks: full set passed on Windows with 169 frontend tests and 185 Rust tests (two native tests ignored), plus typecheck, lint, formatting, both builds and Clippy. The macOS detector was type-checked with `rustc --target aarch64-apple-darwin` (the aarch64-apple-darwin target was added to the local 1.99 toolchain for this), including its tests. It was never linked or run on a Mac, and no real call was used on either platform.

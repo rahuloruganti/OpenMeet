@@ -5,6 +5,7 @@ import type {
   AudioDevices,
   ExportOptions,
   KeyStatus,
+  MicApp,
   ProviderModel,
   ProviderRole,
   Settings,
@@ -77,7 +78,8 @@ type Props = {
   audioBytes: number | null;
   detectionSupported: boolean;
   onDetection: (enabled: boolean) => void;
-  onDetectionIgnored: (appId: string, ignored: boolean) => void;
+  onDetectionIgnored: (app: MicApp, ignored: boolean) => void;
+  onRefreshDevices: () => void;
   initialSection?: SettingsSection;
 };
 
@@ -300,6 +302,9 @@ export function SettingsPanel(props: Props) {
                   devices(settings?.microphone_id ?? props.microphone, id)
                 }
               />
+              <button disabled={disabled} onClick={props.onRefreshDevices}>
+                Refresh devices
+              </button>
             </section>
             <section
               className="settings-section"
@@ -322,9 +327,9 @@ export function SettingsPanel(props: Props) {
                     </span>
                   </label>
                   <p className="muted">
-                    Every few seconds OpenMeet reads which apps Windows reports
-                    as using the microphone. It reads app names only, never
-                    audio, and nothing leaves this device. A prompt never starts
+                    Every few seconds OpenMeet asks the system which apps are
+                    using the microphone. It reads app names only, never audio,
+                    and nothing leaves this device. A prompt never starts
                     recording: you still choose devices and confirm consent.
                   </p>
                   {settings && settings.detection_ignored.length > 0 && (
@@ -332,12 +337,14 @@ export function SettingsPanel(props: Props) {
                       className="ignored-apps"
                       aria-label="Apps never prompted about"
                     >
-                      {settings.detection_ignored.map((id) => (
-                        <li key={id}>
-                          <span title={id}>{appName(id)}</span>
+                      {settings.detection_ignored.map((app) => (
+                        <li key={app.id}>
+                          <span title={app.id}>
+                            {app.name || appName(app.id)}
+                          </span>
                           <button
                             disabled={disabled}
-                            onClick={() => props.onDetectionIgnored(id, false)}
+                            onClick={() => props.onDetectionIgnored(app, false)}
                           >
                             Prompt again
                           </button>

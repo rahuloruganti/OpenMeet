@@ -22,6 +22,7 @@ type Props = {
   onConsent: (value: boolean) => void;
   onMicrophone: (value: string) => void;
   onOutput: (value: string) => void;
+  onRefreshDevices: () => void;
   onClose: () => void;
   configurationRevision: string;
   processing: ProcessingChoice;
@@ -107,8 +108,9 @@ export function SetupPanel(props: Props) {
       )}
       {!microphoneAvailable && (
         <p role="alert">
-          Selected microphone is unavailable. Choose an available microphone; no
-          device is substituted.
+          Selected microphone is unavailable. Connect or allow it and press
+          Refresh devices, or choose an available microphone; no device is
+          substituted.
         </p>
       )}
       {!outputAvailable && (
@@ -169,6 +171,9 @@ export function SetupPanel(props: Props) {
           </label>
         ))}
       </div>
+      <button disabled={disabled || active} onClick={props.onRefreshDevices}>
+        Refresh devices
+      </button>
       <p>
         Automatic processing: <strong>{modeLabels[mode]}</strong>
         {summary ? `, ${templateLabels[summary]} summary` : ""}.{" "}

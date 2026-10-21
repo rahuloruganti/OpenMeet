@@ -1826,23 +1826,28 @@ async fn save_detection(app: AppHandle, enabled: bool) -> Result<Settings> {
     let flag = app.state::<AppState>().detection.clone();
     let settings = with_core(app, false, move |core, _| core.save_detection(enabled)).await?;
     flag.store(
-        settings.detection_enabled && meeting_detection::SUPPORTED,
+        settings.detection_enabled && meeting_detection::supported(),
         Ordering::SeqCst,
     );
     Ok(settings)
 }
 
 #[tauri::command]
-async fn set_detection_ignored(app: AppHandle, app_id: String, ignored: bool) -> Result<Settings> {
+async fn set_detection_ignored(
+    app: AppHandle,
+    app_id: String,
+    name: String,
+    ignored: bool,
+) -> Result<Settings> {
     with_core(app, false, move |core, _| {
-        core.set_detection_ignored(&app_id, ignored)
+        core.set_detection_ignored(&app_id, &name, ignored)
     })
     .await
 }
 
 #[tauri::command]
 fn detection_supported() -> bool {
-    meeting_detection::SUPPORTED
+    meeting_detection::supported()
 }
 
 /// Flashes the taskbar entry so a detection prompt is noticed; it never shows or focuses the window.
@@ -1855,7 +1860,7 @@ fn request_attention(app: AppHandle) {
 
 /// Polls the microphone privacy store while detection is on and reports stable changes.
 fn spawn_detection(app: AppHandle, enabled: std::sync::Arc<AtomicBool>) {
-    if !meeting_detection::SUPPORTED {
+    if !meeting_detection::supported() {
         return;
     }
     std::thread::spawn(move || {
@@ -1867,11 +1872,11 @@ fn spawn_detection(app: AppHandle, enabled: std::sync::Arc<AtomicBool>) {
             } else {
                 Default::default()
             };
-            if let Some(ids) = debounce.update(now) {
+            if let Some(ids) = debounce.update(now.keys().cloned().collect()) {
                 let apps: Vec<_> = ids
                     .into_iter()
                     .map(|id| meeting_detection::MicApp {
-                        name: meeting_detection::display_name(&id),
+                        name: now.get(&id).cloned().unwrap_or_else(|| id.clone()),
                         id,
                     })
                     .collect();
@@ -2061,7 +2066,7 @@ pub fn run() {
                 settings.stop_shortcut.as_deref().filter(|_| stop_failed),
             );
             let detection = std::sync::Arc::new(AtomicBool::new(
-                settings.detection_enabled && meeting_detection::SUPPORTED,
+                settings.detection_enabled && meeting_detection::supported(),
             ));
             spawn_detection(app.handle().clone(), detection.clone());
             app.manage(AppState {

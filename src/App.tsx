@@ -586,13 +586,32 @@ export function App() {
     settings?.detection_enabled && !active
       ? micApps.find(
           (app) =>
-            !settings.detection_ignored.includes(app.id) &&
+            !settings.detection_ignored.some((item) => item.id === app.id) &&
             !dismissedApps.includes(app.id),
         )
       : undefined;
   useEffect(() => {
     if (detectedApp) void api.requestAttention().catch(() => {});
   }, [detectedApp?.id]);
+  // A device plugged in or allowed after startup appears without restarting. Only an empty choice
+  // is filled; a chosen device that is unavailable is never replaced.
+  const refreshDevices = () =>
+    void run(async () => {
+      const discovered = await api.listDevices();
+      setDevices(discovered);
+      setMicrophone(
+        (current) =>
+          current ||
+          (settings?.microphone_id ?? discovered.microphones[0]?.id ?? ""),
+      );
+      setOutput(
+        (current) =>
+          current || (settings?.output_id ?? discovered.outputs[0]?.id ?? ""),
+      );
+      setNotice(
+        `Devices refreshed: ${discovered.microphones.length} microphone${discovered.microphones.length === 1 ? "" : "s"}, ${discovered.outputs.length} output${discovered.outputs.length === 1 ? "" : "s"}.`,
+      );
+    });
   const dismissApp = (id: string) =>
     setDismissedApps((ids) => (ids.includes(id) ? ids : [...ids, id]));
   const openPanel = (
@@ -773,7 +792,11 @@ export function App() {
                     dismissApp(detectedApp.id);
                     void run(async () =>
                       setSettings(
-                        await api.setDetectionIgnored(detectedApp.id, true),
+                        await api.setDetectionIgnored(
+                          detectedApp.id,
+                          detectedApp.name,
+                          true,
+                        ),
                       ),
                     );
                   }}
@@ -1015,6 +1038,7 @@ export function App() {
             onConsent={setConsent}
             onMicrophone={setMicrophone}
             onOutput={setOutput}
+            onRefreshDevices={refreshDevices}
             onClose={() => setPanel(null)}
             onStartCapture={(confirmation) =>
               void run(async () => {
@@ -1423,11 +1447,14 @@ export function App() {
                 setSettings(await api.saveDetection(enabled)),
               )
             }
-            onDetectionIgnored={(id, ignored) =>
+            onDetectionIgnored={(app, ignored) =>
               void run(async () =>
-                setSettings(await api.setDetectionIgnored(id, ignored)),
+                setSettings(
+                  await api.setDetectionIgnored(app.id, app.name, ignored),
+                ),
               )
             }
+            onRefreshDevices={refreshDevices}
             onSummaryDefault={(template) =>
               void run(async () =>
                 setSettings(await api.saveSummaryDefault(template)),

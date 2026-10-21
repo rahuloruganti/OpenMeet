@@ -203,10 +203,10 @@ export type Settings = {
   summary_default: string;
   /** Opt-in: prompt when another app starts using the microphone. Never starts recording. */
   detection_enabled: boolean;
-  /** Microphone privacy-store keys of apps never to prompt about. */
-  detection_ignored: string[];
+  /** Apps never to prompt about; `name` is empty for ones ignored before names were kept. */
+  detection_ignored: MicApp[];
 };
-/** An app Windows reports as using the microphone; `id` is its privacy-store key. */
+/** An app using the microphone: a Windows privacy-store key or a macOS bundle identifier. */
 export type MicApp = { id: string; name: string };
 /** A saved question prompt; `id` is `recipe-<uuid>`. */
 export type Recipe = { id: string; name: string; prompt: string };
@@ -468,8 +468,8 @@ export const api = {
     listen<MicApp[]>("microphone_apps", (event) => callback(event.payload)),
   saveDetection: (enabled: boolean) =>
     invoke<Settings>("save_detection", { enabled }),
-  setDetectionIgnored: (appId: string, ignored: boolean) =>
-    invoke<Settings>("set_detection_ignored", { appId, ignored }),
+  setDetectionIgnored: (appId: string, name: string, ignored: boolean) =>
+    invoke<Settings>("set_detection_ignored", { appId, name, ignored }),
   detectionSupported: () => invoke<boolean>("detection_supported"),
   /** Flashes the taskbar entry; never shows or focuses the window. */
   requestAttention: () => invoke<void>("request_attention"),

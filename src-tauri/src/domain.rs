@@ -312,8 +312,15 @@ pub struct Settings {
     pub summary_default: String,
     /// Opt-in: prompt when another app starts using the microphone. Never starts recording.
     pub detection_enabled: bool,
-    /// Microphone privacy-store keys of apps never to prompt about.
-    pub detection_ignored: Vec<String>,
+    /// Apps never to prompt about.
+    pub detection_ignored: Vec<MicApp>,
+}
+
+/// An app using the microphone: a Windows privacy-store key or a macOS bundle identifier.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MicApp {
+    pub id: String,
+    pub name: String,
 }
 
 /// A saved, reusable question prompt; `id` is `recipe-<uuid>`.

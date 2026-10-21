@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 26;
+const LATEST_SCHEMA: i64 = 27;
 const MAX_TAGS: usize = 20;
 // Each script sets its own `user_version`, so migration N runs for databases below N.
 // Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
 // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
 // (only switchable outside a transaction) and must pass foreign_key_check before commit.
-const MIGRATIONS: [(i64, &str, bool); 25] = [
+const MIGRATIONS: [(i64, &str, bool); 26] = [
     (2, include_str!("../migrations/002_capture.sql"), true),
     (3, include_str!("../migrations/003_local_model.sql"), false),
     (4, include_str!("../migrations/004_merge_model.sql"), false),
@@ -108,6 +108,11 @@ const MIGRATIONS: [(i64, &str, bool); 25] = [
     (
         26,
         include_str!("../migrations/026_meeting_detection.sql"),
+        false,
+    ),
+    (
+        27,
+        include_str!("../migrations/027_detection_app_names.sql"),
         false,
     ),
 ];
@@ -1340,14 +1345,19 @@ impl Core {
     }
 
     /// Stops or resumes prompts for one app, by its microphone privacy-store key.
-    pub fn set_detection_ignored(&mut self, app_id: &str, ignored: bool) -> Result<Settings> {
-        if app_id.is_empty() || app_id.len() > 1024 {
+    pub fn set_detection_ignored(
+        &mut self,
+        app_id: &str,
+        name: &str,
+        ignored: bool,
+    ) -> Result<Settings> {
+        if app_id.is_empty() || app_id.len() > 1024 || name.len() > 200 {
             return Err(AppError::new("detection_app", "Unknown app."));
         }
         if ignored {
             self.db.execute(
-                "INSERT OR IGNORE INTO detection_ignored_apps(app_id) VALUES (?1)",
-                [app_id],
+                "INSERT OR REPLACE INTO detection_ignored_apps(app_id, name) VALUES (?1, ?2)",
+                params![app_id, name],
             )?;
         } else {
             self.db.execute(
@@ -1596,9 +1606,14 @@ fn read_settings(db: &Connection) -> Result<Settings> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let recipes = crate::recipes::read(db)?;
     let detection_ignored = db
-        .prepare("SELECT app_id FROM detection_ignored_apps ORDER BY app_id")?
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<Vec<String>>>()?;
+        .prepare("SELECT app_id, name FROM detection_ignored_apps ORDER BY app_id")?
+        .query_map([], |row| {
+            Ok(MicApp {
+                id: row.get(0)?,
+                name: row.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(db.query_row(
             "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats, processing_mode, processing_summary, summary_default, detection_enabled FROM settings WHERE id = 1",
             [],
@@ -1922,17 +1937,21 @@ mod tests {
         assert!(!devices.detection_enabled);
         assert!(core.save_detection(true).unwrap().detection_enabled);
         let ignored = core
-            .set_detection_ignored("C:#Apps#zoom.exe", true)
+            .set_detection_ignored("us.zoom.xos", "zoom.us", true)
             .unwrap();
-        assert_eq!(ignored.detection_ignored, ["C:#Apps#zoom.exe"]);
-        core.set_detection_ignored("C:#Apps#zoom.exe", true)
+        let zoom = MicApp {
+            id: "us.zoom.xos".into(),
+            name: "zoom.us".into(),
+        };
+        assert_eq!(ignored.detection_ignored, std::slice::from_ref(&zoom));
+        core.set_detection_ignored("us.zoom.xos", "zoom.us", true)
             .unwrap();
         assert!(core
-            .set_detection_ignored("C:#Apps#zoom.exe", false)
+            .set_detection_ignored("us.zoom.xos", "", false)
             .unwrap()
             .detection_ignored
             .is_empty());
-        assert!(core.set_detection_ignored("", true).is_err());
+        assert!(core.set_detection_ignored("", "x", true).is_err());
     }
 
     #[test]
