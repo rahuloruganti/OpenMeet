@@ -6,7 +6,11 @@ import {
   type SessionProcessingPlan,
   type SessionProcessingRequest,
 } from "../lib/api";
-import type { ProcessingChoice } from "../lib/processing";
+import {
+  builtinTemplates,
+  modeLabels,
+  type ProcessingChoice,
+} from "../lib/processing";
 import { SessionReview } from "./SessionReview";
 
 type Props = {
@@ -32,18 +36,6 @@ type Props = {
   speechReady: boolean;
   sttMode: "local" | "cloud";
 };
-
-const modeLabels = {
-  recording: "Recording only",
-  live: "Live transcription only",
-  final: "Final transcription after stop",
-  both: "Live and final transcription",
-} as const;
-const templateLabels = {
-  "general-v1": "General",
-  "standup-v1": "Stand-up",
-  "one-to-one-v1": "One-to-one",
-} as const;
 
 export function SetupPanel(props: Props) {
   const { devices, microphone, output, disabled, active } = props;
@@ -176,7 +168,10 @@ export function SetupPanel(props: Props) {
       </button>
       <p>
         Automatic processing: <strong>{modeLabels[mode]}</strong>
-        {summary ? `, ${templateLabels[summary]} summary` : ""}.{" "}
+        {summary
+          ? `, ${builtinTemplates.find(({ id }) => id === summary)?.label} summary`
+          : ""}
+        .{" "}
         <button type="button" onClick={props.onOpenSettings}>
           Change in Settings
         </button>

@@ -6,6 +6,7 @@ import type {
   SttDownloadProgress,
   SttStatus,
 } from "../lib/api";
+import { formatBytes } from "../lib/meeting-labels";
 import { Assignment } from "./ProviderSettings";
 
 export type SttDraft = Pick<
@@ -13,7 +14,6 @@ export type SttDraft = Pick<
   "stt_language" | "stt_prompt" | "stt_model"
 >;
 
-const mb = (bytes: number) => Math.round(bytes / (1024 * 1024));
 const languageName = (code: string) => {
   if (code === "auto") return "Detect automatically";
   try {
@@ -126,7 +126,7 @@ export function TranscriptionSettings(props: {
             >
               {stt?.models.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.id} ({mb(item.size)} MB
+                  {item.id} ({formatBytes(item.size)}
                   {item.installed
                     ? ", downloaded"
                     : props.found.includes(item.id)
@@ -140,8 +140,8 @@ export function TranscriptionSettings(props: {
           {props.sttProgress && (
             <p role="status">
               Downloading {props.sttProgress.stage}:{" "}
-              {mb(props.sttProgress.downloaded)} / {mb(props.sttProgress.total)}{" "}
-              MB
+              {formatBytes(props.sttProgress.downloaded)} /{" "}
+              {formatBytes(props.sttProgress.total)}
             </p>
           )}
           <div className="panel-actions">
@@ -153,7 +153,7 @@ export function TranscriptionSettings(props: {
             >
               {stt?.installed
                 ? "Speech engine installed"
-                : `Download speech engine and models (≈ ${mb(stt?.missing_bytes ?? 0)} MB)`}
+                : `Download speech engine and models (≈ ${formatBytes(stt?.missing_bytes ?? 0)})`}
             </button>
             {props.installing && (
               <button onClick={props.onCancelStt}>

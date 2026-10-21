@@ -1488,9 +1488,16 @@ fn read_settings(db: &Connection) -> Result<Settings> {
     let detection_ignored = db
         .prepare("SELECT app_id, name FROM detection_ignored_apps ORDER BY app_id")?
         .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            // Apps ignored before names were kept (schema v26) get one derived from the id.
             Ok(MicApp {
-                id: row.get(0)?,
-                name: row.get(1)?,
+                name: if name.is_empty() {
+                    crate::meeting_detection::display_name(&id)
+                } else {
+                    name
+                },
+                id,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1843,6 +1850,11 @@ mod tests {
             .detection_ignored
             .is_empty());
         assert!(core.set_detection_ignored("", "x", true).is_err());
+        // A row ignored before names were kept reads with a name derived from its key.
+        let legacy = core
+            .set_detection_ignored(r"C:#Program Files#chrome.exe", "", true)
+            .unwrap();
+        assert_eq!(legacy.detection_ignored[0].name, "Chrome");
     }
 
     #[test]

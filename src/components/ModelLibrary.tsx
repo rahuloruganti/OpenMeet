@@ -7,6 +7,7 @@ import {
   type ModelLibraryProgress,
   type ModelScan,
 } from "../lib/api";
+import { formatBytes } from "../lib/meeting-labels";
 
 type Props = {
   disabled: boolean;
@@ -14,7 +15,6 @@ type Props = {
   /** Catalog model ids a scan found on disk (not necessarily imported). */
   onFound?: (ids: string[]) => void;
 };
-const mb = (bytes: number) => (bytes / 1048576).toFixed(1);
 export function ModelLibrary({ disabled, onImported, onFound }: Props) {
   const [scan, setScan] = useState<ModelScan | null>(null);
   const [query, setQuery] = useState("");
@@ -164,7 +164,7 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
                         <option value="">Choose a model to import</option>
                         {speech.map((model) => (
                           <option key={model.path} value={model.path}>
-                            {model.model_id} · {mb(model.size)} MB ·{" "}
+                            {model.model_id} · {formatBytes(model.size)} ·{" "}
                             {model.path}
                           </option>
                         ))}
@@ -193,7 +193,8 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
                     {other.map((model) => (
                       <li key={model.path}>
                         <p>
-                          {model.path} · {model.format} · {mb(model.size)} MB
+                          {model.path} · {model.format} ·{" "}
+                          {formatBytes(model.size)}
                         </p>
                         <p className="muted">
                           {model.format === "gguf"
@@ -262,8 +263,8 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
         {files.map((file) => (
           <li key={`${file.repo_id}/${file.filename}`}>
             <p>
-              {file.repo_id}/{file.filename} · {mb(file.size)} MB · License:{" "}
-              {file.license ?? "Not supplied"}
+              {file.repo_id}/{file.filename} · {formatBytes(file.size)} ·
+              License: {file.license ?? "Not supplied"}
             </p>
             <p className="muted">
               Revision {file.revision}.{" "}
@@ -302,7 +303,7 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
           <p role="status">
             Downloading
             {progress
-              ? ` ${mb(progress.downloaded)} / ${mb(progress.total)} MB`
+              ? ` ${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
               : " model"}
           </p>
           <button

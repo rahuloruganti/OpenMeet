@@ -9,6 +9,7 @@ import {
   type ProviderRole,
   type Settings,
 } from "../lib/api";
+import { useTask } from "../lib/use-task";
 
 type Publish = {
   onSaved: (settings: Settings) => void;
@@ -339,19 +340,14 @@ export function Assignment({
   const assignment = settings.provider_assignments[role];
   const [id, setId] = useState(assignment?.connection_id ?? "");
   const [model, setModel] = useState(assignment?.model ?? "");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
+  const { busy, notice, error, setNotice, run } = useTask();
   useEffect(() => {
     setId(assignment?.connection_id ?? "");
     setModel(assignment?.model ?? "");
   }, [assignment?.connection_id, assignment?.model]);
   const label = role === "llm" ? "Summary" : "Speech API";
-  const save = async () => {
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
+  const save = () =>
+    run(async () => {
       await publishSettings(
         await api.saveProviderAssignment(
           role,
@@ -363,12 +359,7 @@ export function Assignment({
         publish,
       );
       setNotice("Task assignment saved. No meeting content was sent.");
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   const unchanged =
     id === (assignment?.connection_id ?? "") &&
     model.trim() === (assignment?.model ?? "");

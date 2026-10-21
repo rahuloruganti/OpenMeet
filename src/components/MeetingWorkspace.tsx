@@ -10,9 +10,11 @@ import {
   type MeetingDetail,
   type ProcessingPlan,
   type Settings,
-  type SummaryTemplate,
   type SummaryVersion,
 } from "../lib/api";
+import { builtinTemplates as templates } from "../lib/processing";
+import { tabTarget } from "../lib/tabs";
+import { TextConsent } from "./TextConsent";
 import { extractSection, renderMarkdown } from "../lib/markdown";
 import { ActionItems } from "./ActionItems";
 import { RecipePicker } from "./Recipes";
@@ -33,11 +35,6 @@ const trackLabels: Record<string, string> = {
   system: "Others (system audio)",
 };
 
-const templates: { id: SummaryTemplate; label: string }[] = [
-  { id: "general-v1", label: "General" },
-  { id: "standup-v1", label: "Stand-up" },
-  { id: "one-to-one-v1", label: "One-to-one" },
-];
 const templateLabel = (id: string, custom: CustomTemplate[]) =>
   templates.find((template) => template.id === id)?.label ??
   custom.find((template) => template.id === id)?.name ??
@@ -360,11 +357,8 @@ export function MeetingWorkspace(props: Props) {
     );
   }
   const { meeting } = selected;
-  const transcribable =
-    meeting.source === "desktop" &&
-    meeting.status !== "recording" &&
-    meeting.status !== "paused" &&
-    selected.tracks.some((track) => track.finalized && track.frames > 0);
+  const playable = playableTracks(selected);
+  const transcribable = playable.length > 0;
   const hasTranscript = selected.segments.length > 0;
   const audioBytes = selected.tracks.reduce(
     (total, track) => total + (track.size_bytes ?? 0),
@@ -393,7 +387,6 @@ export function MeetingWorkspace(props: Props) {
   };
   const draft = props.summaryDraft;
   const stale = current ? current.stale : selected.summary_stale;
-  const playable = playableTracks(selected);
   /** A `[m:ss]` citation becomes a link only when a stored timed segment starts in that second. */
   const reference = (token: string) => {
     const ms = parseTimestamp(token);
@@ -642,14 +635,8 @@ export function MeetingWorkspace(props: Props) {
             tabIndex={tab === item.id ? 0 : -1}
             onClick={() => props.onTab(item.id)}
             onKeyDown={(event) => {
-              let next: number;
-              if (event.key === "ArrowRight")
-                next = (index + 1) % contentTabs.length;
-              else if (event.key === "ArrowLeft")
-                next = (index + contentTabs.length - 1) % contentTabs.length;
-              else if (event.key === "Home") next = 0;
-              else if (event.key === "End") next = contentTabs.length - 1;
-              else return;
+              const next = tabTarget(event.key, index, contentTabs.length);
+              if (next === null) return;
               event.preventDefault();
               props.onTab(contentTabs[next].id);
               document.getElementById(`tab-${contentTabs[next].id}`)?.focus();
@@ -797,11 +784,10 @@ export function MeetingWorkspace(props: Props) {
                   Send text to your selected provider to generate a summary?
                 </strong>
               </p>
-              <ul>
-                <li>
-                  Model: <code>{confirming.model}</code> via{" "}
-                  <code>{confirming.base_url}</code>
-                </li>
+              <TextConsent
+                plan={confirming}
+                note="A new summary is saved beside any earlier one; your notes are never changed."
+              >
                 <li>
                   Template: {templateLabel(template, props.customTemplates)}
                 </li>
@@ -822,14 +808,7 @@ export function MeetingWorkspace(props: Props) {
                     becomes the current version.
                   </li>
                 )}
-                <li>
-                  {isLocalBase(confirming.base_url)
-                    ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
-                    : "The text leaves this device and is handled under your provider's terms."}{" "}
-                  A new summary is saved beside any earlier one; your notes are
-                  never changed.
-                </li>
-              </ul>
+              </TextConsent>
               <div className="panel-actions">
                 <button
                   className="primary"
@@ -1056,11 +1035,10 @@ export function MeetingWorkspace(props: Props) {
               <p>
                 <strong>Send this question to your selected provider?</strong>
               </p>
-              <ul>
-                <li>
-                  Model: <code>{asking.model}</code> via{" "}
-                  <code>{asking.base_url}</code>
-                </li>
+              <TextConsent
+                plan={asking}
+                note="The question and answer are saved with this meeting on this device, unencrypted."
+              >
                 <li>
                   Sent in {asking.requests} request(s): your question,{" "}
                   {asking.excerpts
@@ -1076,14 +1054,7 @@ export function MeetingWorkspace(props: Props) {
                   </li>
                 )}
                 <li>Not sent: audio recordings or other meetings.</li>
-                <li>
-                  {isLocalBase(asking.base_url)
-                    ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
-                    : "The text leaves this device and is handled under your provider's terms."}{" "}
-                  The question and answer are saved with this meeting on this
-                  device, unencrypted.
-                </li>
-              </ul>
+              </TextConsent>
               <div className="panel-actions">
                 <button
                   className="primary"

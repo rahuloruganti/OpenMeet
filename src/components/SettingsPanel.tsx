@@ -13,7 +13,12 @@ import type {
   SttStatus,
 } from "../lib/api";
 import { formatBytes } from "../lib/meeting-labels";
-import type { ProcessingChoice } from "../lib/processing";
+import {
+  builtinTemplates,
+  modeLabels,
+  type ProcessingChoice,
+} from "../lib/processing";
+import { tabTarget } from "../lib/tabs";
 import { ModelLibrary } from "./ModelLibrary";
 import { Assignment, Connections } from "./ProviderSettings";
 import { RecipeSettings } from "./Recipes";
@@ -36,12 +41,6 @@ export const settingsSections = [
   ["about", "Privacy & about"],
 ] as const;
 export type SettingsSection = (typeof settingsSections)[number][0];
-
-const builtinTemplates = [
-  ["general-v1", "General"],
-  ["standup-v1", "Stand-up"],
-  ["one-to-one-v1", "One-to-one"],
-] as const;
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -81,15 +80,6 @@ type Props = {
   onDetectionIgnored: (app: MicApp, ignored: boolean) => void;
   onRefreshDevices: () => void;
   initialSection?: SettingsSection;
-};
-
-/** A readable name for a microphone privacy-store key; matches Rust `display_name`. */
-const appName = (id: string) => {
-  const file = id.includes("#") ? id.slice(id.lastIndexOf("#") + 1) : null;
-  const name = file
-    ? file.replace(/\.exe$/i, "")
-    : (id.split("_")[0].split(".").pop() ?? id);
-  return name.charAt(0).toUpperCase() + name.slice(1);
 };
 
 /** A keyboard chord as a shortcut accelerator, or null for a lone modifier or a key without
@@ -248,17 +238,12 @@ export function SettingsPanel(props: Props) {
               onClick={() => setSection(id)}
               onKeyDown={(event) => {
                 if (event.ctrlKey || event.altKey || event.metaKey) return;
-                const count = settingsSections.length;
-                const next =
-                  event.key === "Home"
-                    ? 0
-                    : event.key === "End"
-                      ? count - 1
-                      : event.key === "ArrowDown"
-                        ? (index + 1) % count
-                        : event.key === "ArrowUp"
-                          ? (index + count - 1) % count
-                          : null;
+                const next = tabTarget(
+                  event.key,
+                  index,
+                  settingsSections.length,
+                  true,
+                );
                 if (next === null) return;
                 event.preventDefault();
                 const target = settingsSections[next][0];
@@ -339,9 +324,7 @@ export function SettingsPanel(props: Props) {
                     >
                       {settings.detection_ignored.map((app) => (
                         <li key={app.id}>
-                          <span title={app.id}>
-                            {app.name || appName(app.id)}
-                          </span>
+                          <span title={app.id}>{app.name}</span>
                           <button
                             disabled={disabled}
                             onClick={() => props.onDetectionIgnored(app, false)}
@@ -433,7 +416,7 @@ export function SettingsPanel(props: Props) {
                     props.onSummaryDefault(event.target.value)
                   }
                 >
-                  {builtinTemplates.map(([id, label]) => (
+                  {builtinTemplates.map(({ id, label }) => (
                     <option key={id} value={id}>
                       {label}
                     </option>
@@ -467,10 +450,11 @@ export function SettingsPanel(props: Props) {
                     })
                   }
                 >
-                  <option value="recording">Recording only</option>
-                  <option value="live">Live transcription only</option>
-                  <option value="final">Final transcription after stop</option>
-                  <option value="both">Live and final transcription</option>
+                  {Object.entries(modeLabels).map(([mode, label]) => (
+                    <option key={mode} value={mode}>
+                      {label}
+                    </option>
+                  ))}
                 </select>
               </label>
               {(props.processing.mode === "final" ||
@@ -485,13 +469,13 @@ export function SettingsPanel(props: Props) {
                         ...props.processing,
                         summary:
                           builtinTemplates.find(
-                            ([id]) => id === event.target.value,
-                          )?.[0] ?? null,
+                            ({ id }) => id === event.target.value,
+                          )?.id ?? null,
                       })
                     }
                   >
                     <option value="">No automatic summary</option>
-                    {builtinTemplates.map(([id, label]) => (
+                    {builtinTemplates.map(({ id, label }) => (
                       <option key={id} value={id}>
                         {label}
                       </option>
@@ -631,13 +615,7 @@ export function SettingsPanel(props: Props) {
                           props.onExportOptions({
                             ...settings.export,
                             transcript_formats: event.target.checked
-                              ? [
-                                  ...settings.export.transcript_formats,
-                                  format,
-                                ].filter(
-                                  (chosen, index, all) =>
-                                    all.indexOf(chosen) === index,
-                                )
+                              ? [...settings.export.transcript_formats, format]
                               : settings.export.transcript_formats.filter(
                                   (chosen) => chosen !== format,
                                 ),

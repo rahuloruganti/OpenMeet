@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
+  errorCode,
   errorMessage,
   isLocalBase,
   type Meeting,
@@ -47,6 +48,16 @@ import {
 
 type Writer = ReturnType<typeof createNoteWriter>;
 
+/** Final summary processing waits for this session's saved notes to be acknowledged. */
+const awaitingNotes = (snapshot: SessionProcessingSnapshot) =>
+  snapshot.plan.scope.kind === "final" &&
+  snapshot.plan.scope.summary !== null &&
+  !!snapshot.workflow?.notes_barrier &&
+  snapshot.workflow.notes_revision === null &&
+  ["finalizing_audio", "transcribing", "awaiting_notes"].includes(
+    snapshot.workflow.stage,
+  );
+
 export function App() {
   const desktop = api.isDesktop();
   const [ready, setReady] = useState(false);
@@ -55,6 +66,7 @@ export function App() {
   const [controlBusy, setControlBusy] = useState(false);
   const controlBusyRef = useRef(false);
   const [error, setError] = useState("");
+  const report = (failure: unknown) => setError(errorMessage(failure));
   const [notesError, setNotesError] = useState("");
   const noteFailure = useRef<unknown>(undefined);
   const [notice, setNotice] = useState("");
@@ -192,18 +204,10 @@ export function App() {
   }, []);
   const acknowledgeNotes = useCallback(
     async (snapshot: SessionProcessingSnapshot, retry = false) => {
-      const workflow = snapshot.workflow;
-      if (
-        snapshot.plan.scope.kind !== "final" ||
-        snapshot.plan.scope.summary === null ||
-        !workflow?.notes_barrier ||
-        workflow.notes_revision !== null ||
-        !["finalizing_audio", "transcribing", "awaiting_notes"].includes(
-          workflow.stage,
-        )
-      )
-        return;
-      const key = `${workflow.run_id}:${workflow.notes_barrier}`;
+      if (!awaitingNotes(snapshot)) return;
+      const workflow = snapshot.workflow!;
+      const barrier = workflow.notes_barrier!;
+      const key = `${workflow.run_id}:${barrier}`;
       if (!retry && ackAttempts.current.has(key)) return;
       ackAttempts.current.add(key);
       try {
@@ -217,7 +221,7 @@ export function App() {
           await api.acknowledgeProcessingNotes(
             snapshot.meeting_id,
             workflow.run_id,
-            workflow.notes_barrier,
+            barrier,
             revision,
           ),
         );
@@ -288,9 +292,7 @@ export function App() {
       setProcessing(null);
       setRetryPlan(null);
       setRetryConfirmed(false);
-      void refreshProcessing(id).catch((failure: unknown) =>
-        setError(errorMessage(failure)),
-      );
+      void refreshProcessing(id).catch(report);
     },
     [refreshProcessing],
   );
@@ -321,8 +323,7 @@ export function App() {
         await task();
       } catch (failure) {
         // Note-save failures are already shown by the notes banner.
-        if (keepMessages || failure !== noteFailure.current)
-          setError(errorMessage(failure));
+        if (keepMessages || failure !== noteFailure.current) report(failure);
       } finally {
         lock.current = false;
         mark(false);
@@ -347,6 +348,27 @@ export function App() {
       },
       task,
     );
+  // Saves notes first; null when nothing is selected or planning failed.
+  const planFor = async (
+    load: (id: string) => Promise<ProcessingPlan | null>,
+  ): Promise<ProcessingPlan | null> => {
+    const id = selected?.meeting.id;
+    let plan: ProcessingPlan | null = null;
+    if (!id) return plan;
+    await run(async () => {
+      await writer.current?.flush();
+      plan = await load(id);
+    });
+    return plan;
+  };
+  // Replaces only the patched fields, so an unsaved notes draft is untouched.
+  const patchSelected = (
+    id: string,
+    patch: (current: MeetingDetail) => Partial<MeetingDetail>,
+  ) =>
+    setSelected((current) =>
+      current?.meeting.id === id ? { ...current, ...patch(current) } : current,
+    );
   const finishJob = async (id: string) => {
     await refreshList();
     // Do not yank the user back if they moved to another meeting meanwhile.
@@ -356,12 +378,8 @@ export function App() {
   useEffect(() => {
     const id = recording.meeting_id;
     if (recording.status !== "stopped" || !id) return;
-    void refreshMeeting(id).catch((failure: unknown) =>
-      setError(errorMessage(failure)),
-    );
-    void refreshProcessing(id).catch((failure: unknown) =>
-      setError(errorMessage(failure)),
-    );
+    void refreshMeeting(id).catch(report);
+    void refreshProcessing(id).catch(report);
   }, [recording, refreshMeeting, refreshProcessing]);
 
   useEffect(() => {
@@ -388,20 +406,14 @@ export function App() {
       void api.detectionSupported().then(setDetectionSupported, () => {});
       await register(
         api.onSessionProcessingChanged((notification) => {
-          void refreshProcessing(notification.meeting_id).catch(
-            (failure: unknown) => setError(errorMessage(failure)),
-          );
+          void refreshProcessing(notification.meeting_id).catch(report);
           if (selectedIdRef.current === notification.meeting_id)
-            void refreshMeeting(notification.meeting_id).catch(
-              (failure: unknown) => setError(errorMessage(failure)),
-            );
+            void refreshMeeting(notification.meeting_id).catch(report);
         }),
       );
       await register(
         api.onMeetingUpdated(() => {
-          void refreshList().catch((failure: unknown) =>
-            setError(errorMessage(failure)),
-          );
+          void refreshList().catch(report);
         }),
       );
       await register(api.onCloseRequested(() => setCloseRequested(true)));
@@ -503,15 +515,8 @@ export function App() {
     if (!desktop) return;
     const reconnect = () => {
       const id = selectedIdRef.current;
-      if (id)
-        void refreshProcessing(id).catch((failure: unknown) =>
-          setError(errorMessage(failure)),
-        );
-      void api
-        .getRecordingState()
-        .then(updateRecording, (failure: unknown) =>
-          setError(errorMessage(failure)),
-        );
+      if (id) void refreshProcessing(id).catch(report);
+      void api.getRecordingState().then(updateRecording, report);
     };
     window.addEventListener("focus", reconnect);
     window.addEventListener("online", reconnect);
@@ -889,29 +894,21 @@ export function App() {
                     {processing.workflow.text_bytes_used} UTF-8 text bytes.
                   </p>
                 )}
-                {processing.plan.scope.kind === "final" &&
-                  processing.plan.scope.summary !== null &&
-                  processing.workflow?.notes_barrier &&
-                  processing.workflow.notes_revision === null &&
-                  [
-                    "finalizing_audio",
-                    "transcribing",
-                    "awaiting_notes",
-                  ].includes(processing.workflow.stage) && (
-                    <div>
-                      <p>
-                        Automatic summary waits for saved notes.
-                        {ackError?.meetingId === processing.meeting_id &&
-                          ` Notes acknowledgement failed: ${ackError.message}`}
-                      </p>
-                      <button
-                        disabled={busy}
-                        onClick={() => void acknowledgeNotes(processing, true)}
-                      >
-                        Save notes and continue processing
-                      </button>
-                    </div>
-                  )}
+                {awaitingNotes(processing) && (
+                  <div>
+                    <p>
+                      Automatic summary waits for saved notes.
+                      {ackError?.meetingId === processing.meeting_id &&
+                        ` Notes acknowledgement failed: ${ackError.message}`}
+                    </p>
+                    <button
+                      disabled={busy}
+                      onClick={() => void acknowledgeNotes(processing, true)}
+                    >
+                      Save notes and continue processing
+                    </button>
+                  </div>
+                )}
                 {![
                   "completed",
                   "cancelled",
@@ -1091,16 +1088,7 @@ export function App() {
           connectionRevision={`${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`}
           enhanceBlocked={enhanceBlocked}
           llmBlocked={llmBlocked}
-          onPlanTranscription={async () => {
-            const id = selected?.meeting.id;
-            let plan: ProcessingPlan | null = null;
-            if (!id) return plan;
-            await run(async () => {
-              await writer.current?.flush();
-              plan = await api.planTranscription(id);
-            });
-            return plan;
-          }}
+          onPlanTranscription={() => planFor(api.planTranscription)}
           onTranscribe={(confirmation) => {
             const id = selected?.meeting.id;
             if (!id) return;
@@ -1109,8 +1097,7 @@ export function App() {
               try {
                 await api.transcribeMeeting(id, confirmation);
               } catch (failure) {
-                const code = (failure as { code?: string } | null)?.code;
-                if (code !== "stt_cancelled") throw failure;
+                if (errorCode(failure) !== "stt_cancelled") throw failure;
                 setNotice(errorMessage(failure));
                 return;
               }
@@ -1134,7 +1121,7 @@ export function App() {
                     : "Transcription has not started or has already finished.",
                 ),
               )
-              .catch((failure: unknown) => setError(errorMessage(failure)))
+              .catch(report)
           }
           getRecordingOffset={async () => {
             try {
@@ -1142,7 +1129,7 @@ export function App() {
               updateRecording(state);
               return state.recording_offset_ms;
             } catch (failure) {
-              setError(errorMessage(failure));
+              report(failure);
               return null;
             }
           }}
@@ -1152,7 +1139,7 @@ export function App() {
             try {
               return await api.audioPosition(id, kind, sessionMs);
             } catch (failure) {
-              setError(errorMessage(failure));
+              report(failure);
               return null;
             }
           }}
@@ -1193,10 +1180,7 @@ export function App() {
                 );
               } catch (failure) {
                 // Rebase onto the newer version so saving again is the user's explicit choice.
-                if (
-                  (failure as { code?: string } | null)?.code ===
-                  "summary_conflict"
-                ) {
+                if (errorCode(failure) === "summary_conflict") {
                   const newest = (await api.listSummaries(id))[0];
                   if (newest)
                     setSummaryDraft(id, { ...draft, latestId: newest.id });
@@ -1231,56 +1215,34 @@ export function App() {
             return saved;
           }}
           onTags={(id, tags) => {
-            // Patch only the tags so an unsaved notes draft is untouched; the list needs a fresh read.
-            setSelected((current) =>
-              current?.meeting.id === id
-                ? { ...current, meeting: { ...current.meeting, tags } }
-                : current,
-            );
+            // The list needs a fresh read.
+            patchSelected(id, (current) => ({
+              meeting: { ...current.meeting, tags },
+            }));
             void refreshList().catch(() => undefined);
           }}
           onSpeakerNames={(id, names) =>
-            setSelected((current) =>
-              current?.meeting.id === id
-                ? { ...current, speaker_names: names }
-                : current,
-            )
+            patchSelected(id, () => ({ speaker_names: names }))
           }
           onActionItems={(id, items) =>
-            // Patch only the tasks so an unsaved notes draft is untouched.
-            setSelected((current) =>
-              current?.meeting.id === id
-                ? { ...current, action_items: items }
-                : current,
-            )
+            patchSelected(id, () => ({ action_items: items }))
           }
-          onPlanSummary={async (template) => {
-            const id = selected?.meeting.id;
-            let plan: ProcessingPlan | null = null;
-            if (!id) return plan;
-            await run(async () => {
-              await writer.current?.flush();
-              plan = await api.planSummary(id, template);
-            });
-            return plan;
-          }}
-          onPlanQuestion={async (question, threadId) => {
-            const id = selected?.meeting.id;
-            let plan: ProcessingPlan | null = null;
-            if (!id) return plan;
-            await run(async () => {
-              await writer.current?.flush();
+          onPlanSummary={(template) =>
+            planFor((id) => api.planSummary(id, template))
+          }
+          onPlanQuestion={(question, threadId) =>
+            planFor(async (id) => {
               try {
-                plan = await api.planQuestion(id, question, threadId);
+                return await api.planQuestion(id, question, threadId);
               } catch (failure) {
                 // Nothing matched: nothing is sent, which is an answer, not a failure.
-                const code = (failure as { code?: string } | null)?.code;
-                if (code !== "insufficient_evidence") throw failure;
+                if (errorCode(failure) !== "insufficient_evidence")
+                  throw failure;
                 setNotice(errorMessage(failure));
+                return null;
               }
-            });
-            return plan;
-          }}
+            })
+          }
           onAsk={(question, threadId, confirmation) => {
             const id = selected?.meeting.id;
             if (!id) return;
@@ -1292,21 +1254,15 @@ export function App() {
                 threadId,
                 confirmation,
               );
-              // Patch only the threads so an unsaved notes draft is untouched.
-              setSelected((current) =>
-                current?.meeting.id === id
-                  ? {
-                      ...current,
-                      question_threads: current.question_threads.some(
-                        (item) => item.id === thread.id,
-                      )
-                        ? current.question_threads.map((item) =>
-                            item.id === thread.id ? thread : item,
-                          )
-                        : [thread, ...current.question_threads],
-                    }
-                  : current,
-              );
+              patchSelected(id, (current) => ({
+                question_threads: current.question_threads.some(
+                  (item) => item.id === thread.id,
+                )
+                  ? current.question_threads.map((item) =>
+                      item.id === thread.id ? thread : item,
+                    )
+                  : [thread, ...current.question_threads],
+              }));
             });
           }}
           onDeleteThread={(threadId) => {
@@ -1314,11 +1270,7 @@ export function App() {
             if (!id) return;
             void run(async () => {
               const threads = await api.deleteQuestionThread(id, threadId);
-              setSelected((current) =>
-                current?.meeting.id === id
-                  ? { ...current, question_threads: threads }
-                  : current,
-              );
+              patchSelected(id, () => ({ question_threads: threads }));
             });
           }}
           notes={notes}
@@ -1401,14 +1353,9 @@ export function App() {
             void run(async () => {
               const stored = await api.renameMeeting(id, next);
               // The sidebar refreshes from the backend's meeting_updated event.
-              setSelected((current) =>
-                current?.meeting.id === id
-                  ? {
-                      ...current,
-                      meeting: { ...current.meeting, title: stored },
-                    }
-                  : current,
-              );
+              patchSelected(id, (current) => ({
+                meeting: { ...current.meeting, title: stored },
+              }));
             });
           }}
           onRecover={() => {
@@ -1475,11 +1422,7 @@ export function App() {
             stt={stt}
             sttProgress={sttProgress}
             installing={job === "install"}
-            onCancelStt={() =>
-              void api
-                .cancelModelDownload()
-                .catch((failure: unknown) => setError(errorMessage(failure)))
-            }
+            onCancelStt={() => void api.cancelModelDownload().catch(report)}
             onInstallStt={() =>
               void runJob("install", async () => {
                 updateStt(await api.sttInstall());

@@ -1,10 +1,7 @@
 import { useState, type RefObject } from "react";
-import {
-  api,
-  errorMessage,
-  isLocalBase,
-  type ProcessingPlan,
-} from "../lib/api";
+import { api, type ProcessingPlan } from "../lib/api";
+import { useTask } from "../lib/use-task";
+import { TextConsent } from "./TextConsent";
 
 const presets = [
   "Make it shorter",
@@ -30,9 +27,7 @@ export function RewriteSelection(props: {
   const [request, setRequest] = useState("");
   const [review, setReview] = useState<ProcessingPlan | null>(null);
   const [result, setResult] = useState<string | null>(null);
-  const [working, setWorking] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
+  const { busy: working, error, notice, setError, setNotice, run } = useTask();
 
   const close = () => {
     setSelection(null);
@@ -52,18 +47,6 @@ export function RewriteSelection(props: {
       return;
     }
     setSelection({ start, end, text: area.value.slice(start, end) });
-  };
-  const run = async (step: () => Promise<void>) => {
-    setWorking(true);
-    setNotice("");
-    setError("");
-    try {
-      await step();
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      setWorking(false);
-    }
   };
 
   return (
@@ -160,11 +143,10 @@ export function RewriteSelection(props: {
                   Send the selected text to your selected provider?
                 </strong>
               </p>
-              <ul>
-                <li>
-                  Model: <code>{review.model}</code> via{" "}
-                  <code>{review.base_url}</code>
-                </li>
+              <TextConsent
+                plan={review}
+                note="The rewrite is shown here and replaces nothing until you accept it."
+              >
                 <li>
                   Sent in 1 request: only the {selection.text.length} selected
                   characters and your request.
@@ -172,14 +154,7 @@ export function RewriteSelection(props: {
                 <li>
                   Not sent: the rest of your notes, the transcript or audio.
                 </li>
-                <li>
-                  {isLocalBase(review.base_url)
-                    ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
-                    : "The text leaves this device and is handled under your provider's terms."}{" "}
-                  The rewrite is shown here and replaces nothing until you
-                  accept it.
-                </li>
-              </ul>
+              </TextConsent>
               <div className="panel-actions">
                 <button
                   className="primary"

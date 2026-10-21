@@ -6,11 +6,18 @@ export type ProcessingChoice = {
   summary: SummaryTemplate | null;
 };
 
-const modes: ProcessingMode[] = ["recording", "live", "final", "both"];
-const templates: SummaryTemplate[] = [
-  "general-v1",
-  "standup-v1",
-  "one-to-one-v1",
+export const modeLabels: Record<ProcessingMode, string> = {
+  recording: "Recording only",
+  live: "Live transcription only",
+  final: "Final transcription after stop",
+  both: "Live and final transcription",
+};
+const modes = Object.keys(modeLabels) as ProcessingMode[];
+/** Built-in summary templates in picker order. */
+export const builtinTemplates: { id: SummaryTemplate; label: string }[] = [
+  { id: "general-v1", label: "General" },
+  { id: "standup-v1", label: "Stand-up" },
+  { id: "one-to-one-v1", label: "One-to-one" },
 ];
 
 function choice(mode: unknown, summary: unknown): ProcessingChoice {
@@ -19,7 +26,7 @@ function choice(mode: unknown, summary: unknown): ProcessingChoice {
     mode: chosen,
     summary:
       chosen === "final" || chosen === "both"
-        ? (templates.find((item) => item === summary) ?? null)
+        ? (builtinTemplates.find((item) => item.id === summary)?.id ?? null)
         : null,
   };
 }

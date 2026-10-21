@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, errorMessage, type Settings } from "../lib/api";
+import { api, type Settings } from "../lib/api";
+import { useTask } from "../lib/use-task";
 
 type Props = {
   settings: Settings | null;
@@ -28,9 +29,7 @@ export function SavedTextEditor(props: {
   const [editing, setEditing] = useState("");
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
+  const { busy, notice, error, setNotice, run } = useTask();
   const Noun = props.noun[0].toUpperCase() + props.noun.slice(1);
   const choose = (id: string) => {
     const item = props.items.find((saved) => saved.id === id);
@@ -38,24 +37,16 @@ export function SavedTextEditor(props: {
     setName(item?.name ?? "");
     setBody(item?.body ?? "");
   };
-  const run = async (
+  const save = (
     action: () => Promise<Settings>,
     done: string,
     reset: boolean,
-  ) => {
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
+  ) =>
+    run(async () => {
       props.onSettings(await action());
       setNotice(done);
       if (reset) choose("");
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   const locked = props.locked || busy;
   return (
     <>
@@ -97,7 +88,7 @@ export function SavedTextEditor(props: {
         <button
           disabled={locked || !name.trim() || !body.trim()}
           onClick={() =>
-            void run(
+            void save(
               () => props.onSave(editing || null, name, body),
               editing ? `${Noun} updated.` : `${Noun} added.`,
               !editing,
@@ -110,7 +101,7 @@ export function SavedTextEditor(props: {
           <button
             disabled={locked}
             onClick={() =>
-              void run(() => props.onDelete(editing), props.deleted, true)
+              void save(() => props.onDelete(editing), props.deleted, true)
             }
           >
             Delete {props.noun}
@@ -130,23 +121,13 @@ export function SavedTextEditor(props: {
 /** Saved personal instructions and user-defined summary templates. Built-in templates stay fixed. */
 export function SummaryTemplates({ settings, disabled, onSettings }: Props) {
   const [instructions, setInstructions] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
-  const saveInstructions = async () => {
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
+  const { busy, notice, error, setNotice, run } = useTask();
+  const saveInstructions = () =>
+    run(async () => {
       onSettings(await api.saveSummaryInstructions(instructions ?? ""));
       setNotice("Summary instructions saved.");
       setInstructions(null);
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   const locked = disabled || busy || settings === null;
   return (
     <section className="settings-section" aria-label="Summary templates">

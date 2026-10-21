@@ -638,3 +638,11 @@ Rust simplifications (no behaviour change intended):
 - Shared helpers: `domain::hex`/`sha256_hex`, `as_str` on `SttMode`/`FilenamePattern`/`TranscriptFormat` (reads keep their lenient fallbacks), `storage::segment_row`, `storage::require_meeting`, `Core::capture_busy`, `session_processing::configuration_revision`/`review_open`, `Template::from_id`.
 - SRT and VTT export share one loop; `stage`/`State` parsing goes through serde; `stopped` reads its session row once; `cloud_stt::prepare` has one form.
 - Kept: `library_unchanged`, because tests call it (the review's "one caller" finding was wrong).
+
+User asked to apply the review's frontend findings 19–31 and run the full check set.
+
+Frontend simplifications (no behaviour change intended except byte display):
+- `App.tsx`: `patchSelected` for the six "patch the open meeting" sites, `planFor` for the three review-plan handlers, `report` and `errorCode` instead of repeated error casts, and one `awaitingNotes` predicate for the notes-acknowledgement check.
+- Shared pieces: `builtinTemplates` and `modeLabels` in `lib/processing.ts`, `tagChoices` in `lib/meeting-labels.ts`, `errorCode` in `lib/api.ts`, `useTask` (busy/error/notice runner for rewrite, saved texts, summary instructions and task assignments), `tabTarget` for tablist keys, and a `TextConsent` list for the four text consent cards. The audio upload card keeps its own wording.
+- Download and model sizes use `formatBytes`, so they read "100.0 MB" or "1 KB" instead of whole or one-decimal MB; two test assertions were updated.
+- Ignored apps saved before names were kept now get their name from Rust `display_name` in `read_settings`, so the TypeScript copy was removed (with a Rust regression test).

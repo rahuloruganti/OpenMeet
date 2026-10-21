@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Meeting, SearchHit } from "../lib/api";
 import { groupMeetings } from "../lib/group-meetings";
-import { formatBytes, sourceLabels } from "../lib/meeting-labels";
+import { formatBytes, sourceLabels, tagChoices } from "../lib/meeting-labels";
 
 const hitLabels: Record<SearchHit["kind"], string> = {
   title: "Title",
@@ -34,19 +34,11 @@ export function MeetingSidebar(props: Props) {
   const { meetings, search, selectedId, disabled } = props;
   const needle = search.trim().toLocaleLowerCase();
   const [tag, setTag] = useState("");
-  // Tags match case-insensitively, so list each spelling-insensitive tag once.
-  const tagChoices = [
-    ...new Map(
-      meetings.flatMap((meeting) =>
-        meeting.tags.map((name) => [name.toLocaleLowerCase(), name] as const),
-      ),
-    ).values(),
-  ].sort((a, b) => a.localeCompare(b));
+  const tags = tagChoices(meetings);
   // A tag that no meeting has any more stops filtering instead of hiding everything.
   const active =
-    tagChoices.find(
-      (name) => name.toLocaleLowerCase() === tag.toLocaleLowerCase(),
-    ) ?? "";
+    tags.find((name) => name.toLocaleLowerCase() === tag.toLocaleLowerCase()) ??
+    "";
   const tagged = (meeting: Meeting) =>
     active === "" ||
     meeting.tags.some(
@@ -111,14 +103,14 @@ export function MeetingSidebar(props: Props) {
             placeholder="Search notes & meetings…"
           />
         </label>
-        {tagChoices.length > 0 && (
+        {tags.length > 0 && (
           <select
             aria-label="Filter by tag"
             value={active}
             onChange={(event) => setTag(event.target.value)}
           >
             <option value="">All tags</option>
-            {tagChoices.map((name) => (
+            {tags.map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>

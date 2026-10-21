@@ -644,6 +644,10 @@ export const api = {
   recoverAudio: (id: string) => invoke<void>("recover_audio", { id }),
 };
 
+/** The backend error code, e.g. "stt_cancelled", if the error carries one. */
+export const errorCode = (error: unknown) =>
+  (error as { code?: string } | null)?.code;
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error)

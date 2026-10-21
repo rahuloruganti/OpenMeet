@@ -1193,7 +1193,7 @@ describe("desktop foundation", () => {
       }),
     );
     expect(
-      await screen.findByText(/Downloading model: 100 \/ 465 MB/),
+      await screen.findByText(/Downloading model: 100\.0 MB \/ 465\.0 MB/),
     ).toBeTruthy();
     await act(async () => finish(installed));
     await screen.findByText("Installed and verified");

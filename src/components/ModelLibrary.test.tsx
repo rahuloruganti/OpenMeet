@@ -51,7 +51,7 @@ it("imports only catalog candidates, shows external-server models separately, an
   await userEvent.selectOptions(select, "C:/small.bin");
   expect(onFound).toHaveBeenCalledWith(["small"]);
   expect(select.textContent).not.toMatch(/model\.gguf/);
-  expect(screen.getByText(/C:\/model\.gguf · gguf · 0\.0 MB/)).toBeTruthy();
+  expect(screen.getByText(/C:\/model\.gguf · gguf · 1 KB/)).toBeTruthy();
   expect(
     screen.getByText(
       /Use with an external server\. Inference compatibility unverified\./,

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type Ref } from "react";
 import {
   api,
+  errorCode,
   errorMessage,
-  isLocalBase,
   type LibraryAnswer,
   type Meeting,
   type MeetingDetail,
@@ -10,8 +10,10 @@ import {
   type Recipe,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
+import { tagChoices } from "../lib/meeting-labels";
 import { parseTimestamp, segmentsAt } from "../lib/timestamps";
 import { RecipePicker } from "./Recipes";
+import { TextConsent } from "./TextConsent";
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -58,13 +60,7 @@ export function LibraryQuestion(props: Props) {
   const title = (id: string) =>
     meetings.find((meeting) => meeting.id === id)?.title ?? id;
 
-  const tags = [
-    ...new Map(
-      meetings.flatMap((meeting) =>
-        meeting.tags.map((name) => [name.toLocaleLowerCase(), name] as const),
-      ),
-    ).values(),
-  ].sort((a, b) => a.localeCompare(b));
+  const tags = tagChoices(meetings);
   const scope =
     mode === "tag"
       ? meetings.filter((meeting) => meeting.tags.some((t) => same(t, tag)))
@@ -129,8 +125,8 @@ export function LibraryQuestion(props: Props) {
         setReview({ plan: result, ids, question: question.trim() });
     } catch (failure) {
       if (current !== version.current) return;
-      const code = (failure as { code?: string } | null)?.code;
-      if (code === "insufficient_evidence") setNotice(errorMessage(failure));
+      if (errorCode(failure) === "insufficient_evidence")
+        setNotice(errorMessage(failure));
       else setError(errorMessage(failure));
     } finally {
       if (current === version.current) setWorking(false);
@@ -333,11 +329,10 @@ export function LibraryQuestion(props: Props) {
               {review.ids.length === 1 ? "" : "s"} to your selected provider?
             </strong>
           </p>
-          <ul>
-            <li>
-              Model: <code>{review.plan.model}</code> via{" "}
-              <code>{review.plan.base_url}</code>
-            </li>
+          <TextConsent
+            plan={review.plan}
+            note="The question and answer are saved on this device, unencrypted, until you delete them or any of these meetings."
+          >
             <li>
               Sent in {review.plan.requests} request: your question, and the{" "}
               {review.plan.excerpts
@@ -351,14 +346,7 @@ export function LibraryQuestion(props: Props) {
               </ol>
             </li>
             <li>Not sent: audio recordings or other meetings.</li>
-            <li>
-              {isLocalBase(review.plan.base_url)
-                ? "Text is sent to your local server. Its configuration determines whether it forwards requests."
-                : "The text leaves this device and is handled under your provider's terms."}{" "}
-              The question and answer are saved on this device, unencrypted,
-              until you delete them or any of these meetings.
-            </li>
-          </ul>
+          </TextConsent>
           <div className="panel-actions">
             <button
               className="primary"
