@@ -628,3 +628,13 @@ macOS detection:
 Device refresh: a **Refresh devices** button in New recording and Settings → Recording lists audio devices again. It fills only an empty selection and never replaces a chosen, unavailable device. Backend errors already told users to "refresh devices", but no such control existed.
 
 Checks: full set passed on Windows with 169 frontend tests and 185 Rust tests (two native tests ignored), plus typecheck, lint, formatting, both builds and Clippy. The macOS detector was type-checked with `rustc --target aarch64-apple-darwin` (the aarch64-apple-darwin target was added to the local 1.99 toolchain for this), including its tests. It was never linked or run on a Mac, and no real call was used on either platform.
+
+User asked for a whole-repo over-engineering review, then to apply its 18 Rust findings and run the full check set.
+
+Rust simplifications (no behaviour change intended):
+- One `lock_core` helper replaces the hand-written core-lock blocks in `lib.rs` and `session_runtime.rs`; lock scopes are unchanged, and send paths still map a poisoned lock to `plan_changed`.
+- The migration table is `#[rustfmt::skip]` with one line per entry, and `LATEST_SCHEMA` is derived from its last entry.
+- `llm.rs` and `providers.rs` take the `Connection` directly instead of `_at(url, key, model, timeout)` wrappers; tests use `Connection::for_test`. The unreachable `None`-key branch in the question path is gone; `confirm()` in `lib.rs` remains the consent gate.
+- Shared helpers: `domain::hex`/`sha256_hex`, `as_str` on `SttMode`/`FilenamePattern`/`TranscriptFormat` (reads keep their lenient fallbacks), `storage::segment_row`, `storage::require_meeting`, `Core::capture_busy`, `session_processing::configuration_revision`/`review_open`, `Template::from_id`.
+- SRT and VTT export share one loop; `stage`/`State` parsing goes through serde; `stopped` reads its session row once; `cloud_stt::prepare` has one form.
+- Kept: `library_unchanged`, because tests call it (the review's "one caller" finding was wrong).

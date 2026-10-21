@@ -11,14 +11,14 @@ use std::{
 };
 fn cancelled(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::SeqCst) {
-        Err(AppError::new(
-            "stt_cancelled",
-            "Processing was cancelled. Previous results were kept.",
-        ))
+        Err(crate::processing_control::cancelled())
     } else {
         Ok(())
     }
 }
+
+/// Every provider request waits at most this long.
+const TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Largest single request body (notes + transcript text) sent in one call.
 const MAX_SUMMARY_INPUT_CHARS: usize = 120_000;
@@ -59,6 +59,12 @@ pub enum Template {
 }
 
 impl Template {
+    const ALL: [Self; 3] = [Self::General, Self::Standup, Self::OneToOne];
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|template| template.id() == id)
+    }
+
     pub fn id(self) -> &'static str {
         match self {
             Self::General => "general-v1",
@@ -107,8 +113,8 @@ pub fn resolve_summary(settings: &Settings, template: &str) -> Result<String> {
     if template.starts_with(CUSTOM_TEMPLATE_PREFIX) {
         return Err(missing_template());
     }
-    let builtin: Template = serde_json::from_value(serde_json::Value::String(template.into()))
-        .map_err(|_| AppError::new("summary_template", "Unknown summary template."))?;
+    let builtin = Template::from_id(template)
+        .ok_or_else(|| AppError::new("summary_template", "Unknown summary template."))?;
     Ok(summary_system(Structure::Builtin(builtin), instructions))
 }
 
@@ -233,32 +239,6 @@ pub fn summarize(
     notes: &str,
     lines: &[String],
     cancel: &AtomicBool,
-    before_request: impl FnMut(&[u8]) -> Result<()>,
-) -> Result<String> {
-    let url = connection.endpoint("chat/completions")?;
-    summarize_at(
-        url.as_str(),
-        connection.key(),
-        connection.model()?,
-        system,
-        notes,
-        lines,
-        Duration::from_secs(120),
-        cancel,
-        before_request,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn summarize_at(
-    url: &str,
-    key: &str,
-    model: &str,
-    system: &str,
-    notes: &str,
-    lines: &[String],
-    timeout: Duration,
-    cancel: &AtomicBool,
     mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
     cancelled(cancel)?;
@@ -266,16 +246,7 @@ fn summarize_at(
     if let [transcript] = chunks.as_slice() {
         let user =
             format!("<notes>\n{notes}\n</notes>\n\n<transcript>\n{transcript}\n</transcript>");
-        return chat(
-            url,
-            key,
-            model,
-            system,
-            &user,
-            timeout,
-            cancel,
-            &mut before_request,
-        );
+        return chat(connection, system, &user, cancel, &mut before_request);
     }
     let mut partials = String::new();
     for (index, chunk) in chunks.iter().enumerate() {
@@ -285,12 +256,9 @@ fn summarize_at(
             chunks.len()
         );
         let partial = chat(
-            url,
-            key,
-            model,
+            connection,
             &format!("{PARTIAL_PROMPT} {RULES}"),
             &user,
-            timeout,
             cancel,
             &mut before_request,
         )?;
@@ -304,12 +272,9 @@ fn summarize_at(
     }
     let user = format!("<notes>\n{notes}\n</notes>\n\n<transcript>\n{partials}</transcript>");
     chat(
-        url,
-        key,
-        model,
+        connection,
         &format!("{system} {MERGE_NOTE}"),
         &user,
-        timeout,
         cancel,
         &mut before_request,
     )
@@ -328,21 +293,25 @@ pub fn ask(
     question: &str,
     thread: &[QuestionTurn],
     cancel: &AtomicBool,
-    before_request: impl FnMut(&[u8]) -> Result<()>,
+    mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
-    let url = connection.endpoint("chat/completions")?;
-    ask_at(
-        url.as_str(),
-        Some(connection.key()),
-        connection.model()?,
-        notes,
-        lines,
-        excerpts,
-        question,
-        thread,
-        Duration::from_secs(120),
+    validate_question(notes, lines, question, thread)?;
+    let transcript = lines.join("\n");
+    let block = question_block(question, thread);
+    let user = format!(
+        "<notes>\n{notes}\n</notes>\n\n<transcript>\n{transcript}\n</transcript>\n\n{block}"
+    );
+    let follow_up = if thread.is_empty() {
+        String::new()
+    } else {
+        format!(" {FOLLOW_UP_NOTE}")
+    };
+    chat(
+        connection,
+        &format!("{ASK_PROMPT}{} {RULES}{follow_up}", excerpt_note(excerpts)),
+        &user,
         cancel,
-        before_request,
+        &mut before_request,
     )
 }
 
@@ -431,49 +400,6 @@ pub fn validate_question(
         ));
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn ask_at(
-    url: &str,
-    key: Option<&str>,
-    model: &str,
-    notes: &str,
-    lines: &[String],
-    excerpts: bool,
-    question: &str,
-    thread: &[QuestionTurn],
-    timeout: Duration,
-    cancel: &AtomicBool,
-    mut before_request: impl FnMut(&[u8]) -> Result<()>,
-) -> Result<String> {
-    let Some(key) = key else {
-        return Err(AppError::new(
-            "consent_required",
-            "Confirm what will be sent before asking. Nothing was sent.",
-        ));
-    };
-    validate_question(notes, lines, question, thread)?;
-    let transcript = lines.join("\n");
-    let block = question_block(question, thread);
-    let user = format!(
-        "<notes>\n{notes}\n</notes>\n\n<transcript>\n{transcript}\n</transcript>\n\n{block}"
-    );
-    let follow_up = if thread.is_empty() {
-        String::new()
-    } else {
-        format!(" {FOLLOW_UP_NOTE}")
-    };
-    chat(
-        url,
-        key,
-        model,
-        &format!("{ASK_PROMPT}{} {RULES}{follow_up}", excerpt_note(excerpts)),
-        &user,
-        timeout,
-        cancel,
-        &mut before_request,
-    )
 }
 
 fn excerpt_note(excerpts: bool) -> String {
@@ -593,42 +519,13 @@ pub fn ask_library(
     excerpts: bool,
     question: &str,
     cancel: &AtomicBool,
-    before_request: impl FnMut(&[u8]) -> Result<()>,
-) -> Result<String> {
-    let url = connection.endpoint("chat/completions")?;
-    library_at(
-        url.as_str(),
-        connection.key(),
-        connection.model()?,
-        items,
-        excerpts,
-        question,
-        Duration::from_secs(120),
-        cancel,
-        before_request,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn library_at(
-    url: &str,
-    key: &str,
-    model: &str,
-    items: &[LibraryItem],
-    excerpts: bool,
-    question: &str,
-    timeout: Duration,
-    cancel: &AtomicBool,
     mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
     validate_library(items, question)?;
     chat(
-        url,
-        key,
-        model,
+        connection,
         &format!("{LIBRARY_PROMPT}{} {RULES}", excerpt_note(excerpts)),
         &library_message(items, question),
-        timeout,
         cancel,
         &mut before_request,
     )
@@ -682,30 +579,23 @@ pub fn rewrite(
     mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
     check_rewrite(text, request)?;
-    let url = connection.endpoint("chat/completions")?;
     chat(
-        url.as_str(),
-        connection.key(),
-        connection.model()?,
+        connection,
         REWRITE_PROMPT,
         &rewrite_message(text, request),
-        Duration::from_secs(120),
         cancel,
         &mut before_request,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn chat(
-    url: &str,
-    key: &str,
-    model: &str,
+    connection: &Connection,
     system: &str,
     user: &str,
-    timeout: Duration,
     cancel: &AtomicBool,
     mut before_request: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<String> {
+    let url = connection.endpoint("chat/completions")?;
     let unreachable = || {
         AppError::new(
             "provider_unreachable",
@@ -713,7 +603,7 @@ fn chat(
         )
     };
     let body = serde_json::json!({
-        "model": model,
+        "model": connection.model()?,
         "messages": [
             { "role": "system", "content": system },
             { "role": "user", "content": user },
@@ -723,11 +613,14 @@ fn chat(
     cancelled(cancel)?;
     before_request(&body)?;
     cancelled(cancel)?;
-    let response = authorize(client(timeout).map_err(|_| unreachable())?.post(url), key)
-        .header("Content-Type", "application/json")
-        .body(body)
-        .send()
-        .map_err(|_| unreachable())?;
+    let response = authorize(
+        client(TIMEOUT).map_err(|_| unreachable())?.post(url),
+        connection.key(),
+    )
+    .header("Content-Type", "application/json")
+    .body(body)
+    .send()
+    .map_err(|_| unreachable())?;
     cancelled(cancel)?;
     check_status(response.status())?;
     let reply: ChatReply = read_capped(response, MAX_SUMMARY_BYTES)
@@ -821,6 +714,11 @@ mod tests {
         (url, worker, seen, bodies)
     }
 
+    /// A test connection to a `serve` URL (its `/models` path dropped) using `model`.
+    fn conn(url: &str, model: &str) -> crate::providers::Connection {
+        crate::providers::Connection::for_test(url.trim_end_matches("/models"), model)
+    }
+
     /// A chat completion reply whose content is `text`.
     fn reply(text: &str) -> String {
         ok(&serde_json::json!({ "choices": [{ "message": { "content": text } }] }).to_string())
@@ -884,16 +782,13 @@ A long selected passage [1:02]
         let url = format!("http://{}/chat", listener.local_addr().unwrap());
         let cancel = AtomicBool::new(false);
         let mut body = Vec::new();
-        let error = ask_at(
-            &url,
-            Some("fictional"),
-            "test",
+        let error = ask(
+            &conn(&url, "test"),
             "notes",
             &[],
             false,
             "why?",
             &[],
-            Duration::from_secs(1),
             &cancel,
             |bytes| {
                 body = bytes.to_vec();
@@ -912,14 +807,11 @@ A long selected passage [1:02]
             listener.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock
         );
-        let error = summarize_at(
-            &url,
-            "fictional",
-            "test",
+        let error = summarize(
+            &conn(&url, "test"),
             &system_prompt(Template::General),
             "notes",
             &[],
-            Duration::from_secs(1),
             &cancel,
             |_| {
                 cancel.store(true, Ordering::SeqCst);
@@ -938,14 +830,11 @@ A long selected passage [1:02]
         let lines = vec!["a".repeat(70_000), "b".repeat(70_000)];
         let (url, worker, _, bodies) = serve_with(2, |_, _| reply("fictional partial"));
         let mut authorized = Vec::new();
-        let result = summarize_at(
-            &url,
-            "fictional",
-            "test",
+        let result = summarize(
+            &conn(&url, "test"),
             &system_prompt(Template::General),
             "notes",
             &lines,
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |bytes| {
                 authorized.push(String::from_utf8(bytes.to_vec()).unwrap());
@@ -966,14 +855,11 @@ A long selected passage [1:02]
     fn summary_request_carries_content_only_in_the_body_and_surfaces_failures() {
         let reply = r#"{"choices":[{"message":{"content":"  ## Summary\nDone.  "}}]}"#;
         let (url, worker, seen) = serve(vec![ok(reply)]);
-        let text = summarize_at(
-            &url,
-            "mg_test_key",
-            "anthropic/claude-haiku-5-5",
+        let text = summarize(
+            &conn(&url, "anthropic/claude-haiku-5-5"),
             &system_prompt(Template::General),
             "my private note",
             &["You: hello".to_string()],
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -982,7 +868,7 @@ A long selected passage [1:02]
         assert_eq!(text, "## Summary\nDone.");
         let head = seen.lock().unwrap()[0].clone();
         assert!(head.starts_with("post "));
-        assert!(head.contains("authorization: bearer mg_test_key"));
+        assert!(head.contains("authorization: bearer synthetic-test-key"));
         assert!(
             !head.contains("my private note"),
             "content must not be in headers or URL"
@@ -998,32 +884,26 @@ A long selected passage [1:02]
             (ok("garbage"), "provider_response"),
         ] {
             let (url, worker, _) = serve(vec![response]);
-            let error = summarize_at(
-                &url,
-                "mg_k",
-                "m",
+            let error = summarize(
+                &conn(&url, "m"),
                 &system_prompt(Template::General),
                 "n",
                 &["t".to_string()],
-                Duration::from_secs(3),
                 &AtomicBool::new(false),
                 |_| Ok(()),
             )
             .unwrap_err();
             worker.join().unwrap();
             assert_eq!(error.code, code);
-            assert!(!error.message.contains("mg_k"));
+            assert!(!error.message.contains("synthetic-test-key"));
         }
         // Input above the chunk cap is refused locally, before any connection is attempted.
         let huge = vec!["x".repeat(CHUNK_CHARS - 10); MAX_CHUNKS + 1];
-        let error = summarize_at(
-            "http://127.0.0.1:1/x",
-            "k",
-            "m",
+        let error = summarize(
+            &conn("http://127.0.0.1:1/x", "m"),
             &system_prompt(Template::General),
             "",
             &huge,
-            Duration::from_secs(1),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -1095,14 +975,11 @@ A long selected passage [1:02]
     #[test]
     fn standup_template_prompt_is_sent() {
         let (url, worker, _, bodies) = serve_with(1, |_, _| reply("## Summary\nok"));
-        summarize_at(
-            &url,
-            "mg_k",
-            "m",
+        summarize(
+            &conn(&url, "m"),
             &system_prompt(Template::Standup),
             "notes",
             &["[0:01] You: done".to_string()],
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -1153,14 +1030,11 @@ A long selected passage [1:02]
                 ))
             }
         });
-        let summary = summarize_at(
-            &url,
-            "mg_k",
-            "m",
+        let summary = summarize(
+            &conn(&url, "m"),
             &system_prompt(Template::General),
             "my notes",
             &lines,
-            Duration::from_secs(5),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -1189,19 +1063,16 @@ A long selected passage [1:02]
     }
 
     #[test]
-    fn ask_sends_one_request_with_only_the_given_meeting_and_nothing_without_consent() {
+    fn ask_sends_one_request_with_only_the_given_meeting_and_nothing_for_invalid_questions() {
         let lines = ["[1:05] Others: budget is 40k".to_string()];
         let (url, worker, seen, bodies) = serve_with(1, |_, _| reply("The budget is 40k [1:05]."));
-        let answer = ask_at(
-            &url,
-            Some("mg_k"),
-            "m",
+        let answer = ask(
+            &conn(&url, "m"),
             "meeting A notes",
             &lines,
             false,
             "  What is the budget?  ",
             &[],
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -1215,31 +1086,27 @@ A long selected passage [1:02]
             user,
             "<notes>\nmeeting A notes\n</notes>\n\n<transcript>\n[1:05] Others: budget is 40k\n</transcript>\n\n<question>\nWhat is the budget?\n</question>"
         );
-        // No consent, or an invalid question: refused before any connection.
+        // An invalid question is refused before any connection.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let url = format!("http://{}/x", listener.local_addr().unwrap());
-        let refuse = |key: Option<&str>, question: &str| {
-            ask_at(
-                &url,
-                key,
-                "m",
+        let refuse = |question: &str| {
+            ask(
+                &conn(&url, "m"),
                 "n",
                 &lines,
                 false,
                 question,
                 &[],
-                Duration::from_secs(1),
                 &AtomicBool::new(false),
                 |_| Ok(()),
             )
             .unwrap_err()
             .code
         };
-        assert_eq!(refuse(None, "What?"), "consent_required");
-        assert_eq!(refuse(Some("k"), "   "), "invalid_question");
+        assert_eq!(refuse("   "), "invalid_question");
         assert_eq!(
-            refuse(Some("k"), &"q".repeat(MAX_QUESTION_CHARS + 1)),
+            refuse(&"q".repeat(MAX_QUESTION_CHARS + 1)),
             "invalid_question"
         );
         assert_eq!(
@@ -1271,14 +1138,11 @@ A long selected passage [1:02]
             item("b", "Launch", "", &["Others: untimed words"]),
         ];
         let (url, worker, seen, bodies) = serve_with(1, |_, _| reply("It is 40k [M1 1:01]."));
-        let answer = library_at(
-            &url,
-            "mg_k",
-            "m",
+        let answer = ask_library(
+            &conn(&url, "m"),
             &items,
             false,
             "  What is the budget?  ",
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -1308,14 +1172,11 @@ A long selected passage [1:02]
             .map(|n| item(&n.to_string(), "t", "n", &[]))
             .collect();
         let refuse = |items: &[LibraryItem], question: &str| {
-            library_at(
-                &url,
-                "k",
-                "m",
+            ask_library(
+                &conn(&url, "m"),
                 items,
                 false,
                 question,
-                Duration::from_secs(1),
                 &AtomicBool::new(false),
                 |_| Ok(()),
             )
@@ -1332,14 +1193,11 @@ A long selected passage [1:02]
             item("a", "t", &big[..big.len() / 2], &[]),
             item("b", "t", &big[..big.len() / 2], &[]),
         ];
-        let error = library_at(
-            &url,
-            "k",
-            "m",
+        let error = ask_library(
+            &conn(&url, "m"),
             &halves,
             false,
             "Why?",
-            Duration::from_secs(1),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -1368,16 +1226,13 @@ A long selected passage [1:02]
             .map(|n| turn(n, &format!("Question {n}?"), &format!("Answer {n}.")))
             .collect();
         let (url, worker, _, bodies) = serve_with(1, |_, _| reply("Because of cost."));
-        ask_at(
-            &url,
-            Some("k"),
-            "m",
+        ask(
+            &conn(&url, "m"),
             "notes",
             &[],
             false,
             "And why?",
             &thread,
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
@@ -1401,29 +1256,23 @@ A long selected passage [1:02]
     fn excerpt_requests_say_so_before_the_rules_and_carry_only_the_selected_text() {
         let lines = ["[0:10] Others: first".to_string(), "…".to_string()];
         let (url, worker, _, bodies) = serve_with(2, |_, _| reply("Insufficient evidence."));
-        ask_at(
-            &url,
-            Some("k"),
-            "m",
+        ask(
+            &conn(&url, "m"),
             "matching note",
             &lines,
             true,
             "Why?",
             &[],
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |_| Ok(()),
         )
         .unwrap();
         let items = [item("a", "t", "matching note", &["[0:10] Others: first"])];
-        library_at(
-            &url,
-            "k",
-            "m",
+        ask_library(
+            &conn(&url, "m"),
             &items,
             true,
             "Why?",
-            Duration::from_secs(3),
             &AtomicBool::new(false),
             |_| Ok(()),
         )

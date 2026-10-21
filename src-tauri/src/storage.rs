@@ -5,13 +5,11 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// Highest `user_version` this build understands; bump with every new migration.
-const LATEST_SCHEMA: i64 = 27;
-const MAX_TAGS: usize = 20;
 // Each script sets its own `user_version`, so migration N runs for databases below N.
-// Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
+// Keep entries numbered explicitly and in ascending order.
 // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
 // (only switchable outside a transaction) and must pass foreign_key_check before commit.
+#[rustfmt::skip]
 const MIGRATIONS: [(i64, &str, bool); 26] = [
     (2, include_str!("../migrations/002_capture.sql"), true),
     (3, include_str!("../migrations/003_local_model.sql"), false),
@@ -20,102 +18,29 @@ const MIGRATIONS: [(i64, &str, bool); 26] = [
     (6, include_str!("../migrations/006_note_meetings.sql"), true),
     (7, include_str!("../migrations/007_search.sql"), false),
     (8, include_str!("../migrations/008_stt_settings.sql"), false),
-    (
-        9,
-        include_str!("../migrations/009_export_options.sql"),
-        false,
-    ),
-    (
-        10,
-        include_str!("../migrations/010_provider_settings.sql"),
-        false,
-    ),
-    (
-        11,
-        include_str!("../migrations/011_cloud_transcripts.sql"),
-        false,
-    ),
-    (
-        12,
-        include_str!("../migrations/012_saved_connections.sql"),
-        false,
-    ),
-    (
-        13,
-        include_str!("../migrations/013_session_processing.sql"),
-        false,
-    ),
-    (
-        14,
-        include_str!("../migrations/014_processing_workflow.sql"),
-        false,
-    ),
-    (
-        15,
-        include_str!("../migrations/015_summary_templates.sql"),
-        false,
-    ),
-    (
-        16,
-        include_str!("../migrations/016_action_items.sql"),
-        false,
-    ),
-    (
-        17,
-        include_str!("../migrations/017_summary_edits.sql"),
-        false,
-    ),
-    (
-        18,
-        include_str!("../migrations/018_speaker_names.sql"),
-        false,
-    ),
-    (
-        19,
-        include_str!("../migrations/019_transcript_edits.sql"),
-        false,
-    ),
-    (
-        20,
-        include_str!("../migrations/020_summary_freshness.sql"),
-        false,
-    ),
-    (
-        21,
-        include_str!("../migrations/021_meeting_tags.sql"),
-        false,
-    ),
-    (
-        22,
-        include_str!("../migrations/022_question_threads.sql"),
-        false,
-    ),
-    (
-        23,
-        include_str!("../migrations/023_export_transcript_formats.sql"),
-        false,
-    ),
-    (
-        24,
-        include_str!("../migrations/024_recipes_library_answers.sql"),
-        false,
-    ),
-    (
-        25,
-        include_str!("../migrations/025_settings_defaults.sql"),
-        false,
-    ),
-    (
-        26,
-        include_str!("../migrations/026_meeting_detection.sql"),
-        false,
-    ),
-    (
-        27,
-        include_str!("../migrations/027_detection_app_names.sql"),
-        false,
-    ),
+    (9, include_str!("../migrations/009_export_options.sql"), false),
+    (10, include_str!("../migrations/010_provider_settings.sql"), false),
+    (11, include_str!("../migrations/011_cloud_transcripts.sql"), false),
+    (12, include_str!("../migrations/012_saved_connections.sql"), false),
+    (13, include_str!("../migrations/013_session_processing.sql"), false),
+    (14, include_str!("../migrations/014_processing_workflow.sql"), false),
+    (15, include_str!("../migrations/015_summary_templates.sql"), false),
+    (16, include_str!("../migrations/016_action_items.sql"), false),
+    (17, include_str!("../migrations/017_summary_edits.sql"), false),
+    (18, include_str!("../migrations/018_speaker_names.sql"), false),
+    (19, include_str!("../migrations/019_transcript_edits.sql"), false),
+    (20, include_str!("../migrations/020_summary_freshness.sql"), false),
+    (21, include_str!("../migrations/021_meeting_tags.sql"), false),
+    (22, include_str!("../migrations/022_question_threads.sql"), false),
+    (23, include_str!("../migrations/023_export_transcript_formats.sql"), false),
+    (24, include_str!("../migrations/024_recipes_library_answers.sql"), false),
+    (25, include_str!("../migrations/025_settings_defaults.sql"), false),
+    (26, include_str!("../migrations/026_meeting_detection.sql"), false),
+    (27, include_str!("../migrations/027_detection_app_names.sql"), false),
 ];
+/// Highest `user_version` this build understands: the last migration's.
+const LATEST_SCHEMA: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
+const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 40;
 
 pub struct Core {
@@ -214,15 +139,19 @@ impl Core {
         }
     }
 
-    /// Rejects a new session while one is active or unfinished; returns the trimmed title.
-    fn begin<'a>(&self, title: &'a str) -> Result<&'a str> {
-        if self.audio.is_some()
+    /// A recording is active or its audio is not yet finalized.
+    fn capture_busy(&self) -> bool {
+        self.audio.is_some()
             || self.capture_report.is_some()
             || matches!(
                 self.recording.status,
                 CaptureStatus::Recording | CaptureStatus::Paused
             )
-        {
+    }
+
+    /// Rejects a new session while one is active or unfinished; returns the trimmed title.
+    fn begin<'a>(&self, title: &'a str) -> Result<&'a str> {
+        if self.capture_busy() {
             return Err(AppError::new(
                 "already_recording",
                 "Stop the active recording before starting another.",
@@ -563,17 +492,7 @@ impl Core {
         let (segments, segment_meta): (Vec<_>, Vec<_>) = query
             .query_map([id], |row| {
                 Ok((
-                    Segment {
-                        speaker: row.get(0)?,
-                        timing: match row.get::<_, Option<i64>>(1)? {
-                            Some(start_ms) => SegmentTiming::Timed {
-                                start_ms,
-                                end_ms: row.get(2)?,
-                            },
-                            None => SegmentTiming::Untimed,
-                        },
-                        text: row.get(3)?,
-                    },
+                    segment_row(row)?,
                     SegmentMeta {
                         id: row.get(4)?,
                         original_text: row.get(5)?,
@@ -959,10 +878,7 @@ impl Core {
     pub fn save_stt_mode(&mut self, mode: SttMode) -> Result<Settings> {
         self.db.execute(
             "UPDATE settings SET stt_mode = ?1 WHERE id = 1",
-            [match mode {
-                SttMode::Local => "local",
-                SttMode::Cloud => "cloud",
-            }],
+            [mode.as_str()],
         )?;
         self.settings()
     }
@@ -1080,27 +996,13 @@ impl Core {
 
     /// Removes this meeting's track files and rows; notes, transcript and summaries stay.
     pub fn delete_audio(&mut self, id: &str) -> Result<()> {
-        if self.recording.meeting_id.as_deref() == Some(id)
-            && (self.audio.is_some()
-                || self.capture_report.is_some()
-                || matches!(
-                    self.recording.status,
-                    CaptureStatus::Recording | CaptureStatus::Paused
-                ))
-        {
+        if self.recording.meeting_id.as_deref() == Some(id) && self.capture_busy() {
             return Err(AppError::new(
                 "recording_active",
                 "Stop the recording before deleting it or its audio.",
             ));
         }
-        let exists: bool = self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1)",
-            [id],
-            |row| row.get(0),
-        )?;
-        if !exists {
-            return Err(AppError::new("not_found", "Meeting not found."));
-        }
+        require_meeting(&self.db, id)?;
         for file in self.owned_audio_files(id)? {
             match std::fs::remove_file(&file) {
                 Ok(()) => {}
@@ -1275,14 +1177,7 @@ impl Core {
             ));
         }
         let tx = self.db.transaction()?;
-        let exists: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1)",
-            [id],
-            |row| row.get(0),
-        )?;
-        if !exists {
-            return Err(AppError::new("not_found", "Meeting not found."));
-        }
+        require_meeting(&tx, id)?;
         tx.execute("DELETE FROM meeting_tags WHERE meeting_id = ?1", [id])?;
         for tag in &clean {
             tx.execute(
@@ -1303,7 +1198,7 @@ impl Core {
     ) -> Result<Settings> {
         let summary = summary.filter(|_| matches!(mode, "final" | "both"));
         if !["recording", "live", "final", "both"].contains(&mode)
-            || summary.is_some_and(|id| !BUILTIN_TEMPLATES.contains(&id))
+            || summary.is_some_and(|id| crate::llm::Template::from_id(id).is_none())
         {
             return Err(AppError::new(
                 "processing_default",
@@ -1319,7 +1214,7 @@ impl Core {
 
     /// The template the Enhance picker starts at: a built-in or an existing custom template.
     pub fn save_summary_default(&mut self, template: &str) -> Result<Settings> {
-        if !BUILTIN_TEMPLATES.contains(&template)
+        if crate::llm::Template::from_id(template).is_none()
             && !self
                 .settings()?
                 .summary_templates
@@ -1384,16 +1279,12 @@ impl Core {
     }
 
     pub fn save_export_options(&mut self, options: &ExportOptions) -> Result<Settings> {
-        let filename = match options.filename {
-            FilenamePattern::Title => "title",
-            FilenamePattern::DateTitle => "date_title",
-        };
         self.db.execute(
             "UPDATE settings SET export_transcript = ?1, export_summary = ?2, export_filename = ?3, export_transcript_formats = ?4 WHERE id = 1",
             params![
                 options.transcript,
                 options.summary,
-                filename,
+                options.filename.as_str(),
                 transcript_formats_value(&options.transcript_formats)
             ],
         )?;
@@ -1545,34 +1436,23 @@ fn provider_conflict() -> AppError {
 /// Stored as a comma-separated subset in a fixed order, so the same choice always serializes the
 /// same way; anything unknown is dropped rather than guessed.
 fn parse_transcript_formats(value: &str) -> Vec<TranscriptFormat> {
-    let wanted = |name: &str| value.split(',').any(|token| token.trim() == name);
-    [
-        ("txt", TranscriptFormat::Txt),
-        ("srt", TranscriptFormat::Srt),
-        ("vtt", TranscriptFormat::Vtt),
-    ]
-    .into_iter()
-    .filter(|(name, _)| wanted(name))
-    .map(|(_, format)| format)
-    .collect()
+    TranscriptFormat::ALL
+        .into_iter()
+        .filter(|format| {
+            value
+                .split(',')
+                .any(|token| token.trim() == format.as_str())
+        })
+        .collect()
 }
 
 fn transcript_formats_value(formats: &[TranscriptFormat]) -> String {
-    let name = |format: TranscriptFormat| match format {
-        TranscriptFormat::Txt => "txt",
-        TranscriptFormat::Srt => "srt",
-        TranscriptFormat::Vtt => "vtt",
-    };
-    [
-        TranscriptFormat::Txt,
-        TranscriptFormat::Srt,
-        TranscriptFormat::Vtt,
-    ]
-    .into_iter()
-    .filter(|format| formats.contains(format))
-    .map(name)
-    .collect::<Vec<_>>()
-    .join(",")
+    TranscriptFormat::ALL
+        .into_iter()
+        .filter(|format| formats.contains(format))
+        .map(TranscriptFormat::as_str)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn read_settings(db: &Connection) -> Result<Settings> {
@@ -1658,15 +1538,9 @@ fn read_settings(db: &Connection) -> Result<Settings> {
         )?)
 }
 
-const BUILTIN_TEMPLATES: [&str; 3] = ["general-v1", "standup-v1", "one-to-one-v1"];
-
 /// SHA-256 of the exact transcript lines a summary reads, speaker names included.
 pub(crate) fn transcript_hash(segments: &[Segment], names: &SpeakerNames) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(crate::transcript_lines(segments, names).join("\n"))
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    sha256_hex(crate::transcript_lines(segments, names).join("\n"))
 }
 
 pub const CUSTOM_TEMPLATE_PREFIX: &str = "custom-";
@@ -1732,6 +1606,33 @@ fn meeting_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Meeting> {
         capture_error: row.get(6)?,
         tags: Vec::new(),
     })
+}
+
+/// The first four columns of a segment query: speaker, start_ms, end_ms, text.
+pub(crate) fn segment_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Segment> {
+    Ok(Segment {
+        speaker: row.get(0)?,
+        timing: match row.get::<_, Option<i64>>(1)? {
+            Some(start_ms) => SegmentTiming::Timed {
+                start_ms,
+                end_ms: row.get(2)?,
+            },
+            None => SegmentTiming::Untimed,
+        },
+        text: row.get(3)?,
+    })
+}
+
+pub(crate) fn require_meeting(db: &Connection, id: &str) -> Result<()> {
+    let exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(AppError::new("not_found", "Meeting not found."));
+    }
+    Ok(())
 }
 
 /// Returns the trimmed title if it has 1–160 characters.
@@ -1828,19 +1729,9 @@ fn check_schema(db: &Connection) -> Result<()> {
 #[cfg(test)]
 pub(crate) fn test_v11_database(path: &Path) -> Connection {
     let db = Connection::open(path).unwrap();
-    for script in [
-        include_str!("../migrations/001_foundation.sql"),
-        include_str!("../migrations/002_capture.sql"),
-        include_str!("../migrations/003_local_model.sql"),
-        include_str!("../migrations/004_merge_model.sql"),
-        include_str!("../migrations/005_transcripts.sql"),
-        include_str!("../migrations/006_note_meetings.sql"),
-        include_str!("../migrations/007_search.sql"),
-        include_str!("../migrations/008_stt_settings.sql"),
-        include_str!("../migrations/009_export_options.sql"),
-        include_str!("../migrations/010_provider_settings.sql"),
-        include_str!("../migrations/011_cloud_transcripts.sql"),
-    ] {
+    db.execute_batch(include_str!("../migrations/001_foundation.sql"))
+        .unwrap();
+    for (_, script, _) in MIGRATIONS.iter().take_while(|(number, ..)| *number <= 11) {
         db.execute_batch(script).unwrap();
     }
     db

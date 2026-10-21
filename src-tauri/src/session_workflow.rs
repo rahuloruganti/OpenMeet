@@ -5,10 +5,10 @@ use crate::{
     storage::Core,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
     Live,
@@ -48,20 +48,8 @@ impl Stage {
         )
     }
 }
-fn stage(value: &str) -> Result<Stage> {
-    Ok(match value {
-        "live" => Stage::Live,
-        "finalizing_audio" => Stage::FinalizingAudio,
-        "transcribing" => Stage::Transcribing,
-        "awaiting_notes" => Stage::AwaitingNotes,
-        "summarizing" => Stage::Summarizing,
-        "completed" => Stage::Completed,
-        "failed" => Stage::Failed,
-        "cancelled" => Stage::Cancelled,
-        "interrupted" => Stage::Interrupted,
-        "consent_required" => Stage::ConsentRequired,
-        _ => return Err(stale()),
-    })
+fn stage(value: String) -> Result<Stage> {
+    serde_json::from_value(serde_json::Value::String(value)).map_err(|_| stale())
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Provisional {
@@ -137,7 +125,7 @@ impl Core {
         Ok(Some(Workflow {
             run_id,
             attempt,
-            stage: stage(&status)?,
+            stage: stage(status)?,
             error,
             live_incomplete,
             transcript_done,
@@ -166,11 +154,7 @@ impl Core {
         {
             return Err(stale());
         }
-        let current: i64 = self.db.query_row(
-            "SELECT revision FROM processing_configuration WHERE id=1",
-            [],
-            |r| r.get(0),
-        )?;
+        let current = crate::session_processing::configuration_revision(&self.db)?;
         if current != snapshot.plan.configuration_revision || clock()? >= snapshot.authorized_until
         {
             return Err(stale());
@@ -505,22 +489,17 @@ impl Core {
 }
 
 pub(crate) fn stopped(tx: &Transaction<'_>, id: &str, success: bool, quitting: bool) -> Result<()> {
-    let json: Option<String> = tx
+    let row: Option<(String, i64)> = tx
         .query_row(
-            "SELECT plan_json FROM processing_sessions WHERE meeting_id=?1",
+            "SELECT plan_json, started_at FROM processing_sessions WHERE meeting_id=?1",
             [id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let Some(json) = json else {
+    let Some((json, started)) = row else {
         return Ok(());
     };
     let plan: Plan = serde_json::from_str(&json).map_err(|_| stale())?;
-    let started: i64 = tx.query_row(
-        "SELECT started_at FROM processing_sessions WHERE meeting_id=?1",
-        [id],
-        |r| r.get(0),
-    )?;
     let now = clock()?;
     let (stage, error) = if quitting {
         (

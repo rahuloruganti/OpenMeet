@@ -1,6 +1,6 @@
 //! User corrections to final transcript segments and read-only copies of replaced transcripts.
 use crate::{
-    domain::{AppError, Result, Segment, SegmentTiming, TranscriptVersion},
+    domain::{AppError, Result, Segment, TranscriptVersion},
     storage::Core,
 };
 use rusqlite::{params, OptionalExtension, Transaction};
@@ -16,20 +16,7 @@ pub(crate) fn snapshot(tx: &Transaction<'_>, id: &str) -> Result<()> {
     )?;
     let rows = query
         .query_map([id], |row| {
-            Ok((
-                Segment {
-                    speaker: row.get(0)?,
-                    timing: match row.get::<_, Option<i64>>(1)? {
-                        Some(start_ms) => SegmentTiming::Timed {
-                            start_ms,
-                            end_ms: row.get(2)?,
-                        },
-                        None => SegmentTiming::Untimed,
-                    },
-                    text: row.get(3)?,
-                },
-                row.get::<_, bool>(4)?,
-            ))
+            Ok((crate::storage::segment_row(row)?, row.get::<_, bool>(4)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     if rows.is_empty() {
@@ -126,6 +113,7 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::SegmentTiming;
     use std::path::Path;
 
     fn line(text: &str, start_ms: i64) -> Segment {

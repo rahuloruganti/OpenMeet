@@ -234,10 +234,6 @@ struct ModelItem {
 
 pub fn list_models(connection: &Connection) -> Result<Vec<ProviderModel>> {
     let url = connection.endpoint("models")?;
-    fetch_models(url.as_str(), connection.key(), Duration::from_secs(15))
-}
-
-fn fetch_models(url: &str, key: &str, timeout: Duration) -> Result<Vec<ProviderModel>> {
     let unreachable = || {
         AppError::new(
             "provider_unreachable",
@@ -247,9 +243,14 @@ fn fetch_models(url: &str, key: &str, timeout: Duration) -> Result<Vec<ProviderM
     let invalid = || {
         AppError::new("provider_models", "The provider returned an unsupported model list. Enter a model ID manually if discovery is unavailable.")
     };
-    let response = authorize(client(timeout).map_err(|_| unreachable())?.get(url), key)
-        .send()
-        .map_err(|_| unreachable())?;
+    let response = authorize(
+        client(Duration::from_secs(15))
+            .map_err(|_| unreachable())?
+            .get(url),
+        connection.key(),
+    )
+    .send()
+    .map_err(|_| unreachable())?;
     check_status(response.status())?;
     let bytes = read_capped(response, MAX_MODELS_BYTES).ok_or_else(invalid)?;
     let catalog: Catalog = serde_json::from_slice(&bytes).map_err(|_| invalid())?;

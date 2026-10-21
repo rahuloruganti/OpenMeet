@@ -15,7 +15,7 @@ pub struct Guard {
     owner: Owner,
     operation: Arc<Operation>,
 }
-fn cancelled() -> AppError {
+pub(crate) fn cancelled() -> AppError {
     AppError::new(
         "stt_cancelled",
         "Processing was cancelled. Previous results were kept.",

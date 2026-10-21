@@ -1,14 +1,13 @@
 //! Blocking session runner. Core owns every durable transition and publication.
 use crate::{
     cloud_stt,
-    domain::{AppError, CaptureStatus, ProviderRole, Result, Segment, Settings, SttMode},
+    domain::{CaptureStatus, ProviderRole, Result, Segment, Settings, SttMode},
     live_audio::Chunk,
     processing_control::Guard,
     session_processing::{Scope, State},
     session_workflow::{self, Stage},
     storage::Core,
 };
-use sha2::{Digest, Sha256};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -17,15 +16,10 @@ use std::{
     },
     time::Duration,
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 fn core<T>(app: &AppHandle, operation: impl FnOnce(&mut Core) -> Result<T>) -> Result<T> {
-    let state = app.state::<crate::AppState>();
-    let mut core = state
-        .core
-        .lock()
-        .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
-    operation(&mut core)
+    operation(&mut *crate::lock_core(app)?)
 }
 pub(crate) fn notify(app: &AppHandle, id: &str) {
     if let Ok(Some(snapshot)) = core(app, |core| core.session_processing(id)) {
@@ -282,10 +276,7 @@ fn summary(app: &AppHandle, id: &str, run: &str) -> Result<()> {
     let lines = crate::transcript_lines(&segments, &names);
     let markdown =
         crate::llm::summarize(&remote, &system, &notes, &lines, guard.cancel(), |body| {
-            let fingerprint = Sha256::digest(body)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>();
+            let fingerprint = crate::domain::sha256_hex(body);
             core(app, |core| {
                 core.reserve_processing_request(
                     id,

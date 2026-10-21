@@ -1,12 +1,11 @@
 //! Frozen session consent preparation and durable authorization snapshots.
 use crate::{
-    domain::{AppError, ProviderRole, Result, Settings, SttMode},
+    domain::{sha256_hex, AppError, ProviderRole, Result, Settings, SttMode},
     llm::Template,
     storage::Core,
 };
-use rusqlite::{params, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -117,6 +116,25 @@ fn invalid_record() -> AppError {
     )
 }
 
+/// How long a reviewed plan stays valid.
+const REVIEW_SECONDS: i64 = 300;
+
+pub(crate) fn configuration_revision(db: &Connection) -> Result<i64> {
+    Ok(db.query_row(
+        "SELECT revision FROM processing_configuration WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+/// The review has not expired, the clock did not move backwards past it, and the
+/// processing configuration is still the reviewed one.
+fn review_open(plan: &Plan, now: i64, revision: i64) -> bool {
+    now < plan.review_expires_at
+        && now >= plan.review_expires_at.saturating_sub(REVIEW_SECONDS)
+        && revision == plan.configuration_revision
+}
+
 pub(crate) fn clock() -> Result<i64> {
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -186,8 +204,8 @@ impl Core {
             id: Uuid::new_v4().to_string(),
             fingerprint: String::new(),
             meeting_id: None,
-            configuration_revision: self.processing_configuration_revision()?,
-            review_expires_at: now.checked_add(300).ok_or_else(changed)?,
+            configuration_revision: configuration_revision(&self.db)?,
+            review_expires_at: now.checked_add(REVIEW_SECONDS).ok_or_else(changed)?,
             scope,
             language: settings.stt_language,
             tracks: ["mic".into(), "system".into()],
@@ -202,14 +220,6 @@ impl Core {
         seal(&mut plan)?;
         self.pending_processing = Some(plan.clone());
         Ok(plan)
-    }
-
-    fn processing_configuration_revision(&self) -> Result<i64> {
-        Ok(self.db.query_row(
-            "SELECT revision FROM processing_configuration WHERE id=1",
-            [],
-            |row| row.get(0),
-        )?)
     }
 
     pub(crate) fn confirmed_session_processing(
@@ -229,9 +239,7 @@ impl Core {
         };
         let plan = self.pending_processing.as_ref().ok_or_else(changed)?;
         if confirmation != plan.fingerprint
-            || now >= plan.review_expires_at
-            || now < plan.review_expires_at.saturating_sub(300)
-            || plan.configuration_revision != self.processing_configuration_revision()?
+            || !review_open(plan, now, configuration_revision(&self.db)?)
         {
             return Err(changed());
         }
@@ -251,13 +259,8 @@ impl Core {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         ).optional()?;
         row.map(|(revision, state, json, started_at, authorized_until)| {
-            let state = match state.as_str() {
-                "prepared" => State::Prepared,
-                "consent_required" => State::ConsentRequired,
-                "cancelled" => State::Cancelled,
-                "interrupted" => State::Interrupted,
-                _ => return Err(invalid_record()),
-            };
+            let state = serde_json::from_value(serde_json::Value::String(state))
+                .map_err(|_| invalid_record())?;
             Ok(Snapshot {
                 meeting_id: meeting_id.to_string(),
                 revision,
@@ -312,24 +315,13 @@ impl Core {
 pub(crate) fn seal(plan: &mut Plan) -> Result<()> {
     plan.fingerprint.clear();
     let bytes = serde_json::to_vec(plan).map_err(|_| invalid_record())?;
-    plan.fingerprint = Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    plan.fingerprint = sha256_hex(bytes);
     Ok(())
 }
 
 pub(crate) fn attach(tx: &Transaction<'_>, plan: &Plan, meeting_id: &str) -> Result<()> {
     let started_at = clock()?;
-    let revision: i64 = tx.query_row(
-        "SELECT revision FROM processing_configuration WHERE id=1",
-        [],
-        |row| row.get(0),
-    )?;
-    if started_at >= plan.review_expires_at
-        || started_at < plan.review_expires_at.saturating_sub(300)
-        || revision != plan.configuration_revision
-    {
+    if !review_open(plan, started_at, configuration_revision(tx)?) {
         return Err(changed());
     }
     let recording: bool = tx.query_row(

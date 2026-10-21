@@ -2,7 +2,7 @@
 use crate::{
     audio::Track,
     audio_timing::{self, Block, CLOCK_TOLERANCE_US},
-    domain::{AppError, Result, Segment, SegmentTiming},
+    domain::{hex, sha256_hex, AppError, Result, Segment, SegmentTiming},
     providers::{check_status, client, read_capped, Connection},
 };
 use reqwest::blocking::multipart::{Form, Part};
@@ -168,18 +168,14 @@ fn copy_samples(
 }
 
 pub fn plan(tracks: &[Track]) -> Result<CloudPlan> {
-    prepare(tracks, MAX_CHUNK_BYTES)
+    prepare(tracks, MAX_CHUNK_BYTES, &AtomicBool::new(false))
 }
 
 pub fn plan_cancellable(tracks: &[Track], cancel: &AtomicBool) -> Result<CloudPlan> {
-    prepare_cancellable(tracks, MAX_CHUNK_BYTES, cancel)
+    prepare(tracks, MAX_CHUNK_BYTES, cancel)
 }
 
-fn prepare(tracks: &[Track], cap: u64) -> Result<CloudPlan> {
-    prepare_cancellable(tracks, cap, &AtomicBool::new(false))
-}
-
-fn prepare_cancellable(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Result<CloudPlan> {
+fn prepare(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Result<CloudPlan> {
     cancelled(cancel)?;
     if tracks.is_empty() || tracks.len() > 2 || cap <= WAV_HEADER_BYTES + 64 {
         return Err(error(
@@ -292,11 +288,7 @@ fn prepare_cancellable(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Resul
         bytes,
         requests,
         tracks: kinds,
-        fingerprint: fingerprint
-            .finalize()
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
+        fingerprint: hex(&fingerprint.finalize()),
         input,
         prepared,
         _scratch: scratch,
@@ -447,10 +439,7 @@ pub fn transcribe(
             cancelled(cancel)?;
             let identity = serde_json::to_vec(&(chunk.digest, model, language, prompt.trim()))
                 .map_err(|_| changed())?;
-            let fingerprint: String = Sha256::digest(identity)
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
+            let fingerprint = sha256_hex(identity);
             before_request(&fingerprint, chunk.bytes)?;
             cancelled(cancel)?;
             let response = crate::providers::authorize(http.post(url.clone()), connection.key())
@@ -638,8 +627,8 @@ pub(crate) mod tests {
         let track = synthetic(dir.path(), "mic", 32000);
         fs::write(&track.timing_path, "{\"frame_offset\":0,\"frames\":16000,\"capture_start_us\":1000000,\"generation\":1}\n{\"frame_offset\":16000,\"frames\":16000,\"capture_start_us\":6000000,\"generation\":2}\n").unwrap();
         let tracks = [track.clone()];
-        let first = prepare(&tracks, 16044).unwrap();
-        let second = prepare(&tracks, 16044).unwrap();
+        let first = prepare(&tracks, 16044, &AtomicBool::new(false)).unwrap();
+        let second = prepare(&tracks, 16044, &AtomicBool::new(false)).unwrap();
         assert_eq!(first.requests, 4);
         assert_eq!(first.bytes, 64176);
         assert_eq!(first.fingerprint(), second.fingerprint());
@@ -709,7 +698,7 @@ pub(crate) mod tests {
     fn cancellation_prevents_additional_chunks_and_no_partial_result_returns() {
         let dir = tempfile::tempdir().unwrap();
         let tracks = [synthetic(dir.path(), "mic", 1600)];
-        let plan = prepare(&tracks, 1644).unwrap();
+        let plan = prepare(&tracks, 1644, &AtomicBool::new(false)).unwrap();
         assert_eq!(plan.requests, 2);
         let (connection, worker, seen) = serve(vec![r#"{"text":"first"}"#.into()]);
         let cancel = AtomicBool::new(false);

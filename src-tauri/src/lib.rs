@@ -25,12 +25,11 @@ mod stt;
 mod transcript_edits;
 
 use domain::*;
-use sha2::{Digest, Sha256};
 use std::{
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, MutexGuard,
     },
 };
 use storage::Core;
@@ -75,6 +74,16 @@ where
     })
     .await
     .map_err(|_| AppError::new("worker", "The background operation failed."))?
+}
+
+/// Locks the shared core. Keep each guard as short-lived as the work allows, so keychain,
+/// network and engine work never runs while it is held.
+fn lock_core(app: &AppHandle) -> Result<MutexGuard<'_, Core>> {
+    app.state::<AppState>()
+        .inner()
+        .core
+        .lock()
+        .map_err(|_| AppError::new("internal", "The local database is unavailable."))
 }
 
 fn publish(app: &AppHandle, state: &RecordingState) {
@@ -219,9 +228,7 @@ async fn start_recording(
 
 #[tauri::command]
 async fn list_audio_devices() -> Result<audio::Devices> {
-    tauri::async_runtime::spawn_blocking(audio::devices)
-        .await
-        .map_err(|_| AppError::new("audio", "Device discovery failed."))?
+    blocking(audio::devices).await
 }
 
 #[tauri::command]
@@ -256,11 +263,7 @@ async fn cancel_session_processing(
     let worker_app = app.clone();
     let snapshot = blocking(move || {
         owner.cancel_session_with(&id, || {
-            let state = worker_app.state::<AppState>();
-            let mut core = state
-                .core
-                .lock()
-                .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
+            let mut core = lock_core(&worker_app)?;
             let snapshot = core.cancel_session_processing(&id, expected_revision)?;
             let run_id = snapshot.plan.id.clone();
             Ok((snapshot, run_id))
@@ -380,7 +383,7 @@ async fn save_api_connection(
         let state = app.state::<AppState>();
         let _writer = state.provider_writes.lock().map_err(|_| AppError::new("provider", "Provider settings are unavailable."))?;
         let previous = {
-            let core = state.core.lock().map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
+            let core = lock_core(&app)?;
             id.as_deref().map(|id| core.api_connection(id)).transpose()?
         };
         if previous.as_ref().map(|config| config.revision) != expected_revision {
@@ -402,8 +405,7 @@ async fn save_api_connection(
             KeyChange::Replace { key } => Some(providers::store_key(&key)?),
             KeyChange::Remove => None,
         };
-        let result = state.core.lock()
-            .map_err(|_| AppError::new("internal", "Settings are unavailable."))
+        let result = lock_core(&app)
             .and_then(|mut core| core.save_api_connection(id.as_deref(), &name, &base_url, account.as_deref(), expected_revision));
         if result.is_err() {
             if account != old_account {
@@ -431,7 +433,7 @@ async fn delete_api_connection(
         let state = app.state::<AppState>();
         let _writer = state.provider_writes.lock().map_err(|_| AppError::new("provider", "Provider settings are unavailable."))?;
         let (settings, account) = {
-            let mut core = state.core.lock().map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
+            let mut core = lock_core(&app)?;
             let account = core.api_connection(&id)?.credential_account;
             (core.delete_api_connection(&id,expected_revision)?,account)
         };
@@ -629,10 +631,7 @@ fn processing_plan(
     let input = serde_json::to_vec(&(config, payload, requests, audio_bytes, &tracks))
         .map_err(|_| AppError::new("processing_plan", "The request could not be prepared."))?;
     Ok(ProcessingPlan {
-        fingerprint: Sha256::digest(input)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect(),
+        fingerprint: sha256_hex(input),
         base_url: config.base_url.clone(),
         model: model.to_string(),
         requests,
@@ -757,14 +756,7 @@ async fn transcribe_meeting(
 ) -> Result<()> {
     let root = stt_root(&app)?;
     blocking(move || {
-        let owner = {
-            let state = app.state::<AppState>();
-            let core = state
-                .core
-                .lock()
-                .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
-            core.processing_owner.clone()
-        };
+        let owner = lock_core(&app)?.processing_owner.clone();
         let operation = owner.begin(&id)?;
         let cancel = operation.cancel();
         {
@@ -780,11 +772,7 @@ async fn transcribe_meeting(
             };
             report("preparing", 0);
             let (settings, tracks) = {
-                let state = app.state::<AppState>();
-                let core = state
-                    .core
-                    .lock()
-                    .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
+                let core = lock_core(&app)?;
                 (core.settings()?, finalized_tracks(&core.get_meeting(&id)?)?)
             };
             let (segments, provider, model) = match settings.stt_mode {
@@ -806,11 +794,7 @@ async fn transcribe_meeting(
                         confirmation.as_deref(),
                     )?;
                     {
-                        let state = app.state::<AppState>();
-                        let core = state
-                            .core
-                            .lock()
-                            .map_err(|_| AppError::new("internal", "Settings are unavailable."))?;
+                        let core = lock_core(&app)?;
                         if core.quitting || !same_stt_settings(&core.settings()?, &settings) {
                             return Err(plan_changed());
                         }
@@ -826,10 +810,7 @@ async fn transcribe_meeting(
                         cancel,
                         report,
                         |_, _| {
-                            let state = app.state::<AppState>();
-                            let core = state.core.lock().map_err(|_| {
-                                AppError::new("internal", "Settings are unavailable.")
-                            })?;
+                            let core = lock_core(&app)?;
                             if core.quitting || !same_stt_settings(&core.settings()?, &settings) {
                                 return Err(plan_changed());
                             }
@@ -840,11 +821,7 @@ async fn transcribe_meeting(
                 }
             };
             operation.finish(|| {
-                let state = app.state::<AppState>();
-                let mut core = state
-                    .core
-                    .lock()
-                    .map_err(|_| AppError::new("internal", "The local database is unavailable."))?;
+                let mut core = lock_core(&app)?;
                 let current = core.settings()?;
                 if core.quitting || !same_stt_settings(&current, &settings) {
                     return Err(plan_changed());
@@ -962,11 +939,10 @@ async fn generate_summary(
     )?;
     confirm(&plan, Some(&confirmation))?;
     blocking(move || {
-        let owner = {
-            let state = app.state::<AppState>();
-            let core = state.core.lock().map_err(|_| plan_changed())?;
-            core.processing_owner.clone()
-        };
+        let owner = lock_core(&app)
+            .map_err(|_| plan_changed())?
+            .processing_owner
+            .clone();
         let operation = owner.begin(&id)?;
         let mut sent = 0;
         let markdown = llm::summarize(
@@ -976,8 +952,7 @@ async fn generate_summary(
             &lines,
             operation.cancel(),
             |_| {
-                let state = app.state::<AppState>();
-                let core = state.core.lock().map_err(|_| plan_changed())?;
+                let core = lock_core(&app).map_err(|_| plan_changed())?;
                 manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
                 sent += 1;
                 if sent > plan.requests {
@@ -987,8 +962,7 @@ async fn generate_summary(
             },
         )?;
         operation.finish(|| {
-            let state = app.state::<AppState>();
-            let mut core = state.core.lock().map_err(|_| plan_changed())?;
+            let mut core = lock_core(&app).map_err(|_| plan_changed())?;
             manual_text_check(&core, &id, &config, detail.notes_revision, &lines)?;
             core.save_summary(&id, &plan.base_url, &plan.model, &markdown, &template)?;
             publish(&app, &core.recording_state());
@@ -1274,11 +1248,10 @@ async fn ask_meeting(
     )?;
     confirm(&plan, Some(&confirmation))?;
     blocking(move || {
-        let owner = {
-            let state = app.state::<AppState>();
-            let core = state.core.lock().map_err(|_| plan_changed())?;
-            core.processing_owner.clone()
-        };
+        let owner = lock_core(&app)
+            .map_err(|_| plan_changed())?
+            .processing_owner
+            .clone();
         let operation = owner.begin(&id)?;
         // Content, provider, and the thread's turns must still match what was reviewed.
         let unchanged = |core: &Core| -> Result<()> {
@@ -1300,14 +1273,12 @@ async fn ask_meeting(
             &earlier,
             operation.cancel(),
             |_| {
-                let state = app.state::<AppState>();
-                let core = state.core.lock().map_err(|_| plan_changed())?;
+                let core = lock_core(&app).map_err(|_| plan_changed())?;
                 unchanged(&core)
             },
         )?;
         operation.finish(|| {
-            let state = app.state::<AppState>();
-            let mut core = state.core.lock().map_err(|_| plan_changed())?;
+            let mut core = lock_core(&app).map_err(|_| plan_changed())?;
             unchanged(&core)?;
             core.save_question_turn(
                 &id,
@@ -1491,15 +1462,13 @@ async fn ask_library(
     let plan = library_plan(&config, &scope, &question)?;
     confirm(&plan, Some(&confirmation))?;
     blocking(move || {
-        let owner = {
-            let state = app.state::<AppState>();
-            let core = state.core.lock().map_err(|_| plan_changed())?;
-            core.processing_owner.clone()
-        };
+        let owner = lock_core(&app)
+            .map_err(|_| plan_changed())?
+            .processing_owner
+            .clone();
         let operation = owner.begin("library")?;
         let unchanged = || {
-            let state = app.state::<AppState>();
-            let core = state.core.lock().map_err(|_| plan_changed())?;
+            let core = lock_core(&app).map_err(|_| plan_changed())?;
             library_check(&core, &ids, &config, &question, &scope)
         };
         let answer = llm::ask_library(
@@ -1511,8 +1480,7 @@ async fn ask_library(
             |_| unchanged(),
         )?;
         operation.finish(|| {
-            let state = app.state::<AppState>();
-            let mut core = state.core.lock().map_err(|_| plan_changed())?;
+            let mut core = lock_core(&app).map_err(|_| plan_changed())?;
             library_check(&core, &ids, &config, &question, &scope)?;
             core.save_library_answer(&ids, question.trim(), &answer, &plan.base_url, &plan.model)
         })
@@ -1567,8 +1535,7 @@ async fn rewrite_text(
     blocking(move || {
         let operation = owner.begin("rewrite")?;
         let unchanged = || {
-            let state = app.state::<AppState>();
-            let core = state.core.lock().map_err(|_| plan_changed())?;
+            let core = lock_core(&app).map_err(|_| plan_changed())?;
             if llm_changed(&core, &config)? {
                 return Err(plan_changed());
             }
@@ -1687,15 +1654,14 @@ async fn save_settings(
 #[tauri::command]
 async fn choose_vault_folder(app: AppHandle) -> Result<Settings> {
     let dialog_app = app.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        dialog_app
+    let picked = blocking(move || {
+        Ok(dialog_app
             .dialog()
             .file()
             .set_title("Choose a folder for meeting notes")
-            .blocking_pick_folder()
+            .blocking_pick_folder())
     })
-    .await
-    .map_err(|_| AppError::new("dialog", "The folder picker failed."))?;
+    .await?;
     with_core(app, false, move |core, _| match picked {
         Some(file) => {
             let path = file

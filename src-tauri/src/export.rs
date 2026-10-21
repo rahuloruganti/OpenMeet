@@ -194,57 +194,31 @@ pub fn render_transcript(detail: &MeetingDetail, format: TranscriptFormat) -> Re
                 ));
             }
         }
-        TranscriptFormat::Srt => {
+        TranscriptFormat::Srt | TranscriptFormat::Vtt => {
+            let srt = format == TranscriptFormat::Srt;
+            if !srt {
+                output.push_str("WEBVTT\n\n");
+            }
             for (index, segment) in detail.segments.iter().enumerate() {
                 let SegmentTiming::Timed { start_ms, end_ms } = segment.timing else {
                     return Err(untimed());
                 };
-                let end = if end_ms > start_ms {
-                    end_ms
+                let separator = if srt { ',' } else { '.' };
+                let times = format!(
+                    "{} --> {}",
+                    cue_time(start_ms, separator),
+                    cue_time(end_ms.max(start_ms + 1), separator)
+                );
+                let (who, text) = (speaker(segment), one_line(&segment.text));
+                output.push_str(&if srt {
+                    format!("{}\n{times}\n{who}: {text}\n\n", index + 1)
                 } else {
-                    start_ms + 1
-                };
-                output.push_str(&format!(
-                    "{}\n{} --> {}\n{}: {}\n\n",
-                    index + 1,
-                    cue_time(start_ms, ','),
-                    cue_time(end, ','),
-                    speaker(segment),
-                    one_line(&segment.text)
-                ));
-            }
-        }
-        TranscriptFormat::Vtt => {
-            output.push_str("WEBVTT\n\n");
-            for segment in &detail.segments {
-                let SegmentTiming::Timed { start_ms, end_ms } = segment.timing else {
-                    return Err(untimed());
-                };
-                let end = if end_ms > start_ms {
-                    end_ms
-                } else {
-                    start_ms + 1
-                };
-                output.push_str(&format!(
-                    "{} --> {}\n<v {}>{}\n\n",
-                    cue_time(start_ms, '.'),
-                    cue_time(end, '.'),
-                    vtt_escape(&speaker(segment)),
-                    vtt_escape(&one_line(&segment.text))
-                ));
+                    format!("{times}\n<v {}>{}\n\n", vtt_escape(&who), vtt_escape(&text))
+                });
             }
         }
     }
     Ok(output)
-}
-
-/// The transcript file extension; the stem is the Markdown snapshot's, so one export shares a name.
-fn extension(format: TranscriptFormat) -> &'static str {
-    match format {
-        TranscriptFormat::Txt => "txt",
-        TranscriptFormat::Srt => "srt",
-        TranscriptFormat::Vtt => "vtt",
-    }
 }
 
 fn safe_name(text: &str, max: usize) -> String {
@@ -308,7 +282,8 @@ pub fn write_snapshot(
     let (markdown, created_copy) = publish(&folder, original, output.as_bytes())?;
     let mut transcript_paths = Vec::new();
     for (format, content) in transcripts {
-        let target = markdown.with_extension(extension(format));
+        // The stem is the Markdown snapshot's, so one export shares a name.
+        let target = markdown.with_extension(format.as_str());
         let (path, _) = publish(&folder, target, content.as_bytes())?;
         transcript_paths.push(path.to_string_lossy().into_owned());
     }

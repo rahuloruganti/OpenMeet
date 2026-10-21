@@ -1,6 +1,6 @@
 //! Explicit model discovery and verified file acquisition. Files never start inference servers.
 use crate::{
-    domain::{AppError, Result},
+    domain::{hex, AppError, Result},
     providers, stt,
 };
 use reqwest::{blocking::Client, redirect::Policy, Url};
@@ -317,10 +317,6 @@ fn import_with_catalog(
     Ok(ImportedModel {
         model_id: approved.id.into(),
     })
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn stream_hash(

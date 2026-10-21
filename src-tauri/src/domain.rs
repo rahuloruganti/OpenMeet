@@ -250,6 +250,15 @@ pub enum SttMode {
     Cloud,
 }
 
+impl SttMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Cloud => "cloud",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyStatus {
@@ -403,11 +412,45 @@ pub enum TranscriptFormat {
     Vtt,
 }
 
+impl TranscriptFormat {
+    /// Every format in the fixed order they are stored and listed.
+    pub const ALL: [Self; 3] = [Self::Txt, Self::Srt, Self::Vtt];
+
+    /// The stored name, which is also the file extension.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Txt => "txt",
+            Self::Srt => "srt",
+            Self::Vtt => "vtt",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilenamePattern {
     Title,
     DateTitle,
+}
+
+impl FilenamePattern {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::DateTitle => "date_title",
+        }
+    }
+}
+
+/// Lowercase hex of `bytes`, e.g. a digest.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Lowercase hex SHA-256 of `data`.
+pub fn sha256_hex(data: impl AsRef<[u8]>) -> String {
+    use sha2::Digest;
+    hex(&sha2::Sha256::digest(data))
 }
 
 pub fn now() -> Result<String> {

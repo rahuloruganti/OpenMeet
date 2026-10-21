@@ -141,7 +141,7 @@ impl Core {
                 params![id, meeting_id, text, owner, due, done],
             )?,
             None => {
-                self.get_meeting_title(meeting_id)?;
+                crate::storage::require_meeting(&self.db, meeting_id)?;
                 if self.action_items(meeting_id)?.len() >= MAX_ITEMS {
                     return Err(invalid(&format!("A meeting can have at most {MAX_ITEMS} tasks.")));
                 }
@@ -221,17 +221,6 @@ impl Core {
         }
         tx.commit()?;
         self.action_items(meeting_id)
-    }
-
-    fn get_meeting_title(&self, meeting_id: &str) -> Result<String> {
-        self.db
-            .query_row(
-                "SELECT title FROM meetings WHERE id=?1",
-                [meeting_id],
-                |row| row.get(0),
-            )
-            .optional()?
-            .ok_or_else(|| AppError::new("not_found", "Meeting not found."))
     }
 }
 
