@@ -65,28 +65,6 @@ export function RewriteSelection(props: {
       setWorking(false);
     }
   };
-  const plan = (text: string) =>
-    run(async () => setReview(await api.planRewrite(text, request)));
-  const send = (text: string, reviewed: ProcessingPlan) =>
-    run(async () => {
-      setReview(null);
-      setResult(await api.rewriteText(text, request, reviewed.fingerprint));
-    });
-  const apply = (chosen: Selection, rewritten: string) => {
-    // The selection must still hold the text that was rewritten.
-    if (props.notes.slice(chosen.start, chosen.end) !== chosen.text) {
-      setError(
-        "Your notes changed around the selection, so nothing was replaced. Copy the rewrite instead.",
-      );
-      return;
-    }
-    props.onApply(
-      props.notes.slice(0, chosen.start) +
-        rewritten +
-        props.notes.slice(chosen.end),
-    );
-    close();
-  };
 
   return (
     <>
@@ -122,7 +100,10 @@ export function RewriteSelection(props: {
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                if (request.trim()) void plan(selection.text);
+                if (request.trim())
+                  void run(async () =>
+                    setReview(await api.planRewrite(selection.text, request)),
+                  );
               }}
             >
               <div
@@ -203,7 +184,18 @@ export function RewriteSelection(props: {
                 <button
                   className="primary"
                   disabled={props.disabled || working}
-                  onClick={() => void send(selection.text, review)}
+                  onClick={() =>
+                    void run(async () => {
+                      setReview(null);
+                      setResult(
+                        await api.rewriteText(
+                          selection.text,
+                          request,
+                          review.fingerprint,
+                        ),
+                      );
+                    })
+                  }
                 >
                   Send for rewrite
                 </button>
@@ -222,7 +214,20 @@ export function RewriteSelection(props: {
                 <button
                   className="primary"
                   disabled={props.disabled}
-                  onClick={() => apply(selection, result)}
+                  onClick={() => {
+                    const { start, end, text } = selection;
+                    // The selection must still hold the text that was rewritten.
+                    if (props.notes.slice(start, end) !== text)
+                      return setError(
+                        "Your notes changed around the selection, so nothing was replaced. Copy the rewrite instead.",
+                      );
+                    props.onApply(
+                      props.notes.slice(0, start) +
+                        result +
+                        props.notes.slice(end),
+                    );
+                    close();
+                  }}
                 >
                   Replace selection
                 </button>

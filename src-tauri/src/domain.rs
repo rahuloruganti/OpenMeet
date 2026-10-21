@@ -322,7 +322,6 @@ pub struct LibraryAnswer {
     pub answer: String,
     pub provider: String,
     pub model: String,
-    pub created_at: String,
     pub meeting_ids: Vec<String>,
 }
 

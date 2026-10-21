@@ -95,7 +95,6 @@ const saved = (
   answer,
   provider: plan.base_url,
   model: plan.model,
-  created_at: "2026-10-20T10:00:00Z",
   meeting_ids: meetingIds,
 });
 

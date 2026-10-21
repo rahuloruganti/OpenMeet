@@ -601,6 +601,11 @@ async fn cancel_model_download() -> Result<()> {
     model_library::cancel_download()
 }
 
+/// The app is quitting or the summary/question provider changed since review.
+fn llm_changed(core: &Core, config: &ProviderConfig) -> Result<bool> {
+    Ok(core.quitting || core.settings()?.connection(ProviderRole::Llm) != Some(config))
+}
+
 fn plan_changed() -> AppError {
     AppError::new("processing_plan_changed", "The meeting or provider settings changed. Review and confirm again. Nothing new was sent or saved.")
 }
@@ -926,8 +931,7 @@ fn manual_text_check(
     lines: &[String],
 ) -> Result<()> {
     let current = core.get_meeting(id)?;
-    if core.quitting
-        || core.settings()?.connection(ProviderRole::Llm) != Some(config)
+    if llm_changed(core, config)?
         || current.notes_revision != revision
         || transcript_lines(&current.segments, &current.speaker_names) != lines
     {
@@ -1206,8 +1210,7 @@ fn question_unchanged(
     thread: (Option<i64>, &[QuestionTurn]),
 ) -> Result<()> {
     let current = core.get_meeting(id)?;
-    if core.quitting
-        || core.settings()?.connection(ProviderRole::Llm) != Some(config)
+    if llm_changed(core, config)?
         || current.notes_revision != reviewed.0.notes_revision
         || earlier_turns(&core.question_threads(id)?, thread.0)? != thread.1
         || question_content(core, &current, question, thread.1)
@@ -1440,10 +1443,7 @@ fn library_check(
     question: &str,
     scope: &LibraryScope,
 ) -> Result<()> {
-    if core.quitting
-        || core.settings()?.connection(ProviderRole::Llm) != Some(config)
-        || !library_unchanged(core, ids, question, scope)
-    {
+    if llm_changed(core, config)? || !library_unchanged(core, ids, question, scope) {
         return Err(plan_changed());
     }
     Ok(())
@@ -1566,7 +1566,7 @@ async fn rewrite_text(
         let unchanged = || {
             let state = app.state::<AppState>();
             let core = state.core.lock().map_err(|_| plan_changed())?;
-            if core.quitting || core.settings()?.connection(ProviderRole::Llm) != Some(&config) {
+            if llm_changed(&core, &config)? {
                 return Err(plan_changed());
             }
             Ok(())

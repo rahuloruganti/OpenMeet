@@ -10,7 +10,7 @@ impl Core {
     /// Newest first, each with its meeting ids in the order sent.
     pub fn library_answers(&self) -> Result<Vec<LibraryAnswer>> {
         let mut query = self.db.prepare(
-            "SELECT a.id,a.question,a.answer,a.provider,a.model,a.created_at,m.meeting_id \
+            "SELECT a.id,a.question,a.answer,a.provider,a.model,m.meeting_id \
              FROM library_answers a JOIN library_answer_meetings m ON m.answer_id=a.id \
              ORDER BY a.id DESC,m.position",
         )?;
@@ -22,10 +22,9 @@ impl Core {
                     answer: row.get(2)?,
                     provider: row.get(3)?,
                     model: row.get(4)?,
-                    created_at: row.get(5)?,
                     meeting_ids: Vec::new(),
                 },
-                row.get::<_, String>(6)?,
+                row.get::<_, String>(5)?,
             ))
         })?;
         let mut answers: Vec<LibraryAnswer> = Vec::new();
@@ -63,10 +62,14 @@ impl Core {
             )?;
         }
         tx.commit()?;
-        self.library_answers()?
-            .into_iter()
-            .find(|saved| saved.id == id)
-            .ok_or_else(missing)
+        Ok(LibraryAnswer {
+            id,
+            question: question.into(),
+            answer: answer.into(),
+            provider: provider.into(),
+            model: model.into(),
+            meeting_ids: meeting_ids.to_vec(),
+        })
     }
 
     /// Explicit user action; returns the remaining answers.

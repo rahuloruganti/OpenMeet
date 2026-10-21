@@ -1314,13 +1314,7 @@ impl Core {
         name: &str,
         instructions: &str,
     ) -> Result<Settings> {
-        let (name, instructions) = (name.trim(), instructions.trim());
-        if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
-            return Err(AppError::new(
-                "summary_template",
-                "Enter a template name of 1–80 characters on one line.",
-            ));
-        }
+        let instructions = instructions.trim();
         crate::llm::validate_instructions(instructions, MAX_TEMPLATE_INSTRUCTIONS)?;
         if instructions.is_empty() {
             return Err(AppError::new(
@@ -1328,47 +1322,60 @@ impl Core {
                 "Describe the summary structure for this template.",
             ));
         }
-        let changed = match id {
-            Some(id) => self.db.execute(
-                "UPDATE summary_templates SET name=?2,instructions=?3 WHERE id=?1",
-                params![id, name, instructions],
-            )?,
-            None => {
-                let count: i64 =
-                    self.db
-                        .query_row("SELECT COUNT(*) FROM summary_templates", [], |row| {
-                            row.get(0)
-                        })?;
-                if count >= MAX_CUSTOM_TEMPLATES {
-                    return Err(AppError::new(
-                        "summary_template",
-                        format!("You can save up to {MAX_CUSTOM_TEMPLATES} custom templates."),
-                    ));
-                }
-                self.db.execute(
-                    "INSERT INTO summary_templates(id,name,instructions) VALUES (?1,?2,?3)",
-                    params![
-                        format!("{CUSTOM_TEMPLATE_PREFIX}{}", Uuid::new_v4()),
-                        name,
-                        instructions
-                    ],
-                )?
-            }
-        };
-        if changed != 1 {
-            return Err(missing_template());
-        }
-        self.settings()
+        self.save_named(&TEMPLATES, id, name, instructions)
     }
 
     /// Existing summaries keep their stored text; history shows a fallback label afterwards.
     pub fn delete_summary_template(&mut self, id: &str) -> Result<Settings> {
-        if self
-            .db
-            .execute("DELETE FROM summary_templates WHERE id=?1", [id])?
-            != 1
-        {
-            return Err(missing_template());
+        self.delete_named(&TEMPLATES, id)
+    }
+
+    /// Saves a user-named text whose body the caller validated: creates one when `id` is `None`,
+    /// otherwise replaces it.
+    pub(crate) fn save_named(
+        &mut self,
+        kind: &Named,
+        id: Option<&str>,
+        name: &str,
+        body: &str,
+    ) -> Result<Settings> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+            let message = format!("Enter a {} name of 1–80 characters on one line.", kind.noun);
+            return Err(AppError::new(kind.code, message));
+        }
+        let (table, column) = (kind.table, kind.column);
+        let changed = match id {
+            Some(id) => self.db.execute(
+                &format!("UPDATE {table} SET name=?2,{column}=?3 WHERE id=?1"),
+                params![id, name, body],
+            )?,
+            None => {
+                let count: i64 =
+                    self.db
+                        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                            row.get(0)
+                        })?;
+                if count >= kind.cap {
+                    let message = format!("You can save up to {} {}s.", kind.cap, kind.noun);
+                    return Err(AppError::new(kind.code, message));
+                }
+                self.db.execute(
+                    &format!("INSERT INTO {table}(id,name,{column}) VALUES (?1,?2,?3)"),
+                    params![format!("{}{}", kind.prefix, Uuid::new_v4()), name, body],
+                )?
+            }
+        };
+        if changed != 1 {
+            return Err((kind.missing)());
+        }
+        self.settings()
+    }
+
+    pub(crate) fn delete_named(&mut self, kind: &Named, id: &str) -> Result<Settings> {
+        let sql = format!("DELETE FROM {} WHERE id=?1", kind.table);
+        if self.db.execute(&sql, [id])? != 1 {
+            return Err((kind.missing)());
         }
         self.settings()
     }
@@ -1538,8 +1545,28 @@ pub(crate) fn transcript_hash(segments: &[Segment], names: &SpeakerNames) -> Str
 
 pub const CUSTOM_TEMPLATE_PREFIX: &str = "custom-";
 const MAX_SUMMARY_EDIT_BYTES: usize = 2 * 1024 * 1024;
-const MAX_CUSTOM_TEMPLATES: i64 = 50;
 const MAX_TEMPLATE_INSTRUCTIONS: usize = 4000;
+
+/// A table of user-named texts (summary templates, recipes); names are fixed, never user input.
+pub(crate) struct Named {
+    pub table: &'static str,
+    pub column: &'static str,
+    pub prefix: &'static str,
+    pub code: &'static str,
+    pub noun: &'static str,
+    pub cap: i64,
+    pub missing: fn() -> AppError,
+}
+
+const TEMPLATES: Named = Named {
+    table: "summary_templates",
+    column: "instructions",
+    prefix: CUSTOM_TEMPLATE_PREFIX,
+    code: "summary_template",
+    noun: "custom template",
+    cap: 50,
+    missing: missing_template,
+};
 const MAX_SUMMARY_INSTRUCTIONS: usize = 2000;
 
 pub fn missing_template() -> AppError {
@@ -2290,7 +2317,7 @@ mod tests {
             "summary_template_missing"
         );
         assert_eq!(core.list_summaries(&meeting).unwrap()[0].template, id);
-        for index in 0..MAX_CUSTOM_TEMPLATES {
+        for index in 0..TEMPLATES.cap {
             core.save_summary_template(None, &format!("T{index}"), "## A")
                 .unwrap();
         }

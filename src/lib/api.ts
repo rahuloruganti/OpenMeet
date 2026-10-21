@@ -206,7 +206,6 @@ export type LibraryAnswer = {
   answer: string;
   provider: string;
   model: string;
-  created_at: string;
   meeting_ids: string[];
 };
 /** `original_text` holds the engine's text once the user edited a segment. */

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { api, errorMessage, type Recipe, type Settings } from "../lib/api";
+import { api, type Recipe, type Settings } from "../lib/api";
+import { SavedTextEditor } from "./SummaryTemplates";
 
 /** Built-in recipes live in code; saved ones come from Settings. */
 export const builtinRecipes: Recipe[] = [
@@ -68,34 +68,6 @@ export function RecipeSettings({
   disabled: boolean;
   onSettings: (settings: Settings) => void;
 }) {
-  const saved = settings?.recipes ?? [];
-  const [editing, setEditing] = useState("");
-  const [name, setName] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [error, setError] = useState("");
-  const choose = (id: string) => {
-    const recipe = saved.find((item) => item.id === id);
-    setEditing(recipe?.id ?? "");
-    setName(recipe?.name ?? "");
-    setPrompt(recipe?.prompt ?? "");
-  };
-  const run = async (action: () => Promise<Settings>, done: string) => {
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      onSettings(await action());
-      setNotice(done);
-      choose("");
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const locked = disabled || busy || settings === null;
   return (
     <section className="settings-section" aria-label="Recipes">
       <h3>Recipes</h3>
@@ -104,69 +76,23 @@ export function RecipeSettings({
         Choosing one only fills the question box; you still review what is sent.
         Built in: {builtinRecipes.map((recipe) => recipe.name).join(", ")}.
       </p>
-      <label>
-        Saved recipe
-        <select
-          value={editing}
-          disabled={locked}
-          onChange={(event) => choose(event.target.value)}
-        >
-          <option value="">New recipe</option>
-          {saved.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Recipe name
-        <input
-          value={name}
-          maxLength={80}
-          disabled={locked}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </label>
-      <label>
-        Question
-        <textarea
-          value={prompt}
-          maxLength={1000}
-          disabled={locked}
-          placeholder="What risks were raised, and who owns each one?"
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-      </label>
-      <div className="panel-actions">
-        <button
-          disabled={locked || !name.trim() || !prompt.trim()}
-          onClick={() =>
-            void run(
-              () => api.saveRecipe(editing || null, name, prompt),
-              editing ? "Recipe updated." : "Recipe added.",
-            )
-          }
-        >
-          {editing ? "Save recipe" : "Add recipe"}
-        </button>
-        {editing && (
-          <button
-            disabled={locked}
-            onClick={() =>
-              void run(() => api.deleteRecipe(editing), "Recipe deleted.")
-            }
-          >
-            Delete recipe
-          </button>
-        )}
-      </div>
-      {notice && <p role="status">{notice}</p>}
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
+      <SavedTextEditor
+        noun="recipe"
+        pickerLabel="Saved recipe"
+        bodyLabel="Question"
+        bodyMax={1000}
+        placeholder="What risks were raised, and who owns each one?"
+        deleted="Recipe deleted."
+        items={(settings?.recipes ?? []).map((recipe) => ({
+          id: recipe.id,
+          name: recipe.name,
+          body: recipe.prompt,
+        }))}
+        locked={disabled || settings === null}
+        onSave={api.saveRecipe}
+        onDelete={api.deleteRecipe}
+        onSettings={onSettings}
+      />
     </section>
   );
 }

@@ -370,10 +370,15 @@ pub fn earlier_count(thread: &[QuestionTurn]) -> usize {
     thread.len().min(MAX_EARLIER_TURNS)
 }
 
+/// A question or request of 1 to `MAX_QUESTION_CHARS` characters once trimmed.
+fn prompt_ok(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty() && text.chars().count() <= MAX_QUESTION_CHARS
+}
+
 /// Checks the question and thread context, but not the size of the meeting content.
 pub fn check_question(question: &str, thread: &[QuestionTurn]) -> Result<()> {
-    let question = question.trim();
-    if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
+    if !prompt_ok(question) {
         return Err(AppError::new(
             "invalid_question",
             format!("Ask a question of 1 to {MAX_QUESTION_CHARS} characters. Nothing was sent."),
@@ -534,8 +539,7 @@ fn library_message(items: &[LibraryItem], question: &str) -> String {
 /// Checks the question, the number of meetings and that there is something to send, but not
 /// the size. Callers run it on the full meetings, before choosing between full text and excerpts.
 pub fn check_library(items: &[LibraryItem], question: &str) -> Result<()> {
-    let question = question.trim();
-    if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
+    if !prompt_ok(question) {
         return Err(AppError::new(
             "invalid_question",
             format!("Ask a question of 1 to {MAX_QUESTION_CHARS} characters. Nothing was sent."),
@@ -644,8 +648,7 @@ pub fn check_rewrite(text: &str, request: &str) -> Result<()> {
             format!("Select 1 to {MAX_REWRITE_CHARS} characters to rewrite. Nothing was sent."),
         ));
     }
-    let request = request.trim();
-    if request.is_empty() || request.chars().count() > MAX_QUESTION_CHARS {
+    if !prompt_ok(request) {
         return Err(AppError::new(
             "invalid_rewrite",
             format!(

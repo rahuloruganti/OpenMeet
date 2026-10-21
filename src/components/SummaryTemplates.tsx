@@ -7,36 +7,145 @@ type Props = {
   onSettings: (settings: Settings) => void;
 };
 
-/** Saved personal instructions and user-defined summary templates. Built-in templates stay fixed. */
-export function SummaryTemplates({ settings, disabled, onSettings }: Props) {
-  const saved = settings?.summary_templates ?? [];
-  const [instructions, setInstructions] = useState<string | null>(null);
+type Item = { id: string; name: string; body: string };
+
+/** Picker plus name/body form for saved user texts (summary templates, recipes). */
+export function SavedTextEditor(props: {
+  /** Lower-case singular, e.g. "template". */
+  noun: string;
+  pickerLabel: string;
+  bodyLabel: string;
+  bodyMax: number;
+  placeholder: string;
+  /** Shown after a delete. */
+  deleted: string;
+  items: Item[];
+  locked: boolean;
+  onSave: (id: string | null, name: string, body: string) => Promise<Settings>;
+  onDelete: (id: string) => Promise<Settings>;
+  onSettings: (settings: Settings) => void;
+}) {
   const [editing, setEditing] = useState("");
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const run = async (action: () => Promise<Settings>, done: string) => {
+  const Noun = props.noun[0].toUpperCase() + props.noun.slice(1);
+  const choose = (id: string) => {
+    const item = props.items.find((saved) => saved.id === id);
+    setEditing(item?.id ?? "");
+    setName(item?.name ?? "");
+    setBody(item?.body ?? "");
+  };
+  const run = async (
+    action: () => Promise<Settings>,
+    done: string,
+    reset: boolean,
+  ) => {
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      onSettings(await action());
+      props.onSettings(await action());
       setNotice(done);
-      return true;
+      if (reset) choose("");
     } catch (failure) {
       setError(errorMessage(failure));
-      return false;
     } finally {
       setBusy(false);
     }
   };
-  const choose = (id: string) => {
-    const template = saved.find((item) => item.id === id);
-    setEditing(template?.id ?? "");
-    setName(template?.name ?? "");
-    setBody(template?.instructions ?? "");
+  const locked = props.locked || busy;
+  return (
+    <>
+      <label>
+        {props.pickerLabel}
+        <select
+          value={editing}
+          disabled={locked}
+          onChange={(event) => choose(event.target.value)}
+        >
+          <option value="">New {props.noun}</option>
+          {props.items.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {Noun} name
+        <input
+          value={name}
+          maxLength={80}
+          disabled={locked}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label>
+        {props.bodyLabel}
+        <textarea
+          value={body}
+          maxLength={props.bodyMax}
+          disabled={locked}
+          placeholder={props.placeholder}
+          onChange={(event) => setBody(event.target.value)}
+        />
+      </label>
+      <div className="panel-actions">
+        <button
+          disabled={locked || !name.trim() || !body.trim()}
+          onClick={() =>
+            void run(
+              () => props.onSave(editing || null, name, body),
+              editing ? `${Noun} updated.` : `${Noun} added.`,
+              !editing,
+            )
+          }
+        >
+          {editing ? `Save ${props.noun}` : `Add ${props.noun}`}
+        </button>
+        {editing && (
+          <button
+            disabled={locked}
+            onClick={() =>
+              void run(() => props.onDelete(editing), props.deleted, true)
+            }
+          >
+            Delete {props.noun}
+          </button>
+        )}
+      </div>
+      {notice && <p role="status">{notice}</p>}
+      {error && (
+        <p role="alert" className="error">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Saved personal instructions and user-defined summary templates. Built-in templates stay fixed. */
+export function SummaryTemplates({ settings, disabled, onSettings }: Props) {
+  const [instructions, setInstructions] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const saveInstructions = async () => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      onSettings(await api.saveSummaryInstructions(instructions ?? ""));
+      setNotice("Summary instructions saved.");
+      setInstructions(null);
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
   };
   const locked = disabled || busy || settings === null;
   return (
@@ -58,81 +167,33 @@ export function SummaryTemplates({ settings, disabled, onSettings }: Props) {
       </label>
       <button
         disabled={locked || instructions === null}
-        onClick={() =>
-          void run(
-            () => api.saveSummaryInstructions(instructions ?? ""),
-            "Summary instructions saved.",
-          ).then((ok) => ok && setInstructions(null))
-        }
+        onClick={() => void saveInstructions()}
       >
         Save instructions
       </button>
-      <label>
-        Custom template
-        <select
-          value={editing}
-          disabled={locked}
-          onChange={(event) => choose(event.target.value)}
-        >
-          <option value="">New template</option>
-          {saved.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Template name
-        <input
-          value={name}
-          maxLength={80}
-          disabled={locked}
-          onChange={(event) => setName(event.target.value)}
-        />
-      </label>
-      <label>
-        Template structure
-        <textarea
-          value={body}
-          maxLength={4000}
-          disabled={locked}
-          placeholder={"## Summary\n## Risks\n## Action items"}
-          onChange={(event) => setBody(event.target.value)}
-        />
-      </label>
-      <div className="panel-actions">
-        <button
-          disabled={locked || !name.trim() || !body.trim()}
-          onClick={() =>
-            void run(
-              () => api.saveSummaryTemplate(editing || null, name, body),
-              editing ? "Template updated." : "Template added.",
-            ).then((ok) => ok && !editing && choose(""))
-          }
-        >
-          {editing ? "Save template" : "Add template"}
-        </button>
-        {editing && (
-          <button
-            disabled={locked}
-            onClick={() =>
-              void run(
-                () => api.deleteSummaryTemplate(editing),
-                "Template deleted. Earlier summaries keep their text.",
-              ).then((ok) => ok && choose(""))
-            }
-          >
-            Delete template
-          </button>
-        )}
-      </div>
       {notice && <p role="status">{notice}</p>}
       {error && (
         <p role="alert" className="error">
           {error}
         </p>
       )}
+      <SavedTextEditor
+        noun="template"
+        pickerLabel="Custom template"
+        bodyLabel="Template structure"
+        bodyMax={4000}
+        placeholder={"## Summary\n## Risks\n## Action items"}
+        deleted="Template deleted. Earlier summaries keep their text."
+        items={(settings?.summary_templates ?? []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          body: item.instructions,
+        }))}
+        locked={disabled || settings === null}
+        onSave={api.saveSummaryTemplate}
+        onDelete={api.deleteSummaryTemplate}
+        onSettings={onSettings}
+      />
     </section>
   );
 }

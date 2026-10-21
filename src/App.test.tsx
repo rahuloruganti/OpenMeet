@@ -2968,7 +2968,6 @@ describe("transcript and audio", () => {
       answer: "Moved [M1 0:08] and [M2 0:08].",
       provider: "https://provider.example/v1",
       model: "test-chat",
-      created_at: "2026-10-20T10:00:00Z",
       meeting_ids: ["rec"],
     });
     vi.mocked(api.audioPosition).mockResolvedValue(2250);
