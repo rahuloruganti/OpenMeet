@@ -33,7 +33,8 @@ import { LibraryQuestion } from "./components/LibraryQuestion";
 import { SetupPanel } from "./components/SetupPanel";
 import {
   processingDefault,
-  takeLegacyProcessing,
+  forgetLegacyProcessing,
+  legacyProcessing,
   type ProcessingChoice,
 } from "./lib/processing";
 import { SessionReview } from "./components/SessionReview";
@@ -411,11 +412,16 @@ export function App() {
       updateRecording(state);
       setSettings(preferences);
       // One-time move of the default earlier versions kept in webview storage.
-      const legacy = takeLegacyProcessing();
-      if (legacy && preferences.processing_mode === "recording")
+      // The old value is forgotten only once the database holds a default; a failed save retries
+      // on the next start.
+      const legacy = legacyProcessing();
+      if (legacy && preferences.processing_mode !== "recording")
+        forgetLegacyProcessing();
+      else if (legacy)
         void api
           .saveProcessingDefault(legacy.mode, legacy.summary)
           .then((saved) => {
+            forgetLegacyProcessing();
             if (!disposed) setSettings(saved);
           })
           .catch(() => undefined);

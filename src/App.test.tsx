@@ -46,6 +46,7 @@ vi.mock("./lib/api", async (original) => {
       apiConnectionKeyStatus: vi.fn(),
       deleteApiConnection: vi.fn(),
       onModelLibraryProgress: vi.fn(),
+      scanLocalModels: vi.fn(),
       cancelModelDownload: vi.fn(),
       listApiConnectionModels: vi.fn(),
       saveProviderAssignment: vi.fn(),
@@ -3530,7 +3531,9 @@ describe("settings defaults", () => {
         "standup-v1",
       ),
     );
-    expect(localStorage.getItem("openmeet.automaticProcessing")).toBeNull();
+    await waitFor(() =>
+      expect(localStorage.getItem("openmeet.automaticProcessing")).toBeNull(),
+    );
     await chooseProcessing("live");
     expect(api.saveProcessingDefault).toHaveBeenLastCalledWith("live", null);
   });
@@ -3590,5 +3593,42 @@ describe("settings defaults", () => {
     ).toHaveProperty("value", "CommandOrControl+Shift+S");
     expect(screen.getByRole("button", { name: "Save shortcuts" })).toBeTruthy();
     expect(screen.queryByText("Other engines (not supported yet)")).toBeNull();
+    // Tab still moves focus, and a key without a modifier is not taken.
+    await userEvent.click(capture);
+    expect(fireEvent.keyDown(capture, { key: "Tab", code: "Tab" })).toBe(true);
+    fireEvent.keyDown(capture, { key: "s", code: "KeyS" });
+    expect(
+      screen.getByLabelText("Stop recording shortcut (optional)"),
+    ).toHaveProperty("value", "CommandOrControl+Shift+S");
+  });
+
+  it("keeps the old processing default when saving it fails", async () => {
+    localStorage.setItem(
+      "openmeet.automaticProcessing",
+      JSON.stringify({ mode: "both", summary: null }),
+    );
+    vi.mocked(api.saveProcessingDefault).mockRejectedValue(
+      new Error("Database busy"),
+    );
+    await ready();
+    await waitFor(() => expect(api.saveProcessingDefault).toHaveBeenCalled());
+    expect(localStorage.getItem("openmeet.automaticProcessing")).not.toBeNull();
+  });
+
+  it("scans for local models only once Models is expanded, and shows a failed scan", async () => {
+    vi.mocked(api.scanLocalModels).mockRejectedValue(
+      new Error("Model folder unreadable"),
+    );
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Models" }));
+    expect(api.scanLocalModels).not.toHaveBeenCalled();
+    const details = screen
+      .getByText("Advanced: local model library")
+      .closest("details") as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    expect(await screen.findByText("Model folder unreadable")).toBeTruthy();
+    expect(api.scanLocalModels).toHaveBeenCalledWith(null);
   });
 });

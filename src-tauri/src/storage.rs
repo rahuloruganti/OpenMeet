@@ -1388,7 +1388,13 @@ impl Core {
 
     /// Existing summaries keep their stored text; history shows a fallback label afterwards.
     pub fn delete_summary_template(&mut self, id: &str) -> Result<Settings> {
-        self.delete_named(&TEMPLATES, id)
+        self.delete_named(&TEMPLATES, id)?;
+        // A deleted default falls back to General instead of pointing at nothing.
+        self.db.execute(
+            "UPDATE settings SET summary_default = 'general-v1' WHERE id = 1 AND summary_default = ?1",
+            [id],
+        )?;
+        self.settings()
     }
 
     /// Saves a user-named text whose body the caller validated: creates one when `id` is `None`,
@@ -1856,6 +1862,13 @@ mod tests {
                 .unwrap_err()
                 .code,
             "summary_template_missing"
+        );
+        // Deleting the default template falls back to General.
+        assert_eq!(
+            core.delete_summary_template(&custom)
+                .unwrap()
+                .summary_default,
+            "general-v1"
         );
         let devices = core.save_default_devices("mic", "out").unwrap();
         assert_eq!(

@@ -30,15 +30,23 @@ export const processingDefault = (settings: Settings | null) =>
 
 const LEGACY_KEY = "openmeet.automaticProcessing";
 
-/** Reads and removes the default that earlier versions kept in webview storage. */
-export function takeLegacyProcessing(): ProcessingChoice | null {
+/** The default that earlier versions kept in webview storage, if any. */
+export function legacyProcessing(): ProcessingChoice | null {
   try {
     const raw = localStorage.getItem(LEGACY_KEY);
     if (raw === null) return null;
-    localStorage.removeItem(LEGACY_KEY);
     const value = JSON.parse(raw) as { mode?: unknown; summary?: unknown };
     return choice(value?.mode, value?.summary);
   } catch {
     return null;
+  }
+}
+
+/** Call once the database holds the default, so the old value is never lost. */
+export function forgetLegacyProcessing() {
+  try {
+    localStorage.removeItem(LEGACY_KEY);
+  } catch {
+    // Unavailable storage has nothing to forget.
   }
 }

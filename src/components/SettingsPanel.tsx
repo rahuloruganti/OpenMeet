@@ -78,13 +78,16 @@ type Props = {
   initialSection?: SettingsSection;
 };
 
-/** A keyboard chord as a shortcut accelerator, or null for a lone modifier. */
+/** A keyboard chord as a shortcut accelerator, or null for a lone modifier or a key without
+ * one (a global shortcut on a bare key would capture it system-wide). F-keys may stand alone. */
 function accelerator(event: KeyboardEvent): string | null {
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return null;
   const key =
     event.code === "Space"
       ? "Space"
       : event.code.replace(/^(Key|Digit|Arrow)/, "") || event.key;
+  const modified = event.ctrlKey || event.metaKey || event.altKey;
+  if (!modified && !/^F\d{1,2}$/.test(key)) return null;
   return [
     (event.ctrlKey || event.metaKey) && "CommandOrControl",
     event.altKey && "Alt",
@@ -121,7 +124,8 @@ function ShortcutField(props: {
         onClick={() => setCapturing(true)}
         onBlur={() => setCapturing(false)}
         onKeyDown={(event) => {
-          if (!capturing) return;
+          // Tab still moves focus, so capturing never traps the keyboard.
+          if (!capturing || event.key === "Tab") return;
           event.preventDefault();
           event.stopPropagation();
           if (event.key === "Escape") return setCapturing(false);
@@ -174,6 +178,7 @@ export function SettingsPanel(props: Props) {
   );
   // Catalog models a scan found on disk but that are not imported yet.
   const [found, setFound] = useState<string[]>([]);
+  const [modelsOpened, setModelsOpened] = useState(false);
   const [models, setModels] = useState<{
     connectionId: string;
     models: ProviderModel[];
@@ -267,17 +272,21 @@ export function SettingsPanel(props: Props) {
               </p>
               <DeviceSelect
                 label="Default microphone"
-                value={props.microphone}
+                value={settings?.microphone_id ?? ""}
                 devices={props.devices?.microphones ?? []}
                 disabled={disabled}
-                onChange={(id) => devices(id, props.output)}
+                onChange={(id) =>
+                  devices(id, settings?.output_id ?? props.output)
+                }
               />
               <DeviceSelect
                 label="Default system output"
-                value={props.output}
+                value={settings?.output_id ?? ""}
                 devices={props.devices?.outputs ?? []}
                 disabled={disabled}
-                onChange={(id) => devices(props.microphone, id)}
+                onChange={(id) =>
+                  devices(settings?.microphone_id ?? props.microphone, id)
+                }
               />
             </section>
             <section
@@ -453,13 +462,21 @@ export function SettingsPanel(props: Props) {
             )}
           </div>
           <div {...panel("models")}>
-            <details className="settings-section advanced">
+            <details
+              className="settings-section advanced"
+              onToggle={(event) => {
+                if (event.currentTarget.open) setModelsOpened(true);
+              }}
+            >
               <summary>Advanced: local model library</summary>
-              <ModelLibrary
-                disabled={disabled}
-                onImported={props.onImported}
-                onFound={setFound}
-              />
+              {/* Mounted on first expand: it scans on mount, and a failure must be visible. */}
+              {modelsOpened && (
+                <ModelLibrary
+                  disabled={disabled}
+                  onImported={props.onImported}
+                  onFound={setFound}
+                />
+              )}
             </details>
           </div>
           <div {...panel("export")}>
