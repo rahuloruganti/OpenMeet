@@ -8,6 +8,99 @@ use uuid::Uuid;
 /// Highest `user_version` this build understands; bump with every new migration.
 const LATEST_SCHEMA: i64 = 24;
 const MAX_TAGS: usize = 20;
+// Each script sets its own `user_version`, so migration N runs for databases below N.
+// Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
+// `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
+// (only switchable outside a transaction) and must pass foreign_key_check before commit.
+const MIGRATIONS: [(i64, &str, bool); 23] = [
+    (2, include_str!("../migrations/002_capture.sql"), true),
+    (3, include_str!("../migrations/003_local_model.sql"), false),
+    (4, include_str!("../migrations/004_merge_model.sql"), false),
+    (5, include_str!("../migrations/005_transcripts.sql"), false),
+    (6, include_str!("../migrations/006_note_meetings.sql"), true),
+    (7, include_str!("../migrations/007_search.sql"), false),
+    (8, include_str!("../migrations/008_stt_settings.sql"), false),
+    (
+        9,
+        include_str!("../migrations/009_export_options.sql"),
+        false,
+    ),
+    (
+        10,
+        include_str!("../migrations/010_provider_settings.sql"),
+        false,
+    ),
+    (
+        11,
+        include_str!("../migrations/011_cloud_transcripts.sql"),
+        false,
+    ),
+    (
+        12,
+        include_str!("../migrations/012_saved_connections.sql"),
+        false,
+    ),
+    (
+        13,
+        include_str!("../migrations/013_session_processing.sql"),
+        false,
+    ),
+    (
+        14,
+        include_str!("../migrations/014_processing_workflow.sql"),
+        false,
+    ),
+    (
+        15,
+        include_str!("../migrations/015_summary_templates.sql"),
+        false,
+    ),
+    (
+        16,
+        include_str!("../migrations/016_action_items.sql"),
+        false,
+    ),
+    (
+        17,
+        include_str!("../migrations/017_summary_edits.sql"),
+        false,
+    ),
+    (
+        18,
+        include_str!("../migrations/018_speaker_names.sql"),
+        false,
+    ),
+    (
+        19,
+        include_str!("../migrations/019_transcript_edits.sql"),
+        false,
+    ),
+    (
+        20,
+        include_str!("../migrations/020_summary_freshness.sql"),
+        false,
+    ),
+    (
+        21,
+        include_str!("../migrations/021_meeting_tags.sql"),
+        false,
+    ),
+    (
+        22,
+        include_str!("../migrations/022_question_threads.sql"),
+        false,
+    ),
+    (
+        23,
+        include_str!("../migrations/023_export_transcript_formats.sql"),
+        false,
+    ),
+    (
+        24,
+        include_str!("../migrations/024_recipes_library_answers.sql"),
+        false,
+    ),
+];
 const MAX_TAG_CHARS: usize = 40;
 
 pub struct Core {
@@ -48,100 +141,7 @@ impl Core {
                 ))
             }
         }
-        // Each script sets its own `user_version`, so migration N runs for databases below N.
-        // Keep entries numbered explicitly and in ascending order; LATEST_SCHEMA must match the last one.
-        // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
-        // (only switchable outside a transaction) and must pass foreign_key_check before commit.
-        let additive = [
-            (2, include_str!("../migrations/002_capture.sql"), true),
-            (3, include_str!("../migrations/003_local_model.sql"), false),
-            (4, include_str!("../migrations/004_merge_model.sql"), false),
-            (5, include_str!("../migrations/005_transcripts.sql"), false),
-            (6, include_str!("../migrations/006_note_meetings.sql"), true),
-            (7, include_str!("../migrations/007_search.sql"), false),
-            (8, include_str!("../migrations/008_stt_settings.sql"), false),
-            (
-                9,
-                include_str!("../migrations/009_export_options.sql"),
-                false,
-            ),
-            (
-                10,
-                include_str!("../migrations/010_provider_settings.sql"),
-                false,
-            ),
-            (
-                11,
-                include_str!("../migrations/011_cloud_transcripts.sql"),
-                false,
-            ),
-            (
-                12,
-                include_str!("../migrations/012_saved_connections.sql"),
-                false,
-            ),
-            (
-                13,
-                include_str!("../migrations/013_session_processing.sql"),
-                false,
-            ),
-            (
-                14,
-                include_str!("../migrations/014_processing_workflow.sql"),
-                false,
-            ),
-            (
-                15,
-                include_str!("../migrations/015_summary_templates.sql"),
-                false,
-            ),
-            (
-                16,
-                include_str!("../migrations/016_action_items.sql"),
-                false,
-            ),
-            (
-                17,
-                include_str!("../migrations/017_summary_edits.sql"),
-                false,
-            ),
-            (
-                18,
-                include_str!("../migrations/018_speaker_names.sql"),
-                false,
-            ),
-            (
-                19,
-                include_str!("../migrations/019_transcript_edits.sql"),
-                false,
-            ),
-            (
-                20,
-                include_str!("../migrations/020_summary_freshness.sql"),
-                false,
-            ),
-            (
-                21,
-                include_str!("../migrations/021_meeting_tags.sql"),
-                false,
-            ),
-            (
-                22,
-                include_str!("../migrations/022_question_threads.sql"),
-                false,
-            ),
-            (
-                23,
-                include_str!("../migrations/023_export_transcript_formats.sql"),
-                false,
-            ),
-            (
-                24,
-                include_str!("../migrations/024_recipes_library_answers.sql"),
-                false,
-            ),
-        ];
-        for (number, script, rebuilds_referenced) in additive {
+        for (number, script, rebuilds_referenced) in MIGRATIONS {
             if version >= number {
                 continue;
             }
@@ -167,6 +167,7 @@ impl Core {
                 db.pragma_update(None, "foreign_keys", "ON")?;
             }
         }
+        check_schema(&db)?;
         // A restarted process cannot still own a recording from the previous process.
         db.execute(
             "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')",
@@ -1626,6 +1627,51 @@ pub(crate) fn replace_transcript_in(
     Ok(())
 }
 
+/// Fails naming every table or column a fully migrated database lacks, so a version number
+/// that claims scripts which never ran is reported clearly instead of as a later query error.
+/// Extra leftovers are allowed.
+fn check_schema(db: &Connection) -> Result<()> {
+    let expected = Connection::open_in_memory()?;
+    expected.execute_batch(include_str!("../migrations/001_foundation.sql"))?;
+    for (_, script, _) in MIGRATIONS {
+        expected.execute_batch(script)?;
+    }
+    let columns = |db: &Connection| -> Result<Vec<(String, String)>> {
+        let mut statement = db.prepare(
+            "SELECT m.name, p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' ORDER BY 1, 2",
+        )?;
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    };
+    let actual = columns(db)?;
+    let mut missing: Vec<String> = Vec::new();
+    for (table, column) in columns(&expected)? {
+        if actual.iter().any(|(t, c)| *t == table && *c == column) {
+            continue;
+        }
+        let item = if actual.iter().any(|(t, _)| *t == table) {
+            format!("column {table}.{column}")
+        } else {
+            format!("table {table}")
+        };
+        if !missing.contains(&item) {
+            missing.push(item);
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(AppError::new(
+        "schema_inconsistent",
+        format!(
+            "The database schema is inconsistent: missing {}. Saved data was not deleted.",
+            missing.join(", ")
+        ),
+    ))
+}
+
 #[cfg(test)]
 pub(crate) fn test_v11_database(path: &Path) -> Connection {
     let db = Connection::open(path).unwrap();
@@ -1650,6 +1696,32 @@ pub(crate) fn test_v11_database(path: &Path) -> Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_names_a_table_or_column_a_skipped_migration_left_out() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("meetings.db");
+        let error = |path: &Path| match Core::open(path) {
+            Err(error) => error,
+            Ok(_) => panic!("inconsistent schema opened"),
+        };
+        drop(Core::open(&path).unwrap());
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE settings DROP COLUMN summary_instructions")
+            .unwrap();
+        let column = error(&path);
+        assert_eq!(column.code, "schema_inconsistent");
+        assert!(column
+            .message
+            .contains("column settings.summary_instructions"));
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("DROP TABLE summary_templates")
+            .unwrap();
+        let both = error(&path).message;
+        assert!(both.contains("column settings.summary_instructions, table summary_templates"));
+    }
 
     #[test]
     fn simulation_transitions_and_idempotent_stop() {

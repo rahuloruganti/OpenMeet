@@ -579,3 +579,13 @@ Schema v24 adds three features:
 A profile field was skipped because saved summary instructions already cover summaries. Speaker separation, calendar and detection, briefs, restore, API/MCP, sharing and integrations remain unbuilt. The comparison, status, architecture, privacy and user-guide docs were updated.
 
 Full checks passed: typecheck, lint, formatting, 157 frontend tests, frontend build, Rust formatting, all-target Clippy, 179 Rust tests with two native tests ignored, and Cargo build. The native app was not launched, and no provider request was made.
+
+## Dev database schema drift repair
+
+The dev app (`dev.openmeet.preview`) panicked at startup with the generic database error. Its `meetings.db` reported `user_version = 24`, but migrations 015 and 016 had never run, most likely because an earlier branch used those numbers. As a result, `summary_templates`, `action_items` and `settings.summary_instructions` were missing. Two harmless leftovers from that branch remain: an unused, NULL-only `settings.automatic_processing` column and a `segments.source` CHECK that also allows `local_stt`.
+
+The database files were backed up beside it in `backup-schema-repair-2026-10-20/`. With the user's approval, only the 015/016 statements were applied, in one transaction. `user_version` was left unchanged and nothing was deleted. Row counts for every existing table are unchanged, `integrity_check` passes, and the dev app now starts.
+
+`Core::open` now compares the migrated schema with one built in memory from the same scripts. When the version claims migrations that never ran, it reports `schema_inconsistent` and names every missing table or column. A regression test covers this.
+
+Checks: Rust formatting, all-target Clippy, 180 Rust tests with two native tests ignored, and Cargo build.
