@@ -315,7 +315,7 @@ export function SettingsPanel(props: Props) {
                     Every few seconds OpenMeet asks the system which apps are
                     using the microphone. It reads app names only, never audio,
                     and nothing leaves this device. A prompt never starts
-                    recording: you still choose devices and confirm consent.
+                    recording: it opens New recording for you to start.
                   </p>
                   {settings && settings.detection_ignored.length > 0 && (
                     <ul
@@ -361,7 +361,7 @@ export function SettingsPanel(props: Props) {
               />
               <p className="muted">
                 There is no shortcut to start recording: starting always goes
-                through setup and consent.
+                through New recording.
               </p>
               {shortcutsDirty && (
                 <button
@@ -484,9 +484,10 @@ export function SettingsPanel(props: Props) {
                 </label>
               )}
               <p className="muted">
-                This is only your default. Every recording still shows a review
-                of what will be processed and where it goes, and needs your
-                confirmation before it starts.
+                Runs after every recording. Audio and text go to the engines and
+                connections set in Transcription and AI notes. If they are not
+                ready, the recording is still kept and processing is skipped
+                with a notice.
               </p>
             </section>
             <SummaryTemplates

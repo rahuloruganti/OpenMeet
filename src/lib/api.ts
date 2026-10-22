@@ -22,14 +22,9 @@ export type RecordingState = {
   error: string | null;
   /** Audio written so far (paused time excluded); null without real capture. */
   recording_offset_ms: number | null;
+  /** Why automatic processing was skipped for this recording, if it was. */
+  processing_notice?: string | null;
 };
-export type SessionProcessingRequest =
-  | { kind: "live_only" }
-  | {
-      kind: "final";
-      live: boolean;
-      summary: SummaryTemplate | null;
-    };
 export type SessionDestination =
   | { kind: "local_whisper"; model: string }
   | {
@@ -43,9 +38,7 @@ export type SessionDestination =
 export type SessionProcessingPlan = {
   id: string;
   meeting_id: string | null;
-  fingerprint: string;
   configuration_revision: number;
-  review_expires_at: number;
   scope:
     | { kind: "live_only"; speech: SessionDestination }
     | {
@@ -55,7 +48,7 @@ export type SessionProcessingPlan = {
         summary: {
           destination: SessionDestination;
           template: SummaryTemplate;
-          /** Saved personal instructions frozen at review; omitted when empty. */
+          /** Saved personal instructions frozen at recording start; omitted when empty. */
           instructions?: string;
         } | null;
       };
@@ -357,20 +350,11 @@ export const api = {
   listMeetings: () => invoke<Meeting[]>("list_meetings"),
   getMeeting: (id: string) => invoke<MeetingDetail>("get_meeting", { id }),
   getRecordingState: () => invoke<RecordingState>("get_recording_state"),
+  /** Starts capture; automatic processing follows the saved default. */
   startCapture: (
     title: string,
-    consent: boolean,
     devices: { microphoneId: string; outputId: string },
-    processingConfirmation: string | null = null,
-  ) =>
-    invoke<RecordingState>("start_recording", {
-      title,
-      consent,
-      devices,
-      processingConfirmation,
-    }),
-  prepareSessionProcessing: (request: SessionProcessingRequest) =>
-    invoke<SessionProcessingPlan>("prepare_session_processing", { request }),
+  ) => invoke<RecordingState>("start_recording", { title, devices }),
   getSessionProcessing: (id: string) =>
     invoke<SessionProcessingSnapshot | null>("get_session_processing", { id }),
   acknowledgeProcessingNotes: (
@@ -385,13 +369,9 @@ export const api = {
       notesBarrier,
       expectedNotesRevision,
     }),
-  prepareSessionRetry: (id: string) =>
-    invoke<SessionProcessingPlan>("prepare_session_retry", { id }),
-  retrySessionProcessing: (id: string, confirmation: string) =>
-    invoke<SessionProcessingSnapshot>("retry_session_processing", {
-      id,
-      confirmation,
-    }),
+  /** Retries failed or interrupted automatic processing with the current settings. */
+  retrySessionProcessing: (id: string) =>
+    invoke<SessionProcessingSnapshot>("retry_session_processing", { id }),
   cancelSessionProcessing: (id: string, expectedRevision: number) =>
     invoke<SessionProcessingSnapshot>("cancel_session_processing", {
       id,

@@ -49,7 +49,6 @@ pub struct Core {
     audio_root: PathBuf,
     audio: Option<audio::Session>,
     capture_report: Option<audio::Report>,
-    pub(crate) pending_processing: Option<crate::session_processing::Plan>,
     pub(crate) processing_owner: crate::processing_control::Owner,
     pub(crate) live_cancellation: Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
     pub(crate) live_receiver: Option<(
@@ -113,7 +112,7 @@ impl Core {
             "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')",
             [],
         )?;
-        db.execute("UPDATE processing_runs SET stage='interrupted',error='Processing was interrupted. Review before retrying.' WHERE stage IN ('live','finalizing_audio','transcribing','awaiting_notes','summarizing')", [])?;
+        db.execute("UPDATE processing_runs SET stage='interrupted',error='Processing was interrupted. Retry when ready.' WHERE stage IN ('live','finalizing_audio','transcribing','awaiting_notes','summarizing')", [])?;
         db.execute(
             "UPDATE processing_sessions SET state='interrupted',revision=revision+1 WHERE state='prepared' AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage='interrupted')",
             [],
@@ -124,7 +123,6 @@ impl Core {
             audio_root: path.parent().unwrap_or(Path::new(".")).join("audio"),
             audio: None,
             capture_report: None,
-            pending_processing: None,
             processing_owner: crate::processing_control::Owner::default(),
             live_cancellation: None,
             live_receiver: None,
@@ -178,6 +176,7 @@ impl Core {
             source: Some("simulation".into()),
             error: None,
             recording_offset_ms: None,
+            processing_notice: None,
         };
         Ok(self.recording_state())
     }
@@ -186,17 +185,22 @@ impl Core {
         &mut self,
         title: &str,
         options: audio::CaptureOptions,
-        consent: bool,
-        processing_confirmation: Option<&str>,
     ) -> Result<RecordingState> {
-        if !consent {
-            return Err(AppError::new(
-                "consent_required",
-                "Confirm participant consent before recording.",
-            ));
-        }
         let title = self.begin(title)?;
-        let processing = self.confirmed_session_processing(processing_confirmation)?;
+        // A plan that cannot be built (say, no summary model) never blocks the recording.
+        let (processing, processing_notice) = match self.default_processing_request()? {
+            None => (None, None),
+            Some(request) => match self.prepare_session_processing(request) {
+                Ok(plan) => (Some(plan), None),
+                Err(error) => (
+                    None,
+                    Some(format!(
+                        "Automatic processing is off for this recording: {}",
+                        error.message
+                    )),
+                ),
+            },
+        };
         if options.microphone_id.is_empty() || options.output_id.is_empty() {
             return Err(AppError::new(
                 "audio_devices",
@@ -205,15 +209,6 @@ impl Core {
         }
         let id = Uuid::new_v4().to_string();
         std::fs::create_dir_all(&self.audio_root)?;
-        if processing
-            .as_ref()
-            .is_some_and(|plan| plan.meeting_id.is_some())
-        {
-            return Err(AppError::new(
-                "session_consent_changed",
-                "A retry review cannot authorize a new recording.",
-            ));
-        }
         let live_enabled = processing.as_ref().is_some_and(|plan| match plan.scope {
             crate::session_processing::Scope::LiveOnly { .. } => true,
             crate::session_processing::Scope::Final { live, .. } => live,
@@ -238,7 +233,6 @@ impl Core {
             crate::session_processing::attach(&tx, plan, &id)?;
         }
         tx.commit()?;
-        self.pending_processing = None;
         if processing.is_some() {
             self.live_receiver = Some((id.clone(), receiver, incomplete));
         }
@@ -250,6 +244,7 @@ impl Core {
             source: Some("desktop".into()),
             error: None,
             recording_offset_ms: None,
+            processing_notice,
         };
         self.resume()
     }
@@ -2119,19 +2114,13 @@ mod tests {
     }
 
     #[test]
-    fn desktop_start_rejects_denied_consent_and_missing_devices_without_capture() {
+    fn desktop_start_rejects_missing_devices_without_capture() {
         let dir = tempfile::tempdir().unwrap();
         let mut core = Core::open(&dir.path().join("meetings.db")).unwrap();
         let options = audio::CaptureOptions {
             microphone_id: "mic".into(),
             output_id: "out".into(),
         };
-        assert_eq!(
-            core.start_desktop("Denied", options.clone(), false, None)
-                .unwrap_err()
-                .code,
-            "consent_required"
-        );
         for options in [
             audio::CaptureOptions {
                 microphone_id: String::new(),
@@ -2143,7 +2132,7 @@ mod tests {
             },
         ] {
             assert_eq!(
-                core.start_desktop("Missing device", options, true, None)
+                core.start_desktop("Missing device", options)
                     .unwrap_err()
                     .code,
                 "audio_devices"

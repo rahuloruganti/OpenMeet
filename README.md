@@ -63,14 +63,14 @@ Exported files appear in the chosen folder's `Meetings` directory. Export create
 
 1. Click **New recording** and enter a title.
 2. Choose your microphone. On Windows the system track records **All app audio (except OpenMeet)**, whichever speaker or headset plays it, including Bluetooth headsets in call mode. Play some audio if you want to check the system track.
-3. Inform participants and acknowledge consent, then click **Start recording**.
+3. Click **Start recording**. You are responsible for telling participants and following the recording-consent laws that apply to you.
 4. Use **Pause**, **Resume**, and **Stop** in the bottom bar. Check the microphone meter for a signal.
 5. Open **Settings**, choose a speech model, and download the speech engine and models if needed.
 6. Open the meeting's **Transcript** tab and click **Transcribe audio**.
 
 Local Whisper keeps audio and transcription on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
 
-For cloud transcription, add a connection under **Settings → Connections**, then choose **API connection** under **Settings → Transcription** and assign that connection and a model ID. Each transcription asks before uploading audio and shows the destination, model, tracks, bytes, and request count. Text-only model results have no fabricated timestamps or playback links. Provider retention and charges apply; cancellation cannot recall audio already uploaded.
+For cloud transcription, add a connection under **Settings → Connections**, then choose **API connection** under **Settings → Transcription** and assign that connection and a model ID. Transcribing uploads the audio to that connection. Text-only model results have no fabricated timestamps or playback links. Provider retention and charges apply; cancellation cannot recall audio already uploaded.
 
 Sample and simulation creation has been removed. Existing historical samples remain labeled and accessible to preserve edited notes. Use **New note** without opening audio devices.
 
@@ -84,7 +84,7 @@ Notes, recording, and local transcription work without a cloud key. Summaries an
 
 Keys pass briefly through the password field and IPC to Rust, then live in the OS keychain. They are not read back into Settings. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; refreshing models sends credentials only. Environment-key import has been removed.
 
-Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. Review the destination, model, content, and request count before confirming. These calls send notes and transcript text only. Questions have their own confirmation, and earlier summaries remain available in the version picker.
+Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. It sends notes and transcript text only. Questions have their own confirmation, and earlier summaries remain available in the version picker.
 
 Compatible endpoints must implement the operation you select; a model list does not prove chat or transcription support. No automatic model/provider fallback occurs. Live provider quality has not yet been qualified.
 

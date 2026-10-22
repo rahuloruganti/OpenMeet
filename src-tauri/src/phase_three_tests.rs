@@ -28,7 +28,6 @@ fn attach(core: &mut Core, plan: &Plan, tracks: &[Track]) -> String {
         tx.execute("INSERT INTO tracks(meeting_id,kind,path,timing_path,device_name,sample_rate,channels,frames,dropped_frames,finalized) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![id,track.kind,track.path,track.timing_path,track.device_name,track.sample_rate,track.channels,track.frames,track.dropped_frames,track.finalized]).unwrap();
     }
     tx.commit().unwrap();
-    core.pending_processing = None;
     id
 }
 fn stop(core: &mut Core, id: &str) {
@@ -250,7 +249,6 @@ fn request_budgets_are_atomic_and_retry_rejects_stale_identity_and_changed_horiz
     plan.limits.requests = 2;
     plan.limits.upload_bytes = 10;
     plan.limits.text_bytes = 8;
-    session_processing::seal(&mut plan).unwrap();
     let id = attach(&mut core, &plan, &[]);
     stop(&mut core, &id);
     core.processing_stage(&id, &plan.id, Stage::FinalizingAudio, Stage::Transcribing)
@@ -300,21 +298,14 @@ fn request_budgets_are_atomic_and_retry_rejects_stale_identity_and_changed_horiz
     assert_eq!(reserved, ["first-payload", "second-payload"]);
     core.fail_processing(&id, &plan.id, "processing_budget")
         .unwrap();
-    let retry = core.prepare_session_retry(&id).unwrap();
     core.db
         .execute(
-            "UPDATE meetings SET ended_at='2026-01-01T02:00:00Z' WHERE id=?1",
+            "UPDATE meetings SET ended_at='2026-01-01T05:00:00Z' WHERE id=?1",
             [&id],
         )
         .unwrap();
     assert_eq!(
-        core.retry_session_processing(&id, &retry.fingerprint)
-            .unwrap_err()
-            .code,
-        "processing_retry"
-    );
-    assert_eq!(
-        core.prepare_session_retry(&id).unwrap_err().code,
+        core.retry_session_processing(&id).unwrap_err().code,
         "processing_retry"
     );
     core.db
@@ -323,11 +314,7 @@ fn request_budgets_are_atomic_and_retry_rejects_stale_identity_and_changed_horiz
             [&id],
         )
         .unwrap();
-    let retry = core.prepare_session_retry(&id).unwrap();
-    assert_eq!(retry.meeting_id.as_deref(), Some(id.as_str()));
-    let restarted = core
-        .retry_session_processing(&id, &retry.fingerprint)
-        .unwrap();
+    let restarted = core.retry_session_processing(&id).unwrap();
     let workflow = restarted.workflow.unwrap();
     assert_eq!(
         (workflow.attempt, workflow.requests_used, workflow.stage),
@@ -340,9 +327,7 @@ fn request_budgets_are_atomic_and_retry_rejects_stale_identity_and_changed_horiz
             .code,
         "processing_cancelled"
     );
-    assert!(core
-        .retry_session_processing(&id, &retry.fingerprint)
-        .is_err());
+    assert!(core.retry_session_processing(&id).is_err());
     core.db
         .execute(
             "UPDATE processing_sessions SET started_at=0,authorized_until=1 WHERE meeting_id=?1",
@@ -424,10 +409,7 @@ fn frozen_notes_reject_edits_and_summary_retry_keeps_completed_transcript() {
     );
     core.fail_processing(&id, &plan.id, "notes_conflict")
         .unwrap();
-    let retry = core.prepare_session_retry(&id).unwrap();
-    let snapshot = core
-        .retry_session_processing(&id, &retry.fingerprint)
-        .unwrap();
+    let snapshot = core.retry_session_processing(&id).unwrap();
     let workflow = snapshot.workflow.unwrap();
     assert_eq!(
         (workflow.stage, workflow.transcript_done),
@@ -520,7 +502,6 @@ fn restart_interrupts_unfinished_work_and_preserves_saved_content() {
         .iter()
         .all(|track| Path::new(&track.path).exists()));
     assert!(core.processing_owner.is_idle());
-    assert!(core.pending_processing.is_none());
     assert!(core
         .check_processing(&id, &plan.id, Stage::Live, false)
         .is_err());
@@ -907,10 +888,9 @@ fn cancel_during_final_upload_survives_restart_and_reviewed_retry_completes() {
         .all(|track| Path::new(&track.path).exists()));
     assert_eq!(observed.lock().unwrap().0.len(), 1);
 
-    // Another billable attempt needs a fresh review and a new run identity.
-    let retry = core.prepare_session_retry(&id).unwrap();
+    // Another billable attempt needs an explicit retry and a new run identity.
     let workflow = core
-        .retry_session_processing(&id, &retry.fingerprint)
+        .retry_session_processing(&id)
         .unwrap()
         .workflow
         .unwrap();

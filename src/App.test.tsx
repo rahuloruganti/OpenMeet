@@ -29,11 +29,9 @@ vi.mock("./lib/api", async (original) => {
       listMeetings: vi.fn(),
       getMeeting: vi.fn(),
       getRecordingState: vi.fn(),
-      prepareSessionProcessing: vi.fn(),
       getSessionProcessing: vi.fn(),
       cancelSessionProcessing: vi.fn(),
       acknowledgeProcessingNotes: vi.fn(),
-      prepareSessionRetry: vi.fn(),
       retrySessionProcessing: vi.fn(),
       onSessionProcessingChanged: vi.fn(),
       pause: vi.fn(),
@@ -141,9 +139,9 @@ const textPlan = {
 const sessionPlan: SessionProcessingPlan = {
   id: "session-plan",
   meeting_id: null,
-  fingerprint: "session-consent",
+
   configuration_revision: 1,
-  review_expires_at: 4_000_000_000,
+
   scope: {
     kind: "final",
     live: true,
@@ -510,7 +508,6 @@ describe("desktop foundation", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
     );
-    await userEvent.click(screen.getByRole("checkbox"));
     expect(
       (
         screen.getByRole("button", {
@@ -670,7 +667,7 @@ describe("desktop foundation", () => {
     );
   });
 
-  it("opens recording setup without capture and resets consent when reopened", async () => {
+  it("opens recording setup without capture and with no consent checkbox", async () => {
     await ready();
     const trigger = screen.getByRole("button", { name: "New recording" });
     expect(screen.queryByRole("textbox", { name: "Meeting title" })).toBeNull();
@@ -688,7 +685,7 @@ describe("desktop foundation", () => {
     expect(
       screen.queryByRole("button", { name: "Start simulation" }),
     ).toBeNull();
-    await userEvent.click(screen.getByRole("checkbox"));
+    expect(screen.queryByRole("checkbox")).toBeNull();
     expect(
       (
         screen.getByRole("button", {
@@ -699,17 +696,6 @@ describe("desktop foundation", () => {
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "New recording" })).toBeNull();
     expect(document.activeElement).toBe(trigger);
-    await userEvent.click(trigger);
-    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(
-      false,
-    );
-    expect(
-      (
-        screen.getByRole("button", {
-          name: "Start recording",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
     expect(api.startCapture).not.toHaveBeenCalled();
   });
 
@@ -764,7 +750,7 @@ describe("desktop foundation", () => {
     expect(screen.getByDisplayValue("Still editing my notes")).toBeTruthy();
   });
 
-  it("preserves historical sample labels and requires acknowledgement before recording", async () => {
+  it("starts a recording from setup with the chosen devices", async () => {
     await ready();
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
@@ -772,11 +758,6 @@ describe("desktop foundation", () => {
     const start = screen.getByRole("button", {
       name: "Start recording",
     }) as HTMLButtonElement;
-    expect(start.disabled).toBe(true);
-    expect(
-      screen.getByText(/have consent to record microphone and system audio/),
-    ).toBeTruthy();
-    await userEvent.click(screen.getByRole("checkbox"));
     expect(start.disabled).toBe(false);
     vi.mocked(api.startCapture).mockResolvedValue({
       revision: 1,
@@ -788,15 +769,10 @@ describe("desktop foundation", () => {
     });
     await userEvent.click(start);
     await waitFor(() =>
-      expect(api.startCapture).toHaveBeenCalledWith(
-        "Untitled meeting",
-        true,
-        {
-          microphoneId: "mic",
-          outputId: "out",
-        },
-        null,
-      ),
+      expect(api.startCapture).toHaveBeenCalledWith("Untitled meeting", {
+        microphoneId: "mic",
+        outputId: "out",
+      }),
     );
     await screen.findByText("Recording: recording");
   });
@@ -810,7 +786,6 @@ describe("desktop foundation", () => {
       code: "audio_devices",
       message: "Selected microphone is unavailable",
     });
-    await userEvent.click(screen.getByRole("checkbox"));
     await userEvent.click(
       screen.getByRole("button", { name: "Start recording" }),
     );
@@ -2129,69 +2104,17 @@ describe("automatic session processing", () => {
     expect(screen.getByDisplayValue("Keep this draft")).toBeTruthy();
   });
 
-  it.each([
-    ["live", { kind: "live_only" }],
-    ["final", { kind: "final", live: false, summary: null }],
-    ["both", { kind: "final", live: true, summary: null }],
-  ])(
-    "starts %s only with the reviewed processing fingerprint",
-    async (mode, request) => {
-      vi.mocked(api.prepareSessionProcessing).mockResolvedValue({
-        ...sessionPlan,
-        scope:
-          request.kind === "live_only"
-            ? { kind: "live_only", speech: sessionPlan.scope.speech }
-            : {
-                kind: "final",
-                live: mode === "both",
-                summary: null,
-                speech: sessionPlan.scope.speech,
-              },
-      });
-      vi.mocked(api.startCapture).mockResolvedValue({
-        revision: 1,
-        status: "recording",
-        meeting_id: "sample",
-        source: "desktop",
-        error: null,
-        recording_offset_ms: 0,
-      });
-      await ready();
-      await chooseProcessing(mode);
-      await userEvent.click(
-        screen.getByRole("button", { name: "New recording" }),
-      );
-      await userEvent.click(
-        screen.getByRole("button", { name: "Review processing" }),
-      );
-      expect(api.prepareSessionProcessing).toHaveBeenCalledWith(request);
-      await userEvent.click(
-        await screen.findByLabelText(
-          "I authorize this processing scope and these destinations and limits.",
-        ),
-      );
-      expect(
-        screen.getByRole("button", { name: "Start recording" }),
-      ).toHaveProperty("disabled", true);
-      await userEvent.click(
-        screen.getByLabelText(/I have informed participants/),
-      );
-      await userEvent.click(
-        screen.getByRole("button", { name: "Start recording" }),
-      );
-      await waitFor(() =>
-        expect(api.startCapture).toHaveBeenCalledWith(
-          "Untitled meeting",
-          true,
-          { microphoneId: "mic", outputId: "out" },
-          "session-consent",
-        ),
-      );
-    },
-  );
-
-  it("requires separate reviewed future-content consent and invalidates it when scope changes", async () => {
-    vi.mocked(api.prepareSessionProcessing).mockResolvedValue(sessionPlan);
+  it("starts with the saved processing default and shows a skipped-processing notice", async () => {
+    vi.mocked(api.startCapture).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "desktop",
+      error: null,
+      recording_offset_ms: 0,
+      processing_notice:
+        "Automatic processing is off for this recording: Choose and save a model first.",
+    });
     await ready();
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
@@ -2210,42 +2133,21 @@ describe("automatic session processing", () => {
       screen.getByRole("button", { name: "New recording" }),
     );
     expect(screen.getByText(/Live and final transcription/)).toBeTruthy();
-    const start = screen.getByRole("button", { name: "Start recording" });
-    expect(start).toHaveProperty("disabled", true);
+    expect(
+      screen.queryByRole("button", { name: "Review processing" }),
+    ).toBeNull();
     await userEvent.click(
-      screen.getByRole("button", { name: "Review processing" }),
+      screen.getByRole("button", { name: "Start recording" }),
     );
-    expect(api.prepareSessionProcessing).toHaveBeenCalledWith({
-      kind: "final",
-      live: true,
-      summary: "general-v1",
-    });
-    await screen.findByText(/https:\/\/summary.example/);
-    expect(screen.getByText(/UTF-8 text bytes/)).toBeTruthy();
-    expect(start).toHaveProperty("disabled", true);
-    await userEvent.click(
-      screen.getByLabelText(
-        "I authorize this processing scope and these destinations and limits.",
-      ),
-    );
-    const consent = screen.getByLabelText(/I have informed participants/);
-    if (!(consent as HTMLInputElement).checked) await userEvent.click(consent);
-    expect(start).toHaveProperty("disabled", false);
-    await chooseProcessing("live");
-    await userEvent.click(
-      screen.getByRole("button", { name: "New recording" }),
+    await waitFor(() =>
+      expect(api.startCapture).toHaveBeenCalledWith("Untitled meeting", {
+        microphoneId: "mic",
+        outputId: "out",
+      }),
     );
     expect(
-      screen.getByRole("button", { name: "Start recording" }),
-    ).toHaveProperty("disabled", true);
-    expect(screen.queryByLabelText("Processing review")).toBeNull();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Review processing" }),
-    );
-    expect(api.prepareSessionProcessing).toHaveBeenLastCalledWith({
-      kind: "live_only",
-    });
-    expect(api.startCapture).not.toHaveBeenCalled();
+      await screen.findByText(/Automatic processing is off for this recording/),
+    ).toBeTruthy();
   });
 
   it("keeps failed note drafts and acknowledges the saved revision only on explicit retry", async () => {
@@ -2335,7 +2237,7 @@ describe("automatic session processing", () => {
     expect(screen.getByText("Live word 204")).toBeTruthy();
   });
 
-  it("cancels the exact revision and requires a new review before retry", async () => {
+  it("cancels the exact revision and retries in one step", async () => {
     const current = sessionSnapshot(5);
     const cancelled = {
       ...sessionSnapshot(6, "cancelled"),
@@ -2343,11 +2245,6 @@ describe("automatic session processing", () => {
     };
     vi.mocked(api.getSessionProcessing).mockResolvedValue(current);
     vi.mocked(api.cancelSessionProcessing).mockResolvedValue(cancelled);
-    vi.mocked(api.prepareSessionRetry).mockResolvedValue({
-      ...sessionPlan,
-      meeting_id: "sample",
-      fingerprint: "retry-consent",
-    });
     vi.mocked(api.retrySessionProcessing).mockResolvedValue(
       sessionSnapshot(7, "transcribing"),
     );
@@ -2356,33 +2253,14 @@ describe("automatic session processing", () => {
       await screen.findByRole("button", { name: "Cancel session processing" }),
     );
     expect(api.cancelSessionProcessing).toHaveBeenCalledWith("sample", 5);
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Review processing retry" }),
-    );
-    const retry = await screen.findByRole("button", {
-      name: "Confirm processing retry",
-    });
-    expect(
-      screen.getByText(/This authorizes processing the existing recording/),
-    ).toBeTruthy();
-    expect(
-      screen.queryByText(/This authorizes future recorded audio/),
-    ).toBeNull();
-    expect(retry).toHaveProperty("disabled", true);
-    await userEvent.click(
-      screen.getByLabelText(
-        "I authorize this processing scope and these destinations and limits.",
-      ),
-    );
     vi.mocked(api.getSessionProcessing).mockResolvedValue(
       sessionSnapshot(7, "transcribing"),
     );
-    await userEvent.click(retry);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Retry processing" }),
+    );
     await waitFor(() =>
-      expect(api.retrySessionProcessing).toHaveBeenCalledWith(
-        "sample",
-        "retry-consent",
-      ),
+      expect(api.retrySessionProcessing).toHaveBeenCalledWith("sample"),
     );
     expect(api.startCapture).not.toHaveBeenCalled();
   });
@@ -3340,9 +3218,6 @@ describe("provider workflows", () => {
     expect(
       screen.queryByRole("button", { name: "Start simulation" }),
     ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Start recording" }),
-    ).toHaveProperty("disabled", true);
   });
 });
 
@@ -3478,13 +3353,6 @@ describe("meeting detection", () => {
       within(card).getByRole("button", { name: "Set up recording" }),
     );
     expect(screen.getByRole("dialog", { name: "New recording" })).toBeTruthy();
-    expect(
-      (
-        screen.getByRole("checkbox", {
-          name: /I have informed participants/,
-        }) as HTMLInputElement
-      ).checked,
-    ).toBe(false);
     expect(screen.getByDisplayValue("Zoom meeting")).toBeTruthy();
     expect(api.startCapture).not.toHaveBeenCalled();
     expect(

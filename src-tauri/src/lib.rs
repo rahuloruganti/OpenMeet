@@ -216,12 +216,10 @@ fn get_startup_warning(state: tauri::State<'_, AppState>) -> Option<String> {
 async fn start_recording(
     app: AppHandle,
     title: String,
-    consent: bool,
     devices: audio::CaptureOptions,
-    processing_confirmation: Option<String>,
 ) -> Result<RecordingState> {
     with_core(app, true, move |core, _| {
-        core.start_desktop(&title, devices, consent, processing_confirmation.as_deref())
+        core.start_desktop(&title, devices)
     })
     .await
 }
@@ -229,17 +227,6 @@ async fn start_recording(
 #[tauri::command]
 async fn list_audio_devices() -> Result<audio::Devices> {
     blocking(audio::devices).await
-}
-
-#[tauri::command]
-async fn prepare_session_processing(
-    app: AppHandle,
-    request: session_processing::Request,
-) -> Result<session_processing::Plan> {
-    with_core(app, false, move |core, _| {
-        core.prepare_session_processing(request)
-    })
-    .await
 }
 
 #[tauri::command]
@@ -290,18 +277,13 @@ async fn acknowledge_processing_notes(
     Ok(result)
 }
 #[tauri::command]
-async fn prepare_session_retry(app: AppHandle, id: String) -> Result<session_processing::Plan> {
-    with_core(app, false, move |core, _| core.prepare_session_retry(&id)).await
-}
-#[tauri::command]
 async fn retry_session_processing(
     app: AppHandle,
     id: String,
-    confirmation: String,
 ) -> Result<session_processing::Snapshot> {
     let target = id.clone();
     let result = with_core(app.clone(), false, move |core, _| {
-        core.retry_session_processing(&id, &confirmation)
+        core.retry_session_processing(&id)
     })
     .await?;
     session_runtime::spawn(
@@ -612,7 +594,7 @@ fn llm_changed(core: &Core, config: &ProviderConfig) -> Result<bool> {
 }
 
 fn plan_changed() -> AppError {
-    AppError::new("processing_plan_changed", "The meeting or provider settings changed. Review and confirm again. Nothing new was sent or saved.")
+    AppError::new("processing_plan_changed", "The meeting or provider settings changed while this was running. Nothing new was saved; try again.")
 }
 
 /// The destination and request bound for one text task; no request is sent here.
@@ -1894,11 +1876,9 @@ pub fn run() {
             pause_recording,
             resume_recording,
             stop_recording,
-            prepare_session_processing,
             get_session_processing,
             cancel_session_processing,
             acknowledge_processing_notes,
-            prepare_session_retry,
             retry_session_processing,
             save_notes,
             get_settings,

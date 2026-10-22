@@ -73,42 +73,18 @@ it("sends cloud actions directly, with no review fingerprint", async () => {
   expect(invoke).toHaveBeenLastCalledWith("transcribe_meeting", { id: "m" });
 });
 
-it("exposes real recording only and omits the retired simulation argument", async () => {
-  await api.startCapture("Meeting", true, {
-    microphoneId: "mic",
-    outputId: "out",
-  });
+it("starts real recordings with no consent or review argument", async () => {
+  await api.startCapture("Meeting", { microphoneId: "mic", outputId: "out" });
   expect(invoke).toHaveBeenLastCalledWith("start_recording", {
     title: "Meeting",
-    consent: true,
     devices: { microphoneId: "mic", outputId: "out" },
-    processingConfirmation: null,
   });
   expect(Object.keys(api)).not.toContain("start");
   expect(Object.keys(api)).not.toContain("createFixture");
+  expect(Object.keys(api)).not.toContain("prepareSessionProcessing");
 });
 
-it("keeps session consent separate from recording permission and manual action consent", async () => {
-  await api.prepareSessionProcessing({
-    kind: "final",
-    live: true,
-    summary: "standup-v1",
-  });
-  expect(invoke).toHaveBeenLastCalledWith("prepare_session_processing", {
-    request: { kind: "final", live: true, summary: "standup-v1" },
-  });
-  await api.startCapture(
-    "Meeting",
-    true,
-    { microphoneId: "mic", outputId: "out" },
-    "reviewed-session",
-  );
-  expect(invoke).toHaveBeenLastCalledWith("start_recording", {
-    title: "Meeting",
-    consent: true,
-    devices: { microphoneId: "mic", outputId: "out" },
-    processingConfirmation: "reviewed-session",
-  });
+it("binds automatic processing controls", async () => {
   await api.cancelSessionProcessing("meeting", 3);
   expect(invoke).toHaveBeenLastCalledWith("cancel_session_processing", {
     id: "meeting",
@@ -125,13 +101,8 @@ it("keeps session consent separate from recording permission and manual action c
     notesBarrier: "barrier",
     expectedNotesRevision: 7,
   });
-  await api.prepareSessionRetry("meeting");
-  expect(invoke).toHaveBeenLastCalledWith("prepare_session_retry", {
-    id: "meeting",
-  });
-  await api.retrySessionProcessing("meeting", "fresh-consent");
+  await api.retrySessionProcessing("meeting");
   expect(invoke).toHaveBeenLastCalledWith("retry_session_processing", {
     id: "meeting",
-    confirmation: "fresh-consent",
   });
 });

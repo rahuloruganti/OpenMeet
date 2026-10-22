@@ -18,7 +18,6 @@ import {
   type Settings,
   type SummaryVersion,
   type SessionProcessingSnapshot,
-  type SessionProcessingPlan,
 } from "./lib/api";
 import { createNoteWriter } from "./lib/note-writer";
 import { formatTimestamp } from "./lib/timestamps";
@@ -38,7 +37,6 @@ import {
   legacyProcessing,
   type ProcessingChoice,
 } from "./lib/processing";
-import { SessionReview } from "./components/SessionReview";
 import {
   SettingsPanel,
   type SettingsSection,
@@ -133,7 +131,6 @@ export function App() {
   const [micApps, setMicApps] = useState<MicApp[]>([]);
   const [dismissedApps, setDismissedApps] = useState<string[]>([]);
   const [detectionSupported, setDetectionSupported] = useState(false);
-  const [consent, setConsent] = useState(false);
   const [devices, setDevices] = useState<AudioDevices | null>(null);
   const [microphone, setMicrophone] = useState("");
   const [output, setOutput] = useState("");
@@ -184,10 +181,6 @@ export function App() {
   const [processing, setProcessing] =
     useState<SessionProcessingSnapshot | null>(null);
   const processingRevisions = useRef(new Map<string, number>());
-  const [retryPlan, setRetryPlan] = useState<SessionProcessingPlan | null>(
-    null,
-  );
-  const [retryConfirmed, setRetryConfirmed] = useState(false);
   const [ackError, setAckError] = useState<{
     meetingId: string;
     message: string;
@@ -289,8 +282,6 @@ export function App() {
       selectedIdRef.current = id;
       setSelected(detail);
       setProcessing(null);
-      setRetryPlan(null);
-      setRetryConfirmed(false);
       void refreshProcessing(id).catch(report);
     },
     [refreshProcessing],
@@ -533,10 +524,6 @@ export function App() {
       current = false;
     };
   }, [desktop, selected]);
-  useEffect(() => {
-    setRetryPlan(null);
-    setRetryConfirmed(false);
-  }, [settings]);
 
   // Full-text matches for searches of 2+ characters; re-run when meetings change so hits stay current.
   useEffect(() => {
@@ -658,10 +645,7 @@ export function App() {
         disabled={disabled}
         recordingActive={active}
         onSearch={setSearch}
-        onNewRecording={(trigger) => {
-          setConsent(false);
-          openPanel("setup", trigger);
-        }}
+        onNewRecording={(trigger) => openPanel("setup", trigger)}
         onSettings={(trigger) => {
           setSettingsTab("transcription");
           openPanel("settings", trigger);
@@ -768,7 +752,6 @@ export function App() {
                   disabled={disabled}
                   onClick={(event) => {
                     dismissApp(detectedApp.id);
-                    setConsent(false);
                     if (title === "Untitled meeting")
                       setTitle(`${detectedApp.name} meeting`);
                     openPanel("setup", event.currentTarget);
@@ -818,6 +801,11 @@ export function App() {
           {recording.error && (
             <p className="error" role="alert">
               Capture: {recording.error}
+            </p>
+          )}
+          {recording.processing_notice && (
+            <p className="notice" role="status">
+              {recording.processing_notice}
             </p>
           )}
           {notice && (
@@ -929,45 +917,17 @@ export function App() {
                     disabled={busy || active}
                     onClick={() =>
                       void run(async () => {
-                        setRetryConfirmed(false);
-                        setRetryPlan(
-                          await api.prepareSessionRetry(processing.meeting_id),
+                        applyProcessing(
+                          await api.retrySessionProcessing(
+                            processing.meeting_id,
+                          ),
                         );
+                        await refreshProcessing(processing.meeting_id);
                       })
                     }
                   >
-                    Review processing retry
+                    Retry processing
                   </button>
-                )}
-                {retryPlan?.meeting_id === processing.meeting_id && (
-                  <>
-                    <SessionReview
-                      plan={retryPlan}
-                      confirmed={retryConfirmed}
-                      onConfirm={setRetryConfirmed}
-                    />
-                    <button
-                      disabled={
-                        busy ||
-                        !retryConfirmed ||
-                        retryPlan.review_expires_at <= Date.now() / 1000
-                      }
-                      onClick={() =>
-                        void run(async () => {
-                          applyProcessing(
-                            await api.retrySessionProcessing(
-                              processing.meeting_id,
-                              retryPlan.fingerprint,
-                            ),
-                          );
-                          setRetryPlan(null);
-                          await refreshProcessing(processing.meeting_id);
-                        })
-                      }
-                    >
-                      Confirm processing retry
-                    </button>
-                  </>
                 )}
                 {!!processing.workflow?.provisional.length && (
                   <section aria-label="Provisional live transcript">
@@ -1007,35 +967,27 @@ export function App() {
             sttMode={settings?.stt_mode ?? "local"}
             devices={devices}
             title={title}
-            consent={consent}
             microphone={microphone}
             output={output}
             disabled={disabled}
             active={active}
-            configurationRevision={JSON.stringify(settings)}
             processing={autoProcessing}
             onOpenSettings={() => {
               setSettingsTab("ai");
               setPanel("settings");
             }}
             onTitle={setTitle}
-            onConsent={setConsent}
             onMicrophone={setMicrophone}
             onOutput={setOutput}
             onRefreshDevices={refreshDevices}
             onClose={() => setPanel(null)}
-            onStartCapture={(confirmation) =>
+            onStartCapture={() =>
               void run(async () => {
                 await writer.current?.flush();
-                const state = await api.startCapture(
-                  title,
-                  consent,
-                  {
-                    microphoneId: microphone,
-                    outputId: output,
-                  },
-                  confirmation,
-                );
+                const state = await api.startCapture(title, {
+                  microphoneId: microphone,
+                  outputId: output,
+                });
                 updateRecording(state);
                 setPanel(null);
                 if (state.meeting_id) await openMeeting(state.meeting_id);

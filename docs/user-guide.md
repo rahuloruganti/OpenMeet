@@ -34,8 +34,8 @@ Capture remains a preview. On Apple Silicon macOS 14.2 or newer, choose an outpu
 
 1. Click **New recording** and enter a title.
 2. Choose the microphone and system-output device you intend to capture.
-3. Choose the default **Automatic processing** under **Settings → AI notes** (**Recording only** by default; it is saved in the database). The New recording panel shows it and still requires a reviewed, confirmed plan before any processing starts.
-4. Acknowledge participant recording consent, then click **Start recording**.
+3. Choose the default **Automatic processing** under **Settings → AI notes** (**Recording only** by default; it is saved in the database). The New recording panel shows it, and every new recording runs it.
+4. Click **Start recording**. Telling participants and following recording-consent law is your responsibility; see [Recording consent](consent.md).
 5. Use the microphone and system meters to check for incoming signals.
 6. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.
 
@@ -53,19 +53,17 @@ The code excludes paused audio, but real-device pause privacy, device failures, 
 
 Turn on **Settings → Recording → Meeting detection** to be offered a recording when another app, such as Zoom, Teams or a browser, starts using your microphone. OpenMeet then asks the system every 3 seconds which apps are using the microphone: on Windows it reads the microphone privacy store, and on macOS 14.2 or newer (Apple Silicon) it asks CoreAudio which processes are running audio input. It reads app names only, never audio, and nothing leaves this device. On macOS, browsers are named after the browser even when a helper process holds the microphone, and processes without an app bundle are not reported. An app must hold the microphone for two checks in a row before a prompt appears, and OpenMeet's own recording is ignored.
 
-The prompt names the app and offers **Set up recording**, **Not now**, or **Never for** that app. **Set up recording** only opens New recording with the title prefilled: you still choose devices and confirm consent before anything is captured. Each app prompts once per microphone session and again the next time it starts using the microphone. Prompts are not shown while OpenMeet is recording. Ignored apps are listed in Settings with **Prompt again**. The prompt flashes the taskbar entry but does not open a hidden window, so it is only visible once you switch to OpenMeet. Dictation and captioning tools that hold the microphone also trigger it; choose **Never for** them. Detection is not available on Intel Macs or macOS before 14.2, and has not been qualified on a real call on either platform.
+The prompt names the app and offers **Set up recording**, **Not now**, or **Never for** that app. **Set up recording** only opens New recording with the title prefilled: nothing is captured until you click **Start recording**. Each app prompts once per microphone session and again the next time it starts using the microphone. Prompts are not shown while OpenMeet is recording. Ignored apps are listed in Settings with **Prompt again**. The prompt flashes the taskbar entry but does not open a hidden window, so it is only visible once you switch to OpenMeet. Dictation and captioning tools that hold the microphone also trigger it; choose **Never for** them. Detection is not available on Intel Macs or macOS before 14.2, and has not been qualified on a real call on either platform.
 
 ## Choose automatic processing
 
-1. In **New recording**, choose **Live transcription only**, **Final transcription after stop**, or **Live and final transcription**.
+1. In **Settings → AI notes**, choose **Live transcription only**, **Final transcription after stop**, or **Live and final transcription**.
 2. For either final option, optionally choose an **Automatic summary** template.
-3. Click **Review processing**. Check the speech and summary destinations, models, tracks, language, and limits.
-4. Acknowledge the processing scope, destinations, and limits. This covers future recorded audio and, when a summary is enabled, saved notes and the final transcript.
-5. Acknowledge participant recording consent independently, then start recording. Changing the scope or relevant settings requires another review.
+3. Start recordings as usual. Each new recording runs the saved choice with the engines and connections set in Settings at that moment. If they are not ready, for example a summary with no model assigned, the recording still starts and a notice says processing is off for it.
 
-Local Whisper stays on this device. An API speech destination receives audio. An API summary destination receives saved notes and final transcript text. Live plus final transcription uses separate requests and can incur separate charges. Review preparation makes no provider request and does not install a missing model.
+Local Whisper stays on this device. An API speech destination receives audio. An API summary destination receives saved notes and final transcript text. Live plus final transcription uses separate requests and can incur separate charges. Starting a recording does not install a missing model.
 
-The review currently allows up to 3,600 seconds of recording, 14,400 seconds of processing after stop, 256 MiB of uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. The screen shows the authoritative limits. Exceeding a processing limit does not stop recording or authorize more requests. Recordings beyond the reviewed duration are refused for automatic processing and retry under that plan.
+Automatic processing allows up to 14,400 seconds (4 hours) of recording, 14,400 seconds of processing after stop, 256 MiB of uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. Exceeding a limit does not stop recording or send more requests. Longer recordings are not processed automatically; use **Transcribe audio** on the Transcript tab.
 
 Live text is provisional. The latest 200 segments appear with track labels and incomplete-coverage warnings. Provisional text is excluded from search, summaries, and exports. If the live queue fills or a processing operation cannot run, capture continues and the preview can have gaps. Accepted audio captured before a pause may finish processing while paused. Paused audio is excluded by the implementation; hardware privacy remains unqualified.
 
@@ -73,7 +71,7 @@ Stop finalizes audio through the shared UI, tray, or shortcut path. Final transc
 
 An automatic summary waits for the capture meeting's saved notes. A failed save keeps your draft and displays **Save notes and continue processing**. Retry that action after resolving the save failure. Changes to notes or the transcript during summary generation prevent publication of a stale summary and preserve previous output.
 
-Use **Cancel session processing** to stop further work without stopping capture or deleting output. Submitted content cannot be recalled, and a remote request may still be billed. **Review processing retry** requires a new confirmation for the existing stopped recording, with fresh limits and a processing deadline. Retry keeps a successfully completed transcript and can continue with the summary. It starts no recording. A stopped live-only preview cannot restart; use manual final transcription instead.
+Use **Cancel session processing** to stop further work without stopping capture or deleting output. Submitted content cannot be recalled, and a remote request may still be billed. **Retry processing** runs again for the existing stopped recording with the current settings, fresh limits and a new processing deadline. A previous request may already have been billed. Retry keeps a successfully completed transcript and can continue with the summary. It starts no recording. A stopped live-only preview cannot restart; use manual final transcription instead.
 
 **Save and quit** first saves notes, then stops capture and interrupts unfinished processing. Restart displays interrupted work and makes no automatic retry. Recover incomplete recording files before retrying final processing. Native, hardware, and real-provider qualification remain open; see [workflow evidence](phase-3-workflow-verification.md).
 
@@ -89,7 +87,7 @@ The engine and models download only on an explicit action. The selected model ru
 
 **You** identifies the microphone track and **Others** identifies system audio. These labels do not identify individual people. Review names, numbers, and decisions before using a transcript.
 
-Under the transcript's **Speaker names**, you can name the two labels for this meeting, for example "Rahul" for You. The transcript, export, and the text sent for summaries and questions then show "Rahul (You)". Others covers all system audio, so one name applies to everyone heard through it. Clearing a name restores the label. Renaming after reviewing a summary or question requires a new review.
+Under the transcript's **Speaker names**, you can name the two labels for this meeting, for example "Rahul" for You. The transcript, export, and the text sent for summaries and questions then show "Rahul (You)". Others covers all system audio, so one name applies to everyone heard through it. Clearing a name restores the label. Renaming while a summary or question is running stops that result from being saved.
 
 Click **Edit** beside a transcript segment to correct its text, then **Save**. Edited segments show "(edited)"; hover to see the original, or click **Revert** to restore it. Search, summaries, questions, and export use the corrected text, and export marks the transcript with `transcript_edited: true`. An open segment edit is kept while you switch meetings, and quitting warns before discarding it. Editing is unavailable while a transcription or summary you started from this screen runs. If the segment changed since you started, for example after re-transcription, the save is refused and your text stays open. Re-transcribing never discards your edits: the current transcript, including edits, is kept under **Earlier transcripts**, where you can read it but not restore it.
 
@@ -99,7 +97,7 @@ The Transcript tab provides one player for each playable track. Select a transcr
 
 For API transcription, create a named connection under **Settings → Connections**, then choose **API connection** under **Settings → Transcription**, select the connection and a model for the **Speech API** task and save. Local loopback HTTP permits optional keys; remote APIs require HTTPS and a key. Explicit refresh lists model IDs; custom IDs also work. Local engine downloads are not needed for cloud mode. Language/vocabulary settings remain available, but a provider may reject unsupported options visibly.
 
-**Transcribe audio** in cloud mode first shows an audio-upload confirmation with destination, model, tracks, bytes, and request count. Cancelling the review sends nothing. Cancelling an active run prevents further chunks and preserves the old transcript, but audio already uploaded cannot be recalled and in-flight work may still be billed. JSON results without timing are explicitly untimed and grouped by track; their text supports search, summaries, and export, without timestamp links.
+**Transcribe audio** in cloud mode uploads the finalized tracks in bounded chunks to the speech connection. Cancelling an active run prevents further chunks and preserves the old transcript, but audio already uploaded cannot be recalled and in-flight work may still be billed. JSON results without timing are explicitly untimed and grouped by track; their text supports search, summaries, and export, without timestamp links.
 
 ## Find and download local models
 
@@ -112,13 +110,11 @@ Search Hugging Face explicitly to see up to 20 public results. Review the reposi
 Configure your independent LLM base URL, key, and model using the [README setup](../README.md#set-up-optional-ai-summaries). Keys are saved in the OS keychain and not read back into the form. Model discovery is optional; the chosen model must support the chat endpoint.
 
 1. Open **Summary** and choose **General**, **Stand-up**, **One-to-one**, or one of your custom templates.
-2. Click **Enhance notes**.
-3. Review the destination, model, template, saved-instructions notice, text scope, and request count.
-4. Confirm the send, or cancel to send nothing.
+2. Click **Enhance notes**. Notes and transcript text, with your saved instructions and template, go to the AI notes connection.
 
-Add custom templates and saved summary instructions in **Settings → AI notes → Summary templates**. **Default summary template** there sets the template the Summary tab starts at. A custom template describes the sections you want. Saved instructions, such as "Write in British English", are sent with every manual and automatic summary request. Built-in rules still apply: the model must not invent facts or follow instructions found inside notes or transcripts. Editing a template or the instructions after reviewing a summary requires a new review. Automatic summaries offer only the three built-in templates, but they include the saved instructions frozen at review. Deleting a template keeps earlier summaries; their history shows "Deleted custom template".
+Add custom templates and saved summary instructions in **Settings → AI notes → Summary templates**. **Default summary template** there sets the template the Summary tab starts at. A custom template describes the sections you want. Saved instructions, such as "Write in British English", are sent with every manual and automatic summary request. Built-in rules still apply: the model must not invent facts or follow instructions found inside notes or transcripts. Automatic summaries offer only the three built-in templates, and include the saved instructions as they were when the recording started. Deleting a template keeps earlier summaries; their history shows "Deleted custom template".
 
-Notes and transcript text leave the device after confirmation. Audio is never included. Longer transcripts can require several requests, including a final combination request. Inputs above the implementation's limits are refused rather than silently shortened. A failed request does not remove your notes or the last saved summary.
+Notes and transcript text leave the device when you click **Enhance notes**. Audio is never included. Longer transcripts can require several requests, including a final combination request. Inputs above the implementation's limits are refused rather than silently shortened. A failed request does not remove your notes or the last saved summary.
 
 Use the version picker to read earlier summaries. **Copy summary** and **Copy action items** write to the system clipboard, where other apps may read the text. Markdown export always uses the latest saved summary, regardless of the viewed version.
 
@@ -144,7 +140,7 @@ Recipes are saved questions. Both question boxes show them as buttons: **Catch m
 
 ### Rewrite selected notes
 
-Select text in **My notes** and click **Rewrite selection…**. Choose a preset (shorter, clearer, bullet points, fix spelling and grammar, more formal) or describe the change, then **Review**. The confirmation card names the model and destination and states that only the selected characters and your request are sent, not the rest of your notes, the transcript or audio. The rewrite is shown beside the original and changes nothing until you click **Replace selection**. If your notes changed around the selection meanwhile, nothing is replaced; use **Copy** instead. The rewrite is not saved anywhere else.
+Select text in **My notes** and click **Rewrite selection…**. Choose a preset (shorter, clearer, bullet points, fix spelling and grammar, more formal) or describe the change, then **Rewrite**. Only the selected characters and your request are sent, not the rest of your notes, the transcript or audio. The rewrite is shown beside the original and changes nothing until you click **Replace selection**. If your notes changed around the selection meanwhile, nothing is replaced; use **Copy** instead. The rewrite is not saved anywhere else.
 
 ## Export Markdown and transcripts
 

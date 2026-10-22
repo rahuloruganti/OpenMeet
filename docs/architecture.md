@@ -13,16 +13,16 @@ flowchart LR
     Backend --> STT[Local whisper.cpp subprocess]
     Files --> STT
     STT --> Core
-    Backend -->|Confirmed meeting text| LLM[Configured LLM API]
+    Backend -->|Meeting text| LLM[Configured LLM API]
     LLM --> Core
-    Backend -->|Confirmed audio chunks| Cloud[Configured speech API]
+    Backend -->|Audio chunks| Cloud[Configured speech API]
     Files --> Cloud
     Cloud --> Core
     Backend --> Export[Markdown snapshots]
     Backend -->|Events| UI
 ```
 
-Model downloads are separate explicit network actions. Cloud transcription uploads audio only after a manual confirmation or a reviewed session grant; local Whisper remains the default. Summary/question calls send text only. The diagram does not establish hardware or provider qualification.
+Model downloads are separate explicit network actions. Cloud transcription uploads audio when you transcribe or when the saved automatic-processing default runs; local Whisper remains the default. Summary/question calls send text only. The diagram does not establish hardware or provider qualification.
 
 ## Code ownership
 
@@ -31,10 +31,10 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src/App.tsx`                                              | Selection, settings/setup panels, command orchestration, operation guards, and note lifecycle.          |
 | `src/components/MeetingSidebar.tsx`                        | Meeting library, source labels, title and content search.                                               |
 | `src/components/MeetingWorkspace.tsx`                      | Notes, transcript, playback, summaries, questions, export, and deletion confirmations.                  |
-| `src/components/LibraryQuestion.tsx`                       | Ask across meetings: scope picker, recipes, consent card, saved answers with validated `[M2 1:01]` source links. |
+| `src/components/LibraryQuestion.tsx`                       | Ask across meetings: scope picker, recipes, saved answers with validated `[M2 1:01]` source links. |
 | `src/components/Recipes.tsx` | Built-in and saved recipes: question-box chips and the Settings editor. |
-| `src/components/RewriteSelection.tsx` | Rewrite selected note text: presets, consent card, and accept-to-replace result. |
-| `src/components/SetupPanel.tsx`, `SessionReview.tsx`        | Device selection, independent recording consent, and reviewed session processing.                                                                   |
+| `src/components/RewriteSelection.tsx` | Rewrite selected note text: presets and accept-to-replace result. |
+| `src/components/SetupPanel.tsx`                              | Device selection and the automatic-processing default shown before start.                                                                           |
 | `src/components/SettingsPanel.tsx` | Settings left navigation and sections: recording defaults and shortcut capture, AI notes, export and storage, privacy and about. |
 | `src/components/TranscriptionSettings.tsx` | Engine choice cards, local Whisper setup and downloads, speech API assignment, language and vocabulary. |
 | `src/components/ProviderSettings.tsx` | One list of saved connections (badged This device / Leaves this device) and the per-task `Assignment`. |
@@ -48,7 +48,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src-tauri/src/audio.rs`                                   | Device enumeration, bounded sample queues, capture worker, WAV writers, timing indexes, and WAV repair. |
 | `src-tauri/src/live_audio.rs`                              | Bounded accepted-sample live chunks and owned finalized temporary tracks. |
 | `src-tauri/src/processing_control.rs`                      | Shared manual/automatic operation ownership, cancellation, and publication gate. |
-| `src-tauri/src/session_processing.rs`, `session_workflow.rs` | Reviewed grants, durable runs/stages, provisional text, accounting, notes acknowledgement, and retry. |
+| `src-tauri/src/session_processing.rs`, `session_workflow.rs` | Plans from the saved default, durable runs/stages, provisional text, accounting, notes acknowledgement, and retry. |
 | `src-tauri/src/session_runtime.rs`                         | Rust live/final/summary runner outside the Core lock. |
 | `src-tauri/src/stt.rs`                                     | Pinned artifact downloads, local engine execution, progress/cancel, and time mapping.                   |
 | `src-tauri/src/providers.rs`                               | URL/model validation, keychain access, frozen credentials, model discovery, and bounded HTTP.           |
@@ -106,13 +106,13 @@ Automatic summary waits for `acknowledge_processing_notes`. The frontend flushes
 
 ## Provider requests
 
-The Phase 3 modules implement session grants and workflow execution. `prepare_session_processing` prepares live-only or final transcription, optional live processing and summary, independent destinations, two tracks, language, and finite limits. Reviews expire after five minutes. Start validates confirmation before device access and attaches the grant atomically with recording publication. The UI defaults to recording-only and requires participant consent independently.
+The Phase 3 modules implement automatic processing and workflow execution. `start_desktop` turns the saved default into a plan with `prepare_session_processing`: live-only or final transcription, optional live processing and summary, independent destinations, two tracks, language, and finite limits. The plan is attached atomically with recording publication; if it cannot be built, the recording starts without it and `RecordingState.processing_notice` says why. There is no review or participant-consent step (removed 2026-10-22). The default is recording only.
 
-Default limits are a 3,600-second recording horizon, 14,400 seconds after stop, 256 MiB uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. The initial deadline covers the recording horizon plus the post-stop allowance. Shared stop publication reduces it to the actual stop plus that allowance. Longer recordings cannot silently expand authorization. Retry rejects recorded durations beyond the review horizon, identifies the existing stopped meeting, creates a fresh run/attempt and notes barrier, and receives fresh finite limits. A completed final transcript can be retained while retry resumes summary work. A stopped live-only preview uses manual transcription rather than live replay.
+Default limits are a 14,400-second recording horizon, 14,400 seconds after stop, 256 MiB uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. The initial deadline covers the recording horizon plus the post-stop allowance. Shared stop publication reduces it to the actual stop plus that allowance. Longer recordings are not processed automatically. Retry rejects recorded durations beyond the plan horizon, builds a plan from current settings, identifies the existing stopped meeting, creates a fresh run/attempt and notes barrier, and receives fresh finite limits. A completed final transcript can be retained while retry resumes summary work. A stopped live-only preview uses manual transcription rather than live replay.
 
-Before each operation and actual HTTP send, the runner revalidates run, stage, configuration revision, consent, deadline, and scope. Cloud speech reserves the frozen audio digest and byte count before each send. Chat requests reserve the exact serialized JSON body's digest and UTF-8 byte count, including combination requests. Reservation and counters commit before dispatch, with no refund for an uncertain remote result. Cancellation or changed configuration prevents later dispatch/publication. There is no automatic billable retry or model fallback.
+Before each operation and actual HTTP send, the runner revalidates run, stage, configuration revision, deadline, and scope. Cloud speech reserves the frozen audio digest and byte count before each send. Chat requests reserve the exact serialized JSON body's digest and UTF-8 byte count, including combination requests. Reservation and counters commit before dispatch, with no refund for an uncertain remote result. Cancellation or changed configuration prevents later dispatch/publication. There is no automatic billable retry or model fallback.
 
-Speech settings and provider edits invalidate unsent work, including edit-and-revert and key replacement. Schema 14 invalidates older prepared grants rather than interpreting their historical character budgets as new byte budgets. Startup marks unfinished stages interrupted, preserves completed output, restores no review, and starts no request. The plan metadata excludes secrets and meeting content; separate workflow rows include provisional text and the saved-note snapshot used by a summary.
+Speech settings and provider edits invalidate unsent work, including edit-and-revert and key replacement. Schema 14 invalidates older prepared grants rather than interpreting their historical character budgets as new byte budgets. Startup marks unfinished stages interrupted, preserves completed output, and starts no request. The plan metadata excludes secrets and meeting content; separate workflow rows include provisional text and the saved-note snapshot used by a summary.
 
 Reusable saved connections supply independent summary/question and speech task assignments. Each assignment keeps its own model ID and revision; changing a shared connection invalidates consent for every role using it. Assigned connections cannot be deleted. Rust appends `models`, `chat/completions`, or `audio/transcriptions` to a validated user-supplied HTTPS API base, preserving its path prefix. Redirects are disabled. Credentials and response bodies do not enter diagnostics. Local servers may use loopback HTTP with an optional key. Remote endpoints require HTTPS and a destination-bound key.
 
@@ -139,8 +139,8 @@ The Rust `model_library` module owns bounded scans, verified catalog imports, pu
 | `action_items`             | Tasks with nullable owner/due date, done state, source, and original summary bullet.  |
 | `saved_connections`        | Named nonsecret endpoint/revision and OS-keychain account reference.                  |
 | `provider_assignments`     | Independent task connection/model selection and monotonic revision.                   |
-| `processing_configuration` | Revision invalidating session reviews after speech/provider edits.                    |
-| `processing_sessions`      | Recording-bound consent plan, deadlines, state, and revision.                         |
+| `processing_configuration` | Revision that stops running work after speech/provider edits.                         |
+| `processing_sessions`      | Recording-bound processing plan, deadlines, state, and revision.                      |
 | `processing_runs`          | Run/attempt/stage, completeness, completed transcript flag, saved-note barrier/snapshot, and counters. |
 | `processing_requests`      | Reserved request digests and audio/text byte accounting. |
 | `processing_provisional`   | Bounded live segments, separate from authoritative transcript/search/export tables. |

@@ -233,7 +233,7 @@ impl Core {
             || uploaded > i64::try_from(snapshot.plan.limits.upload_bytes).map_err(|_| stale())?
             || texts > i64::from(snapshot.plan.limits.text_bytes)
         {
-            return Err(AppError::new("processing_budget", "The session request, audio, or text budget was exhausted. Review before retrying; recording continues."));
+            return Err(AppError::new("processing_budget", "The session request, audio, or text budget was exhausted. Retry when ready; recording continues."));
         }
         let tx = self.db.transaction()?;
         tx.execute("INSERT INTO processing_requests(meeting_id,run_id,ordinal,fingerprint,audio_bytes,text_bytes) VALUES (?1,?2,?3,?4,?5,?6)",params![id,run,requests,fingerprint,audio,text])?;
@@ -388,7 +388,7 @@ impl Core {
         self.check_processing(id, run, Stage::Summarizing, false)?;
         let detail = self.get_meeting(id)?;
         if detail.notes_revision != revision || detail.segments != segments {
-            return Err(AppError::new("notes_conflict","Meeting content changed during summary generation. Previous summary is unchanged; review before retrying."));
+            return Err(AppError::new("notes_conflict","Meeting content changed during summary generation. Previous summary is unchanged; retry when ready."));
         }
         let tx = self.db.transaction()?;
         let hash = crate::storage::transcript_hash(&detail.segments, &detail.speaker_names);
@@ -401,10 +401,10 @@ impl Core {
 
     pub(crate) fn fail_processing(&mut self, id: &str, run: &str, code: &str) -> Result<()> {
         let (stage,message)=match code {
-            "processing_cancelled"|"session_consent_changed" => ("consent_required","Processing permission changed. Review before retrying."),
-            "processing_budget" => ("failed","The session processing limit was reached. Review before retrying."),
-            "notes_conflict" => ("failed","Notes or transcript changed. Previous output is unchanged; review before retrying."),
-            _ => ("failed","Processing failed. Original audio, notes, and earlier output are preserved. Review before retrying; a previous request may already have been billed."),
+            "processing_cancelled"|"session_consent_changed" => ("consent_required","Processing settings changed. Retry when ready."),
+            "processing_budget" => ("failed","The session processing limit was reached. Retry when ready."),
+            "notes_conflict" => ("failed","Notes or transcript changed. Previous output is unchanged; retry when ready."),
+            _ => ("failed","Processing failed. Original audio, notes, and earlier output are preserved. Retrying is safe; a previous request may already have been billed."),
         };
         let tx = self.db.transaction()?;
         if tx.execute("UPDATE processing_runs SET stage=?1,error=?2 WHERE meeting_id=?3 AND run_id=?4 AND stage NOT IN ('completed','cancelled','interrupted')",params![stage,message,id,run])? !=0 {bump(&tx,id)?;}
@@ -427,33 +427,18 @@ impl Core {
                     || track.frames as f64 / f64::from(track.sample_rate) > f64::from(seconds)
             })
         {
-            return Err(AppError::new("processing_retry", "This recording exceeds the session review or is not finalized. Use manual transcription with its exact saved-audio review."));
+            return Err(AppError::new("processing_retry", "This recording is longer than automatic processing allows or is not finalized. Use Transcribe audio on the Transcript tab instead."));
         }
         Ok(())
     }
 
-    pub fn prepare_session_retry(&mut self, id: &str) -> Result<Plan> {
+    /// Retries a stopped meeting's failed or interrupted processing with the current settings.
+    pub fn retry_session_processing(&mut self, id: &str) -> Result<Snapshot> {
         let snapshot = self.session_processing(id)?.ok_or_else(stale)?;
-        self.check_retry_audio_horizon(id, snapshot.plan.limits.duration_seconds)?;
-        let workflow = snapshot.workflow.ok_or_else(stale)?;
-        if !workflow.stage.terminal() || workflow.stage == Stage::Completed {
-            return Err(stale());
-        }
         let request=match snapshot.plan.scope { Scope::Final {summary,..}=>Request::Final {live:false,summary:summary.map(|s|s.template)}, Scope::LiveOnly {..}=>return Err(AppError::new("processing_retry","A stopped live-only preview cannot restart. Use manual final transcription instead.")) };
         let mut plan = self.prepare_session_processing(request)?;
         plan.meeting_id = Some(id.into());
-        crate::session_processing::seal(&mut plan)?;
-        self.pending_processing = Some(plan.clone());
-        Ok(plan)
-    }
-
-    pub fn retry_session_processing(&mut self, id: &str, confirmation: &str) -> Result<Snapshot> {
-        let plan = self
-            .confirmed_session_processing(Some(confirmation))?
-            .ok_or_else(stale)?;
-        if plan.meeting_id.as_deref() != Some(id)
-            || self.get_meeting(id)?.meeting.status != "stopped"
-        {
+        if self.get_meeting(id)?.meeting.status != "stopped" {
             return Err(stale());
         }
         self.check_retry_audio_horizon(id, plan.limits.duration_seconds)?;
@@ -474,7 +459,6 @@ impl Core {
             [id],
         )?;
         tx.commit()?;
-        self.pending_processing = None;
         self.session_processing(id)?.ok_or_else(stale)
     }
 
@@ -482,7 +466,7 @@ impl Core {
         self.quitting = true;
         let tx = self.db.transaction()?;
         tx.execute("UPDATE processing_sessions SET state='interrupted',revision=revision+1 WHERE state='prepared' AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage NOT IN ('completed','failed','cancelled','interrupted','consent_required'))",[])?;
-        tx.execute("UPDATE processing_runs SET stage='interrupted',error='Processing stopped when the app closed. Review before retrying.' WHERE stage NOT IN ('completed','failed','cancelled','interrupted','consent_required')",[])?;
+        tx.execute("UPDATE processing_runs SET stage='interrupted',error='Processing stopped when the app closed. Retry when ready.' WHERE stage NOT IN ('completed','failed','cancelled','interrupted','consent_required')",[])?;
         tx.commit()?;
         Ok(())
     }
@@ -504,7 +488,7 @@ pub(crate) fn stopped(tx: &Transaction<'_>, id: &str, success: bool, quitting: b
     let (stage, error) = if quitting {
         (
             "interrupted",
-            Some("Processing stopped when the app closed. Review before retrying."),
+            Some("Processing stopped when the app closed. Retry when ready."),
         )
     } else if !success {
         (
@@ -512,7 +496,7 @@ pub(crate) fn stopped(tx: &Transaction<'_>, id: &str, success: bool, quitting: b
             Some("Audio finalization failed. Recover complete audio before retrying processing."),
         )
     } else if now > started + i64::from(plan.limits.duration_seconds) {
-        ("consent_required",Some("Recording exceeded the reviewed processing duration. Review before submitting its audio."))
+        ("consent_required",Some("The recording is longer than automatic processing allows. Use Transcribe audio on the Transcript tab instead."))
     } else if matches!(plan.scope, Scope::LiveOnly { .. }) {
         ("completed", None)
     } else {

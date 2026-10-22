@@ -1,6 +1,6 @@
-//! Frozen session consent preparation and durable authorization snapshots.
+//! Automatic-processing plans built from the saved defaults, and their durable snapshots.
 use crate::{
-    domain::{sha256_hex, AppError, ProviderRole, Result, Settings, SttMode},
+    domain::{AppError, ProviderRole, Result, Settings, SttMode},
     llm::Template,
     storage::Core,
 };
@@ -38,8 +38,7 @@ pub enum Destination {
 pub struct SummaryScope {
     pub destination: Destination,
     pub template: Template,
-    /// Saved personal instructions frozen at review. Omitted when empty so plans sealed
-    /// before this field existed keep their fingerprints.
+    /// Saved personal instructions frozen at recording start; omitted when empty.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub instructions: String,
 }
@@ -71,11 +70,9 @@ pub struct Limits {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Plan {
     pub id: String,
-    pub fingerprint: String,
     #[serde(default)]
     pub meeting_id: Option<String>,
     pub configuration_revision: i64,
-    pub review_expires_at: i64,
     pub scope: Scope,
     pub language: String,
     pub tracks: [String; 2],
@@ -105,19 +102,16 @@ pub struct Snapshot {
 fn changed() -> AppError {
     AppError::new(
         "session_consent_changed",
-        "The session review expired or processing settings changed. Review again before recording. Nothing was sent.",
+        "Processing settings changed, so automatic processing stopped. Nothing was sent; retry when ready.",
     )
 }
 
 fn invalid_record() -> AppError {
     AppError::new(
         "session_processing",
-        "The processing consent record could not be read. No processing was started.",
+        "The automatic processing record could not be read. No processing was started.",
     )
 }
-
-/// How long a reviewed plan stays valid.
-const REVIEW_SECONDS: i64 = 300;
 
 pub(crate) fn configuration_revision(db: &Connection) -> Result<i64> {
     Ok(db.query_row(
@@ -125,14 +119,6 @@ pub(crate) fn configuration_revision(db: &Connection) -> Result<i64> {
         [],
         |row| row.get(0),
     )?)
-}
-
-/// The review has not expired, the clock did not move backwards past it, and the
-/// processing configuration is still the reviewed one.
-fn review_open(plan: &Plan, now: i64, revision: i64) -> bool {
-    now < plan.review_expires_at
-        && now >= plan.review_expires_at.saturating_sub(REVIEW_SECONDS)
-        && revision == plan.configuration_revision
 }
 
 pub(crate) fn clock() -> Result<i64> {
@@ -170,13 +156,28 @@ fn api_destination(settings: &Settings, role: ProviderRole) -> Result<Destinatio
 }
 
 impl Core {
-    pub fn prepare_session_processing(&mut self, request: Request) -> Result<Plan> {
-        self.prepare_session_processing_at(request, clock()?)
+    /// The request the saved default asks for, or None for recording only.
+    pub(crate) fn default_processing_request(&self) -> Result<Option<Request>> {
+        let settings = self.settings()?;
+        let summary = settings
+            .processing_summary
+            .as_deref()
+            .and_then(Template::from_id);
+        Ok(match settings.processing_mode.as_str() {
+            "live" => Some(Request::LiveOnly {}),
+            "final" => Some(Request::Final {
+                live: false,
+                summary,
+            }),
+            "both" => Some(Request::Final {
+                live: true,
+                summary,
+            }),
+            _ => None,
+        })
     }
 
-    fn prepare_session_processing_at(&mut self, request: Request, now: i64) -> Result<Plan> {
-        // A new review supersedes the previous one, including when this review fails.
-        self.pending_processing = None;
+    pub fn prepare_session_processing(&self, request: Request) -> Result<Plan> {
         let settings = self.settings()?;
         let speech = match settings.stt_mode {
             SttMode::Local => Destination::LocalWhisper {
@@ -200,50 +201,21 @@ impl Core {
                     .transpose()?,
             },
         };
-        let mut plan = Plan {
+        Ok(Plan {
             id: Uuid::new_v4().to_string(),
-            fingerprint: String::new(),
             meeting_id: None,
             configuration_revision: configuration_revision(&self.db)?,
-            review_expires_at: now.checked_add(REVIEW_SECONDS).ok_or_else(changed)?,
             scope,
             language: settings.stt_language,
             tracks: ["mic".into(), "system".into()],
             limits: Limits {
-                duration_seconds: 3600,
+                duration_seconds: 14_400,
                 post_stop_seconds: 14_400,
                 upload_bytes: 256 * 1024 * 1024,
                 requests: 1000,
                 text_bytes: 800_000,
             },
-        };
-        seal(&mut plan)?;
-        self.pending_processing = Some(plan.clone());
-        Ok(plan)
-    }
-
-    pub(crate) fn confirmed_session_processing(
-        &self,
-        confirmation: Option<&str>,
-    ) -> Result<Option<Plan>> {
-        self.confirmed_session_processing_at(confirmation, clock()?)
-    }
-
-    fn confirmed_session_processing_at(
-        &self,
-        confirmation: Option<&str>,
-        now: i64,
-    ) -> Result<Option<Plan>> {
-        let Some(confirmation) = confirmation else {
-            return Ok(None);
-        };
-        let plan = self.pending_processing.as_ref().ok_or_else(changed)?;
-        if confirmation != plan.fingerprint
-            || !review_open(plan, now, configuration_revision(&self.db)?)
-        {
-            return Err(changed());
-        }
-        Ok(Some(plan.clone()))
+        })
     }
 
     pub fn session_processing(&self, meeting_id: &str) -> Result<Option<Snapshot>> {
@@ -280,10 +252,7 @@ impl Core {
         expected_revision: i64,
     ) -> Result<Snapshot> {
         let snapshot = self.session_processing(meeting_id)?.ok_or_else(|| {
-            AppError::new(
-                "not_found",
-                "This meeting has no session processing consent.",
-            )
+            AppError::new("not_found", "This meeting has no automatic processing.")
         })?;
         if snapshot.state == State::Cancelled {
             return Ok(snapshot);
@@ -312,18 +281,8 @@ impl Core {
     }
 }
 
-pub(crate) fn seal(plan: &mut Plan) -> Result<()> {
-    plan.fingerprint.clear();
-    let bytes = serde_json::to_vec(plan).map_err(|_| invalid_record())?;
-    plan.fingerprint = sha256_hex(bytes);
-    Ok(())
-}
-
 pub(crate) fn attach(tx: &Transaction<'_>, plan: &Plan, meeting_id: &str) -> Result<()> {
     let started_at = clock()?;
-    if !review_open(plan, started_at, configuration_revision(tx)?) {
-        return Err(changed());
-    }
     let recording: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM meetings WHERE id=?1 AND source='desktop' AND status='paused')",
         [meeting_id],
@@ -332,7 +291,7 @@ pub(crate) fn attach(tx: &Transaction<'_>, plan: &Plan, meeting_id: &str) -> Res
     if !recording {
         return Err(AppError::new(
             "session_processing",
-            "Processing consent can only be attached while preparing its new recording.",
+            "Automatic processing can only be attached while preparing its new recording.",
         ));
     }
     let authorized_until = started_at
@@ -409,7 +368,6 @@ mod tests {
         let tx = core.db.transaction().unwrap();
         attach(&tx, plan, &id).unwrap();
         tx.commit().unwrap();
-        core.pending_processing = None;
         id
     }
 
@@ -447,7 +405,7 @@ mod tests {
         assert_eq!(value["tracks"], serde_json::json!(["mic", "system"]));
         assert_eq!(
             value["limits"],
-            serde_json::json!({"duration_seconds":3600,"upload_bytes":268435456,"requests":1000,"text_bytes":800000,"post_stop_seconds":14400})
+            serde_json::json!({"duration_seconds":14400,"upload_bytes":268435456,"requests":1000,"text_bytes":800000,"post_stop_seconds":14400})
         );
         let json = serde_json::to_string(&plan).unwrap();
         assert!(!json.contains("synthetic-credential-reference"));
@@ -456,87 +414,36 @@ mod tests {
     }
 
     #[test]
-    fn consent_expires_is_superseded_and_cannot_authorize_recording_itself() {
-        let mut core = core();
-        let first = core
-            .prepare_session_processing_at(Request::LiveOnly {}, 100)
-            .unwrap();
-        assert_eq!(
-            core.confirmed_session_processing_at(Some(&first.fingerprint), 399)
-                .unwrap()
-                .unwrap()
-                .id,
-            first.id
-        );
-        assert_eq!(
-            core.confirmed_session_processing_at(Some(&first.fingerprint), 400)
-                .unwrap_err()
-                .code,
-            "session_consent_changed"
-        );
-        let second = core
-            .prepare_session_processing_at(Request::LiveOnly {}, 100)
-            .unwrap();
-        assert_ne!(first.fingerprint, second.fingerprint);
-        assert_eq!(
-            core.confirmed_session_processing_at(Some(&first.fingerprint), 101)
-                .unwrap_err()
-                .code,
-            "session_consent_changed"
-        );
-        assert!(core
-            .confirmed_session_processing_at(None, 101)
-            .unwrap()
-            .is_none());
-        let options = crate::audio::CaptureOptions {
-            microphone_id: String::new(),
-            output_id: String::new(),
-        };
-        assert_eq!(
-            core.start_desktop("No permission", options, false, Some(&second.fingerprint))
-                .unwrap_err()
-                .code,
-            "consent_required"
-        );
-        assert_eq!(core.recording_state().status, CaptureStatus::Idle);
-        assert!(core.list_meetings().unwrap().is_empty());
+    fn the_saved_default_decides_what_runs_after_a_recording() {
+        let core = core();
+        assert!(core.default_processing_request().unwrap().is_none());
+        for (mode, summary, expected) in [
+            ("live", None, r#"{"kind":"live_only"}"#),
+            (
+                "final",
+                Some("standup-v1"),
+                r#"{"kind":"final","live":false,"summary":"standup-v1"}"#,
+            ),
+            (
+                "both",
+                None,
+                r#"{"kind":"final","live":true,"summary":null}"#,
+            ),
+        ] {
+            core.db
+                .execute(
+                    "UPDATE settings SET processing_mode=?1, processing_summary=?2 WHERE id=1",
+                    rusqlite::params![mode, summary],
+                )
+                .unwrap();
+            let request = core.default_processing_request().unwrap().unwrap();
+            assert_eq!(serde_json::to_string(&request).unwrap(), expected);
+        }
     }
 
     #[test]
-    fn speech_edit_and_revert_invalidate_review_before_device_access() {
-        let mut core = core();
-        let plan = core
-            .prepare_session_processing(Request::LiveOnly {})
-            .unwrap();
-        let original = core.settings().unwrap();
-        core.save_stt_settings("de", "Fictional vocabulary", "base")
-            .unwrap();
-        core.save_stt_settings(
-            &original.stt_language,
-            &original.stt_prompt,
-            &original.stt_model,
-        )
-        .unwrap();
-        let options = crate::audio::CaptureOptions {
-            microphone_id: String::new(),
-            output_id: String::new(),
-        };
-        assert_eq!(
-            core.start_desktop("Stale review", options, true, Some(&plan.fingerprint))
-                .unwrap_err()
-                .code,
-            "session_consent_changed"
-        );
-        assert_eq!(core.recording_state().status, CaptureStatus::Idle);
-        assert!(core.list_meetings().unwrap().is_empty());
-    }
-
-    #[test]
-    fn failed_review_clears_the_old_grant_and_scopes_reject_unknown_fields() {
-        let mut core = core();
-        let plan = core
-            .prepare_session_processing(Request::LiveOnly {})
-            .unwrap();
+    fn a_summary_needs_a_model_and_scopes_reject_unknown_fields() {
+        let core = core();
         assert_eq!(
             core.prepare_session_processing(Request::Final {
                 live: false,
@@ -545,12 +452,6 @@ mod tests {
             .unwrap_err()
             .code,
             "provider_model"
-        );
-        assert_eq!(
-            core.confirmed_session_processing(Some(&plan.fingerprint))
-                .unwrap_err()
-                .code,
-            "session_consent_changed"
         );
         assert!(
             serde_json::from_str::<Request>(r#"{"kind":"live_only","summary":"general-v1"}"#)
@@ -572,7 +473,7 @@ mod tests {
             .unwrap();
         let snapshot = core.session_processing(&id).unwrap().unwrap();
         assert_eq!((snapshot.state, snapshot.revision), (State::Prepared, 1));
-        assert_eq!(snapshot.authorized_until - snapshot.started_at, 18000);
+        assert_eq!(snapshot.authorized_until - snapshot.started_at, 28800);
         assert_eq!(
             core.cancel_session_processing(&id, 2).unwrap_err().code,
             "session_processing_conflict"
@@ -585,9 +486,6 @@ mod tests {
             core.get_meeting(&id).unwrap().user_markdown,
             "Preserve this fictional draft"
         );
-        assert!(core
-            .confirmed_session_processing(Some(&plan.fingerprint))
-            .is_err());
     }
 
     #[test]
@@ -681,15 +579,12 @@ mod tests {
                 core.get_meeting(&id).unwrap().user_markdown,
                 "Restart must retain these notes"
             );
-            assert!(core
-                .confirmed_session_processing(Some(&snapshot.plan.fingerprint))
-                .is_err());
             assert_eq!(core.recording_state().status, CaptureStatus::Idle);
         }
     }
 
     #[test]
-    fn consent_is_not_attachable_to_other_sources_or_after_review_expiry() {
+    fn processing_is_not_attachable_to_other_sources() {
         let mut core = core();
         let id = core.create_note("Fictional existing note").unwrap();
         let plan = core
@@ -700,16 +595,6 @@ mod tests {
             assert_eq!(
                 attach(&tx, &plan, &id).unwrap_err().code,
                 "session_processing"
-            );
-        }
-        let expired = core
-            .prepare_session_processing_at(Request::LiveOnly {}, 100)
-            .unwrap();
-        {
-            let tx = core.db.transaction().unwrap();
-            assert_eq!(
-                attach(&tx, &expired, &id).unwrap_err().code,
-                "session_consent_changed"
             );
         }
         assert!(core.session_processing(&id).unwrap().is_none());
@@ -817,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_scope_freezes_instructions_and_old_plans_keep_fingerprints() {
+    fn summary_scope_freezes_instructions_and_reviewed_plans_still_read() {
         let mut core = core();
         cloud_settings(&mut core);
         let plan = core
@@ -826,11 +711,13 @@ mod tests {
                 summary: Some(Template::General),
             })
             .unwrap();
-        let json = serde_json::to_value(&plan).unwrap();
+        let mut json = serde_json::to_value(&plan).unwrap();
         assert!(json["scope"]["summary"].get("instructions").is_none());
-        let mut resealed: Plan = serde_json::from_value(json).unwrap();
-        seal(&mut resealed).unwrap();
-        assert_eq!(resealed.fingerprint, plan.fingerprint);
+        // Plans stored while consent reviews existed carry these fields.
+        json["fingerprint"] = "a".repeat(64).into();
+        json["review_expires_at"] = 300.into();
+        let stored: Plan = serde_json::from_value(json).unwrap();
+        assert_eq!(stored.id, plan.id);
         core.save_summary_instructions("Use British English.")
             .unwrap();
         let plan = core

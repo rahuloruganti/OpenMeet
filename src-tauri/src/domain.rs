@@ -53,6 +53,8 @@ pub struct RecordingState {
     /// Audio written so far (microphone frames / rate), so paused time is excluded.
     /// Computed from capture counters on every read; `None` without real capture.
     pub recording_offset_ms: Option<i64>,
+    /// Why automatic processing was skipped for this recording, if it was.
+    pub processing_notice: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -477,7 +479,7 @@ mod tests {
             serde_json::to_value(&state).unwrap(),
             serde_json::json!({
                 "revision": 0, "status": "idle", "meeting_id": null, "source": null,
-                "error": null, "recording_offset_ms": 1500
+                "error": null, "recording_offset_ms": 1500, "processing_notice": null
             })
         );
     }

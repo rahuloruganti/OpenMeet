@@ -31,7 +31,7 @@ function choice(mode: unknown, summary: unknown): ProcessingChoice {
   };
 }
 
-/** The saved default. Starting a recording still needs a reviewed, confirmed plan. */
+/** The saved default, applied to every new recording. */
 export const processingDefault = (settings: Settings | null) =>
   choice(settings?.processing_mode, settings?.processing_summary);
 

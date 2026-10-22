@@ -10,7 +10,7 @@ OpenMeet is a local-first desktop meeting notetaker built with Tauri 2, Rust, Re
 - Local Windows Whisper/VAD downloads, generic OpenAI-compatible summaries/questions, and optional cloud STT are implemented. Current main includes an unqualified Apple Silicon macOS 14.2+ capture preview and a separately pinned local speech-engine path. Complete hardware/provider/MVP qualification remains unfinished. Verify current claims against executed checks.
 - Simulation and fictional fixtures are not real recordings or generated summaries. Preserve that distinction in the UI, database, exports, and reports.
 
-**Current direction:** `docs/v1-release-plan.md` (agreed 2026-10-22) sets the v1 public Windows release scope and order. It supersedes the consent rules below: consent cards, the processing review, and the participant checkbox are being removed, and sherpa-onnx, local model/server detection, and first-run setup are in scope. Rules below still apply where the plan is silent.
+**Current direction:** `docs/v1-release-plan.md` (agreed 2026-10-22) sets the v1 public Windows release scope and order. Consent cards, the processing review, and the participant checkbox were removed at the user's request; sherpa-onnx, local model/server detection, and first-run setup are in scope. Rules below still apply where the plan is silent.
 
 Read `docs/v1-release-plan.md`, `docs/phase-1-implementation-plan.md`, and `docs/implementation-status.md` before substantial work. Consult the original development-plan document for broader requirements. Documentation may lag implementation: verify claims against code and executed tests.
 
@@ -28,7 +28,7 @@ Read `docs/v1-release-plan.md`, `docs/phase-1-implementation-plan.md`, and `docs
 | `src-tauri/src/audio.rs` | Device discovery, native capture, bounded queues, WAV writers |
 | `src-tauri/src/model_library.rs` | Bounded model scans, verified imports, public Hugging Face metadata/downloads |
 | `src-tauri/src/providers.rs` | Independent provider validation, keychain credentials, model discovery, bounded HTTP |
-| `src-tauri/src/session_processing.rs` | Backend session-consent preparation, recording attachment, cancellation, and restart state; no automatic dispatch yet |
+| `src-tauri/src/session_processing.rs` | Automatic-processing plans from the saved default, recording attachment, cancellation, and restart state |
 | `src-tauri/src/llm.rs` | Summary/question prompts and bounded text requests |
 | `src-tauri/src/cloud_stt.rs` | Frozen bounded WAV uploads, timing validation, timed/untimed transcription |
 | `src-tauri/src/export.rs` | Markdown rendering and non-overwriting snapshot export |
@@ -87,14 +87,14 @@ Capture qualification still requires real-machine checks: distinct tracks, audib
 
 ## Data, consent, and privacy
 
-- Require consent acknowledgement before real recording. Keep active, paused, failed, and simulated states visibly distinct.
+- The user removed the participant-consent checkbox (2026-10-22); users are responsible for recording-consent law, and the docs say so. Keep active, paused, failed, and simulated states visibly distinct.
 - Paused audio must not be persisted or transcribed. Test queued and in-flight callbacks and resume boundaries, not only the UI label.
 - Preserve user notes and external Markdown edits. Save failures must not silently discard text or allow an unsafe close.
 - Use additive, versioned migrations; test upgrades with existing notes and foreign-key relationships. Do not reset a user's database to fix development errors.
 - Keep snapshot exports non-overwriting until a tested merge implementation replaces them. Protect filenames, destination paths, and concurrent publication.
 - Never delete existing audio, notes, or database files without explicit authorization. Keep partial artifacts recognizable and distinguish incomplete files from successful captures.
-- The user superseded Merge-specific setup with independent user-supplied OpenAI-compatible HTTPS base URL/key/model settings for LLM and cloud STT. Local Whisper stays the default. Settings keys briefly enter an uncontrolled password field/IPC before Rust stores them in the OS keychain; never read them back or persist them in frontend state. Environment import is removed. Changing the destination requires a new key. Cloud text and audio actions each require explicit consent bound to frozen configuration/content; no automatic uploads, model fallback, or billable retries. Legacy Merge keys/configuration are dormant, not automatically forwarded or deleted.
-- Do not add telemetry, automatic uploads, or cloud processing by default. Future cloud providers require clear disclosure and explicit opt-in; keys belong in the OS keychain, never in SQLite, Markdown, logs, or frontend state.
+- The user superseded Merge-specific setup with independent user-supplied OpenAI-compatible HTTPS base URL/key/model settings for LLM and cloud STT. Local Whisper stays the default. Settings keys briefly enter an uncontrolled password field/IPC before Rust stores them in the OS keychain; never read them back or persist them in frontend state. Environment import is removed. Changing the destination requires a new key. Cloud text and audio actions run when the user triggers them or chooses automatic processing in Settings; there are no per-request confirmation cards (removed 2026-10-22). Keep hard request/byte limits, never retry billable requests or fall back to another model automatically, and refuse to save results whose content or provider changed mid-request. Legacy Merge keys/configuration are dormant, not automatically forwarded or deleted.
+- Do not add telemetry, or cloud processing by default. Cloud destinations require clear disclosure ("Leaves this device") and the user's choice in Settings; keys belong in the OS keychain, never in SQLite, Markdown, logs, or frontend state.
 - Do not log transcript content, private audio, credentials, or signed webhook URLs. Use fictional or properly licensed/consented fixtures.
 - App data and exports are currently unencrypted. A cloud-synced export folder can move files off-device even without an app upload feature.
 
