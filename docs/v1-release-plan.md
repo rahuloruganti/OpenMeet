@@ -67,3 +67,4 @@ Native run of `just dev` with two authorized test recordings on a SoundCore 2 Bl
 | 13 | P1 | New recording listed only a stale "Saved microphone (unavailable)" until **Refresh devices**, although the SoundCore microphone was connected. | Fixed: New recording lists devices again each time it opens. |
 
 Pause exclusion held on the microphone track: the timing index has no blocks for the paused 10.5 s and the WAV length matches. Local transcription with Whisper `small` runs end to end. Summaries were not exercised because no connection has a key.
+n- Release notes: `docs/release-notes-0.9.0.md`; installer built locally (not yet installed or tested on a clean machine).
