@@ -33,7 +33,7 @@ export const builtinRecipes: Recipe[] = [
   },
 ];
 
-/** Recipe chips: choosing one fills the question box. Nothing is sent until the usual review. */
+/** Recipe chips: choosing one fills the question box. Nothing is sent until you ask. */
 export function RecipePicker(props: {
   recipes: Recipe[];
   disabled: boolean;
@@ -73,7 +73,7 @@ export function RecipeSettings({
       <h3>Recipes</h3>
       <p className="muted">
         Saved questions you can reuse when asking a meeting or several meetings.
-        Choosing one only fills the question box; you still review what is sent.
+        Choosing one only fills the question box; nothing is sent until you ask.
         Built in: {builtinRecipes.map((recipe) => recipe.name).join(", ")}.
       </p>
       <SavedTextEditor

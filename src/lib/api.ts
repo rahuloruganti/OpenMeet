@@ -189,7 +189,7 @@ export type Settings = {
   summary_instructions: string;
   summary_templates: CustomTemplate[];
   recipes: Recipe[];
-  /** "recording", "live", "final" or "both"; preselects the recording review only. */
+  /** "recording", "live", "final" or "both"; applied to every new recording. */
   processing_mode: string;
   processing_summary: string | null;
   /** The template the Enhance picker starts at. */

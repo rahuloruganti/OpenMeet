@@ -803,11 +803,12 @@ export function App() {
               Capture: {recording.error}
             </p>
           )}
-          {recording.processing_notice && (
-            <p className="notice" role="status">
-              {recording.processing_notice}
-            </p>
-          )}
+          {recording.processing_notice &&
+            recording.meeting_id === selected?.meeting.id && (
+              <p className="notice" role="status">
+                {recording.processing_notice}
+              </p>
+            )}
           {notice && (
             <div className="notice" role="status">
               <span>{notice}</span>
@@ -848,10 +849,12 @@ export function App() {
                 <h3>Automatic processing</h3>
                 <p role="status">
                   Stage:{" "}
-                  {(processing.workflow?.stage ?? processing.state).replaceAll(
-                    "_",
-                    " ",
-                  )}
+                  {(processing.workflow?.stage ?? processing.state) ===
+                  "consent_required"
+                    ? "stopped because settings changed; retry when ready"
+                    : (
+                        processing.workflow?.stage ?? processing.state
+                      ).replaceAll("_", " ")}
                 </p>
                 {processing.workflow?.error && (
                   <p role="alert">{processing.workflow.error}</p>

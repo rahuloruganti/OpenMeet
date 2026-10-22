@@ -63,7 +63,7 @@ The prompt names the app and offers **Set up recording**, **Not now**, or **Neve
 
 Local Whisper stays on this device. An API speech destination receives audio. An API summary destination receives saved notes and final transcript text. Live plus final transcription uses separate requests and can incur separate charges. Starting a recording does not install a missing model.
 
-Automatic processing allows up to 14,400 seconds (4 hours) of recording, 14,400 seconds of processing after stop, 256 MiB of uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. Exceeding a limit does not stop recording or send more requests. Longer recordings are not processed automatically; use **Transcribe audio** on the Transcript tab.
+Automatic processing allows up to 14,400 seconds (4 hours) of recording with local Whisper, 14,400 seconds of processing after stop, 256 MiB of uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. Exceeding a limit does not stop recording or send more requests. Longer recordings are not processed automatically; use **Transcribe audio** on the Transcript tab. With an API speech connection the 256 MiB upload limit is reached after roughly 20 minutes, because the system track is 48 kHz stereo; longer recordings then stop with a budget error.
 
 Live text is provisional. The latest 200 segments appear with track labels and incomplete-coverage warnings. Provisional text is excluded from search, summaries, and exports. If the live queue fills or a processing operation cannot run, capture continues and the preview can have gaps. Accepted audio captured before a pause may finish processing while paused. Paused audio is excluded by the implementation; hardware privacy remains unqualified.
 
