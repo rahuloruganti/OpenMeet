@@ -3,7 +3,13 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 1420, strictPort: true },
+  // Keep Vite out of src-tauri: scanning or watching its multi-GB target/ left the window blank.
+  server: {
+    port: 1420,
+    strictPort: true,
+    watch: { ignored: ["**/src-tauri/**"] },
+  },
+  optimizeDeps: { entries: ["index.html"] },
   clearScreen: false,
   test: {
     environment: "jsdom",
