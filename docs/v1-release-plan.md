@@ -43,3 +43,24 @@ Each step is its own commit to `main`.
 ## Still required before calling v1 done
 
 The capture qualification in AGENTS.md (distinct audible tracks, paused audio excluded, device loss/switch, sleep/wake, a 60-minute run with drift below 100 ms) and a fresh-machine install of the NSIS build. Record unmet gates in the release notes rather than claiming them.
+
+## Hands-on findings (2026-10-22)
+
+Native run of `just dev` with two authorized test recordings on a SoundCore 2 Bluetooth device (microphone and output). Driven through WebView2 remote debugging because desktop automation cannot send input into the webview.
+
+| # | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| 1 | P0 | Dev window stayed blank: Vite scanned and watched the 21 GB `src-tauri/target`. | Fixed `147fdd1` |
+| 2 | P0 | Transcription refused every recording on this machine: device packet stamps jitter up to ±11 ms against a 2 ms tolerance. | Fixed `ea753a6` |
+| 3 | P0 | With the SoundCore 2, the system track is always empty. Opening its microphone switches it to hands-free mode; playback then goes to a "Hands-Free" render endpoint that cpal does not enumerate, and loopback of "Headphones (SoundCore 2)" receives nothing. A Noise THREE headset did capture system audio. Closing `voice-jev` did not change the result. | Open |
+| 4 | P0 | No warning when a track records nothing or near-silence, during recording or after stop. | Open |
+| 5 | P1 | Quiet Bluetooth microphone (−50 to −57 dBFS while speaking) gave 2 short segments from about 10 s of speech. | Open |
+| 6 | P1 | About 1.3 s of microphone audio is lost at start while the Bluetooth profile switches. | Open |
+| 7 | P1 | After a no-speech transcription the UI shows "Transcript generated and saved" above "No transcript yet." | Open |
+| 8 | P1 | Settings shows no warning that both API tasks use `merge-api`, which has no key, or that the speech model ID is a text-to-speech model. | Open (setup work) |
+| 9 | P2 | Export folder is shown with the `\?\` prefix. | Open |
+| 10 | P2 | Window size and position are not remembered. | Open |
+| 11 | P2 | Most library entries read "Untitled meeting"; a default title with date and time would be scannable. | Open |
+| 12 | P2 | "Save notes now" duplicates autosave. | Open |
+
+Pause exclusion held on the microphone track: the timing index has no blocks for the paused 10.5 s and the WAV length matches. Local transcription with Whisper `small` runs end to end. Summaries were not exercised because no connection has a key.
