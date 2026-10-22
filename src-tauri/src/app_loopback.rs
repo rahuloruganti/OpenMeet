@@ -170,3 +170,41 @@ impl Drop for AppLoopback {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ringbuf::{
+        traits::{Consumer, Split},
+        HeapRb,
+    };
+
+    /// Native and explicitly authorized only: play audio from another process while it runs.
+    #[test]
+    #[ignore]
+    fn app_audio_self_test() {
+        let shared = Arc::new(Shared::new());
+        shared.recording.store(true, Ordering::SeqCst);
+        let (producer, mut consumer) = HeapRb::<Block>::new(super::super::QUEUE_BLOCKS).split();
+        let loopback = AppLoopback::start(shared.clone(), 1, producer).unwrap();
+        let (mut frames, mut peak, mut nonzero) = (0_usize, 0_f32, 0_usize);
+        for half_second in 0..16 {
+            let mut window = 0_f32;
+            for _ in 0..50 {
+                thread::sleep(Duration::from_millis(10));
+                while let Some(block) = consumer.try_pop() {
+                    frames += block.len / usize::from(CHANNELS);
+                    for sample in &block.samples[..block.len] {
+                        window = window.max(sample.abs());
+                        nonzero += usize::from(*sample != 0.0);
+                    }
+                }
+            }
+            peak = peak.max(window);
+            println!("{:>4.1}s peak {window:.4}", f64::from(half_second) / 2.0);
+        }
+        drop(loopback);
+        println!("frames {frames}, non-zero samples {nonzero}, peak {peak:.4}");
+        assert!(frames > 0, "no app audio frames");
+    }
+}
