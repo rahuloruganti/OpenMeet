@@ -10,7 +10,9 @@ OpenMeet is a local-first desktop meeting notetaker built with Tauri 2, Rust, Re
 - Local Windows Whisper/VAD downloads, generic OpenAI-compatible summaries/questions, and optional cloud STT are implemented. Current main includes an unqualified Apple Silicon macOS 14.2+ capture preview and a separately pinned local speech-engine path. Complete hardware/provider/MVP qualification remains unfinished. Verify current claims against executed checks.
 - Simulation and fictional fixtures are not real recordings or generated summaries. Preserve that distinction in the UI, database, exports, and reports.
 
-Read `docs/phase-1-implementation-plan.md` and `docs/implementation-status.md` before substantial work. Consult the original development-plan document for broader requirements. Documentation may lag implementation: verify claims against code and executed tests.
+**Current direction:** `docs/v1-release-plan.md` (agreed 2026-10-22) sets the v1 public Windows release scope and order. It supersedes the consent rules below: consent cards, the processing review, and the participant checkbox are being removed, and sherpa-onnx, local model/server detection, and first-run setup are in scope. Rules below still apply where the plan is silent.
+
+Read `docs/v1-release-plan.md`, `docs/phase-1-implementation-plan.md`, and `docs/implementation-status.md` before substantial work. Consult the original development-plan document for broader requirements. Documentation may lag implementation: verify claims against code and executed tests.
 
 ## Code map
 

@@ -9,6 +9,7 @@ OpenMeet is a desktop meeting notetaker built with Tauri, Rust, React, and TypeS
 | Install and launch the app                      | [Installation and troubleshooting](../README.md#install-and-run-on-windows)           |
 | Take notes, transcribe, summarize, and export   | [User guide](user-guide.md)                                                           |
 | Understand which features are ready             | [Implementation status](implementation-status.md)                                     |
+| See the agreed v1 release scope and order       | [v1 release plan](v1-release-plan.md)                                                 |
 | Understand data storage and network requests    | [Privacy](privacy.md)                                                                 |
 | Prepare for a recording                         | [Recording consent](consent.md)                                                       |
 | Understand the code and data flow               | [Architecture](architecture.md)                                                       |
