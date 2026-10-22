@@ -186,7 +186,30 @@ mod tests {
         let shared = Arc::new(Shared::new());
         shared.recording.store(true, Ordering::SeqCst);
         let (producer, mut consumer) = HeapRb::<Block>::new(super::super::QUEUE_BLOCKS).split();
+        // OPENMEET_HOLD_MIC=1 opens the default microphone (samples discarded) before capture
+        // so a Bluetooth headset is already in hands-free mode; =late opens it after capture
+        // starts, as the app does.
+        let hold = std::env::var("OPENMEET_HOLD_MIC").ok();
+        let open_mic = || {
+            use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+            let device = cpal::default_host().default_input_device().unwrap();
+            println!("holding microphone: {device}");
+            let config = device.default_input_config().unwrap();
+            let stream = device
+                .build_input_stream::<f32, _, _>(config.config(), |_, _| {}, |_| {}, None)
+                .unwrap();
+            stream.play().unwrap();
+            stream
+        };
+        let mut _mic = (hold.as_deref() == Some("1")).then(|| {
+            let stream = open_mic();
+            thread::sleep(Duration::from_secs(2)); // Let the headset change profile.
+            stream
+        });
         let loopback = AppLoopback::start(shared.clone(), 1, producer).unwrap();
+        if hold.as_deref() == Some("late") {
+            _mic = Some(open_mic());
+        }
         let (mut frames, mut peak, mut nonzero) = (0_usize, 0_f32, 0_usize);
         for half_second in 0..16 {
             let mut window = 0_f32;
