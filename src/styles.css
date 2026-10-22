@@ -435,12 +435,6 @@ pre {
   height: 6px;
   background: var(--accent);
 }
-.preview-tag {
-  padding: 2px 6px;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  font-size: 0.625rem;
-}
 .privacy-popover {
   position: absolute;
   right: 0;
@@ -1283,8 +1277,7 @@ textarea.notes-editor {
   .feedback-stack {
     padding-inline: 12px;
   }
-  .toolbar-context button span,
-  .preview-tag {
+  .toolbar-context button span {
     display: none;
   }
   .privacy-details {

@@ -491,7 +491,7 @@ describe("desktop foundation", () => {
     fireEvent.keyDown(ai, { key: "End" });
     const about = screen.getByRole("tab", { name: "Privacy & about" });
     expect(document.activeElement).toBe(about);
-    expect(screen.getByText(/Version 0\.1\.0/)).toBeTruthy();
+    expect(screen.getByText(/Version 0.9.0/)).toBeTruthy();
     fireEvent.keyDown(about, { key: "Home" });
     const recording = screen.getByRole("tab", { name: "Recording" });
     expect(document.activeElement).toBe(recording);

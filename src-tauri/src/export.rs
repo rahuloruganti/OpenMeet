@@ -6,8 +6,8 @@ fn banner(source: &str) -> &'static str {
     match source {
         "simulation" => "Simulation: no audio was recorded.",
         "fixture" => "Fictional sample: no audio was recorded and the summary is hand-written.",
-        "desktop" => "Recorded on this device with the Windows capture preview. Audio files are not included in this export.",
-        _ => "OpenMeet preview export.",
+        "desktop" => "Recorded on this device. Audio files are not included in this export.",
+        _ => "OpenMeet export.",
     }
 }
 

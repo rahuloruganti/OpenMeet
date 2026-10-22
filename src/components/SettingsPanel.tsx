@@ -349,7 +349,7 @@ export function SettingsPanel(props: Props) {
               <ShortcutField
                 label="Pause / resume shortcut"
                 value={props.shortcut}
-                placeholder="CommandOrControl+Shift+Space"
+                placeholder="Control+Shift+F9"
                 disabled={disabled}
                 onChange={props.onShortcut}
               />
@@ -688,7 +688,7 @@ export function SettingsPanel(props: Props) {
             </section>
             <section className="settings-section" aria-label="About">
               <h3>About OpenMeet</h3>
-              <p>Version {version} (preview)</p>
+              <p>Version {version}</p>
               <button disabled={props.disabled} onClick={props.onRunSetup}>
                 Run setup again
               </button>

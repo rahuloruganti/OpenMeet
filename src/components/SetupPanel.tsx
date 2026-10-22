@@ -50,8 +50,8 @@ export function SetupPanel(props: Props) {
         </button>
       </div>
       <p className="panel-description">
-        Microphone and system audio are saved on this device. Capture is a
-        preview; hardware qualification is pending.
+        Microphone and system audio are saved on this device. Capture is not yet
+        hardware-qualified.
       </p>
       {devices && !devices.capture_supported && (
         <p role="alert">

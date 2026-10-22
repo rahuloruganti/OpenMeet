@@ -43,6 +43,9 @@ const MIGRATIONS: [(i64, &str, bool); 27] = [
 const LATEST_SCHEMA: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
 const MAX_TAGS: usize = 20;
 const MAX_TAG_CHARS: usize = 40;
+/// Shortcuts written only into a freshly created database. Existing rows are never rewritten.
+pub const DEFAULT_PAUSE_SHORTCUT: &str = "Control+Shift+F9";
+pub const DEFAULT_STOP_SHORTCUT: &str = "Control+Shift+F10";
 
 pub struct Core {
     pub(crate) db: Connection,
@@ -106,6 +109,12 @@ impl Core {
             if rebuilds_referenced {
                 db.pragma_update(None, "foreign_keys", "ON")?;
             }
+        }
+        if version == 0 {
+            db.execute(
+                "UPDATE settings SET pause_shortcut = ?1, stop_shortcut = ?2 WHERE id = 1",
+                params![DEFAULT_PAUSE_SHORTCUT, DEFAULT_STOP_SHORTCUT],
+            )?;
         }
         check_schema(&db)?;
         // A restarted process cannot still own a recording from the previous process.
@@ -1757,6 +1766,23 @@ pub(crate) fn test_v11_database(path: &Path) -> Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_database_gets_default_shortcuts_and_reopen_keeps_saved_ones() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("meetings.db");
+        {
+            let mut core = Core::open(&path).unwrap();
+            let settings = core.settings().unwrap();
+            assert_eq!(settings.pause_shortcut, "Control+Shift+F9");
+            assert_eq!(settings.stop_shortcut.as_deref(), Some("Control+Shift+F10"));
+            core.save_shortcuts("Alt+P", None).unwrap();
+        }
+        let core = Core::open(&path).unwrap();
+        let settings = core.settings().unwrap();
+        assert_eq!(settings.pause_shortcut, "Alt+P");
+        assert_eq!(settings.stop_shortcut, None);
+    }
 
     #[test]
     fn settings_defaults_upgrade_from_v24_and_validate() {

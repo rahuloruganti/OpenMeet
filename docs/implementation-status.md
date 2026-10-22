@@ -88,7 +88,7 @@ The October 14 [Phase 1 foundation verification](phase-1-foundation-verification
 
 ### Stabilization and native UI
 
-- The startup pause-shortcut warning comes from another application owning CommandOrControl+Shift+Space (Windows error 1409). The warning now names every failing shortcut and chord; choose another shortcut in Settings. The default is unchanged.
+- The startup pause-shortcut warning comes from another application owning CommandOrControl+Shift+Space (Windows error 1409). The warning now names every failing shortcut and chord; choose another shortcut in Settings. The default was the same until v0.9.0; new installs now default to Ctrl+Shift+F9 for pause and Ctrl+Shift+F10 for stop.
 - Verify repeated native cold starts after removing optional discovery from the saved-notes startup dependency.
 - Qualify native failures after bounding worker control waits and testing stalled workers, late finalization, and SQLite publication failure/retry.
 - Qualify audio-health cleanup and draft-preserving finalized metadata refresh in the native app; regression tests pass.

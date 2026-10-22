@@ -2,9 +2,24 @@
 
 A desktop meeting notetaker with local notes, Windows audio capture, local or cloud transcription, and optional summaries through your OpenAI-compatible provider.
 
-**Preview:** Windows capture has not passed full hardware qualification. Apple Silicon macOS 14.2 or newer can start a capture preview; it is not qualified, and permission denial has not been tested. Windows downloads its speech engine. Apple Silicon requires a separately pinned local whisper.cpp build. There is no installer yet; run the app from source using the steps below.
+**Status:** Windows is the supported platform for v1. Windows capture has not passed full hardware qualification. macOS is a preview: Apple Silicon macOS 14.2 or newer can start a capture preview; it is not qualified, and permission denial has not been tested. Apple Silicon requires a separately pinned local whisper.cpp build. Windows installs with an unsigned installer (see [Install on Windows](#install-on-windows)) or runs from source using the steps below.
 
 See the [documentation index](docs/README.md) for the [user guide](docs/user-guide.md), [architecture](docs/architecture.md), [dependencies and versions](docs/dependencies.md), and [development guide](docs/development.md).
+
+## Install on Windows
+
+Windows is the supported platform for v1. macOS remains a preview. Build the installer from a checkout after `just setup`:
+
+```powershell
+just installer
+```
+
+The unsigned setup program is written to `src-tauri\target\release\bundle\nsis\` as a file named like `OpenMeet_0.9.0_x64-setup.exe`. Run it to install OpenMeet for your Windows user account; administrator rights are not needed.
+
+- **SmartScreen:** an unsigned installer can show "Windows protected your PC". Click **More info**, then **Run anyway**. Do this only for a build you built or trust.
+- **WebView2:** OpenMeet needs the Microsoft Edge WebView2 Runtime. If it is missing, the installer downloads Microsoft's bootstrapper, which needs an internet connection.
+- **Updates:** v1 has no automatic updater. To upgrade, run a newer installer over the existing install; your data stays in the folder listed under Data and privacy.
+- **Recording consent:** you are responsible for the recording-consent laws that apply to your meetings.
 
 ## Install and run on Windows
 
@@ -46,7 +61,7 @@ just dev
 
 `just setup` installs the Rust version from `rust-toolchain.toml` and JavaScript dependencies using the pinned pnpm version. It needs internet access on the first run. It does not install the system tools above or download speech models.
 
-`just dev` builds Rust, starts the local frontend, and opens **OpenMeet Preview**. Keep the terminal open. The first native build can take several minutes. For later launches, run `just dev` from the same project folder.
+`just dev` builds Rust, starts the local frontend, and opens **OpenMeet**. Keep the terminal open. The first native build can take several minutes. For later launches, run `just dev` from the same project folder.
 
 ## Use the app
 
@@ -86,7 +101,7 @@ Notes, recording, and local transcription work without a cloud key. Summaries an
 
 Keys pass briefly through the password field and IPC to Rust, then live in the OS keychain. They are not read back into Settings. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; refreshing models sends credentials only. Environment-key import has been removed.
 
-Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. It sends notes and transcript text only. Questions have their own confirmation, and earlier summaries remain available in the version picker.
+Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. It sends notes and transcript text only. Questions send directly too, and earlier summaries remain available in the version picker.
 
 Compatible endpoints must implement the operation you select; a model list does not prove chat or transcription support. No automatic model/provider fallback occurs. Live provider quality has not yet been qualified.
 
@@ -101,6 +116,8 @@ Run these from the repository folder:
 | `just dev`   | Start the native desktop app.                                                                  |
 | `just check` | Run frontend and Rust checks. The hardware recording test stays ignored.                       |
 | `just build` | Build a standalone release executable with frontend assets embedded. No installer is produced. |
+| `just installer` | Build the unsigned Windows NSIS installer under `src-tauri/target/release/bundle/nsis/`. |
+sis`). |
 
 On Windows, `just build` writes `src-tauri/target/release/openmeet.exe`. Close a running release executable before rebuilding it.
 

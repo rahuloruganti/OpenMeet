@@ -91,7 +91,7 @@ fn publish(app: &AppHandle, state: &RecordingState) {
         let label = match &state.status {
             CaptureStatus::Recording => "OpenMeet — RECORDING microphone + system audio",
             CaptureStatus::Paused => "OpenMeet — audio PAUSED",
-            _ => "OpenMeet — capture preview, idle",
+            _ => "OpenMeet — idle",
         };
         let _ = tray.set_tooltip(Some(label));
         let _ = tray.set_icon(Some(tray_image(&state.status)));
@@ -163,7 +163,7 @@ fn parse_shortcuts(pause: &str, stop: Option<&str>) -> Result<(Shortcut, Option<
         text.parse().map_err(|_| {
             AppError::new(
                 "invalid_shortcut",
-                "Use a shortcut such as CommandOrControl+Shift+Space.",
+                "Use a shortcut such as Control+Shift+F9.",
             )
         })
     };
@@ -1829,7 +1829,7 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&show, &pause, &stop, &quit])?;
             TrayIconBuilder::with_id("recorder")
                 .icon(tray_image(&CaptureStatus::Idle))
-                .tooltip("OpenMeet — capture preview, idle")
+                .tooltip("OpenMeet — idle")
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_window(app),

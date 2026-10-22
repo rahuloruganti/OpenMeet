@@ -29,3 +29,7 @@ check:
 # Build a release executable with the frontend embedded (no installer).
 build:
     corepack pnpm tauri build --no-bundle -- --locked
+
+# Build the unsigned Windows installer (NSIS setup .exe under src-tauri/target/release/bundle/nsis).
+installer:
+    corepack pnpm tauri build --bundles nsis

@@ -742,8 +742,7 @@ export function App() {
           </div>
           <details className="privacy-details">
             <summary>
-              <span className="status-dot" aria-hidden="true" /> Local workspace{" "}
-              <span className="preview-tag">Preview</span>
+              <span className="status-dot" aria-hidden="true" /> Local workspace
             </summary>
             <div className="privacy-popover">
               <strong>Your workspace is stored on this device.</strong>

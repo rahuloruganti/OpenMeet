@@ -702,3 +702,9 @@ Step 3b (sherpa-onnx, frontend and docs): the Settings engine card is now "On th
 - User request: make sherpa-onnx folders downloaded from Hugging Face selectable as speech models and runnable through the sherpa engine, without a new config option.
 - Outcome: a folder under `sherpa/custom/<name>` is selected as `sherpa-dir:<name>`. The name must be one plain folder name; separators, `..` and leading dots are rejected. The engine flags come from the file layout (transducer, Moonshine, or single-model treated as SenseVoice). Only the shared engine and VAD count as missing. The model library offers "Use this model" after a folder download.
 - Verified with Rust and frontend unit tests only. Not run on real sherpa-onnx transcription; transducer model type is left to the engine's own detection.
+
+## Rename, shortcut defaults, and unsigned NSIS installer (v1 plan step 5)
+
+- User request: rename the product to OpenMeet, version 0.9.0, new default shortcuts (pause Ctrl+Shift+F9, stop Ctrl+Shift+F10), an unsigned NSIS installer with a `just installer` recipe, and install documentation.
+- Outcome: product name, window title, and page title are "OpenMeet"; the identifier `dev.openmeet.preview` is unchanged. The Windows-facing "preview" wording was removed from the tray tooltip, export banners, About line, and the setup and privacy panels; macOS preview notes remain in the README, user guide, and macOS-only messages. Fresh databases get the new shortcut defaults; existing saved settings are not rewritten. The installer is per-user, unsigned, with WebView2 bootstrapper and no auto-updater.
+- Checks and any installer build results are recorded in the step 5 report, not here.
