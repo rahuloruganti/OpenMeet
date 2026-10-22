@@ -224,6 +224,12 @@ async fn start_recording(
     .await
 }
 
+/// Looks for known AI and speech servers on this machine (loopback only).
+#[tauri::command]
+async fn detect_local_servers() -> Result<Vec<providers::LocalServer>> {
+    blocking(|| Ok(providers::detect_local_servers())).await
+}
+
 #[tauri::command]
 async fn list_audio_devices() -> Result<audio::Devices> {
     blocking(audio::devices).await
@@ -1887,6 +1893,7 @@ pub fn run() {
             export_meeting,
             close_application,
             list_audio_devices,
+            detect_local_servers,
             provider_key_status,
             save_api_connection,
             delete_api_connection,

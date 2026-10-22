@@ -128,6 +128,29 @@ fn model(id: &str) -> Result<&'static Artifact> {
         .ok_or_else(|| AppError::new("stt_settings", "Choose one of the listed speech models."))
 }
 
+/// A Whisper model used where it already is: an absolute path to a `ggml` file, chosen from
+/// a local scan. Catalog ids still mean OpenMeet's own verified downloads.
+fn custom_model(id: &str) -> Result<PathBuf> {
+    let invalid = || {
+        AppError::new(
+            "stt_settings",
+            "That speech model file is missing or is not a Whisper ggml model. Choose again.",
+        )
+    };
+    let path = Path::new(id);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(invalid());
+    }
+    let mut magic = [0_u8; 4];
+    fs::File::open(path)
+        .and_then(|mut file| std::io::Read::read_exact(&mut file, &mut magic))
+        .map_err(|_| invalid())?;
+    if &magic != b"lmgg" && &magic != b"ggml" {
+        return Err(invalid());
+    }
+    Ok(path.to_path_buf())
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ModelFile {
     pub id: &'static str,
@@ -159,7 +182,10 @@ pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
             "Keep the vocabulary hint to one line of at most 500 characters.",
         ));
     }
-    model(model_id).map(|_| ())
+    if model(model_id).is_ok() {
+        return Ok(());
+    }
+    custom_model(model_id).map(|_| ())
 }
 
 pub fn status(root: &Path, model_id: &str) -> Status {
@@ -170,7 +196,10 @@ pub fn status(root: &Path, model_id: &str) -> Status {
         fs::metadata(models_dir(root).join(artifact.file)).is_ok_and(|m| m.len() == artifact.size)
     };
     let selected = model(model_id).ok();
-    let (model, vad) = (selected.is_some_and(present), present(&VAD));
+    let (model, vad) = (
+        selected.map_or_else(|| custom_model(model_id).is_ok(), present),
+        present(&VAD),
+    );
     let model_size = selected.map_or(0, |artifact| artifact.size);
     let missing = [(engine, ENGINE.size), (model, model_size), (vad, VAD.size)]
         .iter()
@@ -266,7 +295,11 @@ fn extract_engine(zip_path: &Path, destination: &Path) -> Result<()> {
 /// Downloads whatever is missing for the selected model. Each artifact is verified before it
 /// is installed. Other models already on disk are kept.
 pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) -> Result<Status> {
-    let selected = model(model_id)?;
+    // A model used in place needs only the engine and VAD.
+    let selected = match model(model_id) {
+        Ok(artifact) => Some(artifact),
+        Err(error) => custom_model(model_id).map(|_| None).map_err(|_| error)?,
+    };
     if !status(root, model_id).supported {
         return Err(stt_error(
             "Local speech-to-text needs Windows x64, or Apple Silicon with the local whisper.cpp b5454 build.",
@@ -288,15 +321,15 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
     fs::create_dir_all(models_dir(root))?;
     let before = status(root, model_id);
     let pending = [
-        (before.engine, &ENGINE),
-        (before.vad, &VAD),
+        (before.engine, Some(&ENGINE)),
+        (before.vad, Some(&VAD)),
         (before.model, selected),
     ];
     for (present, artifact) in pending {
         crate::model_library::check_cancel()?;
-        if present {
+        let Some(artifact) = artifact.filter(|_| !present) else {
             continue;
-        }
+        };
         if cfg!(all(target_os = "macos", target_arch = "aarch64")) && artifact.name == "engine" {
             return Err(stt_error(
                 "The Mac speech engine is a local whisper.cpp b5454 build, not a download. It is not installed.",
@@ -445,7 +478,10 @@ fn engine_command(
     command
         .current_dir(engine_dir(root))
         .arg("-m")
-        .arg(models_dir(root).join(model(&settings.stt_model)?.file))
+        .arg(match model(&settings.stt_model) {
+            Ok(artifact) => models_dir(root).join(artifact.file),
+            Err(_) => custom_model(&settings.stt_model)?,
+        })
         .arg("--vad")
         .arg("-vm")
         .arg(models_dir(root).join(VAD.file))
@@ -610,6 +646,32 @@ pub fn transcribe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scanned_whisper_file_is_used_in_place_and_anything_else_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let whisper = dir.path().join("ggml-custom.bin");
+        fs::write(&whisper, b"lmggfictional-weights").unwrap();
+        let other = dir.path().join("notes.bin");
+        fs::write(&other, b"GGUFllm").unwrap();
+        let path = whisper.to_str().unwrap();
+        validate("en", "", path).unwrap();
+        assert!(status(dir.path(), path).model);
+        for bad in [
+            other.to_str().unwrap(),
+            "ggml-custom.bin",
+            "missing/model.bin",
+        ] {
+            assert_eq!(
+                validate("en", "", bad).unwrap_err().code,
+                "stt_settings",
+                "{bad}"
+            );
+            assert!(!status(dir.path(), bad).model, "{bad}");
+        }
+        fs::remove_file(&whisper).unwrap();
+        assert!(!status(dir.path(), path).model);
+    }
     use std::io::Write;
 
     use std::sync::Mutex;

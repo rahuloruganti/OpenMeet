@@ -233,6 +233,75 @@ struct ModelItem {
 }
 
 pub fn list_models(connection: &Connection) -> Result<Vec<ProviderModel>> {
+    list_models_within(connection, Duration::from_secs(15))
+}
+
+/// A known local server found on this machine. Nothing is sent but `GET /models`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LocalServer {
+    pub name: &'static str,
+    pub base_url: String,
+    /// Whether the server is usually used for speech, chat, or both.
+    pub kind: &'static str,
+    /// The server answered but wants an API key (Unsloth Studio does).
+    pub needs_key: bool,
+    pub models: Vec<ProviderModel>,
+}
+
+// Default ports; a server moved to another port is added by hand in Connections.
+const LOCAL_SERVERS: [(&str, u16, &str); 5] = [
+    ("Ollama", 11434, "chat"),
+    ("LM Studio", 1234, "chat"),
+    ("Unsloth Studio", 8888, "chat"),
+    ("speaches", 8000, "speech"),
+    ("LocalAI", 8080, "both"),
+];
+
+/// Probes the known loopback ports in parallel; only servers that answer are returned.
+pub fn detect_local_servers() -> Vec<LocalServer> {
+    probe(
+        LOCAL_SERVERS
+            .iter()
+            .map(|&(name, port, kind)| (name, format!("http://127.0.0.1:{port}/v1"), kind)),
+    )
+}
+
+fn probe(targets: impl Iterator<Item = (&'static str, String, &'static str)>) -> Vec<LocalServer> {
+    let targets: Vec<_> = targets.collect();
+    std::thread::scope(|scope| {
+        let probes: Vec<_> = targets
+            .into_iter()
+            .map(|(name, base_url, kind)| {
+                scope.spawn(move || {
+                    let connection = Connection {
+                        base_url: base_url.clone(),
+                        model: None,
+                        key: String::new(),
+                    };
+                    let (needs_key, models) =
+                        match list_models_within(&connection, Duration::from_secs(2)) {
+                            Ok(models) => (false, models),
+                            Err(error) if error.code == "provider_unauthorized" => (true, vec![]),
+                            Err(_) => return None,
+                        };
+                    Some(LocalServer {
+                        name,
+                        base_url,
+                        kind,
+                        needs_key,
+                        models,
+                    })
+                })
+            })
+            .collect();
+        probes
+            .into_iter()
+            .filter_map(|probe| probe.join().ok().flatten())
+            .collect()
+    })
+}
+
+fn list_models_within(connection: &Connection, timeout: Duration) -> Result<Vec<ProviderModel>> {
     let url = connection.endpoint("models")?;
     let unreachable = || {
         AppError::new(
@@ -244,9 +313,7 @@ pub fn list_models(connection: &Connection) -> Result<Vec<ProviderModel>> {
         AppError::new("provider_models", "The provider returned an unsupported model list. Enter a model ID manually if discovery is unavailable.")
     };
     let response = authorize(
-        client(Duration::from_secs(15))
-            .map_err(|_| unreachable())?
-            .get(url),
+        client(timeout).map_err(|_| unreachable())?.get(url),
         connection.key(),
     )
     .send()
@@ -269,6 +336,58 @@ pub fn list_models(connection: &Connection) -> Result<Vec<ProviderModel>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_probe_reports_answering_servers_and_key_requests_only() {
+        use std::io::{Read as _, Write as _};
+        let serve = |status: &'static str, body: &'static str| {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}
+content-length: {}
+connection: close
+
+{body}",
+                    body.len()
+                );
+            });
+            format!("http://127.0.0.1:{port}/v1")
+        };
+        let open = serve("200 OK", r#"{"data":[{"id":"llama3"},{"id":"whisper-1"}]}"#);
+        let locked = serve("401 Unauthorized", "");
+        let closed = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!(
+                "http://127.0.0.1:{}/v1",
+                listener.local_addr().unwrap().port()
+            )
+        };
+        let found = probe(
+            [
+                ("Open", open, "chat"),
+                ("Locked", locked, "chat"),
+                ("Closed", closed, "chat"),
+            ]
+            .into_iter(),
+        );
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].name, "Open");
+        assert_eq!(
+            found[0]
+                .models
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            ["llama3", "whisper-1"]
+        );
+        assert!(!found[0].needs_key && found[1].needs_key && found[1].models.is_empty());
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
