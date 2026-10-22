@@ -652,12 +652,13 @@ export function SettingsPanel(props: Props) {
                   Audio, notes and transcripts are stored here, unencrypted.
                 </li>
                 <li>
-                  <strong>API transcription:</strong> audio, after a separate
-                  confirmation naming the destination.
+                  <strong>API transcription:</strong> recorded audio, sent to
+                  your speech connection when you transcribe.
                 </li>
                 <li>
-                  <strong>Summaries, questions and rewrites:</strong> only the
-                  text shown on each confirmation card.
+                  <strong>Summaries, questions and rewrites:</strong> notes,
+                  transcript text or the selected text, sent to your AI notes
+                  connection when you use them.
                 </li>
                 <li>
                   <strong>Meeting detection (off by default):</strong> reads

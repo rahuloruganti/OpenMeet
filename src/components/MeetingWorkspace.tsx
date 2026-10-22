@@ -1,20 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api,
-  isLocalBase,
   type ActionItem,
   type CustomTemplate,
   type Recipe,
   type SpeakerNames,
   speakerLabel,
   type MeetingDetail,
-  type ProcessingPlan,
   type Settings,
   type SummaryVersion,
 } from "../lib/api";
 import { builtinTemplates as templates } from "../lib/processing";
 import { tabTarget } from "../lib/tabs";
-import { TextConsent } from "./TextConsent";
 import { extractSection, renderMarkdown } from "../lib/markdown";
 import { ActionItems } from "./ActionItems";
 import { RecipePicker } from "./Recipes";
@@ -43,8 +40,6 @@ const templateLabel = (id: string, custom: CustomTemplate[]) =>
   ] ??
   (id.startsWith("custom-") ? "Deleted custom template" : id);
 
-/** A follow-up sends this many of the thread's latest turns; keep equal to the backend limit. */
-const FOLLOW_UP_TURNS = 6;
 /** An unsaved summary edit: the version it edits and the newest version when editing began. */
 export type SummaryDraft = { baseId: number; latestId: number; text: string };
 /** An unsaved segment edit; `baseText` is the segment text when editing began. */
@@ -116,10 +111,9 @@ type Props = {
   onNotes: (text: string) => void;
   onSaveNow: () => void;
   onExport: () => void;
-  onPlanTranscription: () => Promise<ProcessingPlan | null>;
-  onTranscribe: (confirmation: string | null) => void;
+  onTranscribe: () => void;
   /** `template` is a built-in id or a custom template id. */
-  onGenerate: (template: string, confirmation: string) => void;
+  onGenerate: (template: string) => void;
   /** Stored summaries, newest first. */
   versions: SummaryVersion[];
   customTemplates: CustomTemplate[];
@@ -129,7 +123,6 @@ type Props = {
   recipes: Recipe[];
   /** Saved personal instructions sent with every summary. */
   summaryInstructions: string;
-  onPlanSummary: (template: string) => Promise<ProcessingPlan | null>;
   /** Unsaved edit of this meeting's summary; App keeps it across meeting switches. */
   summaryDraft: SummaryDraft | undefined;
   onSummaryDraft: (draft: SummaryDraft | null) => void;
@@ -144,15 +137,7 @@ type Props = {
   /** Replaces the selected meeting's tasks after a backend change. */
   onActionItems: (meetingId: string, items: ActionItem[]) => void;
   /** `threadId` continues a saved thread; null starts a new one. */
-  onPlanQuestion: (
-    question: string,
-    threadId: number | null,
-  ) => Promise<ProcessingPlan | null>;
-  onAsk: (
-    question: string,
-    threadId: number | null,
-    confirmation: string,
-  ) => void;
+  onAsk: (question: string, threadId: number | null) => void;
   onDeleteThread: (threadId: number) => void;
   /** The selected meeting is being recorded right now, so it cannot be deleted. */
   recordingThis: boolean;
@@ -177,10 +162,6 @@ type Props = {
 
 export function MeetingWorkspace(props: Props) {
   const { selected, tab, disabled, job, versions } = props;
-  const [confirming, setConfirming] = useState<ProcessingPlan | null>(null);
-  const [confirmingAudio, setConfirmingAudio] = useState<ProcessingPlan | null>(
-    null,
-  );
   const [chosenTemplate, setTemplate] = useState(props.defaultTemplate);
   useEffect(() => setTemplate(props.defaultTemplate), [props.defaultTemplate]);
   // A deleted custom template falls back to General instead of failing at send time.
@@ -189,12 +170,9 @@ export function MeetingWorkspace(props: Props) {
     props.customTemplates.some((item) => item.id === chosenTemplate)
       ? chosenTemplate
       : "general-v1";
-  // Content key, not array identity, so a settings refresh keeps an open review.
-  const customKey = JSON.stringify(props.customTemplates);
   const [versionId, setVersionId] = useState<number | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
   const [question, setQuestion] = useState("");
-  const [asking, setAsking] = useState<ProcessingPlan | null>(null);
   // A thread id, "new" for the empty form, or null to show the newest thread.
   const [chosenThread, setChosenThread] = useState<number | "new" | null>(null);
   const [deletingThread, setDeletingThread] = useState(false);
@@ -205,15 +183,10 @@ export function MeetingWorkspace(props: Props) {
       : (threads.find((thread) => thread.id === chosenThread) ??
         threads[0] ??
         null);
-  const earlierTurns = Math.min(
-    activeThread?.turns.length ?? 0,
-    FOLLOW_UP_TURNS,
-  );
   const turnTotal = threads.reduce(
     (sum, thread) => sum + thread.turns.length,
     0,
   );
-  const planVersion = useRef(0);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [jumpHint, setJumpHint] = useState("");
   const [playbackError, setPlaybackError] = useState("");
@@ -230,8 +203,6 @@ export function MeetingWorkspace(props: Props) {
   const [deleting, setDeleting] = useState<"meeting" | "audio" | null>(null);
   const [typed, setTyped] = useState("");
   useEffect(() => {
-    setConfirming(null);
-    setAsking(null);
     setQuestion("");
     setChosenThread(null);
     setDeletingThread(false);
@@ -242,24 +213,6 @@ export function MeetingWorkspace(props: Props) {
     setPlaybackError("");
     if (actions.current) actions.current.open = false;
   }, [meetingId]);
-  useEffect(() => {
-    planVersion.current += 1;
-    setConfirming(null);
-    setAsking(null);
-    setConfirmingAudio(null);
-  }, [
-    meetingId,
-    props.notes,
-    selected?.segments,
-    props.connectionRevision,
-    props.sttMode,
-    template,
-    question,
-    activeThread?.id,
-    selected?.question_threads,
-    customKey,
-    props.summaryInstructions,
-  ]);
   // A saved answer clears the box and shows its thread; a deleted thread closes the prompt.
   const newestThread = threads[0]?.id;
   useEffect(() => {
@@ -270,14 +223,6 @@ export function MeetingWorkspace(props: Props) {
     setQuestion("");
   }, [turnTotal]);
   useEffect(() => setDeletingThread(false), [activeThread?.id]);
-  const reviewPlan = async (
-    load: () => Promise<ProcessingPlan | null>,
-    show: (plan: ProcessingPlan | null) => void,
-  ) => {
-    const version = planVersion.current;
-    const plan = await load();
-    if (version === planVersion.current) show(plan);
-  };
   useEffect(() => {
     if (tab !== "transcript" || props.hidden)
       Object.values(players.current).forEach((player) => player?.pause());
@@ -461,10 +406,6 @@ export function MeetingWorkspace(props: Props) {
     }
   };
   const blocked = disabled || job !== null || props.enhanceBlocked !== null;
-  const named =
-    selected.speaker_names.you !== null ||
-    selected.speaker_names.others !== null;
-  const contentScope = `your notes (${props.notes.length} characters) and the transcript text (${selected.segments.length} segments${named ? ", with your speaker names" : ""})`;
   const recoverable =
     meeting.source === "desktop" &&
     meeting.status === "interrupted" &&
@@ -750,12 +691,7 @@ export function MeetingWorkspace(props: Props) {
                 className="primary"
                 disabled={blocked}
                 aria-describedby="enhance-hint"
-                onClick={() =>
-                  void reviewPlan(
-                    () => props.onPlanSummary(template),
-                    setConfirming,
-                  )
-                }
+                onClick={() => props.onGenerate(template)}
               >
                 {job === "summary" ? "Generating…" : "Enhance notes"}
               </button>
@@ -772,57 +708,6 @@ export function MeetingWorkspace(props: Props) {
             <p id="enhance-hint" className="muted">
               {props.enhanceBlocked}
             </p>
-          )}
-          {confirming !== null && props.enhanceBlocked === null && (
-            <div
-              className="consent-card"
-              role="group"
-              aria-label="Confirm sending"
-            >
-              <p>
-                <strong>
-                  Send text to your selected provider to generate a summary?
-                </strong>
-              </p>
-              <TextConsent
-                plan={confirming}
-                note="A new summary is saved beside any earlier one; your notes are never changed."
-              >
-                <li>
-                  Template: {templateLabel(template, props.customTemplates)}
-                </li>
-                {props.summaryInstructions !== "" && (
-                  <li>Includes your saved summary instructions.</li>
-                )}
-                <li>Sent: {contentScope}.</li>
-                <li>
-                  Requests:{" "}
-                  {confirming.requests === 1
-                    ? "1 request."
-                    : `${confirming.requests} requests (the transcript in ${confirming.requests - 1} parts, then one pass combining them with your notes).`}
-                </li>
-                <li>Not sent: audio recordings.</li>
-                {versions[0]?.edited_from != null && (
-                  <li>
-                    Your edited summary stays in history; the new summary
-                    becomes the current version.
-                  </li>
-                )}
-              </TextConsent>
-              <div className="panel-actions">
-                <button
-                  className="primary"
-                  disabled={disabled || job !== null}
-                  onClick={() => {
-                    setConfirming(null);
-                    props.onGenerate(template, confirming.fingerprint);
-                  }}
-                >
-                  Send and generate summary
-                </button>
-                <button onClick={() => setConfirming(null)}>Cancel</button>
-              </div>
-            </div>
           )}
           {versions.length > 1 && (
             <label className="summary-version">
@@ -988,14 +873,7 @@ export function MeetingWorkspace(props: Props) {
             onSubmit={(event) => {
               event.preventDefault();
               if (question.trim())
-                void reviewPlan(
-                  () =>
-                    props.onPlanQuestion(
-                      question.trim(),
-                      activeThread?.id ?? null,
-                    ),
-                  setAsking,
-                );
+                props.onAsk(question.trim(), activeThread?.id ?? null);
             }}
           >
             <label htmlFor="ask-question">
@@ -1004,10 +882,7 @@ export function MeetingWorkspace(props: Props) {
             <RecipePicker
               recipes={props.recipes}
               disabled={blocked}
-              onPick={(prompt) => {
-                setQuestion(prompt);
-                setAsking(null);
-              }}
+              onPick={setQuestion}
             />
             <textarea
               id="ask-question"
@@ -1015,10 +890,7 @@ export function MeetingWorkspace(props: Props) {
               maxLength={1000}
               value={question}
               placeholder="What did we decide about the launch date?"
-              onChange={(event) => {
-                setQuestion(event.target.value);
-                setAsking(null);
-              }}
+              onChange={(event) => setQuestion(event.target.value)}
             />
             <div className="panel-actions">
               <button type="submit" disabled={blocked || !question.trim()}>
@@ -1026,54 +898,6 @@ export function MeetingWorkspace(props: Props) {
               </button>
             </div>
           </form>
-          {asking && props.enhanceBlocked === null && (
-            <div
-              className="consent-card"
-              role="group"
-              aria-label="Confirm sending question"
-            >
-              <p>
-                <strong>Send this question to your selected provider?</strong>
-              </p>
-              <TextConsent
-                plan={asking}
-                note="The question and answer are saved with this meeting on this device, unencrypted."
-              >
-                <li>
-                  Sent in {asking.requests} request(s): your question,{" "}
-                  {asking.excerpts
-                    ? `${asking.excerpts.segments} transcript excerpts selected on this device by keyword match, plus your notes if they mention a keyword (only the matching paragraphs when the notes are long), from this meeting only — not the full transcript`
-                    : `${contentScope} of this meeting only`}
-                  .
-                </li>
-                {earlierTurns > 0 && (
-                  <li>
-                    Includes {earlierTurns} earlier question
-                    {earlierTurns === 1 ? "" : "s"} and answer
-                    {earlierTurns === 1 ? "" : "s"} from this thread.
-                  </li>
-                )}
-                <li>Not sent: audio recordings or other meetings.</li>
-              </TextConsent>
-              <div className="panel-actions">
-                <button
-                  className="primary"
-                  disabled={disabled || job !== null}
-                  onClick={() => {
-                    setAsking(null);
-                    props.onAsk(
-                      question.trim(),
-                      activeThread?.id ?? null,
-                      asking.fingerprint,
-                    );
-                  }}
-                >
-                  Send question
-                </button>
-                <button onClick={() => setAsking(null)}>Cancel</button>
-              </div>
-            </div>
-          )}
           {activeThread?.turns.map((turn) => (
             <div className="ask-answer" aria-label="Answer" key={turn.id}>
               <p>
@@ -1168,14 +992,7 @@ export function MeetingWorkspace(props: Props) {
               <button
                 className="primary"
                 disabled={disabled || job !== null || !props.speechReady}
-                onClick={() => {
-                  if (props.sttMode === "cloud")
-                    void reviewPlan(
-                      props.onPlanTranscription,
-                      setConfirmingAudio,
-                    );
-                  else props.onTranscribe(null);
-                }}
+                onClick={props.onTranscribe}
               >
                 {job === "transcribe"
                   ? props.sttMode === "cloud"
@@ -1218,58 +1035,6 @@ export function MeetingWorkspace(props: Props) {
                   </span>
                 </>
               )}
-            </div>
-          )}
-          {confirmingAudio && transcribable && (
-            <div
-              className="consent-card"
-              role="group"
-              aria-label="Confirm audio upload"
-            >
-              <p>
-                <strong>Upload recorded audio for transcription?</strong>
-              </p>
-              <ul>
-                <li>
-                  Destination: <code>{confirmingAudio.base_url}</code>
-                </li>
-                <li>
-                  Model: <code>{confirmingAudio.model}</code>
-                </li>
-                <li>
-                  Tracks: {confirmingAudio.tracks.join(", ")}. Audio:{" "}
-                  {formatBytes(confirmingAudio.audio_bytes)}. Requests:{" "}
-                  {confirmingAudio.requests}.
-                </li>
-                <li>
-                  {isLocalBase(confirmingAudio.base_url)
-                    ? "Audio is sent to your local server. Its configuration determines whether it forwards requests."
-                    : "Microphone and system audio leave this device. Your provider handles retention and billing."}
-                </li>
-                <li>
-                  Cancelling prevents further uploads. Audio already received
-                  cannot be recalled, and an in-flight request may finish
-                  remotely.
-                </li>
-                <li>
-                  A successful run replaces the current transcript and keeps it,
-                  including any edits, as an earlier transcript. Notes and
-                  original audio are kept.
-                </li>
-              </ul>
-              <div className="panel-actions">
-                <button
-                  className="primary"
-                  disabled={disabled || job !== null}
-                  onClick={() => {
-                    setConfirmingAudio(null);
-                    props.onTranscribe(confirmingAudio.fingerprint);
-                  }}
-                >
-                  Upload and transcribe audio
-                </button>
-                <button onClick={() => setConfirmingAudio(null)}>Cancel</button>
-              </div>
             </div>
           )}
           {job === "transcribe" &&

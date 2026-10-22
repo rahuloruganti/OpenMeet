@@ -9,7 +9,6 @@ import {
   type MicApp,
   type KeyStatus,
   type ProviderRole,
-  type ProcessingPlan,
   type SttDownloadProgress,
   type SttStatus,
   type AudioDevices,
@@ -349,19 +348,6 @@ export function App() {
       },
       task,
     );
-  // Saves notes first; null when nothing is selected or planning failed.
-  const planFor = async (
-    load: (id: string) => Promise<ProcessingPlan | null>,
-  ): Promise<ProcessingPlan | null> => {
-    const id = selected?.meeting.id;
-    let plan: ProcessingPlan | null = null;
-    if (!id) return plan;
-    await run(async () => {
-      await writer.current?.flush();
-      plan = await load(id);
-    });
-    return plan;
-  };
   // Replaces only the patched fields, so an unsaved notes draft is untouched.
   const patchSelected = (
     id: string,
@@ -1089,14 +1075,13 @@ export function App() {
           connectionRevision={`${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`}
           enhanceBlocked={enhanceBlocked}
           llmBlocked={llmBlocked}
-          onPlanTranscription={() => planFor(api.planTranscription)}
-          onTranscribe={(confirmation) => {
+          onTranscribe={() => {
             const id = selected?.meeting.id;
             if (!id) return;
             void runJob("transcribe", async () => {
               await writer.current?.flush();
               try {
-                await api.transcribeMeeting(id, confirmation);
+                await api.transcribeMeeting(id);
               } catch (failure) {
                 if (errorCode(failure) !== "stt_cancelled") throw failure;
                 setNotice(errorMessage(failure));
@@ -1148,12 +1133,12 @@ export function App() {
               return null;
             }
           }}
-          onGenerate={(template, confirmation) => {
+          onGenerate={(template) => {
             const id = selected?.meeting.id;
             if (!id) return;
             void runJob("summary", async () => {
               await writer.current?.flush();
-              await api.generateSummary(id, template, confirmation);
+              await api.generateSummary(id, template);
               await finishJob(id);
               setNotice(
                 "Summary generated and saved. Only notes and transcript text were sent to your selected provider.",
@@ -1232,33 +1217,21 @@ export function App() {
           onActionItems={(id, items) =>
             patchSelected(id, () => ({ action_items: items }))
           }
-          onPlanSummary={(template) =>
-            planFor((id) => api.planSummary(id, template))
-          }
-          onPlanQuestion={(question, threadId) =>
-            planFor(async (id) => {
+          onAsk={(question, threadId) => {
+            const id = selected?.meeting.id;
+            if (!id) return;
+            void runJob("ask", async () => {
+              await writer.current?.flush();
+              let thread;
               try {
-                return await api.planQuestion(id, question, threadId);
+                thread = await api.askMeeting(id, question, threadId);
               } catch (failure) {
                 // Nothing matched: nothing is sent, which is an answer, not a failure.
                 if (errorCode(failure) !== "insufficient_evidence")
                   throw failure;
                 setNotice(errorMessage(failure));
-                return null;
+                return;
               }
-            })
-          }
-          onAsk={(question, threadId, confirmation) => {
-            const id = selected?.meeting.id;
-            if (!id) return;
-            void runJob("ask", async () => {
-              await writer.current?.flush();
-              const thread = await api.askMeeting(
-                id,
-                question,
-                threadId,
-                confirmation,
-              );
               patchSelected(id, (current) => ({
                 question_threads: current.question_threads.some(
                   (item) => item.id === thread.id,

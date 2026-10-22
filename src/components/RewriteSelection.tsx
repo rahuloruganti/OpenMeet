@@ -1,7 +1,6 @@
 import { useState, type RefObject } from "react";
-import { api, type ProcessingPlan } from "../lib/api";
+import { api } from "../lib/api";
 import { useTask } from "../lib/use-task";
-import { TextConsent } from "./TextConsent";
 
 const presets = [
   "Make it shorter",
@@ -13,8 +12,8 @@ const presets = [
 
 type Selection = { start: number; end: number; text: string };
 
-/** Rewrites selected note text with the chat provider. Only the selection and request are sent,
- * after review; the result replaces the selection only when the user accepts it. */
+/** Rewrites selected note text with the chat provider. Only the selection and request are sent;
+ * the result replaces the selection only when the user accepts it. */
 export function RewriteSelection(props: {
   editor: RefObject<HTMLTextAreaElement | null>;
   notes: string;
@@ -25,14 +24,12 @@ export function RewriteSelection(props: {
 }) {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [request, setRequest] = useState("");
-  const [review, setReview] = useState<ProcessingPlan | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const { busy: working, error, notice, setError, setNotice, run } = useTask();
 
   const close = () => {
     setSelection(null);
     setRequest("");
-    setReview(null);
     setResult(null);
     setNotice("");
     setError("");
@@ -85,7 +82,7 @@ export function RewriteSelection(props: {
                 event.preventDefault();
                 if (request.trim())
                   void run(async () =>
-                    setReview(await api.planRewrite(selection.text, request)),
+                    setResult(await api.rewriteText(selection.text, request)),
                   );
               }}
             >
@@ -101,10 +98,7 @@ export function RewriteSelection(props: {
                     className="recipe-chip"
                     aria-pressed={request === preset}
                     disabled={working}
-                    onClick={() => {
-                      setRequest(preset);
-                      setReview(null);
-                    }}
+                    onClick={() => setRequest(preset)}
                   >
                     {preset}
                   </button>
@@ -116,67 +110,22 @@ export function RewriteSelection(props: {
                   value={request}
                   maxLength={1000}
                   disabled={working}
-                  onChange={(event) => {
-                    setRequest(event.target.value);
-                    setReview(null);
-                  }}
+                  onChange={(event) => setRequest(event.target.value)}
                 />
               </label>
               <div className="panel-actions">
-                <button type="submit" disabled={working || !request.trim()}>
-                  Review
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={props.disabled || working || !request.trim()}
+                >
+                  Rewrite
                 </button>
                 <button type="button" onClick={close}>
                   Cancel
                 </button>
               </div>
             </form>
-          )}
-          {review && (
-            <div
-              className="consent-card"
-              role="group"
-              aria-label="Confirm sending rewrite"
-            >
-              <p>
-                <strong>
-                  Send the selected text to your selected provider?
-                </strong>
-              </p>
-              <TextConsent
-                plan={review}
-                note="The rewrite is shown here and replaces nothing until you accept it."
-              >
-                <li>
-                  Sent in 1 request: only the {selection.text.length} selected
-                  characters and your request.
-                </li>
-                <li>
-                  Not sent: the rest of your notes, the transcript or audio.
-                </li>
-              </TextConsent>
-              <div className="panel-actions">
-                <button
-                  className="primary"
-                  disabled={props.disabled || working}
-                  onClick={() =>
-                    void run(async () => {
-                      setReview(null);
-                      setResult(
-                        await api.rewriteText(
-                          selection.text,
-                          request,
-                          review.fingerprint,
-                        ),
-                      );
-                    })
-                  }
-                >
-                  Send for rewrite
-                </button>
-                <button onClick={() => setReview(null)}>Cancel</button>
-              </div>
-            </div>
           )}
           {working && <p role="status">Working…</p>}
           {result !== null && (

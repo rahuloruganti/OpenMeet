@@ -615,41 +615,19 @@ fn plan_changed() -> AppError {
     AppError::new("processing_plan_changed", "The meeting or provider settings changed. Review and confirm again. Nothing new was sent or saved.")
 }
 
-fn processing_plan(
-    config: &ProviderConfig,
-    payload: &impl serde::Serialize,
-    requests: usize,
-    audio_bytes: u64,
-    tracks: Vec<String>,
-) -> Result<ProcessingPlan> {
+/// The destination and request bound for one text task; no request is sent here.
+fn processing_plan(config: &ProviderConfig, requests: usize) -> Result<ProcessingPlan> {
     let model = config.model.as_deref().ok_or_else(|| {
         AppError::new(
             "provider_model",
             "Choose and save a model in Settings first.",
         )
     })?;
-    let input = serde_json::to_vec(&(config, payload, requests, audio_bytes, &tracks))
-        .map_err(|_| AppError::new("processing_plan", "The request could not be prepared."))?;
     Ok(ProcessingPlan {
-        fingerprint: sha256_hex(input),
         base_url: config.base_url.clone(),
         model: model.to_string(),
         requests,
-        audio_bytes,
-        tracks,
-        excerpts: None,
     })
-}
-
-fn confirm(plan: &ProcessingPlan, confirmation: Option<&str>) -> Result<()> {
-    match confirmation {
-        None => Err(AppError::new(
-            "consent_required",
-            "Review and confirm the destination and content before sending.",
-        )),
-        Some(value) if value != plan.fingerprint => Err(plan_changed()),
-        Some(_) => Ok(()),
-    }
 }
 
 /// Prompt lines keep the "You"/"Others" label beside any user-given name, so the shared
@@ -701,27 +679,6 @@ fn finalized_tracks(detail: &MeetingDetail) -> Result<Vec<audio::Track>> {
     Ok(tracks)
 }
 
-fn audio_plan(
-    config: &ProviderConfig,
-    id: &str,
-    settings: &Settings,
-    plan: &cloud_stt::CloudPlan,
-) -> Result<ProcessingPlan> {
-    processing_plan(
-        config,
-        &(
-            "transcribe",
-            id,
-            &settings.stt_language,
-            &settings.stt_prompt,
-            plan.fingerprint(),
-        ),
-        plan.requests,
-        plan.bytes,
-        plan.tracks.clone(),
-    )
-}
-
 fn same_stt_settings(current: &Settings, snapshot: &Settings) -> bool {
     current.stt_mode == snapshot.stt_mode
         && current.stt_language == snapshot.stt_language
@@ -733,27 +690,7 @@ fn same_stt_settings(current: &Settings, snapshot: &Settings) -> bool {
 }
 
 #[tauri::command]
-async fn plan_transcription(app: AppHandle, id: String) -> Result<ProcessingPlan> {
-    let (settings, tracks) = {
-        let id = id.clone();
-        with_core(app, false, move |core, _| {
-            Ok((core.settings()?, finalized_tracks(&core.get_meeting(&id)?)?))
-        })
-        .await?
-    };
-    if settings.stt_mode != SttMode::Cloud {
-        return Err(plan_changed());
-    }
-    let config = require_connection(&settings, ProviderRole::CloudStt)?;
-    blocking(move || audio_plan(&config, &id, &settings, &cloud_stt::plan(&tracks)?)).await
-}
-
-#[tauri::command]
-async fn transcribe_meeting(
-    app: AppHandle,
-    id: String,
-    confirmation: Option<String>,
-) -> Result<()> {
+async fn transcribe_meeting(app: AppHandle, id: String) -> Result<()> {
     let root = stt_root(&app)?;
     blocking(move || {
         let owner = lock_core(&app)?.processing_owner.clone();
@@ -776,23 +713,14 @@ async fn transcribe_meeting(
                 (core.settings()?, finalized_tracks(&core.get_meeting(&id)?)?)
             };
             let (segments, provider, model) = match settings.stt_mode {
-                SttMode::Local => {
-                    if confirmation.is_some() {
-                        return Err(plan_changed());
-                    }
-                    (
-                        stt::transcribe(&root, &tracks, &settings, cancel, report)?,
-                        "whisper".to_string(),
-                        settings.stt_model.clone(),
-                    )
-                }
+                SttMode::Local => (
+                    stt::transcribe(&root, &tracks, &settings, cancel, report)?,
+                    "whisper".to_string(),
+                    settings.stt_model.clone(),
+                ),
                 SttMode::Cloud => {
                     let config = require_connection(&settings, ProviderRole::CloudStt)?;
                     let prepared = cloud_stt::plan_cancellable(&tracks, cancel)?;
-                    confirm(
-                        &audio_plan(&config, &id, &settings, &prepared)?,
-                        confirmation.as_deref(),
-                    )?;
                     {
                         let core = lock_core(&app)?;
                         if core.quitting || !same_stt_settings(&core.settings()?, &settings) {
@@ -855,52 +783,12 @@ async fn text_snapshot(
     .await
 }
 
-fn text_plan(
-    config: &ProviderConfig,
-    detail: &MeetingDetail,
-    lines: &[String],
-    action: &str,
-    option: &str,
-    requests: usize,
-) -> Result<ProcessingPlan> {
-    processing_plan(
-        config,
-        &(
-            action,
-            &detail.meeting.id,
-            detail.notes_revision,
-            &detail.user_markdown,
-            lines,
-            option,
-        ),
-        requests,
-        0,
-        Vec::new(),
-    )
-}
-
-/// The full system prompt is part of the consent fingerprint, so editing the template or
-/// saved instructions after review requires a new confirmation.
 async fn summary_prompt(app: &AppHandle, template: &str) -> Result<String> {
     let template = template.to_string();
     with_core(app.clone(), false, move |core, _| {
         llm::resolve_summary(&core.settings()?, &template)
     })
     .await
-}
-
-#[tauri::command]
-async fn plan_summary(app: AppHandle, id: String, template: String) -> Result<ProcessingPlan> {
-    let system = summary_prompt(&app, &template).await?;
-    let (detail, config, lines) = text_snapshot(&app, &id).await?;
-    text_plan(
-        &config,
-        &detail,
-        &lines,
-        "summary",
-        &system,
-        llm::summary_requests(&detail.user_markdown, &lines)?,
-    )
 }
 
 fn manual_text_check(
@@ -921,23 +809,13 @@ fn manual_text_check(
 }
 
 #[tauri::command]
-async fn generate_summary(
-    app: AppHandle,
-    id: String,
-    template: String,
-    confirmation: String,
-) -> Result<()> {
+async fn generate_summary(app: AppHandle, id: String, template: String) -> Result<()> {
     let system = summary_prompt(&app, &template).await?;
     let (detail, config, lines) = text_snapshot(&app, &id).await?;
-    let plan = text_plan(
+    let plan = processing_plan(
         &config,
-        &detail,
-        &lines,
-        "summary",
-        &system,
         llm::summary_requests(&detail.user_markdown, &lines)?,
     )?;
-    confirm(&plan, Some(&confirmation))?;
     blocking(move || {
         let owner = lock_core(&app)
             .map_err(|_| plan_changed())?
@@ -1123,32 +1001,6 @@ fn question_content(
     })
 }
 
-/// The consent fingerprint binds exactly the text that will be sent.
-fn question_plan(
-    config: &ProviderConfig,
-    detail: &MeetingDetail,
-    content: &QuestionContent,
-    block: &str,
-) -> Result<ProcessingPlan> {
-    let mut plan = processing_plan(
-        config,
-        &(
-            "question",
-            &detail.meeting.id,
-            detail.notes_revision,
-            &content.notes,
-            &content.lines,
-            block,
-            content.excerpts.is_some(),
-        ),
-        1,
-        0,
-        Vec::new(),
-    )?;
-    plan.excerpts = content.excerpts.clone();
-    Ok(plan)
-}
-
 async fn question_snapshot(
     app: &AppHandle,
     id: &str,
@@ -1177,7 +1029,7 @@ async fn question_snapshot(
     .await
 }
 
-/// The provider, notes revision, thread and sent content must all still match what was reviewed.
+/// The provider, notes revision, thread and sent content must all still match what was sent.
 fn question_unchanged(
     core: &Core,
     id: &str,
@@ -1200,23 +1052,6 @@ fn question_unchanged(
     Ok(())
 }
 
-#[tauri::command]
-async fn plan_question(
-    app: AppHandle,
-    id: String,
-    question: String,
-    thread_id: Option<i64>,
-) -> Result<ProcessingPlan> {
-    let (detail, config, earlier, content) =
-        question_snapshot(&app, &id, &question, thread_id).await?;
-    question_plan(
-        &config,
-        &detail,
-        &content,
-        &llm::question_block(&question, &earlier),
-    )
-}
-
 /// Turns of the thread being continued; a thread that is missing or belongs to another
 /// meeting is refused. Empty for a new question.
 fn earlier_turns(threads: &[QuestionThread], thread_id: Option<i64>) -> Result<Vec<QuestionTurn>> {
@@ -1236,24 +1071,17 @@ async fn ask_meeting(
     id: String,
     question: String,
     thread_id: Option<i64>,
-    confirmation: String,
 ) -> Result<QuestionThread> {
     let (detail, config, earlier, content) =
         question_snapshot(&app, &id, &question, thread_id).await?;
-    let plan = question_plan(
-        &config,
-        &detail,
-        &content,
-        &llm::question_block(&question, &earlier),
-    )?;
-    confirm(&plan, Some(&confirmation))?;
+    let plan = processing_plan(&config, 1)?;
     blocking(move || {
         let owner = lock_core(&app)
             .map_err(|_| plan_changed())?
             .processing_owner
             .clone();
         let operation = owner.begin(&id)?;
-        // Content, provider, and the thread's turns must still match what was reviewed.
+        // Content, provider, and the thread's turns must not change while the answer is pending.
         let unchanged = |core: &Core| -> Result<()> {
             question_unchanged(
                 core,
@@ -1383,29 +1211,7 @@ fn library_scope(core: &Core, ids: &[String], question: &str) -> Result<LibraryS
     })
 }
 
-/// The consent fingerprint binds exactly the text that will be sent.
-fn library_plan(
-    config: &ProviderConfig,
-    scope: &LibraryScope,
-    question: &str,
-) -> Result<ProcessingPlan> {
-    let mut plan = processing_plan(
-        config,
-        &(
-            "library",
-            question.trim(),
-            &scope.items,
-            scope.excerpts.is_some(),
-        ),
-        1,
-        0,
-        Vec::new(),
-    )?;
-    plan.excerpts = scope.excerpts.clone();
-    Ok(plan)
-}
-
-/// Every scoped meeting's sent text must still match what was reviewed.
+/// Every scoped meeting's sent text must still match what was sent.
 fn library_unchanged(core: &Core, ids: &[String], question: &str, scope: &LibraryScope) -> bool {
     library_scope(core, ids, question).is_ok_and(|now| now == *scope)
 }
@@ -1438,29 +1244,16 @@ async fn library_snapshot(
     .await
 }
 
-#[tauri::command]
-async fn plan_library_question(
-    app: AppHandle,
-    meeting_ids: Vec<String>,
-    question: String,
-) -> Result<ProcessingPlan> {
-    let (_, scope, config) = library_snapshot(&app, meeting_ids, &question).await?;
-    llm::validate_library(&scope.items, &question)?;
-    library_plan(&config, &scope, &question)
-}
-
 /// One request over the chosen meetings; the answer is saved with its scope and returned.
 #[tauri::command]
 async fn ask_library(
     app: AppHandle,
     meeting_ids: Vec<String>,
     question: String,
-    confirmation: String,
 ) -> Result<LibraryAnswer> {
     let (ids, scope, config) = library_snapshot(&app, meeting_ids, &question).await?;
     llm::validate_library(&scope.items, &question)?;
-    let plan = library_plan(&config, &scope, &question)?;
-    confirm(&plan, Some(&confirmation))?;
+    let plan = processing_plan(&config, 1)?;
     blocking(move || {
         let owner = lock_core(&app)
             .map_err(|_| plan_changed())?
@@ -1498,29 +1291,9 @@ async fn delete_library_answer(app: AppHandle, id: i64) -> Result<Vec<LibraryAns
     with_core(app, false, move |core, _| core.delete_library_answer(id)).await
 }
 
-/// The consent fingerprint binds the provider, the selected text and the request.
-fn rewrite_plan(config: &ProviderConfig, text: &str, request: &str) -> Result<ProcessingPlan> {
-    llm::check_rewrite(text, request)?;
-    processing_plan(config, &("rewrite", text, request.trim()), 1, 0, Vec::new())
-}
-
-#[tauri::command]
-async fn plan_rewrite(app: AppHandle, text: String, request: String) -> Result<ProcessingPlan> {
-    let config = with_core(app, false, |core, _| {
-        require_connection(&core.settings()?, ProviderRole::Llm)
-    })
-    .await?;
-    rewrite_plan(&config, &text, &request)
-}
-
 /// Sends only the selected text and request; the rewrite is returned for the user to accept.
 #[tauri::command]
-async fn rewrite_text(
-    app: AppHandle,
-    text: String,
-    request: String,
-    confirmation: String,
-) -> Result<String> {
+async fn rewrite_text(app: AppHandle, text: String, request: String) -> Result<String> {
     let (config, owner) = with_core(app.clone(), false, |core, _| {
         Ok((
             require_connection(&core.settings()?, ProviderRole::Llm)?,
@@ -1528,10 +1301,8 @@ async fn rewrite_text(
         ))
     })
     .await?;
-    confirm(
-        &rewrite_plan(&config, &text, &request)?,
-        Some(&confirmation),
-    )?;
+    llm::check_rewrite(&text, &request)?;
+    processing_plan(&config, 1)?;
     blocking(move || {
         let operation = owner.begin("rewrite")?;
         let unchanged = || {
@@ -2143,9 +1914,6 @@ pub fn run() {
             save_provider_assignment,
             list_api_connection_models,
             save_stt_mode,
-            plan_transcription,
-            plan_question,
-            plan_library_question,
             stt_status,
             stt_install,
             transcribe_meeting,
@@ -2155,7 +1923,6 @@ pub fn run() {
             delete_audio,
             delete_meeting,
             search_meetings,
-            plan_summary,
             list_summaries,
             save_summary_edit,
             save_speaker_names,
@@ -2181,7 +1948,6 @@ pub fn run() {
             delete_recipe,
             list_library_answers,
             delete_library_answer,
-            plan_rewrite,
             rewrite_text,
             save_action_item,
             delete_action_item,
@@ -2230,35 +1996,13 @@ mod tests {
     }
 
     #[test]
-    fn summary_consent_binds_the_resolved_template_and_instructions() {
+    fn a_deleted_custom_template_cannot_be_summarized() {
         let mut core = Core::open(std::path::Path::new(":memory:")).unwrap();
-        let id = core.create_note("Fictional summary consent").unwrap();
-        core.save_notes(&id, "Fictional notes", 0).unwrap();
-        let detail = core.get_meeting(&id).unwrap();
-        let config = ProviderConfig {
-            base_url: "https://provider.example/v1".into(),
-            model: Some("model-a".into()),
-            revision: 1,
-            credential_account: Some("private-reference".into()),
-        };
         let settings = core
             .save_summary_template(None, "Retro", "## Went well")
             .unwrap();
         let template = settings.summary_templates[0].id.clone();
-        let plan_for = |settings: &Settings| {
-            let system = llm::resolve_summary(settings, &template).unwrap();
-            text_plan(&config, &detail, &[], "summary", &system, 1).unwrap()
-        };
-        let reviewed = plan_for(&settings);
-        confirm(&plan_for(&settings), Some(&reviewed.fingerprint)).unwrap();
-        let edited = core
-            .save_summary_template(Some(&template), "Retro", "## Changed")
-            .unwrap();
-        assert!(confirm(&plan_for(&edited), Some(&reviewed.fingerprint)).is_err());
-        let instructed = core.save_summary_instructions("Be brief.").unwrap();
-        let reviewed = plan_for(&instructed);
-        let changed = core.save_summary_instructions("Be detailed.").unwrap();
-        assert!(confirm(&plan_for(&changed), Some(&reviewed.fingerprint)).is_err());
+        assert!(llm::resolve_summary(&settings, &template).is_ok());
         let deleted = core.delete_summary_template(&template).unwrap();
         assert_eq!(
             llm::resolve_summary(&deleted, &template).unwrap_err().code,
@@ -2267,42 +2011,18 @@ mod tests {
     }
 
     #[test]
-    fn question_consent_binds_earlier_turns_and_refuses_other_meetings_threads() {
+    fn question_threads_continue_only_within_their_meeting() {
         let mut core = Core::open(std::path::Path::new(":memory:")).unwrap();
         let (id, other) = (
-            core.create_note("Fictional question consent").unwrap(),
+            core.create_note("Fictional question thread").unwrap(),
             core.create_note("Another fictional meeting").unwrap(),
         );
-        core.save_notes(&id, "Fictional notes", 0).unwrap();
-        let config = ProviderConfig {
-            base_url: "https://provider.example/v1".into(),
-            model: Some("model-a".into()),
-            revision: 1,
-            credential_account: Some("private-reference".into()),
-        };
         let thread = core
             .save_question_turn(&id, None, "Budget?", "40k", "p", "m")
             .unwrap();
-        let plan_for = |core: &Core, thread_id: Option<i64>| {
-            let detail = core.get_meeting(&id).unwrap();
-            let earlier = earlier_turns(&detail.question_threads, thread_id).unwrap();
-            let block = llm::question_block("Why?", &earlier);
-            text_plan(&config, &detail, &[], "question", &block, 1).unwrap()
-        };
-        let reviewed = plan_for(&core, Some(thread.id));
-        confirm(
-            &plan_for(&core, Some(thread.id)),
-            Some(&reviewed.fingerprint),
-        )
-        .unwrap();
-        assert!(confirm(&plan_for(&core, None), Some(&reviewed.fingerprint)).is_err());
-        core.save_question_turn(&id, Some(thread.id), "Owner?", "Rahul", "p", "m")
-            .unwrap();
-        assert!(confirm(
-            &plan_for(&core, Some(thread.id)),
-            Some(&reviewed.fingerprint)
-        )
-        .is_err());
+        let own = core.get_meeting(&id).unwrap().question_threads;
+        assert_eq!(earlier_turns(&own, Some(thread.id)).unwrap().len(), 1);
+        assert!(earlier_turns(&own, None).unwrap().is_empty());
         let foreign = core.get_meeting(&other).unwrap().question_threads;
         assert_eq!(
             earlier_turns(&foreign, Some(thread.id)).unwrap_err().code,
@@ -2366,20 +2086,11 @@ mod tests {
         let sent = serde_json::to_string(&items).unwrap();
         assert!(!sent.contains("Private elsewhere") && !sent.contains("Outside"));
 
-        let reviewed = library_plan(&config, &scope, " Why? ").unwrap();
-        let same = library_plan(
-            &config,
-            &library_scope(&core, &ids, "Why?").unwrap(),
-            "Why?",
-        )
-        .unwrap();
-        confirm(&same, Some(&reviewed.fingerprint)).unwrap();
         assert!(library_unchanged(&core, &ids, "Why?", &scope));
         // The unselected meeting may change freely; either selected meeting may not.
         core.save_notes(&outside, "Edited elsewhere", 1).unwrap();
         assert!(library_unchanged(&core, &ids, "Why?", &scope));
-        for change in ["notes", "transcript", "title", "order", "question"] {
-            let (mut now, mut question) = (ids.clone(), "Why?");
+        for change in ["notes", "transcript", "title"] {
             match change {
                 "notes" => {
                     core.save_notes(&a, "Alpha notes edited", 1).unwrap();
@@ -2387,24 +2098,11 @@ mod tests {
                 "transcript" => core
                     .replace_transcript(&b, &[segment("Changed words")], "p", "m")
                     .unwrap(),
-                "title" => {
+                _ => {
                     core.rename_meeting(&b, "Renamed").unwrap();
                 }
-                "order" => now.reverse(),
-                _ => question = "Who?",
             }
-            let current = library_scope(&core, &now, question).unwrap();
-            let plan = library_plan(&config, &current, question).unwrap();
-            assert_eq!(
-                confirm(&plan, Some(&reviewed.fingerprint))
-                    .unwrap_err()
-                    .code,
-                "processing_plan_changed",
-                "{change}"
-            );
-            if matches!(change, "notes" | "transcript" | "title") {
-                assert!(!library_unchanged(&core, &ids, "Why?", &scope), "{change}");
-            }
+            assert!(!library_unchanged(&core, &ids, "Why?", &scope), "{change}");
         }
         // With no saved LLM connection the settings check also refuses.
         let fresh = library_scope(&core, &ids, "Why?").unwrap();
@@ -2417,41 +2115,21 @@ mod tests {
     }
 
     #[test]
-    fn consent_binds_destination_model_revision_and_content() {
+    fn a_text_task_needs_a_saved_model_and_keeps_its_request_bound() {
         let mut config = ProviderConfig {
             base_url: "https://provider.example/v1".into(),
             model: Some("model-a".into()),
             revision: 1,
             credential_account: Some("private-reference".into()),
         };
-        let plan = processing_plan(&config, &("summary", "original notes"), 1, 0, vec![]).unwrap();
+        let plan = processing_plan(&config, 3).unwrap();
         assert_eq!(
             (plan.base_url.as_str(), plan.model.as_str(), plan.requests),
-            ("https://provider.example/v1", "model-a", 1)
+            ("https://provider.example/v1", "model-a", 3)
         );
-        assert_eq!(confirm(&plan, None).unwrap_err().code, "consent_required");
-        confirm(&plan, Some(&plan.fingerprint)).unwrap();
-        for change in ["destination", "model", "credential", "content"] {
-            let mut changed_config = config.clone();
-            let mut notes = "original notes";
-            match change {
-                "destination" => changed_config.base_url = "https://different.example/v1".into(),
-                "model" => changed_config.model = Some("model-b".into()),
-                "credential" => changed_config.revision += 1,
-                _ => notes = "updated notes",
-            }
-            let changed =
-                processing_plan(&changed_config, &("summary", notes), 1, 0, vec![]).unwrap();
-            assert_eq!(
-                confirm(&changed, Some(&plan.fingerprint)).unwrap_err().code,
-                "processing_plan_changed"
-            );
-        }
         config.model = None;
         assert_eq!(
-            processing_plan(&config, &"content", 1, 0, vec![])
-                .unwrap_err()
-                .code,
+            processing_plan(&config, 1).unwrap_err().code,
             "provider_model"
         );
     }
@@ -2575,15 +2253,6 @@ mod tests {
         format!("filler {}", "x".repeat(100))
     }
 
-    fn config() -> ProviderConfig {
-        ProviderConfig {
-            base_url: "https://provider.example/v1".into(),
-            model: Some("m".into()),
-            revision: 1,
-            credential_account: None,
-        }
-    }
-
     fn full_lines(detail: &MeetingDetail) -> Vec<String> {
         transcript_lines(&detail.segments, &detail.speaker_names)
     }
@@ -2628,32 +2297,6 @@ mod tests {
             .unwrap()
             .excerpts
             .is_some());
-
-        // The fingerprint binds the excerpted lines: editing one changes the plan ...
-        let block = llm::question_block(question, &[]);
-        let plan = question_plan(&config(), &detail, &content, &block).unwrap();
-        assert_eq!(plan.excerpts, content.excerpts);
-        let edit = |core: &mut Core, line: usize, text: &str| {
-            let detail = core.get_meeting(&id).unwrap();
-            core.edit_segment(
-                &id,
-                detail.segment_meta[line].id,
-                &detail.segments[line].text,
-                text,
-            )
-            .unwrap();
-            let detail = core.get_meeting(&id).unwrap();
-            let content = question_content(core, &detail, question, &[]).unwrap();
-            let plan = question_plan(&config(), &detail, &content, &block).unwrap();
-            (content, plan)
-        };
-        let (edited, edited_plan) = edit(&mut core, 700, "Persimmon budget approved at 45k");
-        assert_ne!(edited, content);
-        assert_ne!(edited_plan.fingerprint, plan.fingerprint);
-        // ... while a line that is not sent can change without invalidating the review.
-        let (same, same_plan) = edit(&mut core, 10, "Something else entirely");
-        assert_eq!(same, edited);
-        assert_eq!(same_plan.fingerprint, edited_plan.fingerprint);
     }
 
     #[test]
@@ -2717,8 +2360,6 @@ mod tests {
         assert_eq!(content.excerpts, None);
         assert_eq!(content.notes, "My notes");
         assert_eq!(content.lines, full_lines(&detail));
-        let plan = question_plan(&config(), &detail, &content, "q").unwrap();
-        assert_eq!(plan.excerpts, None);
     }
 
     #[test]
@@ -2759,10 +2400,8 @@ mod tests {
             .lines
             .contains(&"[10:50] Others: The persimmon budget doubled".to_string()));
         assert!(llm::validate_library(&scope.items, question).is_ok());
-        let plan = library_plan(&config(), &scope, question).unwrap();
-        assert_eq!(plan.excerpts, scope.excerpts);
         assert!(library_unchanged(&core, &ids, question, &scope));
-        // Editing an excerpted segment changes what is sent, so the review is void.
+        // Editing an excerpted segment changes what is sent, so a pending answer is not saved.
         let detail = core.get_meeting(&a).unwrap();
         core.edit_segment(
             &a,
@@ -2772,13 +2411,6 @@ mod tests {
         )
         .unwrap();
         assert!(!library_unchanged(&core, &ids, question, &scope));
-        let changed = library_scope(&core, &ids, question).unwrap();
-        assert_ne!(
-            library_plan(&config(), &changed, question)
-                .unwrap()
-                .fingerprint,
-            plan.fingerprint
-        );
         assert_eq!(
             library_scope(&core, &ids, "zucchini").unwrap_err().code,
             "insufficient_evidence"

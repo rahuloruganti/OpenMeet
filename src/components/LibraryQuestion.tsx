@@ -6,14 +6,12 @@ import {
   type LibraryAnswer,
   type Meeting,
   type MeetingDetail,
-  type ProcessingPlan,
   type Recipe,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
 import { tagChoices } from "../lib/meeting-labels";
 import { parseTimestamp, segmentsAt } from "../lib/timestamps";
 import { RecipePicker } from "./Recipes";
-import { TextConsent } from "./TextConsent";
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -44,11 +42,6 @@ export function LibraryQuestion(props: Props) {
   const [tag, setTag] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [question, setQuestion] = useState("");
-  const [review, setReview] = useState<{
-    plan: ProcessingPlan;
-    ids: string[];
-    question: string;
-  } | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   // Nothing matched, so nothing was sent: a result, not a failure.
@@ -67,10 +60,9 @@ export function LibraryQuestion(props: Props) {
       : meetings.filter((meeting) => picked.includes(meeting.id));
   const scopeKey = scope.map((meeting) => meeting.id).join(",");
   const tooMany = scope.length > 20;
-  // Any scope, question or provider change discards the review and any request in flight.
+  // Any scope, question or provider change discards a request in flight.
   useEffect(() => {
     version.current += 1;
-    setReview(null);
     setNotice("");
     setWorking(false);
   }, [scopeKey, question, props.connectionRevision]);
@@ -113,38 +105,15 @@ export function LibraryQuestion(props: Props) {
     setAnswered({ answer, details });
   };
 
-  const plan = async () => {
+  const ask = async () => {
     const current = ++version.current;
-    const ids = scope.map((meeting) => meeting.id);
     setError("");
     setNotice("");
     setWorking(true);
     try {
-      const result = await api.planLibraryQuestion(ids, question.trim());
-      if (current === version.current)
-        setReview({ plan: result, ids, question: question.trim() });
-    } catch (failure) {
-      if (current !== version.current) return;
-      if (errorCode(failure) === "insufficient_evidence")
-        setNotice(errorMessage(failure));
-      else setError(errorMessage(failure));
-    } finally {
-      if (current === version.current) setWorking(false);
-    }
-  };
-
-  const send = async () => {
-    if (!review) return;
-    const current = ++version.current;
-    const { ids, plan: reviewed } = review;
-    setReview(null);
-    setError("");
-    setWorking(true);
-    try {
       const saved = await api.askLibrary(
-        ids,
-        review.question,
-        reviewed.fingerprint,
+        scope.map((meeting) => meeting.id),
+        question.trim(),
       );
       // Saved even if the form changed meanwhile, so it always joins the list.
       setAnswers((list) => [saved, ...list]);
@@ -152,7 +121,10 @@ export function LibraryQuestion(props: Props) {
       setQuestion("");
       await show(saved);
     } catch (failure) {
-      if (current === version.current) setError(errorMessage(failure));
+      if (current !== version.current) return;
+      if (errorCode(failure) === "insufficient_evidence")
+        setNotice(errorMessage(failure));
+      else setError(errorMessage(failure));
     } finally {
       if (current === version.current) setWorking(false);
     }
@@ -190,7 +162,7 @@ export function LibraryQuestion(props: Props) {
     );
   };
 
-  const canReview =
+  const canAsk =
     !disabled &&
     !working &&
     scope.length > 0 &&
@@ -213,8 +185,9 @@ export function LibraryQuestion(props: Props) {
         </button>
       </div>
       <p className="panel-description">
-        Choose the meetings to ask about. Nothing is sent until you review and
-        confirm it.
+        Choose the meetings to ask about. The question and those meetings'
+        titles, notes and transcripts go to your AI notes connection; long
+        content is cut down to keyword-matched excerpts first.
       </p>
       <fieldset>
         <legend>Scope</legend>
@@ -291,7 +264,7 @@ export function LibraryQuestion(props: Props) {
         className="ask-meeting"
         onSubmit={(event) => {
           event.preventDefault();
-          if (canReview) void plan();
+          if (canAsk) void ask();
         }}
       >
         <label htmlFor="library-question">Question</label>
@@ -310,56 +283,14 @@ export function LibraryQuestion(props: Props) {
           onChange={(event) => setQuestion(event.target.value)}
         />
         <div className="panel-actions">
-          <button type="submit" disabled={!canReview}>
-            Review
+          <button type="submit" className="primary" disabled={!canAsk}>
+            Ask
           </button>
         </div>
       </form>
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
-      {review && (
-        <div
-          className="consent-card"
-          role="group"
-          aria-label="Confirm sending library question"
-        >
-          <p>
-            <strong>
-              Send this question and {review.ids.length} meeting
-              {review.ids.length === 1 ? "" : "s"} to your selected provider?
-            </strong>
-          </p>
-          <TextConsent
-            plan={review.plan}
-            note="The question and answer are saved on this device, unencrypted, until you delete them or any of these meetings."
-          >
-            <li>
-              Sent in {review.plan.requests} request: your question, and the{" "}
-              {review.plan.excerpts
-                ? `title and start date of only these meetings, with ${review.plan.excerpts.segments} transcript excerpts selected on this device by keyword match from ${review.plan.excerpts.meetings} meeting${review.plan.excerpts.meetings === 1 ? "" : "s"}, plus each meeting's notes if they mention a keyword (only the matching paragraphs when long) — not the full transcripts`
-                : "title, start date, notes and transcript text (with speaker names) of only these meetings"}
-              :
-              <ol>
-                {review.ids.map((id) => (
-                  <li key={id}>{title(id)}</li>
-                ))}
-              </ol>
-            </li>
-            <li>Not sent: audio recordings or other meetings.</li>
-          </TextConsent>
-          <div className="panel-actions">
-            <button
-              className="primary"
-              disabled={disabled || working}
-              onClick={() => void send()}
-            >
-              Send question
-            </button>
-            <button onClick={() => setReview(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
-      {working && !review && <p role="status">Working…</p>}
+      {working && <p role="status">Working…</p>}
       {answers.length > 0 && (
         <div className="panel-actions">
           <select

@@ -2,7 +2,7 @@
 use crate::{
     audio::Track,
     audio_timing::{self, Block, CLOCK_TOLERANCE_US},
-    domain::{hex, sha256_hex, AppError, Result, Segment, SegmentTiming},
+    domain::{sha256_hex, AppError, Result, Segment, SegmentTiming},
     providers::{check_status, client, read_capped, Connection},
 };
 use reqwest::blocking::multipart::{Form, Part};
@@ -36,18 +36,21 @@ struct PreparedTrack {
 }
 
 pub struct CloudPlan {
-    pub bytes: u64,
-    pub requests: usize,
-    pub tracks: Vec<String>,
-    fingerprint: String,
     input: Vec<u8>,
     prepared: Vec<PreparedTrack>,
     _scratch: tempfile::TempDir,
 }
 
+#[cfg(test)]
 impl CloudPlan {
-    pub fn fingerprint(&self) -> &str {
-        &self.fingerprint
+    pub(crate) fn requests(&self) -> usize {
+        self.prepared.iter().map(|track| track.chunks.len()).sum()
+    }
+    pub(crate) fn bytes(&self) -> u64 {
+        self.chunks().map(|chunk| chunk.bytes).sum()
+    }
+    fn chunks(&self) -> impl Iterator<Item = &Chunk> {
+        self.prepared.iter().flat_map(|track| &track.chunks)
     }
 }
 
@@ -55,7 +58,7 @@ fn error(message: &str) -> AppError {
     AppError::new("cloud_stt", message)
 }
 fn changed() -> AppError {
-    error("The audio or chunk plan changed. Review and confirm transcription again; nothing was sent.")
+    error("The audio changed while it was being prepared. Transcribe again; nothing was sent.")
 }
 fn cancelled(cancel: &AtomicBool) -> Result<()> {
     if cancel.load(Ordering::SeqCst) {
@@ -167,7 +170,8 @@ fn copy_samples(
     Ok(())
 }
 
-pub fn plan(tracks: &[Track]) -> Result<CloudPlan> {
+#[cfg(test)]
+pub(crate) fn plan(tracks: &[Track]) -> Result<CloudPlan> {
     prepare(tracks, MAX_CHUNK_BYTES, &AtomicBool::new(false))
 }
 
@@ -183,12 +187,9 @@ fn prepare(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Result<CloudPlan>
         ));
     }
     let input = serde_json::to_vec(tracks).map_err(|_| audio_error("track metadata"))?;
-    let mut fingerprint = Sha256::new();
-    fingerprint.update(&input);
     let scratch = tempfile::tempdir().map_err(audio_error)?;
     let mut prepared = Vec::new();
     let mut requests = 0;
-    let mut bytes = 0_u64;
     let mut kinds = Vec::new();
     for (track_number, track) in tracks.iter().enumerate() {
         cancelled(cancel)?;
@@ -219,7 +220,6 @@ fn prepare(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Result<CloudPlan>
             ));
         }
         let index = audio_timing::read(track, || cancelled(cancel))?;
-        fingerprint.update(serde_json::to_vec(&index).map_err(|_| audio_error("index"))?);
         let ranges = chunk_ranges(&index, track.sample_rate, track.channels, cap);
         requests += ranges.len();
         if requests > MAX_REQUESTS {
@@ -257,12 +257,6 @@ fn prepare(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Result<CloudPlan>
                 ));
             }
             let digest = file_digest(&path, cancel)?;
-            fingerprint.update(start.to_le_bytes());
-            fingerprint.update(frames.to_le_bytes());
-            fingerprint.update(digest);
-            bytes = bytes
-                .checked_add(size)
-                .ok_or_else(|| audio_error("audio size"))?;
             chunks.push(Chunk {
                 path,
                 start,
@@ -285,10 +279,6 @@ fn prepare(tracks: &[Track], cap: u64, cancel: &AtomicBool) -> Result<CloudPlan>
     }
     cancelled(cancel)?;
     Ok(CloudPlan {
-        bytes,
-        requests,
-        tracks: kinds,
-        fingerprint: hex(&fingerprint.finalize()),
         input,
         prepared,
         _scratch: scratch,
@@ -595,7 +585,7 @@ pub(crate) mod tests {
         assert_eq!(error.code, "denied");
         let (digest, bytes) = authorized.unwrap();
         assert_eq!(digest.len(), 64);
-        assert_eq!(bytes, plan.bytes);
+        assert_eq!(bytes, plan.bytes());
         assert_eq!(
             listener.accept().unwrap_err().kind(),
             std::io::ErrorKind::WouldBlock
@@ -622,16 +612,19 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn chunks_are_bounded_split_pauses_and_fingerprint_frozen_audio() {
+    fn chunks_are_bounded_split_pauses_and_repeat_for_the_same_audio() {
         let dir = tempfile::tempdir().unwrap();
         let track = synthetic(dir.path(), "mic", 32000);
         fs::write(&track.timing_path, "{\"frame_offset\":0,\"frames\":16000,\"capture_start_us\":1000000,\"generation\":1}\n{\"frame_offset\":16000,\"frames\":16000,\"capture_start_us\":6000000,\"generation\":2}\n").unwrap();
         let tracks = [track.clone()];
         let first = prepare(&tracks, 16044, &AtomicBool::new(false)).unwrap();
         let second = prepare(&tracks, 16044, &AtomicBool::new(false)).unwrap();
-        assert_eq!(first.requests, 4);
-        assert_eq!(first.bytes, 64176);
-        assert_eq!(first.fingerprint(), second.fingerprint());
+        assert_eq!(first.requests(), 4);
+        assert_eq!(first.bytes(), 64176);
+        assert!(first
+            .chunks()
+            .map(|chunk| chunk.digest)
+            .eq(second.chunks().map(|chunk| chunk.digest)));
         assert!(first.prepared[0]
             .chunks
             .iter()
@@ -699,7 +692,7 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tracks = [synthetic(dir.path(), "mic", 1600)];
         let plan = prepare(&tracks, 1644, &AtomicBool::new(false)).unwrap();
-        assert_eq!(plan.requests, 2);
+        assert_eq!(plan.requests(), 2);
         let (connection, worker, seen) = serve(vec![r#"{"text":"first"}"#.into()]);
         let cancel = AtomicBool::new(false);
         let result = transcribe(

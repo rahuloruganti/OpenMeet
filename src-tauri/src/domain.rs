@@ -284,14 +284,10 @@ pub struct ExcerptSummary {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ProcessingPlan {
-    pub fingerprint: String,
     pub base_url: String,
     pub model: String,
+    /// Upper bound on requests for this task; sending more is refused.
     pub requests: usize,
-    pub audio_bytes: u64,
-    pub tracks: Vec<String>,
-    /// Set when only selected excerpts are sent; None means the full content.
-    pub excerpts: Option<ExcerptSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

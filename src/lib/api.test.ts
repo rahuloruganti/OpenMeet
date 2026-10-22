@@ -47,57 +47,30 @@ it("sends saved connection and independent assignment revision arguments", async
   });
 });
 
-it("uses reviewed fingerprints for cloud actions and null for local transcription", async () => {
-  await api.planSummary("m", "standup-v1");
-  expect(invoke).toHaveBeenLastCalledWith("plan_summary", {
-    id: "m",
-    template: "standup-v1",
-  });
-  await api.generateSummary("m", "standup-v1", "reviewed-summary");
+it("sends cloud actions directly, with no review fingerprint", async () => {
+  await api.generateSummary("m", "standup-v1");
   expect(invoke).toHaveBeenLastCalledWith("generate_summary", {
     id: "m",
     template: "standup-v1",
-    confirmation: "reviewed-summary",
   });
-  await api.planQuestion("m", "What changed?", 7);
-  expect(invoke).toHaveBeenLastCalledWith("plan_question", {
+  await api.askMeeting("m", "What changed?", 7);
+  expect(invoke).toHaveBeenLastCalledWith("ask_meeting", {
     id: "m",
     question: "What changed?",
     threadId: 7,
   });
-  await api.askMeeting("m", "What changed?", null, "reviewed-question");
-  expect(invoke).toHaveBeenLastCalledWith("ask_meeting", {
-    id: "m",
-    question: "What changed?",
-    threadId: null,
-    confirmation: "reviewed-question",
-  });
-  await api.planLibraryQuestion(["a", "b"], "What changed?");
-  expect(invoke).toHaveBeenLastCalledWith("plan_library_question", {
-    meetingIds: ["a", "b"],
-    question: "What changed?",
-  });
-  await api.askLibrary(["a", "b"], "What changed?", "reviewed-library");
+  await api.askLibrary(["a", "b"], "What changed?");
   expect(invoke).toHaveBeenLastCalledWith("ask_library", {
     meetingIds: ["a", "b"],
     question: "What changed?",
-    confirmation: "reviewed-library",
   });
   await api.deleteQuestionThread("m", 7);
   expect(invoke).toHaveBeenLastCalledWith("delete_question_thread", {
     meetingId: "m",
     threadId: 7,
   });
-  await api.transcribeMeeting("m", null);
-  expect(invoke).toHaveBeenLastCalledWith("transcribe_meeting", {
-    id: "m",
-    confirmation: null,
-  });
-  await api.transcribeMeeting("m", "reviewed-audio");
-  expect(invoke).toHaveBeenLastCalledWith("transcribe_meeting", {
-    id: "m",
-    confirmation: "reviewed-audio",
-  });
+  await api.transcribeMeeting("m");
+  expect(invoke).toHaveBeenLastCalledWith("transcribe_meeting", { id: "m" });
 });
 
 it("exposes real recording only and omits the retired simulation argument", async () => {

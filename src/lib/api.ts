@@ -306,16 +306,6 @@ export type ProviderModel = { id: string };
 export type KeyStatus = "present" | "missing" | "unavailable";
 export type KeyChange =
   { kind: "keep" } | { kind: "replace"; key: string } | { kind: "remove" };
-export type ProcessingPlan = {
-  fingerprint: string;
-  base_url: string;
-  model: string;
-  requests: number;
-  audio_bytes: number;
-  tracks: string[];
-  /** Set when a question sends only locally selected excerpts of long content. */
-  excerpts: { segments: number; meetings: number } | null;
-};
 export type SttStatus = {
   engine: boolean;
   model: boolean;
@@ -483,13 +473,10 @@ export const api = {
     invoke<Settings>("save_stt_mode", { mode }),
   sttStatus: () => invoke<SttStatus>("stt_status"),
   sttInstall: () => invoke<SttStatus>("stt_install"),
-  planTranscription: (id: string) =>
-    invoke<ProcessingPlan>("plan_transcription", { id }),
-  transcribeMeeting: (id: string, confirmation: string | null) =>
-    invoke<void>("transcribe_meeting", { id, confirmation }),
+  transcribeMeeting: (id: string) => invoke<void>("transcribe_meeting", { id }),
   /** `template` is a built-in `SummaryTemplate` or a `CustomTemplate` id. */
-  generateSummary: (id: string, template: string, confirmation: string) =>
-    invoke<void>("generate_summary", { id, template, confirmation }),
+  generateSummary: (id: string, template: string) =>
+    invoke<void>("generate_summary", { id, template }),
   saveSummaryInstructions: (instructions: string) =>
     invoke<Settings>("save_summary_instructions", { instructions }),
   saveSummaryTemplate: (
@@ -552,12 +539,6 @@ export const api = {
   deleteMeeting: (id: string) => invoke<void>("delete_meeting", { id }),
   searchMeetings: (query: string) =>
     invoke<SearchHit[]>("search_meetings", { query }),
-  /** Plans a summary without submitting meeting content. */
-  planSummary: (id: string, template: string) =>
-    invoke<ProcessingPlan>("plan_summary", { id, template }),
-  /** `threadId` continues a saved thread, sending its earlier turns; null starts a new one. */
-  planQuestion: (id: string, question: string, threadId: number | null) =>
-    invoke<ProcessingPlan>("plan_question", { id, question, threadId }),
   listSummaries: (id: string) =>
     invoke<SummaryVersion[]>("list_summaries", { id }),
   /** Saves an edit of `baseId` as the newest version; refused if `expectedLatestId` is stale. */
@@ -588,40 +569,21 @@ export const api = {
       expectedLatestId,
       markdown,
     }),
-  /** Saves and returns the thread the answer joined. */
-  askMeeting: (
-    id: string,
-    question: string,
-    threadId: number | null,
-    confirmation: string,
-  ) =>
-    invoke<QuestionThread>("ask_meeting", {
-      id,
-      question,
-      threadId,
-      confirmation,
-    }),
-  /** Plans one question over 1 to 20 meetings, in this order; nothing is sent. */
-  planLibraryQuestion: (meetingIds: string[], question: string) =>
-    invoke<ProcessingPlan>("plan_library_question", { meetingIds, question }),
-  /** One request over the reviewed meetings; the answer is saved and returned. */
-  askLibrary: (meetingIds: string[], question: string, confirmation: string) =>
-    invoke<LibraryAnswer>("ask_library", {
-      meetingIds,
-      question,
-      confirmation,
-    }),
+  /** Saves and returns the thread the answer joined. `threadId` continues a saved
+   * thread, sending its earlier turns; null starts a new one. */
+  askMeeting: (id: string, question: string, threadId: number | null) =>
+    invoke<QuestionThread>("ask_meeting", { id, question, threadId }),
+  /** One request over 1 to 20 meetings, in this order; the answer is saved and returned. */
+  askLibrary: (meetingIds: string[], question: string) =>
+    invoke<LibraryAnswer>("ask_library", { meetingIds, question }),
   /** Saved library answers, newest first. */
   listLibraryAnswers: () => invoke<LibraryAnswer[]>("list_library_answers"),
   /** Returns the remaining answers. */
   deleteLibraryAnswer: (id: number) =>
     invoke<LibraryAnswer[]>("delete_library_answer", { id }),
-  /** Plans a rewrite of selected text; nothing is sent. */
-  planRewrite: (text: string, request: string) =>
-    invoke<ProcessingPlan>("plan_rewrite", { text, request }),
   /** Sends only the selected text and request; the result is returned, never stored. */
-  rewriteText: (text: string, request: string, confirmation: string) =>
-    invoke<string>("rewrite_text", { text, request, confirmation }),
+  rewriteText: (text: string, request: string) =>
+    invoke<string>("rewrite_text", { text, request }),
   /** Creates a recipe when `id` is null; otherwise edits it. */
   saveRecipe: (id: string | null, name: string, prompt: string) =>
     invoke<Settings>("save_recipe", { id, name, prompt }),

@@ -686,7 +686,7 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
     core.processing_stage(&id, &plan.id, Stage::FinalizingAudio, Stage::Transcribing)
         .unwrap();
     let audio_plan = cloud_stt::plan(&tracks).unwrap();
-    assert_eq!(audio_plan.requests, 4);
+    assert_eq!(audio_plan.requests(), 4);
     let guard = core.processing_owner.begin(&id).unwrap();
     let segments = cloud_stt::transcribe(
         &Connection::for_test(&base, "synthetic-speech"),
@@ -775,7 +775,7 @@ fn actual_cloud_requests_from_saved_pcm_publish_final_summary_export_and_survive
         (
             Stage::Completed,
             5,
-            audio_plan.bytes as i64,
+            audio_plan.bytes() as i64,
             authorized_json.len() as i64
         )
     );

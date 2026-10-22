@@ -77,7 +77,7 @@ export function TranscriptionSettings(props: {
           <span>
             <strong>API connection</strong>
             <span className="muted">
-              Uploads audio after a separate confirmation.
+              Uploads audio to your speech connection.
             </span>
           </span>
         </label>

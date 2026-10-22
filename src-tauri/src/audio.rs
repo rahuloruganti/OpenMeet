@@ -1623,7 +1623,7 @@ mod tests {
             .iter()
             .all(|track| track.finalized && track.frames == 32000));
         let plan = cloud_stt::plan(&tracks).unwrap();
-        assert_eq!(plan.requests, 4);
+        assert_eq!(plan.requests(), 4);
         let response = r#"{"text":"Fictional marker","segments":[{"text":"Fictional marker","start":0.0,"end":1.0}]}"#.to_string();
         let (connection, server, requests) = cloud_stt::tests::serve(vec![response; 4]);
         let segments = cloud_stt::transcribe(

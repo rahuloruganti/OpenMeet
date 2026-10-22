@@ -12,7 +12,6 @@ import { LibraryQuestion } from "./LibraryQuestion";
 vi.mock("../lib/api", async (original) => ({
   ...(await original<typeof import("../lib/api")>()),
   api: {
-    planLibraryQuestion: vi.fn(),
     askLibrary: vi.fn(),
     getMeeting: vi.fn(),
     listLibraryAnswers: vi.fn(),
@@ -35,15 +34,6 @@ const meetings = [
   make("b", "Beta review", []),
   make("c", "Gamma plan", ["client"]),
 ];
-const plan = {
-  fingerprint: "library-consent",
-  base_url: "https://provider.example/v1",
-  model: "test-chat",
-  requests: 1,
-  audio_bytes: 0,
-  tracks: [],
-  excerpts: null,
-};
 const detail = (id: string): MeetingDetail =>
   ({
     meeting: meetings.find((meeting) => meeting.id === id),
@@ -75,12 +65,11 @@ function show(onOpen = vi.fn()) {
 }
 const ask = async (text = "What was decided?") => {
   await userEvent.type(screen.getByLabelText("Question"), text);
-  await userEvent.click(screen.getByRole("button", { name: "Review" }));
+  await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 };
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(api.planLibraryQuestion).mockResolvedValue(plan);
   vi.mocked(api.getMeeting).mockImplementation(async (id) => detail(id));
   vi.mocked(api.listLibraryAnswers).mockResolvedValue([]);
 });
@@ -93,75 +82,30 @@ const saved = (
   id,
   question,
   answer,
-  provider: plan.base_url,
-  model: plan.model,
+  provider: "https://provider.example/v1",
+  model: "test-chat",
   meeting_ids: meetingIds,
 });
 
-it("resolves a tag to its meetings, lists them in the consent card, and sends the reviewed scope", async () => {
+it("resolves a tag to its meetings and sends exactly that scope", async () => {
+  vi.mocked(api.askLibrary).mockResolvedValue(
+    saved(1, ["a", "c"], "Ship it [M1 0:08]."),
+  );
   show();
+  expect(
+    (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
   await userEvent.click(screen.getByLabelText("Meetings with a tag"));
   await userEvent.selectOptions(screen.getByLabelText("Tag"), "client");
   expect(screen.getByRole("status").textContent).toContain("2 meetings");
   await ask();
-  expect(api.planLibraryQuestion).toHaveBeenCalledWith(
-    ["a", "c"],
-    "What was decided?",
-  );
-  const card = await screen.findByRole("group", {
-    name: "Confirm sending library question",
-  });
-  const listed = within(card)
-    .getAllByRole("listitem")
-    .map((item) => item.textContent);
-  expect(listed).toContain("Alpha sync");
-  expect(listed).toContain("Gamma plan");
-  expect(card.textContent).not.toContain("Beta review");
-  expect(card.textContent).toContain("Not sent: audio recordings");
-  expect(card.textContent).toContain("leaves this device");
-  vi.mocked(api.askLibrary).mockResolvedValue(
-    saved(1, ["a", "c"], "Ship it [M1 0:08]."),
-  );
-  expect(api.askLibrary).not.toHaveBeenCalled();
-  await userEvent.click(
-    within(card).getByRole("button", { name: "Send question" }),
-  );
-  expect(api.askLibrary).toHaveBeenCalledWith(
-    ["a", "c"],
-    "What was decided?",
-    "library-consent",
-  );
-});
-
-it("discards the review when the scope or question changes", async () => {
-  show();
+  expect(api.askLibrary).toHaveBeenCalledWith(["a", "c"], "What was decided?");
   expect(
-    (screen.getByRole("button", { name: "Review" }) as HTMLButtonElement)
-      .disabled,
-  ).toBe(true);
-  await userEvent.click(screen.getByLabelText(/Alpha sync/));
-  await ask();
-  await screen.findByRole("group", {
-    name: "Confirm sending library question",
-  });
-  await userEvent.click(screen.getByLabelText(/Beta review/));
-  expect(
-    screen.queryByRole("group", { name: "Confirm sending library question" }),
-  ).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: "Review" }));
-  await screen.findByRole("group", {
-    name: "Confirm sending library question",
-  });
-  await userEvent.type(screen.getByLabelText("Question"), "?");
-  expect(
-    screen.queryByRole("group", { name: "Confirm sending library question" }),
-  ).toBeNull();
+    (await screen.findByLabelText("Library answer")).textContent,
+  ).toContain("Ship it");
 });
 
 it("links only in-scope citations that match a stored segment and marks the rest unverified", async () => {
-  const onOpen = show();
-  await userEvent.click(screen.getByLabelText(/Alpha sync/));
-  await ask();
   vi.mocked(api.askLibrary).mockResolvedValue(
     saved(
       1,
@@ -169,9 +113,9 @@ it("links only in-scope citations that match a stored segment and marks the rest
       "Launch is Friday [M1 0:08]. Budget [M1 9:59], other [M2 0:08], plan [M1], bare [0:08].",
     ),
   );
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Send question" }),
-  );
+  const onOpen = show();
+  await userEvent.click(screen.getByLabelText(/Alpha sync/));
+  await ask();
   const link = await screen.findByRole("button", {
     name: "Open Alpha sync at 0:08",
   });
@@ -186,33 +130,10 @@ it("links only in-scope citations that match a stored segment and marks the rest
   expect(onOpen).toHaveBeenLastCalledWith("a", null);
 });
 
-it("discloses that only locally selected excerpts are sent for long content", async () => {
-  vi.mocked(api.planLibraryQuestion).mockResolvedValue({
-    ...plan,
-    excerpts: { segments: 12, meetings: 2 },
-  });
-  show();
-  await userEvent.click(screen.getByLabelText(/Alpha sync/));
-  await userEvent.click(screen.getByLabelText(/Gamma plan/));
-  await ask();
-  const card = await screen.findByRole("group", {
-    name: "Confirm sending library question",
-  });
-  expect(card.textContent).toContain(
-    "12 transcript excerpts selected on this device by keyword match from 2 meetings",
-  );
-  expect(card.textContent).toContain("not the full transcripts");
-  expect(card.textContent).toContain(
-    "each meeting's notes if they mention a keyword",
-  );
-  expect(card.textContent).not.toContain("notes and transcript text");
-  expect(card.textContent).toContain("Alpha sync");
-});
-
-it("shows no matching passages as a status message, not an error, and sends nothing", async () => {
+it("shows no matching passages as a status message, not an error", async () => {
   const message =
     "No passages in the selected content matched your question. Nothing was sent.";
-  vi.mocked(api.planLibraryQuestion).mockRejectedValue({
+  vi.mocked(api.askLibrary).mockRejectedValue({
     code: "insufficient_evidence",
     message,
   });
@@ -223,10 +144,6 @@ it("shows no matching passages as a status message, not an error, and sends noth
     "status",
   );
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(
-    screen.queryByRole("group", { name: "Confirm sending library question" }),
-  ).toBeNull();
-  expect(api.askLibrary).not.toHaveBeenCalled();
   // Changing the question clears the message.
   await userEvent.type(screen.getByLabelText("Question"), "?");
   expect(screen.queryByText(message)).toBeNull();
@@ -244,7 +161,6 @@ it("fills the question from a recipe without sending anything", async () => {
   expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe(
     "What risks came up?",
   );
-  expect(api.planLibraryQuestion).not.toHaveBeenCalled();
   expect(api.askLibrary).not.toHaveBeenCalled();
 });
 
@@ -286,13 +202,6 @@ it("shows a sent answer as saved and adds it to the saved list", async () => {
   show();
   await userEvent.click(screen.getByLabelText(/Alpha sync/));
   await ask();
-  const card = await screen.findByRole("group", {
-    name: "Confirm sending library question",
-  });
-  expect(card.textContent).toContain("saved on this device, unencrypted");
-  await userEvent.click(
-    within(card).getByRole("button", { name: "Send question" }),
-  );
   expect(
     (await screen.findByLabelText("Library answer")).textContent,
   ).toContain("Saved on this device");

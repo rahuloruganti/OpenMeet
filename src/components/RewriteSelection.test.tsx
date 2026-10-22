@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -7,18 +7,8 @@ import { RewriteSelection } from "./RewriteSelection";
 
 vi.mock("../lib/api", async (original) => ({
   ...(await original<typeof import("../lib/api")>()),
-  api: { planRewrite: vi.fn(), rewriteText: vi.fn() },
+  api: { rewriteText: vi.fn() },
 }));
-
-const plan = {
-  fingerprint: "rewrite-consent",
-  base_url: "https://provider.example/v1",
-  model: "test-chat",
-  requests: 1,
-  audio_bytes: 0,
-  tracks: [],
-  excerpts: null,
-};
 
 function Harness(props: { initial: string; onApply?: (text: string) => void }) {
   const [notes, setNotes] = useState(props.initial);
@@ -51,7 +41,6 @@ const select = (start: number, end: number) =>
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.mocked(api.planRewrite).mockResolvedValue(plan);
   vi.mocked(api.rewriteText).mockResolvedValue("Short.");
 });
 
@@ -61,10 +50,10 @@ it("asks for a selection first and sends nothing without one", async () => {
     screen.getByRole("button", { name: "Rewrite selection…" }),
   );
   expect(screen.getByRole("status").textContent).toContain("Select text");
-  expect(api.planRewrite).not.toHaveBeenCalled();
+  expect(api.rewriteText).not.toHaveBeenCalled();
 });
 
-it("sends only the reviewed selection and replaces it only when accepted", async () => {
+it("sends only the selection and replaces it only when accepted", async () => {
   const onApply = vi.fn();
   render(
     <Harness
@@ -79,24 +68,10 @@ it("sends only the reviewed selection and replaces it only when accepted", async
   await userEvent.click(
     screen.getByRole("button", { name: "Make it shorter" }),
   );
-  await userEvent.click(screen.getByRole("button", { name: "Review" }));
-  expect(api.planRewrite).toHaveBeenCalledWith(
-    "A long rambling middle.",
-    "Make it shorter",
-  );
-  const card = await screen.findByRole("group", {
-    name: "Confirm sending rewrite",
-  });
-  expect(card.textContent).toContain("only the 23 selected characters");
-  expect(card.textContent).toContain("Not sent: the rest of your notes");
-  expect(api.rewriteText).not.toHaveBeenCalled();
-  await userEvent.click(
-    within(card).getByRole("button", { name: "Send for rewrite" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Rewrite" }));
   expect(api.rewriteText).toHaveBeenCalledWith(
     "A long rambling middle.",
     "Make it shorter",
-    "rewrite-consent",
   );
   expect((await screen.findByLabelText("Rewritten text")).textContent).toBe(
     "Short.",
@@ -119,10 +94,7 @@ it("refuses to replace when the notes changed around the selection", async () =>
     screen.getByLabelText("How should it change?"),
     "Capitalize",
   );
-  await userEvent.click(screen.getByRole("button", { name: "Review" }));
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Send for rewrite" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Rewrite" }));
   await screen.findByLabelText("Rewritten text");
   await userEvent.type(notes(), "{Home}X");
   await userEvent.click(
@@ -148,10 +120,7 @@ it("shows a failed rewrite as an alert and leaves the notes unchanged", async ()
   await userEvent.click(
     screen.getByRole("button", { name: "Make it clearer" }),
   );
-  await userEvent.click(screen.getByRole("button", { name: "Review" }));
-  await userEvent.click(
-    await screen.findByRole("button", { name: "Send for rewrite" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Rewrite" }));
   expect((await screen.findByRole("alert")).textContent).toContain(
     "Cannot reach",
   );
