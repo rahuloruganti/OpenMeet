@@ -11,6 +11,8 @@ use std::{
 
 const MAX_INDEX_BYTES: u64 = 64 * 1024 * 1024;
 pub(crate) const CLOCK_TOLERANCE_US: u64 = 2000;
+// ponytail: fixed bound from measured WASAPI/Bluetooth jitter (≤ 17 ms); raise if a device exceeds it.
+const JITTER_US: u64 = 30_000;
 
 fn error(message: &str) -> AppError {
     AppError::new("audio_timing", message)
@@ -47,6 +49,7 @@ pub(crate) fn read(
     let mut blocks: Vec<Block> = Vec::new();
     let mut offset = 0_u64;
     let mut consumed = 0_u64;
+    let mut previous_raw_start = 0_u64;
     loop {
         if blocks.len().is_multiple_of(4096) {
             check_cancel()?;
@@ -69,7 +72,7 @@ pub(crate) fn read(
                 "The audio timing index is malformed. Originals and previous transcripts are unchanged.",
             ));
         }
-        let block: Block = serde_json::from_slice(&line)
+        let mut block: Block = serde_json::from_slice(&line)
             .map_err(|_| error("The audio timing index is malformed. Originals and previous transcripts are unchanged."))?;
         let end_us = block
             .capture_start_us
@@ -86,17 +89,23 @@ pub(crate) fn read(
                 "The audio timing index does not match the recording. Originals and previous transcripts are unchanged.",
             ));
         }
+        let raw_start = block.capture_start_us;
         if let Some(previous) = blocks.last() {
-            let previous_end = previous.capture_start_us
-                + previous.frames * 1_000_000 / u64::from(track.sample_rate);
-            if block.capture_start_us < previous.capture_start_us
-                || block.capture_start_us.saturating_add(CLOCK_TOLERANCE_US) < previous_end
+            let duration = |frames: u64| frames * 1_000_000 / u64::from(track.sample_rate);
+            let previous_end = previous.capture_start_us + duration(previous.frames);
+            // Packet stamps jitter by about ±11 ms on real devices, so judge overlap on the raw
+            // stamps with JITTER_US, then lay jittered packets end to end. Larger gaps are kept.
+            if raw_start.saturating_add(JITTER_US) < previous_raw_start + duration(previous.frames)
             {
                 return Err(error(
                     "Audio timestamps overlap or move backwards. Originals and previous transcripts are unchanged.",
                 ));
             }
+            if raw_start <= previous_end + JITTER_US {
+                block.capture_start_us = previous_end;
+            }
         }
+        previous_raw_start = raw_start;
         offset = offset
             .checked_add(block.frames)
             .ok_or_else(|| error("Invalid audio frame count."))?;
@@ -142,6 +151,31 @@ mod tests {
         assert_eq!(blocks[1].generation, None);
         assert_eq!(blocks[1].capture_start_us, 8_000_000);
         assert_eq!(fs::read(path).unwrap(), original);
+    }
+
+    #[test]
+    fn lays_jittered_device_stamps_end_to_end_and_keeps_real_gaps() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("timing.jsonl");
+        // Stamps from a real Bluetooth microphone: the third moves backwards by about 1 ms.
+        let stamps = [43_218, 61_236, 60_296, 70_338, 5_000_000];
+        let lines: String = stamps
+            .iter()
+            .enumerate()
+            .map(|(i, us)| {
+                format!(
+                    "{{\"frame_offset\":{},\"frames\":160,\"capture_start_us\":{us},\"generation\":1}}\n",
+                    i * 160
+                )
+            })
+            .collect();
+        fs::write(&path, lines).unwrap();
+        let starts: Vec<u64> = read(&track(&path, 800), || Ok(()))
+            .unwrap()
+            .iter()
+            .map(|block| block.capture_start_us)
+            .collect();
+        assert_eq!(starts, [43_218, 53_218, 63_218, 73_218, 5_000_000]);
     }
 
     #[test]
