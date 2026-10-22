@@ -708,3 +708,5 @@ Step 3b (sherpa-onnx, frontend and docs): the Settings engine card is now "On th
 - User request: rename the product to OpenMeet, version 0.9.0, new default shortcuts (pause Ctrl+Shift+F9, stop Ctrl+Shift+F10), an unsigned NSIS installer with a `just installer` recipe, and install documentation.
 - Outcome: product name, window title, and page title are "OpenMeet"; the identifier `dev.openmeet.preview` is unchanged. The Windows-facing "preview" wording was removed from the tray tooltip, export banners, About line, and the setup and privacy panels; macOS preview notes remain in the README, user guide, and macOS-only messages. Fresh databases get the new shortcut defaults; existing saved settings are not rewritten. The installer is per-user, unsigned, with WebView2 bootstrapper and no auto-updater.
 - Checks and any installer build results are recorded in the step 5 report, not here.
+
+Installed the v0.9.0 NSIS installer per user on the dev PC and launched it: first-run setup, sherpa models listed, Parakeet recommended. Shortcut defaults not checkable on an existing profile. No recording.

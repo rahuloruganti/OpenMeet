@@ -68,3 +68,5 @@ Native run of `just dev` with two authorized test recordings on a SoundCore 2 Bl
 
 Pause exclusion held on the microphone track: the timing index has no blocks for the paused 10.5 s and the WAV length matches. Local transcription with Whisper `small` runs end to end. Summaries were not exercised because no connection has a key.
 n- Release notes: `docs/release-notes-0.9.0.md`; installer built locally (not yet installed or tested on a clean machine).
+
+- Installer check (2026-10-22): the unsigned per-user installer installed silently to %LOCALAPPDATA%\OpenMeet and launched on this PC against the existing profile. First-run setup appeared, found ggml-small.bin and recommended Parakeet v3. The F9/F10 defaults apply to new databases only and were checked by a unit test, not in the app. A clean-machine install and SmartScreen prompt remain untested.
