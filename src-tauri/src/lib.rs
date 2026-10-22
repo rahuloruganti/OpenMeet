@@ -570,7 +570,7 @@ async fn search_hf_models(query: String) -> Result<Vec<model_library::HubModel>>
 }
 
 #[tauri::command]
-async fn list_hf_files(repo_id: String) -> Result<Vec<model_library::HubFile>> {
+async fn list_hf_files(repo_id: String) -> Result<model_library::HubListing> {
     blocking(move || model_library::list_files(&repo_id)).await
 }
 
@@ -583,6 +583,21 @@ async fn download_hf_model(
     let emitter = app.clone();
     blocking(move || {
         model_library::download(&root, file, |progress| {
+            let _ = emitter.emit("model_library_progress", progress);
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn download_hf_folder(
+    app: AppHandle,
+    folder: model_library::HubFolder,
+) -> Result<model_library::DownloadedFolder> {
+    let root = stt_root(&app)?;
+    let emitter = app.clone();
+    blocking(move || {
+        model_library::download_folder(&root, folder, |progress| {
             let _ = emitter.emit("model_library_progress", progress);
         })
     })
@@ -1955,6 +1970,7 @@ pub fn run() {
             search_hf_models,
             list_hf_files,
             download_hf_model,
+            download_hf_folder,
             cancel_model_download,
         ])
         .build(tauri::generate_context!())

@@ -7,7 +7,7 @@ use reqwest::{blocking::Client, redirect::Policy, Url};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -23,8 +23,13 @@ const MAX_MODELS: usize = 200;
 const MAX_DEPTH: usize = 6;
 const MAX_METADATA: u64 = 4 * 1024 * 1024;
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+/// Total bytes one sherpa-onnx folder download may take. Pinned folders are 110 MB to 500 MB.
+const MAX_FOLDER_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_HUB_ITEMS: usize = 200;
+const SPEECH_TAG: &str = "automatic-speech-recognition";
 const HUB: &str = "https://huggingface.co";
-pub(crate) const TRANSFER_TIMEOUT: Duration = Duration::from_secs(15);
+/// Whole-request limit for one download; the largest pinned model is about 640 MB.
+pub(crate) const TRANSFER_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 static ARTIFACTS: Mutex<()> = Mutex::new(());
 static PUBLICATION: Mutex<()> = Mutex::new(());
 static CANCEL: AtomicBool = AtomicBool::new(false);
@@ -298,7 +303,7 @@ fn import_with_catalog(
         .filter(|file| file.size == size)
         .collect();
     if candidates.is_empty() {
-        return Err(error("This file does not match a supported Whisper model size. GGUF models need an external server."));
+        return Err(error("This file does not match a pinned Whisper model size. Other Whisper files can be used in place."));
     }
     // Hash the copy, not a prior read of a file that may change while it is imported.
     let folder = managed_folder(root, &["models"])?;
@@ -403,10 +408,20 @@ fn verified_temporary(
     Ok(temporary)
 }
 
+/// What a repository's file names say it holds. Search uses names only; downloads re-check.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HubKind {
+    WhisperGgml,
+    SherpaOnnx,
+    Other,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct HubModel {
     pub id: String,
     pub license: Option<String>,
+    pub kind: HubKind,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -418,6 +433,42 @@ pub struct HubFile {
     pub sha256: String,
     pub license: Option<String>,
     pub model_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SherpaLayout {
+    /// encoder, decoder and joiner ONNX files plus tokens.txt (Parakeet-style transducers).
+    Transducer,
+    /// encoder and merged decoder plus tokens.txt (Moonshine).
+    Moonshine,
+    /// One model*.onnx plus tokens.txt (SenseVoice-style).
+    SingleModel,
+}
+
+/// One complete sherpa-onnx model folder. Every file is pinned by its LFS size and SHA-256.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HubFolder {
+    pub repo_id: String,
+    pub revision: String,
+    /// Folder inside the repository; empty for the repository root.
+    pub folder: String,
+    pub layout: SherpaLayout,
+    pub license: Option<String>,
+    pub files: Vec<HubFile>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HubListing {
+    /// Whisper ggml files (`ggml-*.bin`) anywhere in the repository.
+    pub files: Vec<HubFile>,
+    pub folders: Vec<HubFolder>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DownloadedFolder {
+    pub path: String,
+    pub files: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -453,6 +504,7 @@ struct HubMetadata {
     gated: serde_json::Value,
     #[serde(rename = "cardData")]
     card: Option<CardData>,
+    pipeline_tag: Option<String>,
     #[serde(default)]
     siblings: Vec<Sibling>,
 }
@@ -564,6 +616,7 @@ fn search_at(base: &str, query: &str) -> Result<Vec<HubModel>> {
     let mut url = api_url(base, &["api", "models"])?;
     url.query_pairs_mut()
         .append_pair("search", query)
+        .append_pair("pipeline_tag", SPEECH_TAG)
         .append_pair("limit", "20")
         .append_pair("full", "true");
     let results: Vec<HubMetadata> = fetch_json(url)?;
@@ -573,20 +626,86 @@ fn search_at(base: &str, query: &str) -> Result<Vec<HubModel>> {
     Ok(results
         .into_iter()
         .filter(|item| {
-            valid_repo(&item.id) && !item.private && (item.gated.is_null() || item.gated == false)
+            valid_repo(&item.id)
+                && !item.private
+                && (item.gated.is_null() || item.gated == false)
+                && item
+                    .pipeline_tag
+                    .as_deref()
+                    .is_none_or(|tag| tag == SPEECH_TAG)
         })
         .map(|item| HubModel {
+            kind: kind_of(&item.siblings),
             id: item.id,
             license: license_name(item.card),
         })
         .collect())
 }
 
-pub fn list_files(repo: &str) -> Result<Vec<HubFile>> {
+fn split_path(path: &str) -> (&str, &str) {
+    path.rsplit_once('/').unwrap_or(("", path))
+}
+
+fn is_ggml(name: &str) -> bool {
+    name.starts_with("ggml-") && name.ends_with(".bin")
+}
+
+/// Matches one sherpa-onnx layout by the file names in one folder. Each role needs exactly one
+/// file, so an ambiguous folder (say, int8 and full-precision encoders) is not offered.
+fn sherpa_layout<'a>(names: &[&'a str]) -> Option<(SherpaLayout, Vec<&'a str>)> {
+    let only = |matches: &dyn Fn(&str) -> bool| -> Option<&'a str> {
+        let mut found = names.iter().copied().filter(|name| matches(name));
+        let first = found.next()?;
+        found.next().is_none().then_some(first)
+    };
+    let tokens = only(&|name| name == "tokens.txt")?;
+    let onnx = |name: &str| name.ends_with(".onnx");
+    let onnx_or_ort = |name: &str| onnx(name) || name.ends_with(".ort");
+    if let (Some(encoder), Some(decoder), Some(joiner)) = (
+        only(&|name| name.starts_with("encoder") && onnx(name)),
+        only(&|name| name.starts_with("decoder") && onnx(name)),
+        only(&|name| name.starts_with("joiner") && onnx(name)),
+    ) {
+        return Some((
+            SherpaLayout::Transducer,
+            vec![encoder, decoder, joiner, tokens],
+        ));
+    }
+    if let (Some(encoder), Some(decoder)) = (
+        only(&|name| name.starts_with("encoder") && onnx_or_ort(name)),
+        only(&|name| name.starts_with("decoder_model_merged") && onnx_or_ort(name)),
+    ) {
+        return Some((SherpaLayout::Moonshine, vec![encoder, decoder, tokens]));
+    }
+    let model = only(&|name| name.starts_with("model") && onnx(name))?;
+    Some((SherpaLayout::SingleModel, vec![model, tokens]))
+}
+
+fn kind_of(siblings: &[Sibling]) -> HubKind {
+    let names: Vec<&str> = siblings
+        .iter()
+        .map(|sibling| sibling.rfilename.as_str())
+        .filter(|name| valid_filename(name))
+        .collect();
+    let mut folders: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for name in &names {
+        let (folder, base) = split_path(name);
+        folders.entry(folder).or_default().push(base);
+    }
+    if folders.values().any(|bases| sherpa_layout(bases).is_some()) {
+        HubKind::SherpaOnnx
+    } else if names.iter().any(|name| is_ggml(split_path(name).1)) {
+        HubKind::WhisperGgml
+    } else {
+        HubKind::Other
+    }
+}
+
+pub fn list_files(repo: &str) -> Result<HubListing> {
     list_files_at(HUB, repo, None)
 }
 
-fn list_files_at(base: &str, repo: &str, revision: Option<&str>) -> Result<Vec<HubFile>> {
+fn list_files_at(base: &str, repo: &str, revision: Option<&str>) -> Result<HubListing> {
     if !valid_repo(repo) || revision.is_some_and(|value| !valid_hex(value, 40)) {
         return Err(error("Invalid model repository or revision."));
     }
@@ -601,7 +720,7 @@ fn list_files_at(base: &str, repo: &str, revision: Option<&str>) -> Result<Vec<H
     parse_files(metadata, repo, revision)
 }
 
-fn parse_files(metadata: HubMetadata, repo: &str, requested: Option<&str>) -> Result<Vec<HubFile>> {
+fn parse_files(metadata: HubMetadata, repo: &str, requested: Option<&str>) -> Result<HubListing> {
     if metadata.id != repo
         || metadata.private
         || !(metadata.gated.is_null() || metadata.gated == false)
@@ -619,7 +738,11 @@ fn parse_files(metadata: HubMetadata, repo: &str, requested: Option<&str>) -> Re
         return Err(error("The model revision changed. Refresh its files."));
     }
     let license = license_name(metadata.card);
-    let mut files = Vec::new();
+    let mut listing = HubListing {
+        files: Vec::new(),
+        folders: Vec::new(),
+    };
+    let mut by_folder: BTreeMap<String, Vec<HubFile>> = BTreeMap::new();
     for sibling in metadata.siblings {
         if !valid_filename(&sibling.rfilename) {
             continue;
@@ -634,34 +757,65 @@ fn parse_files(metadata: HubMetadata, repo: &str, requested: Option<&str>) -> Re
         {
             continue;
         }
-        let name = sibling.rfilename.rsplit('/').next().unwrap_or("");
-        let catalog = stt::model_files().find(|file| {
-            repo == "ggerganov/whisper.cpp"
-                && sibling.rfilename == file.file
-                && lfs.size == file.size
-                && lfs.sha256 == file.sha256
-        });
-        let complete_gguf =
-            name.ends_with(".gguf") && !name.contains("-of-") && !name.contains(".part");
-        if catalog.is_none() && !complete_gguf {
-            continue;
-        }
-        files.push(HubFile {
+        let (folder, name) = split_path(&sibling.rfilename);
+        let folder = folder.to_string();
+        let catalog = stt::model_files()
+            .find(|known| {
+                known.file == name && known.size == lfs.size && known.sha256 == lfs.sha256
+            })
+            .map(|known| known.id.to_string());
+        let whisper = is_ggml(name);
+        let file = HubFile {
             repo_id: repo.into(),
             revision: revision.clone(),
             filename: sibling.rfilename,
             size: lfs.size,
             sha256: lfs.sha256,
             license: license.clone(),
-            model_id: catalog.map(|file| file.id.into()),
+            model_id: catalog,
+        };
+        if whisper {
+            listing.files.push(file.clone());
+        }
+        by_folder.entry(folder).or_default().push(file);
+    }
+    // A sherpa-onnx folder is offered only when every file its layout needs is present with
+    // an LFS checksum; a partial folder is not a model.
+    for (folder, candidates) in by_folder {
+        let names: Vec<&str> = candidates
+            .iter()
+            .map(|file| split_path(&file.filename).1)
+            .collect();
+        let Some((layout, needed)) = sherpa_layout(&names) else {
+            continue;
+        };
+        let needed: Vec<String> = needed.into_iter().map(str::to_owned).collect();
+        let files: Vec<HubFile> = candidates
+            .into_iter()
+            .filter(|file| {
+                needed
+                    .iter()
+                    .any(|name| name == split_path(&file.filename).1)
+            })
+            .collect();
+        if files.iter().map(|file| file.size).sum::<u64>() > MAX_FOLDER_BYTES {
+            continue;
+        }
+        listing.folders.push(HubFolder {
+            repo_id: repo.into(),
+            revision: revision.clone(),
+            folder,
+            layout,
+            license: license.clone(),
+            files,
         });
     }
-    if files.len() > 200 {
+    if listing.files.len() > MAX_HUB_ITEMS || listing.folders.len() > MAX_HUB_ITEMS {
         return Err(error(
             "This repository has too many supported files. Use a smaller repository.",
         ));
     }
-    Ok(files)
+    Ok(listing)
 }
 
 fn download_client() -> Result<Client> {
@@ -706,15 +860,12 @@ fn download_at(
 ) -> Result<DownloadedModel> {
     let _operation = ArtifactOperation::begin()?;
     let approved = list_files_at(base, &proposed.repo_id, Some(&proposed.revision))?
+        .files
         .into_iter()
         .find(|file| file == &proposed)
         .ok_or_else(|| error("Model metadata changed. Refresh and confirm the download again."))?;
     check_cancel()?;
-    let folder = if approved.model_id.is_some() {
-        managed_folder(root, &["models"])?
-    } else {
-        managed_folder(root, &["library", &approved.sha256])?
-    };
+    let folder = managed_folder(root, &["models"])?;
     let filename = approved
         .filename
         .rsplit('/')
@@ -776,6 +927,108 @@ fn download_at(
     Ok(DownloadedModel {
         path: destination.to_string_lossy().into(),
         model_id: approved.model_id,
+    })
+}
+
+pub fn download_folder(
+    root: &Path,
+    proposed: HubFolder,
+    mut progress: impl FnMut(Progress),
+) -> Result<DownloadedFolder> {
+    download_folder_at(root, proposed, &mut progress, HUB, &download_client()?)
+}
+
+fn folder_name(folder: &HubFolder) -> String {
+    let repo = folder.repo_id.replace('/', "--");
+    if folder.folder.is_empty() {
+        repo
+    } else {
+        format!("{repo}--{}", folder.folder.replace('/', "--"))
+    }
+}
+
+/// All-or-nothing: every file is staged and verified in a hidden folder, which is renamed into
+/// `sherpa/custom/` only after the last checksum passed. Any failure leaves no folder behind.
+fn download_folder_at(
+    root: &Path,
+    proposed: HubFolder,
+    mut progress: impl FnMut(Progress),
+    base: &str,
+    client: &Client,
+) -> Result<DownloadedFolder> {
+    let _operation = ArtifactOperation::begin()?;
+    let approved = list_files_at(base, &proposed.repo_id, Some(&proposed.revision))?
+        .folders
+        .into_iter()
+        .find(|folder| folder == &proposed)
+        .ok_or_else(|| error("Model metadata changed. Refresh and confirm the download again."))?;
+    check_cancel()?;
+    let total: u64 = approved.files.iter().map(|file| file.size).sum();
+    let custom = managed_folder(root, &["sherpa", "custom"])?;
+    let destination = custom.join(folder_name(&approved));
+    if destination.exists() {
+        return Err(error(
+            "This folder already exists. It was preserved. Scan local models to inspect it.",
+        ));
+    }
+    let staging = tempfile::Builder::new()
+        .prefix(".staging-")
+        .tempdir_in(&custom)?;
+    let mut done = 0_u64;
+    for file in &approved.files {
+        let filename = file
+            .filename
+            .rsplit('/')
+            .next()
+            .ok_or_else(|| error("Invalid model filename."))?;
+        let target = staging.path().join(filename);
+        let mut parts: Vec<&str> = approved.repo_id.split('/').collect();
+        parts.extend(["resolve", &approved.revision]);
+        parts.extend(file.filename.split('/'));
+        let mut response = client
+            .get(api_url(base, &parts)?)
+            .send()
+            .map_err(|_| error("Cannot download this model. Existing files were preserved."))?;
+        providers::check_status(response.status())?;
+        if response
+            .content_length()
+            .is_some_and(|size| size != file.size)
+        {
+            return Err(error(
+                "The model download size differs from its pinned metadata.",
+            ));
+        }
+        let temporary = verified_temporary(&mut response, &target, file.size, &file.sha256, |n| {
+            progress(Progress {
+                downloaded: done + n,
+                total,
+            })
+        })?;
+        temporary
+            .persist_noclobber(&target)
+            .map_err(|_| error("Model publication failed. Nothing was activated."))?;
+        done += file.size;
+    }
+    let manifest = serde_json::to_vec_pretty(&approved)
+        .map_err(|_| error("Cannot prepare the model provenance manifest."))?;
+    fs::write(staging.path().join("openmeet-source.json"), manifest)?;
+    let _publication = PUBLICATION
+        .lock()
+        .map_err(|_| error("Model publication is unavailable."))?;
+    check_cancel()?;
+    if destination.exists() {
+        return Err(error(
+            "This folder already exists. It was preserved. Scan local models to inspect it.",
+        ));
+    }
+    let staged = staging.keep();
+    fs::rename(&staged, &destination).map_err(|_| {
+        let _ = fs::remove_dir_all(&staged);
+        error("Folder publication failed. Existing files were preserved.")
+    })?;
+    Ok(DownloadedFolder {
+        path: destination.to_string_lossy().into(),
+        files: approved.files.len(),
     })
 }
 
@@ -845,8 +1098,30 @@ mod tests {
     }
 
     fn metadata_for(bytes: &[u8]) -> serde_json::Value {
-        serde_json::json!({"id":"team/model","sha":"a".repeat(40),"gated":false,"private":false,"cardData":{"license":"apache-2.0"},"siblings":[{"rfilename":"model.gguf","size":bytes.len(),"lfs":{"size":bytes.len(),"sha256":hex(&Sha256::digest(bytes))}}]})
+        serde_json::json!({"id":"team/model","sha":"a".repeat(40),"gated":false,"private":false,"pipeline_tag":SPEECH_TAG,"cardData":{"license":"apache-2.0"},"siblings":[{"rfilename":"ggml-model.bin","size":bytes.len(),"lfs":{"size":bytes.len(),"sha256":hex(&Sha256::digest(bytes))}}]})
     }
+
+    /// A repository whose every file is LFS-pinned, as the Hub reports them.
+    fn repo_metadata(id: &str, files: &[(&str, &[u8])]) -> serde_json::Value {
+        let siblings: Vec<_> = files
+            .iter()
+            .map(|(name, bytes)| {
+                serde_json::json!({"rfilename": name, "size": bytes.len(), "lfs": {"size": bytes.len(), "sha256": hex(&Sha256::digest(bytes))}})
+            })
+            .collect();
+        serde_json::json!({"id":id,"sha":"a".repeat(40),"gated":false,"private":false,"pipeline_tag":SPEECH_TAG,"cardData":{"license":"apache-2.0"},"siblings":siblings})
+    }
+
+    fn parse(value: serde_json::Value) -> Result<HubListing> {
+        parse_files(serde_json::from_value(value).unwrap(), "team/model", None)
+    }
+
+    const TRANSDUCER: [(&str, &[u8]); 4] = [
+        ("encoder.onnx", b"enc!"),
+        ("decoder.onnx", b"dec!"),
+        ("joiner.onnx", b"joi!"),
+        ("tokens.txt", b"tok!"),
+    ];
 
     #[test]
     fn scan_reports_formats_roots_and_global_limits() {
@@ -960,26 +1235,65 @@ mod tests {
     }
 
     #[test]
-    fn metadata_pins_only_complete_public_files_and_rejects_path_traversal() {
-        let raw = serde_json::json!({"id":"team/model", "sha":"a".repeat(40), "private":false, "gated":false, "cardData":{"license":"apache-2.0"}, "siblings":[
-            {"rfilename":"model.gguf","size":10,"lfs":{"size":10,"sha256":"b".repeat(64)}},
-            {"rfilename":"model-00001-of-00002.gguf","size":10,"lfs":{"size":10,"sha256":"b".repeat(64)}},
-            {"rfilename":"../escape.gguf","size":10,"lfs":{"size":10,"sha256":"b".repeat(64)}},
-            {"rfilename":"unhashed.gguf","size":10}
-        ]});
-        let files = parse_files(
-            serde_json::from_value(raw.clone()).unwrap(),
+    fn search_asks_only_for_speech_models_and_says_what_each_result_holds() {
+        let whisper = repo_metadata("team/whisper", &[("ggml-model.bin", b"ggmlsynthetic")]);
+        let sherpa = repo_metadata("team/sherpa", &TRANSDUCER);
+        let other = repo_metadata("team/other", &[("model.safetensors", b"x")]);
+        let mut text = repo_metadata("team/text", &[("ggml-model.bin", b"ggmlsynthetic")]);
+        text["pipeline_tag"] = "text-generation".into();
+        let (base, task) = mock_hub(vec![serde_json::to_vec(&vec![
+            whisper, sherpa, other, text,
+        ])
+        .unwrap()]);
+        let results = search_at(&base, "fixture").unwrap();
+        assert_eq!(
+            results
+                .iter()
+                .map(|model| (model.id.as_str(), model.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                ("team/whisper", HubKind::WhisperGgml),
+                ("team/sherpa", HubKind::SherpaOnnx),
+                ("team/other", HubKind::Other),
+            ]
+        );
+        assert_eq!(
+            task.join().unwrap(),
+            ["GET /api/models?search=fixture&pipeline_tag=automatic-speech-recognition&limit=20&full=true HTTP/1.1"]
+        );
+        assert!(search_at(&base, "").is_err());
+    }
+
+    #[test]
+    fn ggml_files_from_any_repository_are_offered_but_gguf_is_not() {
+        let listing = parse(metadata_for(b"ggmlsynthetic")).unwrap();
+        assert_eq!(listing.files.len(), 1);
+        assert_eq!(listing.files[0].filename, "ggml-model.bin");
+        assert_eq!(listing.files[0].license.as_deref(), Some("apache-2.0"));
+        assert!(listing.files[0].model_id.is_none());
+        assert!(listing.folders.is_empty());
+        let gguf = parse(repo_metadata(
             "team/model",
-            None,
-        )
+            &[("model.gguf", b"GGUFsynthetic")],
+        ))
         .unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].filename, "model.gguf");
-        assert_eq!(files[0].license.as_deref(), Some("apache-2.0"));
-        assert!(files[0].model_id.is_none());
+        assert!(gguf.files.is_empty() && gguf.folders.is_empty());
+    }
+
+    #[test]
+    fn metadata_pins_only_complete_files_and_rejects_path_traversal() {
+        let raw = serde_json::json!({"id":"team/model", "sha":"a".repeat(40), "private":false, "gated":false, "cardData":{"license":"apache-2.0"}, "siblings":[
+            {"rfilename":"ggml-model.bin","size":10,"lfs":{"size":10,"sha256":"b".repeat(64)}},
+            {"rfilename":"../ggml-escape.bin","size":10,"lfs":{"size":10,"sha256":"b".repeat(64)}},
+            {"rfilename":"ggml-unhashed.bin","size":10},
+            {"rfilename":"model.gguf","size":10,"lfs":{"size":10,"sha256":"b".repeat(64)}}
+        ]});
+        let listing = parse(raw.clone()).unwrap();
+        assert_eq!(listing.files.len(), 1);
+        assert_eq!(listing.files[0].filename, "ggml-model.bin");
         let mut private = raw.clone();
         private["gated"] = serde_json::json!("auto");
-        assert!(parse_files(serde_json::from_value(private).unwrap(), "team/model", None).is_err());
+        assert!(parse(private).is_err());
         assert!(parse_files(
             serde_json::from_value(raw).unwrap(),
             "team/model",
@@ -987,11 +1301,11 @@ mod tests {
         )
         .is_err());
         for name in [
-            "../model.gguf",
-            "folder/../model.gguf",
-            "C:\\model.gguf",
-            "/root.gguf",
-            "file.gguf.",
+            "../model.bin",
+            "folder/../model.bin",
+            "C:\\model.bin",
+            "/root.bin",
+            "file.bin.",
         ] {
             assert!(!valid_filename(name));
         }
@@ -1001,79 +1315,140 @@ mod tests {
     }
 
     #[test]
-    fn verified_copy_cancellation_checksum_and_collisions_preserve_originals() {
-        let _serial = TEST_OPERATIONS.lock().unwrap();
-        let _operation = ArtifactOperation::begin().unwrap();
-        let tree = tempfile::tempdir().unwrap();
-        let path = tree.path().join("model.gguf");
-        let bytes = b"GGUFsynthetic";
-        let hash = hex(&Sha256::digest(bytes));
-        copy_verified(&mut &bytes[..], &path, bytes.len() as u64, &hash, |_| {}).unwrap();
-        assert_eq!(fs::read(&path).unwrap(), bytes);
-        assert!(copy_verified(&mut &bytes[..], &path, bytes.len() as u64, &hash, |_| {}).is_err());
-        let bad = tree.path().join("bad.gguf");
-        assert!(copy_verified(
-            &mut &bytes[..],
-            &bad,
-            bytes.len() as u64,
-            &"0".repeat(64),
-            |_| {}
-        )
-        .is_err());
-        assert!(!bad.exists());
-        let cancelled = tree.path().join("cancel.gguf");
+    fn sherpa_layouts_need_their_complete_file_set() {
+        let (layout, needed) = sherpa_layout(&[
+            "encoder.onnx",
+            "decoder.onnx",
+            "joiner.onnx",
+            "tokens.txt",
+            "README.md",
+        ])
+        .unwrap();
+        assert_eq!(layout, SherpaLayout::Transducer);
+        assert_eq!(needed.len(), 4);
         assert_eq!(
-            copy_verified(
-                &mut &bytes[..],
-                &cancelled,
-                bytes.len() as u64,
-                &hash,
-                |_| {
-                    cancel_download().unwrap();
-                }
-            )
-            .unwrap_err()
-            .code,
-            "model_cancelled"
+            sherpa_layout(&[
+                "encoder_model.ort",
+                "decoder_model_merged.ort",
+                "tokens.txt"
+            ])
+            .unwrap()
+            .0,
+            SherpaLayout::Moonshine
         );
-        assert!(!cancelled.exists());
-        assert_eq!(fs::read(&path).unwrap(), bytes);
-        assert_eq!(fs::read_dir(tree.path()).unwrap().count(), 1);
+        assert_eq!(
+            sherpa_layout(&["model.int8.onnx", "tokens.txt"]).unwrap().0,
+            SherpaLayout::SingleModel
+        );
+        assert!(sherpa_layout(&["encoder.onnx", "decoder.onnx", "tokens.txt"]).is_none());
+        assert!(sherpa_layout(&[
+            "encoder.int8.onnx",
+            "encoder.onnx",
+            "decoder.onnx",
+            "joiner.onnx",
+            "tokens.txt"
+        ])
+        .is_none());
+        assert!(sherpa_layout(&["model.onnx", "README.md"]).is_none());
     }
 
     #[test]
-    fn imports_a_verified_copy_preserving_source_and_existing_destination() {
+    fn partial_or_unpinned_sherpa_folders_are_not_offered() {
+        let partial = parse(repo_metadata("team/model", &TRANSDUCER[..3])).unwrap();
+        assert!(partial.folders.is_empty());
+        let mut unpinned = repo_metadata("team/model", &TRANSDUCER);
+        unpinned["siblings"][3]
+            .as_object_mut()
+            .unwrap()
+            .remove("lfs");
+        assert!(parse(unpinned).unwrap().folders.is_empty());
+        let complete = parse(repo_metadata("team/model", &TRANSDUCER)).unwrap();
+        assert_eq!(complete.folders.len(), 1);
+        assert_eq!(complete.folders[0].files.len(), 4);
+    }
+
+    #[test]
+    fn ggml_downloads_go_to_models_and_publish_only_with_the_pinned_sha256() {
         let _serial = TEST_OPERATIONS.lock().unwrap();
-        let source = tempfile::tempdir().unwrap();
+        let bytes = b"ggmlsynthetic";
+        let metadata = metadata_for(bytes);
+        let proposed = parse(metadata.clone()).unwrap().files.remove(0);
         let root = tempfile::tempdir().unwrap();
-        let path = source.path().join("fixture.bin");
-        let bytes = b"synthetic-whisper";
-        fs::write(&path, bytes).unwrap();
-        let catalog = [stt::ModelFile {
-            id: "tiny",
-            file: "ggml-tiny.bin",
-            size: bytes.len() as u64,
-            sha256: "e86db380c435333cc4dbda278b99f6b306e949043da88469228700eebbc99829",
-        }];
+        let client = providers::client(Duration::from_secs(2)).unwrap();
+        let (base, task) = mock_hub(vec![serde_json::to_vec(&metadata).unwrap(), bytes.to_vec()]);
+        let result = download_at(root.path(), proposed.clone(), |_| {}, &base, &client).unwrap();
+        let requests = task.join().unwrap();
         assert_eq!(
-            import_with_catalog(root.path(), &path, &catalog)
-                .unwrap()
-                .model_id,
-            "tiny"
+            requests[1],
+            format!(
+                "GET /team/model/resolve/{}/ggml-model.bin HTTP/1.1",
+                "a".repeat(40)
+            )
         );
-        assert_eq!(fs::read(&path).unwrap(), bytes);
-        let destination = root.path().join("models/ggml-tiny.bin");
-        assert_eq!(fs::read(&destination).unwrap(), bytes);
-        assert!(import_with_catalog(root.path(), &path, &catalog).is_err());
-        fs::write(&path, b"corrupted-whisper").unwrap();
-        assert!(import_with_catalog(root.path(), &path, &catalog).is_err());
-        assert_eq!(fs::read(&destination).unwrap(), bytes);
-        assert_eq!(fs::read_dir(root.path().join("models")).unwrap().count(), 1);
+        assert!(Path::new(&result.path).ends_with(Path::new("models").join("ggml-model.bin")));
+        assert_eq!(fs::read(&result.path).unwrap(), bytes);
+        assert!(result.model_id.is_none());
+        assert!(Path::new(&result.path)
+            .with_file_name("ggml-model.bin.openmeet.json")
+            .is_file());
+
+        let root = tempfile::tempdir().unwrap();
+        let mut wrong = metadata.clone();
+        wrong["siblings"][0]["lfs"]["sha256"] = "0".repeat(64).into();
+        let wrong_proposal = parse(wrong.clone()).unwrap().files.remove(0);
+        // The Hub now says the wrong checksum, so the re-listed file matches and the body must fail.
+        let (base, task) = mock_hub(vec![serde_json::to_vec(&wrong).unwrap(), bytes.to_vec()]);
+        assert!(download_at(root.path(), wrong_proposal, |_| {}, &base, &client).is_err());
+        task.join().unwrap();
+        assert_eq!(fs::read_dir(root.path().join("models")).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn sherpa_folder_is_published_only_when_every_file_verifies() {
+        let _serial = TEST_OPERATIONS.lock().unwrap();
+        let metadata = repo_metadata("team/model", &TRANSDUCER);
+        let proposed = parse(metadata.clone()).unwrap().folders.remove(0);
+        let client = providers::client(Duration::from_secs(2)).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        // The third file is corrupted; the fourth is never requested and nothing is published.
+        let (base, task) = mock_hub(vec![
+            serde_json::to_vec(&metadata).unwrap(),
+            b"enc!".to_vec(),
+            b"dec!".to_vec(),
+            b"XXXX".to_vec(),
+        ]);
+        assert!(download_folder_at(root.path(), proposed.clone(), |_| {}, &base, &client).is_err());
+        task.join().unwrap();
+        assert_eq!(
+            fs::read_dir(root.path().join("sherpa/custom"))
+                .unwrap()
+                .count(),
+            0
+        );
+
+        let mut responses = vec![serde_json::to_vec(&metadata).unwrap()];
+        responses.extend(TRANSDUCER.iter().map(|(_, bytes)| bytes.to_vec()));
+        let (base, task) = mock_hub(responses);
+        let result = download_folder_at(root.path(), proposed, |_| {}, &base, &client).unwrap();
+        task.join().unwrap();
+        let folder = PathBuf::from(&result.path);
+        assert!(folder.ends_with(Path::new("sherpa").join("custom").join("team--model")));
+        for (name, bytes) in TRANSDUCER {
+            assert_eq!(fs::read(folder.join(name)).unwrap(), bytes);
+        }
+        assert!(folder.join("openmeet-source.json").is_file());
+        assert_eq!(result.files, 4);
+        assert_eq!(
+            fs::read_dir(root.path().join("sherpa/custom"))
+                .unwrap()
+                .count(),
+            1
+        );
     }
 
     #[test]
     fn explicit_hub_requests_are_bounded_and_never_send_credentials() {
-        let metadata = metadata_for(b"GGUFsynthetic");
+        let metadata = metadata_for(b"ggmlsynthetic");
         let (base, task) = mock_hub(vec![
             serde_json::to_vec(&vec![metadata.clone()]).unwrap(),
             serde_json::to_vec(&metadata).unwrap(),
@@ -1083,88 +1458,36 @@ mod tests {
             results,
             vec![HubModel {
                 id: "team/model".into(),
-                license: Some("apache-2.0".into())
+                license: Some("apache-2.0".into()),
+                kind: HubKind::WhisperGgml,
             }]
         );
-        let files = list_files_at(&base, &results[0].id, None).unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].revision, "a".repeat(40));
+        let listing = list_files_at(&base, &results[0].id, None).unwrap();
+        assert_eq!(listing.files.len(), 1);
+        assert_eq!(listing.files[0].revision, "a".repeat(40));
         assert_eq!(
             task.join().unwrap(),
             [
-                "GET /api/models?search=fixture&limit=20&full=true HTTP/1.1",
+                "GET /api/models?search=fixture&pipeline_tag=automatic-speech-recognition&limit=20&full=true HTTP/1.1",
                 "GET /api/models/team/model?blobs=true HTTP/1.1"
             ]
         );
-        assert!(search_at(&base, "").is_err());
         assert!(list_files_at(&base, "../escape", None).is_err());
-    }
-
-    #[test]
-    fn hub_download_pins_metadata_persists_provenance_and_rejects_changed_consent() {
-        let _serial = TEST_OPERATIONS.lock().unwrap();
-        let bytes = b"GGUFsynthetic";
-        let metadata = metadata_for(bytes);
-        let proposed = parse_files(
-            serde_json::from_value(metadata.clone()).unwrap(),
-            "team/model",
-            None,
-        )
-        .unwrap()
-        .remove(0);
-        let root = tempfile::tempdir().unwrap();
-        let (base, task) = mock_hub(vec![serde_json::to_vec(&metadata).unwrap(), bytes.to_vec()]);
-        let client = providers::client(Duration::from_secs(2)).unwrap();
-        let result = download_at(root.path(), proposed.clone(), |_| {}, &base, &client).unwrap();
-        let requests = task.join().unwrap();
-        assert_eq!(
-            requests[0],
-            format!(
-                "GET /api/models/team/model/revision/{}?blobs=true HTTP/1.1",
-                "a".repeat(40)
-            )
-        );
-        assert_eq!(
-            requests[1],
-            format!(
-                "GET /team/model/resolve/{}/model.gguf HTTP/1.1",
-                "a".repeat(40)
-            )
-        );
-        assert_eq!(fs::read(&result.path).unwrap(), bytes);
-        assert!(result.model_id.is_none());
-        let manifest: HubFile = serde_json::from_slice(
-            &fs::read(Path::new(&result.path).with_file_name("model.gguf.openmeet.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(manifest, proposed);
-        let (base, task) = mock_hub(vec![serde_json::to_vec(&metadata).unwrap()]);
-        let mut changed = proposed.clone();
-        changed.license = Some("different".into());
-        assert!(download_at(root.path(), changed, |_| {}, &base, &client).is_err());
-        assert_eq!(task.join().unwrap().len(), 1);
-        assert_eq!(fs::read(&result.path).unwrap(), bytes);
     }
 
     #[test]
     fn hub_download_cancellation_and_checksum_failure_never_publish() {
         let _serial = TEST_OPERATIONS.lock().unwrap();
-        let bytes = b"GGUFsynthetic";
+        let bytes = b"ggmlsynthetic";
         let metadata = metadata_for(bytes);
-        let proposed = parse_files(
-            serde_json::from_value(metadata.clone()).unwrap(),
-            "team/model",
-            None,
-        )
-        .unwrap()
-        .remove(0);
+        let proposed = parse(metadata.clone()).unwrap().files.remove(0);
         let client = providers::client(Duration::from_secs(2)).unwrap();
         for cancel in [false, true] {
             let root = tempfile::tempdir().unwrap();
             let body = if cancel {
                 bytes.to_vec()
             } else {
-                b"GGUFcorrupted".to_vec()
+                b"ggmlcorrupted".to_vec()
             };
             let (base, task) = mock_hub(vec![serde_json::to_vec(&metadata).unwrap(), body]);
             let result = download_at(
@@ -1181,23 +1504,16 @@ mod tests {
             assert!(result.is_err());
             task.join().unwrap();
             assert!(scan(vec![root.path().into()]).models.is_empty());
-            let folder = root.path().join("library").join(&proposed.sha256);
-            assert_eq!(fs::read_dir(folder).unwrap().count(), 0);
+            assert_eq!(fs::read_dir(root.path().join("models")).unwrap().count(), 0);
         }
     }
 
     #[test]
     fn unavailable_hub_and_size_mismatch_never_publish() {
         let _serial = TEST_OPERATIONS.lock().unwrap();
-        let bytes = b"GGUFsynthetic";
+        let bytes = b"ggmlsynthetic";
         let metadata = metadata_for(bytes);
-        let proposed = parse_files(
-            serde_json::from_value(metadata.clone()).unwrap(),
-            "team/model",
-            None,
-        )
-        .unwrap()
-        .remove(0);
+        let proposed = parse(metadata.clone()).unwrap().files.remove(0);
         let client = providers::client(Duration::from_secs(2)).unwrap();
         let root = tempfile::tempdir().unwrap();
         // Bind then drop the listener so the port refuses connections.
@@ -1212,7 +1528,7 @@ mod tests {
         assert!(download_at(root.path(), proposed.clone(), |_| {}, &closed, &client).is_err());
         let (base, task) = mock_hub(vec![
             serde_json::to_vec(&metadata).unwrap(),
-            b"GGUFsynthetic-longer".to_vec(),
+            b"ggmlsynthetic-longer".to_vec(),
         ]);
         let error = download_at(root.path(), proposed, |_| {}, &base, &client).unwrap_err();
         assert!(error.message.contains("size differs"));
@@ -1224,15 +1540,9 @@ mod tests {
     #[test]
     fn stalled_body_releases_the_operation_after_cancel_and_read_timeout() {
         let _serial = TEST_OPERATIONS.lock().unwrap();
-        let bytes = b"GGUFsynthetic";
+        let bytes = b"ggmlsynthetic";
         let metadata = metadata_for(bytes);
-        let proposed = parse_files(
-            serde_json::from_value(metadata.clone()).unwrap(),
-            "team/model",
-            None,
-        )
-        .unwrap()
-        .remove(0);
+        let proposed = parse(metadata.clone()).unwrap().files.remove(0);
         let (base, task) = mock_hub_responses(vec![
             (serde_json::to_vec(&metadata).unwrap(), false),
             (bytes.to_vec(), true),

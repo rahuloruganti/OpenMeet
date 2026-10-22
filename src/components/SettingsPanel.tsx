@@ -529,6 +529,7 @@ export function SettingsPanel(props: Props) {
                   disabled={disabled}
                   onImported={props.onImported}
                   onFound={setFound}
+                  onUse={(path) => props.onStt({ stt_model: path })}
                 />
               )}
             </details>

@@ -17,8 +17,8 @@ The app-data root uses the identifier `dev.openmeet.preview`:
 | `meetings.db-wal`, `meetings.db-shm` | SQLite sidecar files that can exist while WAL mode is active.                           |
 | `audio/<meeting ID>/`                | Microphone/system WAV files, timing indexes, and any repaired copies.                   |
 | `stt/engine/`                        | Downloaded local speech engine and its release marker.                                  |
-| `stt/library/<revision>/`            | Downloaded GGUF files and `.openmeet.json` provenance manifests.                        |
-| `stt/models/`                        | Selected speech models and VAD model.                                                   |
+| `stt/sherpa/custom/<folder>/`        | Verified sherpa-onnx model folders from Hugging Face, with `openmeet-source.json` provenance. |
+| `stt/models/`                        | Selected speech models (pinned downloads, verified Hugging Face Whisper `ggml` files with `.openmeet.json` manifests) and VAD model. |
 
 Markdown exports are separate files under the chosen destination's `Meetings` directory. The database, recordings, timing files, transcripts, models, and exports are unencrypted. Device administrators, backups, and sync software may access them. Choosing a cloud-synced export folder can move content off-device without an OpenMeet upload request.
 
@@ -44,7 +44,7 @@ Desktop capture writes the selected microphone and system audio locally. On Wind
 
 There is no telemetry or updater. Automatic processing is off (recording only) by default; when chosen in Settings it runs for every new recording. Development mode uses a Vite server on localhost. Dependency installation and builds can also contact package registries; those development tools are separate from application content submission.
 
-Explicit local scans read bounded directory entries and model headers; candidate import reads and hashes the selected file. Scan results are not uploaded. Hugging Face search sends the entered query, and listing files sends the selected repository ID. Generic GGUF downloads retain repository license metadata in a local manifest and require an external server.
+Explicit local scans read bounded directory entries and model headers; candidate import reads and hashes the selected file. Scan results are not uploaded. Hugging Face search sends the entered query, and listing files sends the selected repository ID. Hugging Face downloads are limited to Whisper `ggml` files and complete sherpa-onnx folders; LLM GGUF files are not downloaded. Downloads keep repository license metadata in a local manifest.
 
 Model installation checks pinned sizes and SHA-256 hashes. Downloads occur only on an explicit action. Changing a selected model retains existing downloads. Local transcription runs whisper.cpp or the sherpa-onnx engine as a subprocess, with paths and settings passed locally. The sherpa-onnx engine and its speech models download from github.com and huggingface.co, each file checked against pinned SHA-256 hashes. Output text is parsed from temporary JSON, not emitted to the app's console. Cancelling or failing transcription keeps the previous transcript. Local transcription, cloud preparation, and mapped timestamp seeking reject missing or damaged recording timing. No transcript is published from that failed run, and original audio/index files are preserved.
 

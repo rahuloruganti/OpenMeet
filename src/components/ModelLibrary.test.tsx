@@ -13,6 +13,7 @@ vi.mock("../lib/api", async (original) => ({
     searchHfModels: vi.fn(),
     listHfFiles: vi.fn(),
     downloadHfModel: vi.fn(),
+    downloadHfFolder: vi.fn(),
     cancelModelDownload: vi.fn(),
   },
 }));
@@ -23,7 +24,7 @@ beforeEach(() => {
 it("scans common folders once on open, makes no network request, and respects a cancelled folder picker", async () => {
   vi.mocked(api.chooseModelFolder).mockResolvedValue(null);
   render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
-  await userEvent.type(screen.getByLabelText("Hugging Face search"), "gguf");
+  await userEvent.type(screen.getByLabelText("Hugging Face search"), "whisper");
   expect(api.searchHfModels).not.toHaveBeenCalled();
   expect(api.scanLocalModels).toHaveBeenCalledOnce();
   expect(api.scanLocalModels).toHaveBeenCalledWith(null);
@@ -88,16 +89,16 @@ it("reports failed downloads and allows cancellation while a transfer is pending
   const file = {
     repo_id: "public/model",
     revision: "abc",
-    filename: "model.gguf",
+    filename: "ggml-model.bin",
     size: 10,
     sha256: "123",
     license: "mit",
     model_id: null,
   };
   vi.mocked(api.searchHfModels).mockResolvedValue([
-    { id: file.repo_id, license: "mit" },
+    { id: file.repo_id, license: "mit", kind: "whisper_ggml" },
   ]);
-  vi.mocked(api.listHfFiles).mockResolvedValue([file]);
+  vi.mocked(api.listHfFiles).mockResolvedValue({ files: [file], folders: [] });
   let reject: (error: Error) => void = () => {};
   vi.mocked(api.downloadHfModel).mockReturnValue(
     new Promise((_resolve, failure) => {
@@ -106,7 +107,7 @@ it("reports failed downloads and allows cancellation while a transfer is pending
   );
   vi.mocked(api.cancelModelDownload).mockResolvedValue();
   render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
-  await userEvent.type(screen.getByLabelText("Hugging Face search"), "gguf");
+  await userEvent.type(screen.getByLabelText("Hugging Face search"), "whisper");
   await userEvent.click(
     screen.getByRole("button", { name: "Search public models" }),
   );
@@ -114,7 +115,7 @@ it("reports failed downloads and allows cancellation while a transfer is pending
     await screen.findByRole("button", { name: "Show files for public/model" }),
   );
   await userEvent.click(
-    await screen.findByRole("button", { name: "Download model.gguf" }),
+    await screen.findByRole("button", { name: "Download ggml-model.bin" }),
   );
   await userEvent.click(
     screen.getByRole("button", { name: "Cancel model download" }),
@@ -124,29 +125,32 @@ it("reports failed downloads and allows cancellation while a transfer is pending
   await screen.findByRole("alert");
   expect(screen.getByRole("alert").textContent).toBe("Download cancelled");
   expect(
-    screen.getByRole("button", { name: "Download model.gguf" }),
+    screen.getByRole("button", { name: "Download ggml-model.bin" }),
   ).toHaveProperty("disabled", false);
 });
 
 it("cancels an active transfer when Settings unmounts", async () => {
   vi.mocked(api.searchHfModels).mockResolvedValue([
-    { id: "public/model", license: null },
+    { id: "public/model", license: null, kind: "whisper_ggml" },
   ]);
-  vi.mocked(api.listHfFiles).mockResolvedValue([
-    {
-      repo_id: "public/model",
-      revision: "abc",
-      filename: "model.gguf",
-      size: 10,
-      sha256: "123",
-      license: null,
-      model_id: null,
-    },
-  ]);
+  vi.mocked(api.listHfFiles).mockResolvedValue({
+    files: [
+      {
+        repo_id: "public/model",
+        revision: "abc",
+        filename: "ggml-model.bin",
+        size: 10,
+        sha256: "123",
+        license: null,
+        model_id: null,
+      },
+    ],
+    folders: [],
+  });
   vi.mocked(api.downloadHfModel).mockReturnValue(new Promise(() => {}));
   vi.mocked(api.cancelModelDownload).mockResolvedValue();
   const view = render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
-  await userEvent.type(screen.getByLabelText("Hugging Face search"), "gguf");
+  await userEvent.type(screen.getByLabelText("Hugging Face search"), "whisper");
   await userEvent.click(
     screen.getByRole("button", { name: "Search public models" }),
   );
@@ -154,7 +158,7 @@ it("cancels an active transfer when Settings unmounts", async () => {
     await screen.findByRole("button", { name: "Show files for public/model" }),
   );
   await userEvent.click(
-    await screen.findByRole("button", { name: "Download model.gguf" }),
+    await screen.findByRole("button", { name: "Download ggml-model.bin" }),
   );
   view.unmount();
   expect(api.cancelModelDownload).toHaveBeenCalledOnce();
@@ -167,4 +171,58 @@ it("shows why the automatic common-folder scan failed", async () => {
   expect((await screen.findByRole("alert")).textContent).toContain(
     "The model folder could not be read.",
   );
+});
+
+it("lists only downloadable speech results and saves a complete sherpa-onnx folder", async () => {
+  const folder = {
+    repo_id: "public/sherpa",
+    revision: "abc",
+    folder: "",
+    layout: "transducer" as const,
+    license: "apache-2.0",
+    files: [
+      {
+        repo_id: "public/sherpa",
+        revision: "abc",
+        filename: "encoder.onnx",
+        size: 10,
+        sha256: "1",
+        license: "apache-2.0",
+        model_id: null,
+      },
+    ],
+  };
+  vi.mocked(api.searchHfModels).mockResolvedValue([
+    { id: "public/sherpa", license: "apache-2.0", kind: "sherpa_onnx" },
+    { id: "public/other", license: null, kind: "other" },
+  ]);
+  vi.mocked(api.listHfFiles).mockResolvedValue({
+    files: [],
+    folders: [folder],
+  });
+  vi.mocked(api.downloadHfFolder).mockResolvedValue({
+    path: "C:/stt/sherpa/custom/public--sherpa",
+    files: 1,
+  });
+  render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
+  await userEvent.type(screen.getByLabelText("Hugging Face search"), "speech");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Search public models" }),
+  );
+  expect(
+    screen.getByText(/public\/other · Other \(not downloadable\)/),
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Show files for public/other" }),
+  ).toBeNull();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Show files for public/sherpa" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", {
+      name: "Download folder public/sherpa",
+    }),
+  );
+  expect(api.downloadHfFolder).toHaveBeenCalledWith(folder);
+  await screen.findByText(/Verified sherpa-onnx folder \(1 files\) saved to/);
 });

@@ -295,7 +295,9 @@ export type ModelScan = {
   folders: { path: string; status: string }[];
   truncated: boolean;
 };
-export type HubModel = { id: string; license: string | null };
+/** What a repository's file names say it holds; `other` is not downloadable. */
+export type HubKind = "whisper_ggml" | "sherpa_onnx" | "other";
+export type HubModel = { id: string; license: string | null; kind: HubKind };
 export type HubFile = {
   repo_id: string;
   revision: string;
@@ -305,6 +307,17 @@ export type HubFile = {
   license: string | null;
   model_id: string | null;
 };
+export type SherpaLayout = "transducer" | "moonshine" | "single_model";
+/** One complete sherpa-onnx folder; every file carries its LFS size and SHA-256. */
+export type HubFolder = {
+  repo_id: string;
+  revision: string;
+  folder: string;
+  layout: SherpaLayout;
+  license: string | null;
+  files: HubFile[];
+};
+export type HubListing = { files: HubFile[]; folders: HubFolder[] };
 export type ModelLibraryProgress = { downloaded: number; total: number };
 export type ProviderModel = { id: string };
 export type KeyStatus = "present" | "missing" | "unavailable";
@@ -438,11 +451,13 @@ export const api = {
   searchHfModels: (query: string) =>
     invoke<HubModel[]>("search_hf_models", { query }),
   listHfFiles: (repoId: string) =>
-    invoke<HubFile[]>("list_hf_files", { repoId }),
+    invoke<HubListing>("list_hf_files", { repoId }),
   downloadHfModel: (file: HubFile) =>
     invoke<{ path: string; model_id: string | null }>("download_hf_model", {
       file,
     }),
+  downloadHfFolder: (folder: HubFolder) =>
+    invoke<{ path: string; files: number }>("download_hf_folder", { folder }),
   cancelModelDownload: () => invoke<void>("cancel_model_download"),
   /** Apps holding the microphone, reported when the stable list changes while detection is on. */
   onMicrophoneApps: (callback: (apps: MicApp[]) => void) =>

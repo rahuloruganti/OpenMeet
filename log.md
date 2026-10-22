@@ -688,3 +688,11 @@ Step 3 frontend: first-run setup (`FirstRunSetup.tsx`, schema v28 `setup_done`, 
 Native check of first-run setup on this machine (no recording): all four steps rendered; it found the managed `ggml-small.bin`, no local AI server was running, and devices listed the SoundCore microphone and all app audio. Fixed from that run: the Silero VAD file was listed as a custom Whisper model, paths showed the `\?\` prefix (also the export folder, finding #9), and the managed copy of the selected pinned model was not marked In use. 169 frontend tests passed.
 
 Step 3b (sherpa-onnx, frontend and docs): the Settings engine card is now "On this computer", and the model select shows friendly names from `speechModelLabel` in `src/lib/models.ts`. Setup recommends Parakeet TDT 0.6B v3 for auto, English, and European languages (Whisper small first for other languages); the old English-only `base.en-q5_1` button was dropped from setup and remains in Settings. THIRD_PARTY_LICENSES lists sherpa-onnx, ONNX Runtime, Silero VAD, the three speech models, and the bzip2/tar crates, with "verify before release" marks where the upstream license was not confirmed locally. The user guide, privacy, architecture, dependency, README, and v1 plan (step 3b) were updated. Real-engine transcription with the sherpa models is not verified.
+
+## Hugging Face search and download fixed (v1 plan step 4)
+
+- Search asks the Hub only for `automatic-speech-recognition` repositories and labels each result Whisper ggml, sherpa-onnx, or Other (not downloadable).
+- Any repository's complete `ggml-*.bin` file can be downloaded; it is SHA-256 checked against the Hub's LFS metadata and saved to the speech models folder for use in place. Pinned catalog files still import as before.
+- Complete sherpa-onnx folders (transducer, Moonshine, single-model layouts) download all-or-nothing into `sherpa/custom/`. Running them is not wired yet.
+- LLM GGUF downloads were removed from the Hub flow. Local GGUF scanning is unchanged.
+- Verified with Rust unit tests and local mock servers only. No real Hugging Face download was tested.

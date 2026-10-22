@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   errorMessage,
-  type HubFile,
+  type HubFolder,
+  type HubKind,
+  type HubListing,
   type HubModel,
   type ModelLibraryProgress,
   type ModelScan,
+  type SherpaLayout,
 } from "../lib/api";
 import { formatBytes } from "../lib/meeting-labels";
 
@@ -14,12 +17,26 @@ type Props = {
   onImported: () => Promise<void>;
   /** Catalog model ids a scan found on disk (not necessarily imported). */
   onFound?: (ids: string[]) => void;
+  /** Selects a Whisper file in place (an absolute path) in the transcription draft. */
+  onUse?: (path: string) => void;
 };
-export function ModelLibrary({ disabled, onImported, onFound }: Props) {
+
+const KIND_LABEL: Record<HubKind, string> = {
+  whisper_ggml: "Whisper ggml",
+  sherpa_onnx: "sherpa-onnx",
+  other: "Other (not downloadable)",
+};
+const LAYOUT_LABEL: Record<SherpaLayout, string> = {
+  transducer: "transducer",
+  moonshine: "Moonshine",
+  single_model: "single model",
+};
+
+export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
   const [scan, setScan] = useState<ModelScan | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<HubModel[]>([]);
-  const [files, setFiles] = useState<HubFile[]>([]);
+  const [listing, setListing] = useState<HubListing | null>(null);
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [progress, setProgress] = useState<ModelLibraryProgress | null>(null);
@@ -52,10 +69,7 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
     setScan(value);
     setPicked((current) =>
       value.models.some(
-        (model) =>
-          model.format === "whisper" &&
-          model.model_id &&
-          model.path === current,
+        (model) => model.format === "whisper" && model.path === current,
       )
         ? current
         : "",
@@ -86,6 +100,18 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
       if (live.current) setBusy(false);
     }
   };
+  const transfer = (task: () => Promise<void>) =>
+    run(async () => {
+      transferActive.current = true;
+      setDownloading(true);
+      setProgress(null);
+      try {
+        await task();
+      } finally {
+        transferActive.current = false;
+        if (live.current) setDownloading(false);
+      }
+    });
   const imported = async (id: string) => {
     await onImported();
     if (live.current)
@@ -97,9 +123,9 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
     <section className="model-library" aria-label="Local model library">
       <h3>Local model library</h3>
       <p className="muted">
-        A model file is not a running server. GGUF files require an external
-        OpenAI-compatible server. Only verified catalog Whisper models can be
-        imported for built-in speech processing.
+        A model file is not a running server. Built-in speech processing uses
+        Whisper ggml files and sherpa-onnx folders. GGUF files need an external
+        OpenAI-compatible server and are not downloaded here.
       </p>
       <p className="muted">
         Each scan checks at most 4,096 entries and six subfolder levels, and
@@ -142,10 +168,10 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
           )}
           {(() => {
             const speech = scan.models.filter(
-              (model) => model.format === "whisper" && model.model_id,
+              (model) => model.format === "whisper",
             );
             const other = scan.models.filter(
-              (model) => !(model.format === "whisper" && model.model_id),
+              (model) => model.format !== "whisper",
             );
             const chosen = speech.find((model) => model.path === picked);
             return (
@@ -161,31 +187,45 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
                         disabled={disabled || busy}
                         onChange={(event) => setPicked(event.target.value)}
                       >
-                        <option value="">Choose a model to import</option>
+                        <option value="">Choose a model</option>
                         {speech.map((model) => (
                           <option key={model.path} value={model.path}>
-                            {model.model_id} · {formatBytes(model.size)} ·{" "}
-                            {model.path}
+                            {model.model_id ?? "Custom Whisper"} ·{" "}
+                            {formatBytes(model.size)} · {model.path}
                           </option>
                         ))}
                       </select>
                     </label>
-                    <button
-                      disabled={disabled || busy || !chosen}
-                      onClick={() =>
-                        chosen &&
-                        void run(async () => {
-                          const result = await api.importLocalModel(
-                            chosen.path,
-                          );
-                          await imported(result.model_id);
-                        })
-                      }
-                    >
-                      {chosen
-                        ? "Verify and import " + chosen.model_id
-                        : "Verify and import"}
-                    </button>
+                    {chosen?.model_id ? (
+                      <button
+                        disabled={disabled || busy}
+                        onClick={() =>
+                          void run(async () => {
+                            const result = await api.importLocalModel(
+                              chosen.path,
+                            );
+                            await imported(result.model_id);
+                          })
+                        }
+                      >
+                        Verify and import {chosen.model_id}
+                      </button>
+                    ) : (
+                      chosen &&
+                      onUse && (
+                        <button
+                          disabled={disabled || busy}
+                          onClick={() => {
+                            onUse(chosen.path);
+                            setNotice(
+                              `${chosen.path} selected. Save transcription settings to use it.`,
+                            );
+                          }}
+                        >
+                          Use this file in place
+                        </button>
+                      )
+                    )}
                   </>
                 )}
                 {other.length > 0 && (
@@ -199,7 +239,7 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
                         <p className="muted">
                           {model.format === "gguf"
                             ? "Use with an external server. Inference compatibility unverified."
-                            : "Not a supported Whisper catalog candidate."}
+                            : "Not a supported Whisper model."}
                         </p>
                       </li>
                     ))}
@@ -210,18 +250,20 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
           })()}
         </>
       )}
-      <h4>Public Hugging Face models</h4>
+      <h4>Public Hugging Face speech models</h4>
       <p className="muted">
-        Search contacts huggingface.co with your query. Downloads are public
-        single files with pinned size and SHA-256 verification. No private or
-        gated models. Search shows up to 20 results. Check the displayed license
-        before downloading.
+        Search contacts huggingface.co with your query and lists only
+        automatic-speech-recognition repositories. Downloads are public files
+        with pinned size and SHA-256 verification. Whisper ggml files and
+        complete sherpa-onnx folders can be downloaded; other results are shown
+        but not downloadable. No private or gated models. Search shows up to 20
+        results. Check the displayed license before downloading.
       </p>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
-            setFiles([]);
+            setListing(null);
             const value = await api.searchHfModels(query.trim());
             if (live.current) setResults(value);
           });
@@ -243,24 +285,35 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
       <ul>
         {results.map((model) => (
           <li key={model.id}>
-            {model.id} · License: {model.license ?? "Not supplied"}{" "}
-            <button
-              disabled={disabled || busy}
-              onClick={() =>
-                void run(async () => {
-                  setFiles([]);
-                  const value = await api.listHfFiles(model.id);
-                  if (live.current) setFiles(value);
-                })
-              }
-            >
-              Show files for {model.id}
-            </button>
+            {model.id} · {KIND_LABEL[model.kind]} · License:{" "}
+            {model.license ?? "Not supplied"}{" "}
+            {model.kind === "other" ? (
+              <span className="muted">Not downloadable.</span>
+            ) : (
+              <button
+                disabled={disabled || busy}
+                onClick={() =>
+                  void run(async () => {
+                    setListing(null);
+                    const value = await api.listHfFiles(model.id);
+                    if (live.current) setListing(value);
+                  })
+                }
+              >
+                Show files for {model.id}
+              </button>
+            )}
           </li>
         ))}
       </ul>
+      {listing && listing.files.length + listing.folders.length === 0 && (
+        <p className="muted">
+          No complete Whisper ggml files or sherpa-onnx folders in this
+          repository.
+        </p>
+      )}
       <ul>
-        {files.map((file) => (
+        {listing?.files.map((file) => (
           <li key={`${file.repo_id}/${file.filename}`}>
             <p>
               {file.repo_id}/{file.filename} · {formatBytes(file.size)} ·
@@ -269,31 +322,55 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
             <p className="muted">
               Revision {file.revision}.{" "}
               {file.model_id
-                ? "Whisper catalog candidate; download verifies the file."
-                : "Requires an external server. Inference compatibility unverified."}
+                ? `Matches pinned ${file.model_id}; download verifies the file.`
+                : "Whisper ggml file; download verifies its SHA-256 and keeps it in place for use."}
             </p>
             <button
               disabled={disabled || busy}
               onClick={() =>
-                void run(async () => {
-                  transferActive.current = true;
-                  setDownloading(true);
-                  setProgress(null);
-                  try {
-                    const result = await api.downloadHfModel(file);
-                    if (result.model_id) await imported(result.model_id);
-                    else if (live.current)
+                transfer(async () => {
+                  const result = await api.downloadHfModel(file);
+                  if (result.model_id) await imported(result.model_id);
+                  else {
+                    await scanCommon();
+                    if (live.current)
                       setNotice(
-                        `Verified file downloaded to ${result.path}. Configure an external server to use it.`,
+                        `Verified file saved to ${result.path}. It is listed under Found speech models; choose it there.`,
                       );
-                  } finally {
-                    transferActive.current = false;
-                    if (live.current) setDownloading(false);
                   }
                 })
               }
             >
               Download {file.filename}
+            </button>
+          </li>
+        ))}
+        {listing?.folders.map((folder) => (
+          <li key={`${folder.repo_id}/${folder.folder}`}>
+            <p>
+              {folder.repo_id}
+              {folder.folder ? `/${folder.folder}` : " (repository root)"} ·
+              sherpa-onnx {LAYOUT_LABEL[folder.layout]} ·{" "}
+              {formatBytes(folderBytes(folder))} · License:{" "}
+              {folder.license ?? "Not supplied"}
+            </p>
+            <p className="muted">
+              Revision {folder.revision}. {folder.files.length} files, each
+              checked against its SHA-256. All files are saved or none are.
+            </p>
+            <button
+              disabled={disabled || busy}
+              onClick={() =>
+                transfer(async () => {
+                  const result = await api.downloadHfFolder(folder);
+                  if (live.current)
+                    setNotice(
+                      `Verified sherpa-onnx folder (${result.files} files) saved to ${result.path}. OpenMeet cannot run this folder yet, so it is not selectable as a speech model.`,
+                    );
+                })
+              }
+            >
+              Download folder {folder.folder || folder.repo_id}
             </button>
           </li>
         ))}
@@ -325,4 +402,8 @@ export function ModelLibrary({ disabled, onImported, onFound }: Props) {
       )}
     </section>
   );
+}
+
+function folderBytes(folder: HubFolder): number {
+  return folder.files.reduce((total, file) => total + file.size, 0);
 }
