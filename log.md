@@ -728,3 +728,9 @@ Outcome: the processing stage/state `consent_required` is now `needs_attention` 
 User request: split the 3,500-line `src/App.test.tsx` into feature test files, keeping the shared setup in one module and leaving assertions unchanged.
 
 Outcome: `src/App.test.tsx` is replaced by ten feature files (`src/App.recording`, `drafts`, `layout`, `library`, `export`, `processing`, `summary`, `transcript`, `settings`, `providers` `.test.tsx`). Shared fixtures and helpers are in `src/test/app-harness.tsx`; the API mock factory is in `src/test/api-mock.ts` and is imported before `./App` in each file, which vi.mock hoisting requires. Test bodies moved unchanged and no exact duplicates were found, so the count stays at 172. Typecheck, lint, format check, tests and build pass locally; nothing was committed and no recordings or network calls were used.
+
+## Fix six first-use UI issues
+
+User request: after a user-perspective review, fix the stale "after you confirm" privacy copy, the "Recording: recording" label, the silent rename discard on blur, the autofocused discard-and-quit button, the first-run default that turned on automatic processing, and the `12.3s` transcript times.
+
+Outcome: the privacy popover says text is sent "when you use them"; the recording bar shows "Recording"; blurring the title field saves it (Escape still cancels); with unsaved edits the quit dialog focuses "Keep working"; first-run setup leaves "transcribe every recording" unchecked; transcript segment times use the `[mm:ss]` format. Tests and the user guide are updated. Typecheck, lint, format check, tests (174) and build pass locally; no recordings, downloads or Rust checks were run.

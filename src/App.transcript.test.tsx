@@ -108,10 +108,10 @@ describe("transcript and audio", () => {
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
       expect(screen.getByText("(edited)")).toBeTruthy();
       await userEvent.click(
-        screen.getByRole("button", { name: "Edit segment at 1.0s" }),
+        screen.getByRole("button", { name: "Edit segment at 00:01" }),
       );
       const input = screen.getByRole("textbox", {
-        name: "Edit segment at 1.0s",
+        name: "Edit segment at 00:01",
       });
       await userEvent.clear(input);
       await userEvent.type(input, "Persimmon budget");
@@ -139,7 +139,7 @@ describe("transcript and audio", () => {
       await userEvent.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() =>
         expect(
-          screen.queryByRole("textbox", { name: "Edit segment at 1.0s" }),
+          screen.queryByRole("textbox", { name: "Edit segment at 00:01" }),
         ).toBeNull(),
       );
       await userEvent.click(
@@ -349,9 +349,11 @@ describe("transcript and audio", () => {
         "Others (system audio)",
       ) as HTMLAudioElement;
       expect(system.getAttribute("src")).toBe("asset://system.wav");
-      await userEvent.click(
-        screen.getByRole("button", { name: "Play Others from 8.3s" }),
-      );
+      const play = screen.getByRole("button", {
+        name: "Play Others from 00:08",
+      });
+      expect(play.textContent).toBe("[00:08]");
+      await userEvent.click(play);
       expect(api.audioPosition).toHaveBeenCalledWith("sample", "system", 8250);
       await waitFor(() => expect(system.currentTime).toBe(2.25));
       expect(
@@ -370,7 +372,7 @@ describe("transcript and audio", () => {
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
       await userEvent.click(
-        screen.getByRole("button", { name: "Play Others from 8.3s" }),
+        screen.getByRole("button", { name: "Play Others from 00:08" }),
       );
       expect((await screen.findByRole("alert")).textContent).toContain(
         "The audio timing index is incomplete. Originals and previous transcripts are unchanged.",
@@ -392,7 +394,7 @@ describe("transcript and audio", () => {
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
       await userEvent.click(
-        screen.getByRole("button", { name: "Play Others from 8.3s" }),
+        screen.getByRole("button", { name: "Play Others from 00:08" }),
       );
       expect(await screen.findByRole("alert")).toHaveProperty(
         "textContent",

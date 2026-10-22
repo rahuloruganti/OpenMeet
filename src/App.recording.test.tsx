@@ -167,7 +167,7 @@ describe("recording, capture and devices", () => {
         outputId: "out",
       }),
     );
-    await screen.findByText("Recording: recording");
+    await screen.findByText("Recording");
   });
 
   it("lists a microphone connected after startup when New recording opens", async () => {
@@ -326,7 +326,7 @@ describe("recording, capture and devices", () => {
     expect(
       (await screen.findByText(/Audio gaps detected/)).textContent,
     ).toContain("mic: 3");
-    expect(screen.getByText("Recording: recording")).toBeTruthy();
+    expect(screen.getByText("Recording")).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement)
         .disabled,

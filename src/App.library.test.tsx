@@ -123,10 +123,35 @@ describe("meeting library", () => {
         "sample",
         "  Planning review ",
       );
+      expect(api.renameMeeting).toHaveBeenCalledOnce();
       expect(
         await screen.findByRole("heading", { name: "Planning review" }),
       ).toBeTruthy();
       expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
+    });
+
+    it("saves a typed title once when the field loses focus, and Escape never saves", async () => {
+      vi.mocked(api.renameMeeting).mockResolvedValue("Blurred title");
+      await ready();
+      await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+      const input = screen.getByRole("textbox", { name: "Meeting title" });
+      await userEvent.clear(input);
+      await userEvent.type(input, "Blurred title");
+      await userEvent.tab();
+      expect(
+        await screen.findByRole("heading", { name: "Blurred title" }),
+      ).toBeTruthy();
+      expect(api.renameMeeting).toHaveBeenCalledOnce();
+      expect(api.renameMeeting).toHaveBeenCalledWith("sample", "Blurred title");
+      await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+      await userEvent.clear(
+        screen.getByRole("textbox", { name: "Meeting title" }),
+      );
+      await userEvent.type(
+        screen.getByRole("textbox", { name: "Meeting title" }),
+        "Escaped title{Escape}",
+      );
+      expect(api.renameMeeting).toHaveBeenCalledOnce();
     });
 
     it("keeps the old title and shows the error when a rename is rejected", async () => {

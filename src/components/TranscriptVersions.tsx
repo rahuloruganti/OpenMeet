@@ -7,6 +7,7 @@ import {
   type SpeakerNames,
   type TranscriptVersion,
 } from "../lib/api";
+import { formatTimestamp } from "../lib/timestamps";
 
 type Props = {
   meetingId: string;
@@ -58,7 +59,7 @@ export function TranscriptVersions({ meetingId, versions, names }: Props) {
               <strong>{speakerLabel(names, segment.speaker)}</strong>{" "}
               <span className="muted">
                 {segment.timing.kind === "timed"
-                  ? `${(segment.timing.start_ms / 1000).toFixed(1)}s`
+                  ? formatTimestamp(segment.timing.start_ms)
                   : "Untimed"}
               </span>{" "}
               — {segment.text}

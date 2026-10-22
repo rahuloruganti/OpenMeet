@@ -131,17 +131,24 @@ it("offers a detected local server for AI notes with chat models only", async ()
   expect(api.saveApiConnection).not.toHaveBeenCalled();
 });
 
-it("finishes with default devices and automatic transcription, or skips with nothing else saved", async () => {
+it("finishes with default devices and recording only, or skips with nothing else saved", async () => {
   vi.mocked(api.saveDefaultDevices).mockResolvedValue(settings);
   vi.mocked(api.saveProcessingDefault).mockResolvedValue(settings);
   const props = show();
   for (let step = 0; step < 3; step++)
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(
+    (
+      screen.getByRole("checkbox", {
+        name: /Transcribe every recording/,
+      }) as HTMLInputElement
+    ).checked,
+  ).toBe(false);
   await userEvent.click(screen.getByRole("button", { name: "Finish" }));
   await waitFor(() => expect(api.saveSetupDone).toHaveBeenCalledWith(true));
   expect(api.saveDefaultDevices).toHaveBeenCalledWith("mic", "app-audio");
   expect(props.onDevices).toHaveBeenCalledWith("mic", "app-audio");
-  expect(api.saveProcessingDefault).toHaveBeenCalledWith("final", null);
+  expect(api.saveProcessingDefault).toHaveBeenCalledWith("recording", null);
 
   vi.mocked(api.saveDefaultDevices).mockClear();
   vi.mocked(api.saveProcessingDefault).mockClear();
@@ -170,4 +177,18 @@ it("recommends Parakeet for English or auto, and Whisper small for other languag
   });
   expect(japanese.textContent).not.toContain("Parakeet");
   expect(japanese.textContent).toContain("Whisper small");
+});
+
+it("saves automatic transcription only when the box is ticked", async () => {
+  vi.mocked(api.saveDefaultDevices).mockResolvedValue(settings);
+  vi.mocked(api.saveProcessingDefault).mockResolvedValue(settings);
+  show();
+  for (let step = 0; step < 3; step++)
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  await userEvent.click(
+    screen.getByRole("checkbox", { name: /Transcribe every recording/ }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Finish" }));
+  await waitFor(() => expect(api.saveSetupDone).toHaveBeenCalledWith(true));
+  expect(api.saveProcessingDefault).toHaveBeenCalledWith("final", null);
 });

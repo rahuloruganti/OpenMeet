@@ -64,7 +64,10 @@ export function RecordingControls(props: Props) {
             ? "Not recording"
             : finalizationPending
               ? "Audio stopped; finalization pending"
-              : `${recording.source === "desktop" ? "Recording" : "Simulation"}: ${recording.status}`}
+              : recording.source === "desktop" &&
+                  recording.status === "recording"
+                ? "Recording"
+                : `${recording.source === "desktop" ? "Recording" : "Simulation"}: ${recording.status}`}
         </span>
       </div>
       {capturing && health && (

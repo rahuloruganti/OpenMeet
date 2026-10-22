@@ -750,7 +750,7 @@ export function App() {
                 Recording saves microphone and system audio locally. Local
                 transcription stays on this computer. Cloud transcription
                 uploads audio, and summaries and questions send text to your
-                selected provider only after you confirm.
+                selected provider when you use them.
               </p>
               <p>
                 Capture is not yet hardware-qualified. Local files are
@@ -1509,7 +1509,7 @@ export function App() {
               </p>
             )}
             <button
-              autoFocus
+              autoFocus={!unsavedEdits}
               disabled={busy || controlBusy}
               onClick={() =>
                 void run(async () => {
@@ -1523,6 +1523,7 @@ export function App() {
                 : "Save and quit"}
             </button>
             <button
+              autoFocus={unsavedEdits}
               disabled={busy || controlBusy}
               onClick={() => setCloseRequested(false)}
             >

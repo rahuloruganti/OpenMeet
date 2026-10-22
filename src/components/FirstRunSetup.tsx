@@ -230,7 +230,7 @@ export function FirstRunSetup(props: Props) {
   const [found, setFound] = useState<LocalModel[] | null>(null);
   const [servers, setServers] = useState<LocalServer[] | null>(null);
   const [notesChoice, setNotesChoice] = useState<string>("");
-  const [auto, setAuto] = useState(true);
+  const [auto, setAuto] = useState(false);
   const [microphone, setMicrophone] = useState(settings.microphone_id ?? "");
   const [output, setOutput] = useState(settings.output_id ?? "");
   const { busy, error, run } = useTask();

@@ -279,6 +279,9 @@ describe("summaries and questions", () => {
           name: "Discard unsaved edits and quit",
         }),
       ).toBeTruthy();
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Keep working" }),
+      );
       await userEvent.click(
         screen.getByRole("button", { name: "Keep working" }),
       );

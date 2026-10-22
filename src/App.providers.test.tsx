@@ -175,7 +175,7 @@ describe("saved connections and provider workflows", () => {
       expect(
         screen.queryByRole("button", { name: /Play You from/ }),
       ).toBeNull();
-      expect(screen.queryByText("0.0s")).toBeNull();
+      expect(screen.queryByText("[00:00]")).toBeNull();
       expect(
         screen.getByText(
           /Generated with https:\/\/speech.example\/v1 \/ speech-model/,

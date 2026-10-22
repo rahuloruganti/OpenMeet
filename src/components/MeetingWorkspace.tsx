@@ -188,6 +188,8 @@ export function MeetingWorkspace(props: Props) {
     0,
   );
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  // Set while the title input is open; Enter, Escape and the blur they can trigger settle it once.
+  const titleEditing = useRef(false);
   const [jumpHint, setJumpHint] = useState("");
   const [playbackError, setPlaybackError] = useState("");
   // Segment ids a clicked reference points to; the first is opened once the tab shows.
@@ -411,7 +413,16 @@ export function MeetingWorkspace(props: Props) {
     meeting.status === "interrupted" &&
     selected.tracks.some((track) => !track.finalized);
   const startRename = () => {
-    if (!disabled) setTitleDraft(meeting.title);
+    if (disabled) return;
+    titleEditing.current = true;
+    setTitleDraft(meeting.title);
+  };
+  const settleTitle = (save: boolean) => {
+    if (!titleEditing.current || titleDraft === null) return;
+    titleEditing.current = false;
+    setTitleDraft(null);
+    // The backend trims and validates; an invalid title is reported, not saved.
+    if (save && titleDraft !== meeting.title) props.onRename(titleDraft);
   };
 
   return (
@@ -429,17 +440,15 @@ export function MeetingWorkspace(props: Props) {
             maxLength={160}
             value={titleDraft}
             onChange={(event) => setTitleDraft(event.target.value)}
-            onBlur={() => setTitleDraft(null)}
+            onBlur={() => settleTitle(true)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                setTitleDraft(null);
-                // The backend trims and validates; an invalid title is reported, not saved.
-                if (titleDraft !== meeting.title) props.onRename(titleDraft);
+                settleTitle(true);
               } else if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
-                setTitleDraft(null);
+                settleTitle(false);
               }
             }}
           />
@@ -1093,10 +1102,12 @@ export function MeetingWorkspace(props: Props) {
                 : null;
             const editLocked = disabled || job !== null;
             const timing = segment.timing;
-            const time =
+            const stamp =
               timing.kind === "timed"
-                ? `${(timing.start_ms / 1000).toFixed(1)}s`
+                ? formatTimestamp(timing.start_ms)
                 : "Untimed";
+            // Labels read better without the brackets.
+            const time = stamp.replace(/^\[|\]$/g, "");
             return (
               <p
                 className={
@@ -1122,10 +1133,10 @@ export function MeetingWorkspace(props: Props) {
                         })
                     }
                   >
-                    {time}
+                    {stamp}
                   </button>
                 ) : (
-                  <span className="muted">{time}</span>
+                  <span className="muted">{stamp}</span>
                 )}{" "}
                 —{" "}
                 {draft ? (
