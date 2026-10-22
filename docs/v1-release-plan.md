@@ -58,7 +58,7 @@ Native run of `just dev` with two authorized test recordings on a SoundCore 2 Bl
 | 6 | P1 | About 1.3 s of microphone audio is lost at start while the Bluetooth profile switches. | Open |
 | 7 | P1 | After a no-speech transcription the UI shows "Transcript generated and saved" above "No transcript yet." | Fixed `531b79e` |
 | 8 | P1 | Settings shows no warning that both API tasks use `merge-api`, which has no key, or that the speech model ID is a text-to-speech model. | Open (setup work) |
-| 9 | P2 | Export folder is shown with the `\?\` prefix. | Open |
+| 9 | P2 | Export folder is shown with the `\?\` prefix. | Fixed: paths drop the prefix for display. |
 | 10 | P2 | Window size and position are not remembered. | Open |
 | 11 | P2 | Most library entries read "Untitled meeting"; a default title with date and time would be scannable. | Open |
 | 12 | P2 | "Save notes now" duplicates autosave. | Open |

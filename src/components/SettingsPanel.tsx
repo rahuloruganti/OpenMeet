@@ -12,7 +12,7 @@ import type {
   SttDownloadProgress,
   SttStatus,
 } from "../lib/api";
-import { formatBytes } from "../lib/meeting-labels";
+import { displayPath, formatBytes } from "../lib/meeting-labels";
 import {
   builtinTemplates,
   modeLabels,
@@ -541,7 +541,11 @@ export function SettingsPanel(props: Props) {
               <h3>Storage & export</h3>
               <label>
                 Export folder
-                <output>{settings?.vault_folder ?? "Not selected"}</output>
+                <output>
+                  {settings?.vault_folder
+                    ? displayPath(settings.vault_folder)
+                    : "Not selected"}
+                </output>
               </label>
               <button disabled={disabled} onClick={props.onChooseFolder}>
                 Choose export folder

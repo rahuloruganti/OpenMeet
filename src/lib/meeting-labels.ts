@@ -22,3 +22,6 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
+
+/** A path without the Windows `\\?\` long-path prefix that Rust adds when it canonicalizes. */
+export const displayPath = (path: string) => path.replace(/^\\\\\?\\/, "");

@@ -11,7 +11,7 @@ import {
   type SttDownloadProgress,
   type SttStatus,
 } from "../lib/api";
-import { formatBytes } from "../lib/meeting-labels";
+import { displayPath, formatBytes } from "../lib/meeting-labels";
 import { modelsFor } from "../lib/models";
 import { useTask } from "../lib/use-task";
 import { destination, publishSettings } from "./ProviderSettings";
@@ -246,7 +246,15 @@ export function FirstRunSetup(props: Props) {
     api.scanLocalModels(null).then(
       (scan) =>
         live &&
-        setFound(scan.models.filter((item) => item.format === "whisper")),
+        setFound(
+          scan.models
+            // The Silero voice-activity file is ggml too, but not a speech model.
+            .filter(
+              (item) =>
+                item.format === "whisper" && !/silero|vad/i.test(item.path),
+            )
+            .map((item) => ({ ...item, path: displayPath(item.path) })),
+        ),
       () => live && setFound([]),
     );
     api.detectLocalServers().then(
@@ -386,26 +394,35 @@ export function FirstRunSetup(props: Props) {
                   className="setup-list"
                   aria-label="Installed Whisper models"
                 >
-                  {found.map((item) => (
-                    <li key={item.path}>
-                      <span>
-                        <strong>{fileName(item.path)}</strong>{" "}
-                        <span className="muted">
-                          {formatBytes(item.size)} ·{" "}
-                          {item.model_id
-                            ? `matches pinned ${item.model_id}`
-                            : "custom"}{" "}
-                          · {item.path}
+                  {found.map((item) => {
+                    // OpenMeet's own download of the selected pinned model is in use too.
+                    const inUse =
+                      settings.stt_model === item.path ||
+                      (item.model_id === settings.stt_model &&
+                        /dev\.openmeet\.preview[\\/]stt[\\/]models[\\/]/i.test(
+                          item.path,
+                        ));
+                    return (
+                      <li key={item.path}>
+                        <span>
+                          <strong>{fileName(item.path)}</strong>{" "}
+                          <span className="muted">
+                            {formatBytes(item.size)} ·{" "}
+                            {item.model_id
+                              ? `matches pinned ${item.model_id}`
+                              : "custom"}{" "}
+                            · {item.path}
+                          </span>
                         </span>
-                      </span>
-                      <button
-                        disabled={busy || settings.stt_model === item.path}
-                        onClick={() => void chooseLocal(item.path, true)}
-                      >
-                        {settings.stt_model === item.path ? "In use" : "Use"}
-                      </button>
-                    </li>
-                  ))}
+                        <button
+                          disabled={busy || inUse}
+                          onClick={() => void chooseLocal(item.path, true)}
+                        >
+                          {inUse ? "In use" : "Use"}
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               <h3>Or download a model</h3>

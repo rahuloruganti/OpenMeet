@@ -20,3 +20,11 @@ it("splits speech and chat models by name and can show everything", () => {
   expect(modelsFor(mixed, "llm", true)).toHaveLength(6);
   expect(ids(modelsFor([{ id: "custom" }], "cloud_stt"))).toEqual(["custom"]);
 });
+
+it("drops only the Windows long-path prefix", async () => {
+  const { displayPath } = await import("./meeting-labels");
+  expect(displayPath(String.raw`\\?\C:\Users\me\ggml-small.bin`)).toBe(
+    String.raw`C:\Users\me\ggml-small.bin`,
+  );
+  expect(displayPath(String.raw`C:\plain`)).toBe(String.raw`C:\plain`);
+});
