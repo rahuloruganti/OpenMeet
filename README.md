@@ -50,7 +50,7 @@ just dev
 
 ## Use the app
 
-On first launch, **Set up OpenMeet** walks through transcription (a Whisper model on this computer, a local speech server, or an online API), AI notes (a local server such as Ollama, LM Studio or Unsloth Studio, or an online API), and default devices. It finds models and local servers already installed. Skip it or run it again from **Settings → Privacy & about**.
+On first launch, **Set up OpenMeet** walks through transcription (a speech model on this computer, a local speech server, or an online API), AI notes (a local server such as Ollama, LM Studio or Unsloth Studio, or an online API), and default devices. It finds models and local servers already installed. Skip it or run it again from **Settings → Privacy & about**.
 
 ### Write a note
 
@@ -70,7 +70,7 @@ Exported files appear in the chosen folder's `Meetings` directory. Export create
 5. Open **Settings**, choose a speech model, and download the speech engine and models if needed.
 6. Open the meeting's **Transcript** tab and click **Transcribe audio**.
 
-Local Whisper keeps audio and transcription on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
+On-this-computer transcription (Whisper or the sherpa-onnx models) keeps audio and transcription on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
 
 For cloud transcription, add a connection under **Settings → Connections**, then choose **API connection** under **Settings → Transcription** and assign that connection and a model ID. Transcribing uploads the audio to that connection. Text-only model results have no fabricated timestamps or playback links. Provider retention and charges apply; cancellation cannot recall audio already uploaded.
 

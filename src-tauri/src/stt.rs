@@ -35,6 +35,8 @@ const ENGINE: Artifact = Artifact {
     size: 8_928_640,
 };
 include!("stt_models.rs");
+#[path = "sherpa.rs"]
+mod sherpa;
 /// Whisper language codes offered in Settings; anything else is rejected before it reaches `-l`.
 pub const LANGUAGES: [&str; 35] = [
     "auto", "ar", "ca", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hr", "hu",
@@ -182,23 +184,56 @@ pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
             "Keep the vocabulary hint to one line of at most 500 characters.",
         ));
     }
-    if model(model_id).is_ok() {
+    if sherpa::model(model_id).is_some() || model(model_id).is_ok() {
         return Ok(());
     }
     custom_model(model_id).map(|_| ())
 }
 
+fn file_present(root: &Path, artifact: &Artifact) -> bool {
+    fs::metadata(models_dir(root).join(artifact.file)).is_ok_and(|m| m.len() == artifact.size)
+}
+
 pub fn status(root: &Path, model_id: &str) -> Status {
+    let mut models: Vec<ModelStatus> = MODELS
+        .iter()
+        .map(|(id, artifact)| ModelStatus {
+            id,
+            size: artifact.size,
+            installed: file_present(root, artifact),
+        })
+        .collect();
+    models.extend(sherpa::MODELS.iter().map(|model| {
+        let parts = sherpa::installed(root, model);
+        ModelStatus {
+            id: model.id,
+            size: sherpa::total_size(model),
+            installed: parts.engine && parts.model && parts.vad,
+        }
+    }));
+    if let Some(model) = sherpa::model(model_id) {
+        let parts = sherpa::installed(root, model);
+        return Status {
+            engine: parts.engine,
+            model: parts.model,
+            vad: parts.vad,
+            installed: parts.engine && parts.model && parts.vad,
+            missing_bytes: parts.missing_bytes,
+            supported: sherpa::supported(),
+            models,
+            languages: &LANGUAGES,
+        };
+    }
     let engine = engine_dir(root).join(engine_filename()).is_file()
         && fs::read_to_string(engine_dir(root).join(ENGINE_MARKER))
             .is_ok_and(|marker| marker.trim() == engine_pin());
-    let present = |artifact: &Artifact| {
-        fs::metadata(models_dir(root).join(artifact.file)).is_ok_and(|m| m.len() == artifact.size)
-    };
     let selected = model(model_id).ok();
     let (model, vad) = (
-        selected.map_or_else(|| custom_model(model_id).is_ok(), present),
-        present(&VAD),
+        selected.map_or_else(
+            || custom_model(model_id).is_ok(),
+            |artifact| file_present(root, artifact),
+        ),
+        file_present(root, &VAD),
     );
     let model_size = selected.map_or(0, |artifact| artifact.size);
     let missing = [(engine, ENGINE.size), (model, model_size), (vad, VAD.size)]
@@ -213,14 +248,7 @@ pub fn status(root: &Path, model_id: &str) -> Status {
         installed: engine && model && vad,
         missing_bytes: missing,
         supported: speech_supported(),
-        models: MODELS
-            .iter()
-            .map(|(id, artifact)| ModelStatus {
-                id,
-                size: artifact.size,
-                installed: present(artifact),
-            })
-            .collect(),
+        models,
         languages: &LANGUAGES,
     }
 }
@@ -292,9 +320,34 @@ fn extract_engine(zip_path: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+fn download_client() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(crate::model_library::TRANSFER_TIMEOUT)
+        .build()
+        .map_err(|_| stt_error("Could not prepare the download client."))
+}
+
 /// Downloads whatever is missing for the selected model. Each artifact is verified before it
 /// is installed. Other models already on disk are kept.
 pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) -> Result<Status> {
+    if let Some(model) = sherpa::model(model_id) {
+        if !sherpa::supported() {
+            return Err(stt_error(
+                "The sherpa speech engine is available on Windows x64 only.",
+            ));
+        }
+        let _operation = crate::model_library::ArtifactOperation::begin()?;
+        sherpa::install(root, model, &download_client()?, &mut report)?;
+        return Ok(status(root, model_id));
+    }
     // A model used in place needs only the engine and VAD.
     let selected = match model(model_id) {
         Ok(artifact) => Some(artifact),
@@ -306,18 +359,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
         ));
     }
     let _operation = crate::model_library::ArtifactOperation::begin()?;
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(crate::model_library::TRANSFER_TIMEOUT)
-        .build()
-        .map_err(|_| stt_error("Could not prepare the download client."))?;
+    let client = download_client()?;
     fs::create_dir_all(models_dir(root))?;
     let before = status(root, model_id);
     let pending = [
@@ -503,20 +545,21 @@ fn run_engine(
     mut command: Command,
     track: &Track,
     index: &[Block],
-    scratch: &Path,
     output_base: &Path,
     cancel: &AtomicBool,
+    sherpa_engine: bool,
     mut report: impl FnMut(u8),
 ) -> Result<Vec<Segment>> {
     if cancel.load(Ordering::SeqCst) {
         return Err(cancelled());
     }
-    let log_path = scratch.join("engine.log");
+    let log_path = output_base.with_extension("log");
+    let stdout_path = output_base.with_extension("txt");
     command
         .stdin(Stdio::null())
-        // Transcript text is printed to stdout; it is parsed from the JSON file instead.
-        .stdout(Stdio::null())
-        // Progress lines go to stderr; the log is read back incrementally below.
+        // whisper-cli reports through its JSON file; sherpa prints its segments and progress here.
+        .stdout(File::create(&stdout_path)?)
+        // Whisper progress lines go to stderr; the log is read back incrementally below.
         .stderr(File::create(&log_path)?);
     #[cfg(windows)]
     {
@@ -527,7 +570,11 @@ fn run_engine(
         .spawn()
         .map_err(|_| stt_error("The speech engine could not be started."))?;
     let mut log = File::open(&log_path)?;
+    let mut stdout = File::open(&stdout_path)?;
     let mut pending = Vec::new();
+    let mut captured = Vec::new();
+    let mut last_percent = None;
+    let seconds = track.frames.max(0) as f64 / f64::from(track.sample_rate.max(1));
     // Generous bound: 4x the audio length plus two minutes.
     let audio_secs = (track.frames.max(0) as u64) / u64::from(track.sample_rate.max(1));
     let deadline = Instant::now() + Duration::from_secs(120 + 4 * audio_secs);
@@ -540,6 +587,15 @@ fn run_engine(
             let line: Vec<u8> = pending.drain(..=end).collect();
             if let Some(percent) = parse_progress(&String::from_utf8_lossy(&line)) {
                 report(percent);
+            }
+        }
+        if sherpa_engine {
+            let _ = stdout.read_to_end(&mut captured);
+            if let Some(percent) = sherpa::progress(&captured, seconds) {
+                if last_percent != Some(percent) {
+                    last_percent = Some(percent);
+                    report(percent);
+                }
             }
         }
         if let Some(status) = exited {
@@ -570,9 +626,12 @@ fn run_engine(
     if !status.success() {
         return Err(stt_error(format!("The speech engine failed ({status}).")));
     }
+    let speaker = if track.kind == "mic" { "You" } else { "Others" };
+    if sherpa_engine {
+        return Ok(sherpa::parse(&captured, speaker, track.sample_rate, index));
+    }
     let json = fs::read(output_base.with_extension("json"))
         .map_err(|_| stt_error("The speech engine produced no output."))?;
-    let speaker = if track.kind == "mic" { "You" } else { "Others" };
     parse_output(&json, speaker, track.sample_rate, index)
 }
 
@@ -581,6 +640,7 @@ fn run_engine(
 fn run_tracks(
     tracks: &[Track],
     cancel: &AtomicBool,
+    sherpa_engine: bool,
     mut command_for: impl FnMut(&Track, &Path) -> Result<Command>,
     mut report: impl FnMut(&str, u8),
 ) -> Result<Vec<Segment>> {
@@ -600,9 +660,9 @@ fn run_tracks(
             command,
             track,
             &index,
-            scratch.path(),
             &output_base,
             cancel,
+            sherpa_engine,
             |percent| report(&track.kind, percent),
         )?);
     }
@@ -635,10 +695,18 @@ pub fn transcribe(
             "The speech engine and the selected model are not installed. Download them in Settings first.",
         ));
     }
+    let sherpa_engine = sherpa::model(&settings.stt_model).is_some();
     run_tracks(
         tracks,
         cancel,
-        |track, output_base| engine_command(root, settings, track, output_base),
+        sherpa_engine,
+        |track, output_base| {
+            if sherpa_engine {
+                sherpa::command(root, settings, track, output_base, cancel)
+            } else {
+                engine_command(root, settings, track, output_base)
+            }
+        },
         report,
     )
 }
@@ -707,6 +775,7 @@ mod tests {
         let result = run_tracks(
             &[track],
             &AtomicBool::new(false),
+            false,
             |_, _| panic!("Invalid timing reached engine setup"),
             |_, _| {},
         );
@@ -954,6 +1023,27 @@ mod tests {
     }
 
     #[test]
+    fn sherpa_ids_are_listed_validated_and_missing_until_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        let listed = status(dir.path(), "sherpa:moonshine-base-en");
+        for id in [
+            "base",
+            "sherpa:parakeet-v3",
+            "sherpa:moonshine-base-en",
+            "sherpa:sense-voice",
+        ] {
+            assert!(listed.models.iter().any(|m| m.id == id), "{id}");
+        }
+        validate("en", "", "sherpa:moonshine-base-en").unwrap();
+        assert_eq!(
+            validate("en", "", "sherpa:unlisted").unwrap_err().code,
+            "stt_settings"
+        );
+        assert!(!listed.installed && !listed.model);
+        assert!(listed.missing_bytes > 0);
+    }
+
+    #[test]
     fn progress_lines_are_parsed_and_noise_is_ignored() {
         assert_eq!(
             parse_progress("whisper_print_progress_callback: progress =  45%\r\n"),
@@ -983,7 +1073,8 @@ mod tests {
         let small = status(dir.path(), "small");
         assert!(!small.model);
         let installed: Vec<_> = small.models.iter().map(|m| (m.id, m.installed)).collect();
-        assert_eq!(installed.len(), 33);
+        // 33 Whisper catalog entries plus the three sherpa models.
+        assert_eq!(installed.len(), 36);
         assert!(installed.contains(&("base", true)));
         assert!(installed.contains(&("small", false)));
         assert!(installed.contains(&("tiny-q5_1", false)));
@@ -1071,6 +1162,7 @@ mod tests {
         let segments = run_tracks(
             std::slice::from_ref(&track),
             &cancel,
+            false,
             fake("fast"),
             |kind, percent| seen.push((kind.to_string(), percent)),
         )
@@ -1104,7 +1196,7 @@ mod tests {
             let cancel = cancel.clone();
             let track = track.clone();
             move || {
-                run_tracks(&[track], &cancel, fake("slow"), move |_, percent| {
+                run_tracks(&[track], &cancel, false, fake("slow"), move |_, percent| {
                     let _ = progress_tx.send(percent);
                 })
             }

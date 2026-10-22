@@ -91,6 +91,11 @@ These artifacts are downloaded only from **Settings**. They are not bundled with
 | Whisper small                      | `ggml-small.bin`               | 487,601,967            | Same model repository; default selection.                                                             |
 | Whisper large-v3-turbo             | `ggml-large-v3-turbo.bin`      | 1,624,555,275          | Same model repository; selectable multilingual model.                                                 |
 | Silero VAD                         | `ggml-silero-v5.1.2.bin`       | 885,098                | [ggml-org/whisper-vad](https://huggingface.co/ggml-org/whisper-vad), voice-activity detection.        |
+| sherpa-onnx Windows x64 runtime    | `v1.13.8`, shared MT no-TTS `.tar.bz2` | 23,271,851     | [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), second local engine (Windows x64 only). |
+| Silero VAD for sherpa-onnx         | `silero_vad.onnx`              | 643,854                | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models), voice-activity detection for sherpa models. |
+| Parakeet TDT 0.6B v3 (int8)        | sherpa `.tar.bz2` archive      | 487,170,055            | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models); English and European languages. |
+| Moonshine base (quantized, English) | sherpa `.tar.bz2` archive     | 111,266,225            | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models); English only. |
+| SenseVoice small (int8)            | sherpa `.tar.bz2` archive      | 165,783,878            | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models); Chinese, Japanese, Korean, Cantonese, English. |
 
 Installation fetches the engine, selected Whisper model, and VAD as needed. Switching models retains existing artifacts. Network transfers, extraction space, inference memory, and audio storage are separate from these download sizes. No measured performance guarantee is implied by model selection.
 

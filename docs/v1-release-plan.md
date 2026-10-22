@@ -35,7 +35,7 @@ Each step is its own commit to `main`.
 1. Hands-on run of the native app, including one short authorized test recording with the user present → bug list.
 2. Remove the consent steps.
 3. First-run setup plus model and server detection.
-   - 3b. sherpa-onnx engine and its pinned models.
+   - 3b. sherpa-onnx engine and its pinned models. Backend and UI done (Parakeet TDT 0.6B v3, Moonshine base, SenseVoice small; Windows x64 only). Real-engine transcription is unverified.
 4. Fix Hugging Face search and download.
 5. Rename, new shortcut defaults, NSIS installer.
 6. Docs, third-party license notices, release notes → `v0.9.0`, built locally.

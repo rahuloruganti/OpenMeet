@@ -12,16 +12,15 @@ import {
   type SttStatus,
 } from "../lib/api";
 import { displayPath, formatBytes } from "../lib/meeting-labels";
-import { modelsFor } from "../lib/models";
+import {
+  modelsFor,
+  recommendedSpeechModels,
+  speechModelLabel,
+} from "../lib/models";
 import { useTask } from "../lib/use-task";
 import { destination, publishSettings } from "./ProviderSettings";
 
 const steps = ["Welcome", "Transcription", "AI notes", "Devices"] as const;
-/** Downloads offered when nothing usable is on disk: English-first, then any language. */
-const recommended = [
-  ["base.en-q5_1", "English, fast and small"],
-  ["small", "Any language, more accurate"],
-] as const;
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -363,7 +362,7 @@ export function FirstRunSetup(props: Props) {
               <span>
                 <strong>On this computer</strong>
                 <span className="muted">
-                  Free and private. Uses a Whisper model on your CPU.
+                  Free and private. Uses a speech model on your CPU.
                 </span>
               </span>
             </label>
@@ -427,28 +426,36 @@ export function FirstRunSetup(props: Props) {
               )}
               <h3>Or download a model</h3>
               <ul className="setup-list" aria-label="Recommended downloads">
-                {recommended.map(([id, note]) => {
-                  const size = stt?.models.find((item) => item.id === id)?.size;
-                  return (
-                    <li key={id}>
-                      <span>
-                        <strong>Whisper {id}</strong>{" "}
-                        <span className="muted">
-                          {note}
-                          {size ? ` · ${formatBytes(size)}` : ""}
+                {recommendedSpeechModels(settings.stt_language).map(
+                  (id, index) => {
+                    const note =
+                      index === 0
+                        ? "Recommended for this language"
+                        : "Any language, more accurate";
+                    const size = stt?.models.find(
+                      (item) => item.id === id,
+                    )?.size;
+                    return (
+                      <li key={id}>
+                        <span>
+                          <strong>{speechModelLabel(id)}</strong>{" "}
+                          <span className="muted">
+                            {note}
+                            {size ? ` · ${formatBytes(size)}` : ""}
+                          </span>
                         </span>
-                      </span>
-                      <button
-                        disabled={busy || props.installing}
-                        onClick={() => void chooseLocal(id, true)}
-                      >
-                        {settings.stt_model === id && stt?.installed
-                          ? "In use"
-                          : "Download and use"}
-                      </button>
-                    </li>
-                  );
-                })}
+                        <button
+                          disabled={busy || props.installing}
+                          onClick={() => void chooseLocal(id, true)}
+                        >
+                          {settings.stt_model === id && stt?.installed
+                            ? "In use"
+                            : "Download and use"}
+                        </button>
+                      </li>
+                    );
+                  },
+                )}
               </ul>
               {props.sttProgress && (
                 <p role="status">
@@ -459,7 +466,8 @@ export function FirstRunSetup(props: Props) {
               )}
               {localReady && (
                 <p role="status">
-                  Ready: {fileName(settings.stt_model)} on this computer.
+                  Ready: {speechModelLabel(settings.stt_model)} on this
+                  computer.
                 </p>
               )}
               {speechServers.length > 0 && (

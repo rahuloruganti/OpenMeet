@@ -10,7 +10,7 @@ flowchart LR
     Backend --> Core[Core and SQLite]
     Backend --> Capture[Windows capture worker]
     Capture --> Files[Local WAV and timing files]
-    Backend --> STT[Local whisper.cpp subprocess]
+    Backend --> STT[Local speech subprocess (whisper.cpp or sherpa-onnx)]
     Files --> STT
     STT --> Core
     Backend -->|Meeting text| LLM[Configured LLM API]
@@ -36,7 +36,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src/components/RewriteSelection.tsx` | Rewrite selected note text: presets and accept-to-replace result. |
 | `src/components/SetupPanel.tsx`                              | Device selection and the automatic-processing default shown before start.                                                                           |
 | `src/components/SettingsPanel.tsx` | Settings left navigation and sections: recording defaults and shortcut capture, AI notes, export and storage, privacy and about. |
-| `src/components/TranscriptionSettings.tsx` | Engine choice cards, local Whisper setup and downloads, speech API assignment, language and vocabulary. |
+| `src/components/TranscriptionSettings.tsx` | Engine choice cards (On this computer, API connection), local Whisper or sherpa-onnx setup and downloads, speech API assignment, language and vocabulary. |
 | `src/components/ProviderSettings.tsx` | One list of saved connections (badged This device / Leaves this device) and the per-task `Assignment`. |
 | `src/components/RecordingControls.tsx`                     | Backend capture state, pause/resume/stop, and audio meters.                                             |
 | `src/lib/api.ts`                                           | TypeScript command bindings, response types, events, and asset URLs.                                    |
@@ -86,7 +86,7 @@ Windows capture opens the explicitly selected microphone and, for the system tra
 
 Control acknowledgements and real-device timing remain stabilization work. Synthetic pause tests do not qualify hardware pause privacy. Process loopback may deliver no frames while no app plays audio. Device packet timestamps jitter by about ±11 ms; the shared timing reader lays packets within 30 ms end to end and keeps larger gaps.
 
-Local transcription runs the downloaded Windows x64 CPU build of whisper.cpp with the selected model, Silero VAD, language, and vocabulary hint. Cloud mode independently selects a compatible endpoint/key/model and uploads frozen PCM16 WAV chunks after confirmation. Chunk boundaries respect pause generations and timing discontinuities. Both modes preserve `You` and `Others` track labels.
+Local transcription runs the downloaded Windows x64 CPU build of whisper.cpp with the selected model, Silero VAD, language, and vocabulary hint. Selecting a sherpa-onnx model (`sherpa:parakeet-v3`, `sherpa:moonshine-base-en`, `sherpa:sense-voice`) runs the pinned sherpa-onnx Windows x64 runtime with that model and its own pinned Silero VAD file. Those paths are wired and unit-tested; real-engine transcription is not yet verified. Cloud mode independently selects a compatible endpoint/key/model and uploads frozen PCM16 WAV chunks after confirmation. Chunk boundaries respect pause generations and timing discontinuities. Both modes preserve `You` and `Others` track labels.
 
 The `audio_timing` module validates bounded timing indexes for local transcription, cloud preparation, and mapped seeking. Local processing rejects incomplete timing before engine setup. Segment starts and ends map to opposite sides of a pause boundary, so a pre-pause segment does not extend through the gap. Damaged indexes produce visible errors instead of file-time guesses.
 

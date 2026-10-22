@@ -19,3 +19,48 @@ export function modelsFor(
   );
   return fits.length > 0 ? fits : models;
 }
+
+const speechNames: Record<string, string> = {
+  "sherpa:parakeet-v3": "Parakeet TDT 0.6B v3 (English + European languages)",
+  "sherpa:moonshine-base-en": "Moonshine base (English, small and fast)",
+  "sherpa:sense-voice":
+    "SenseVoice small (Chinese, Japanese, Korean, Cantonese, English)",
+};
+
+/** Friendly name for a speech model id. Whisper ids get a "Whisper" prefix; a file path
+ * (a Whisper file used in place) shows only its file name. */
+export function speechModelLabel(id: string): string {
+  if (speechNames[id]) return speechNames[id];
+  if (/[\\/]/.test(id)) return id.split(/[\\/]/).pop() ?? id;
+  return `Whisper ${id}`;
+}
+
+/** Parakeet v3 languages that the app also offers as Spoken language choices. */
+const parakeetLanguages = [
+  "cs",
+  "da",
+  "de",
+  "el",
+  "en",
+  "es",
+  "fi",
+  "fr",
+  "hr",
+  "hu",
+  "it",
+  "nl",
+  "pl",
+  "pt",
+  "ro",
+  "ru",
+  "sk",
+  "sv",
+  "uk",
+];
+
+/** Speech models to offer first for a spoken language, best first. */
+export function recommendedSpeechModels(language: string): string[] {
+  return language === "auto" || parakeetLanguages.includes(language)
+    ? ["sherpa:parakeet-v3", "small"]
+    : ["small"];
+}

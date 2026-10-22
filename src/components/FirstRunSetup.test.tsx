@@ -153,3 +153,21 @@ it("finishes with default devices and automatic transcription, or skips with not
   expect(api.saveDefaultDevices).not.toHaveBeenCalled();
   expect(api.saveProcessingDefault).not.toHaveBeenCalled();
 });
+
+it("recommends Parakeet for English or auto, and Whisper small for other languages", async () => {
+  show({ stt_language: "en" });
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  const english = await screen.findByRole("list", {
+    name: "Recommended downloads",
+  });
+  expect(english.textContent).toContain("Parakeet TDT 0.6B v3");
+  expect(english.textContent).toContain("Whisper small");
+  document.body.innerHTML = "";
+  show({ stt_language: "ja" });
+  await userEvent.click(screen.getByRole("button", { name: "Next" }));
+  const japanese = await screen.findByRole("list", {
+    name: "Recommended downloads",
+  });
+  expect(japanese.textContent).not.toContain("Parakeet");
+  expect(japanese.textContent).toContain("Whisper small");
+});

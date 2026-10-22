@@ -7,6 +7,7 @@ import type {
   SttStatus,
 } from "../lib/api";
 import { formatBytes } from "../lib/meeting-labels";
+import { speechModelLabel } from "../lib/models";
 import { Assignment } from "./ProviderSettings";
 
 export type SttDraft = Pick<
@@ -63,7 +64,7 @@ export function TranscriptionSettings(props: {
             onChange={() => props.onSttMode("local")}
           />
           <span>
-            <strong>Local Whisper</strong>
+            <strong>On this computer</strong>
             <span className="muted">Audio stays on this computer.</span>
           </span>
         </label>
@@ -109,10 +110,11 @@ export function TranscriptionSettings(props: {
           <details className="help-details">
             <summary>About model downloads</summary>
             <p>
-              Whisper and Silero models come from huggingface.co; the engine
-              comes from github.com. Downloads are checked against pinned
-              SHA-256 checksums. Switching models keeps existing downloads.
-              Apple Silicon uses the separately pinned local whisper.cpp build.
+              Whisper and Silero models come from huggingface.co. The
+              sherpa-onnx engine and its speech models come from github.com and
+              huggingface.co. Every download is checked against pinned SHA-256
+              checksums. Switching models keeps existing downloads. Apple
+              Silicon uses the separately pinned local whisper.cpp build.
             </p>
           </details>
           <label>
@@ -135,7 +137,7 @@ export function TranscriptionSettings(props: {
                 )}
               {stt?.models.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.id} ({formatBytes(item.size)}
+                  {speechModelLabel(item.id)} ({formatBytes(item.size)}
                   {item.installed
                     ? ", downloaded"
                     : props.found.includes(item.id)

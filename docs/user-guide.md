@@ -7,7 +7,7 @@ Install the prerequisites and run `just setup`, then `just dev`, as described in
 OpenMeet opens **Set up OpenMeet** until you finish or skip it. **Settings → Privacy & about → Run setup again** shows it again. Every step can be skipped.
 
 1. **Welcome** says where data is kept and that recording consent is your responsibility.
-2. **Transcription**: choose **On this computer** or **Online API**. On this computer, OpenMeet lists Whisper `ggml` files it finds in the usual folders (its own, `~/.cache/whisper`, the Hugging Face cache, Ollama and LM Studio folders); **Use** keeps the file where it is, labelled "matches pinned …" when its name and size match a pinned download, otherwise "custom". You can instead download Whisper `base.en-q5_1` (English) or `small` (any language). Speech servers running on this computer, such as speaches or LocalAI, are offered too. Online API asks for a base URL and key, lists the provider's models with speech models first, and has **Show all models** and a field for any model ID.
+2. **Transcription**: choose **On this computer** or **Online API**. On this computer, OpenMeet lists Whisper `ggml` files it finds in the usual folders (its own, `~/.cache/whisper`, the Hugging Face cache, Ollama and LM Studio folders); **Use** keeps the file where it is, labelled "matches pinned …" when its name and size match a pinned download, otherwise "custom". You can instead download Whisper `base.en-q5_1` (English) or `small` (any language), or a sherpa-onnx model (Windows x64): Parakeet TDT 0.6B v3 (English and European languages), Moonshine base (English, small and fast), or SenseVoice small (Chinese, Japanese, Korean, Cantonese, English). Setup recommends Parakeet v3 for English, auto-detect, and European languages, and Whisper small for others. Speech servers running on this computer, such as speaches or LocalAI, are offered too. Online API asks for a base URL and key, lists the provider's models with speech models first, and has **Show all models** and a field for any model ID.
 3. **AI notes**: choose an AI server found on this computer (Ollama, LM Studio, Unsloth Studio, LocalAI), the transcription connection, or another online API, then a chat model. Unsloth Studio needs its `sk-unsloth` key. Without a local server, install Ollama or LM Studio and run setup again.
 4. **Devices**: choose the default microphone and system audio, and whether every recording is transcribed (and summarized, when AI notes are set) when it stops. This is on by default.
 
@@ -88,7 +88,7 @@ Use **Cancel session processing** to stop further work without stopping capture 
 
 ## Transcribe and play audio
 
-1. Open **Settings → Transcription** and choose **Local Whisper**.
+1. Open **Settings → Transcription** and choose **On this computer**.
 2. Choose a speech model, language, and optional vocabulary hint. **Save transcription settings** appears once something differs from the saved values, and the section is marked as having unsaved changes until you save.
 3. Click **Download speech engine and models** if the selected model is missing.
 4. Stop the recording, open its **Transcript** tab, and click **Transcribe audio**.

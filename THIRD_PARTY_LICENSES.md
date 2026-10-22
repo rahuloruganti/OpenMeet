@@ -39,6 +39,9 @@ Exact direct versions and purposes are in [dependencies](docs/dependencies.md). 
 | `wasapi` (Windows only; process-loopback capture of all app audio)                | MIT             | [wasapi-rs](https://github.com/HEnquist/wasapi-rs)                                 |
 | `http-range`, transitive through Tauri playback support                         | MIT               | [http-range](https://github.com/bancek/rust-http-range)                            |
 | `tokio`, transitive runtime dependency                                          | MIT               | [Tokio](https://github.com/tokio-rs/tokio)                                         |
+| `tar` 0.4.46, `filetime` 0.2.29, `xattr` 1.6.1 (archive extraction for the sherpa-onnx bundle) | MIT OR Apache-2.0 | [tar-rs](https://github.com/composefs/tar-rs), [filetime](https://github.com/alexcrichton/filetime), [xattr](https://github.com/Stebalien/xattr) |
+| `bzip2` 0.6.1 (`.tar.bz2` decompression)                                        | MIT OR Apache-2.0 | [bzip2-rs](https://github.com/trifectatechfoundation/bzip2-rs)                     |
+| `libbz2-rs-sys` 0.2.5, transitive under `bzip2`                                 | bzip2-1.0.6       | [libbzip2-rs](https://github.com/trifectatechfoundation/libbzip2-rs)               |
 
 Rust license checks use [deny.toml](deny.toml). An allowed SPDX identifier does not remove the need to include the appropriate notice text. OS runtimes and build tools have their own distribution terms.
 
@@ -49,6 +52,12 @@ Rust license checks use [deny.toml](deny.toml). An allowed SPDX identifier does 
 | whisper.cpp Windows binary, release `b5454`                    | MIT for whisper.cpp; review packaged binary contents before redistribution. | [whisper.cpp](https://github.com/ggml-org/whisper.cpp)                                                                       |
 | Whisper base, small, and large-v3-turbo weights in ggml format | MIT                                                                         | [OpenAI Whisper](https://github.com/openai/whisper), [ggml model distribution](https://huggingface.co/ggerganov/whisper.cpp) |
 | Silero VAD v5.1.2 in ggml format                               | MIT                                                                         | [Silero VAD](https://github.com/snakers4/silero-vad), [ggml distribution](https://huggingface.co/ggml-org/whisper-vad)       |
+| sherpa-onnx v1.13.8 Windows x64 shared runtime (`sherpa-onnx-v1.13.8-win-x64-shared-MT-Release-no-tts`) | Apache-2.0 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) |
+| ONNX Runtime, as bundled inside the sherpa-onnx runtime archive | MIT | [ONNX Runtime](https://github.com/microsoft/onnxruntime). Verify the bundled version and notice text before release. |
+| Silero VAD `silero_vad.onnx` for sherpa-onnx (sherpa-onnx `asr-models` release) | MIT | [Silero VAD](https://github.com/snakers4/silero-vad). Verify before release. |
+| NVIDIA Parakeet TDT 0.6B v3, int8 sherpa-onnx export | CC-BY-4.0 | [NVIDIA model card](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3). Verify upstream attribution against the pinned repo card before release; the v2 repo card was recorded as CC-BY-4.0. |
+| Moonshine base (English), quantized sherpa-onnx export | MIT (verify) | [Useful Sensors Moonshine](https://github.com/usefulsensors/moonshine). The Moonshine tiny English export's LICENSE file is MIT. Verify the base model's license before release. |
+| SenseVoice small (zh/en/ja/ko/yue), int8 sherpa-onnx export | Verify before release | [FunASR SenseVoice](https://github.com/FunAudioLLM/SenseVoice). Expected FunASR Model Open Source License; not confirmed from a local model card. |
 
 No speech engine or model weights are embedded by the application build. They download only on an explicit Settings action. Their pinned URLs, sizes, and checksums live in `src-tauri/src/stt.rs`.
 
