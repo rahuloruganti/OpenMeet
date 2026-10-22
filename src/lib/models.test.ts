@@ -34,6 +34,9 @@ it("names speech models and recommends Parakeet for English and European languag
     "Moonshine base (English, small and fast)",
   );
   expect(speechModelLabel("small")).toBe("Whisper small");
+  expect(speechModelLabel("sherpa-dir:csukuangfj--model")).toBe(
+    "csukuangfj--model (downloaded sherpa-onnx model)",
+  );
   expect(speechModelLabel(String.raw`C:\models\ggml-base.bin`)).toBe(
     "ggml-base.bin",
   );

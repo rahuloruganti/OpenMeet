@@ -469,6 +469,8 @@ pub struct HubListing {
 pub struct DownloadedFolder {
     pub path: String,
     pub files: usize,
+    /// The speech model id Settings uses for this folder (`sherpa-dir:<name>`).
+    pub model_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -652,7 +654,7 @@ fn is_ggml(name: &str) -> bool {
 
 /// Matches one sherpa-onnx layout by the file names in one folder. Each role needs exactly one
 /// file, so an ambiguous folder (say, int8 and full-precision encoders) is not offered.
-fn sherpa_layout<'a>(names: &[&'a str]) -> Option<(SherpaLayout, Vec<&'a str>)> {
+pub(crate) fn sherpa_layout<'a>(names: &[&'a str]) -> Option<(SherpaLayout, Vec<&'a str>)> {
     let only = |matches: &dyn Fn(&str) -> bool| -> Option<&'a str> {
         let mut found = names.iter().copied().filter(|name| matches(name));
         let first = found.next()?;
@@ -1027,6 +1029,7 @@ fn download_folder_at(
         error("Folder publication failed. Existing files were preserved.")
     })?;
     Ok(DownloadedFolder {
+        model_id: stt::custom_model_id(&folder_name(&approved)),
         path: destination.to_string_lossy().into(),
         files: approved.files.len(),
     })

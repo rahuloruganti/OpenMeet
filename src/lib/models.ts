@@ -28,9 +28,12 @@ const speechNames: Record<string, string> = {
 };
 
 /** Friendly name for a speech model id. Whisper ids get a "Whisper" prefix; a file path
- * (a Whisper file used in place) shows only its file name. */
+ * (a Whisper file used in place) shows only its file name; a `sherpa-dir:` id is a
+ * sherpa-onnx folder downloaded from Hugging Face. */
 export function speechModelLabel(id: string): string {
   if (speechNames[id]) return speechNames[id];
+  if (id.startsWith("sherpa-dir:"))
+    return `${id.slice("sherpa-dir:".length)} (downloaded sherpa-onnx model)`;
   if (/[\\/]/.test(id)) return id.split(/[\\/]/).pop() ?? id;
   return `Whisper ${id}`;
 }

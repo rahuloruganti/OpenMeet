@@ -17,8 +17,9 @@ type Props = {
   onImported: () => Promise<void>;
   /** Catalog model ids a scan found on disk (not necessarily imported). */
   onFound?: (ids: string[]) => void;
-  /** Selects a Whisper file in place (an absolute path) in the transcription draft. */
-  onUse?: (path: string) => void;
+  /** Selects a speech model in the transcription draft: a Whisper file path or a downloaded
+   * sherpa-onnx folder id (`sherpa-dir:<name>`). */
+  onUse?: (modelId: string) => void;
 };
 
 const KIND_LABEL: Record<HubKind, string> = {
@@ -42,6 +43,8 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
   const [progress, setProgress] = useState<ModelLibraryProgress | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // The speech model id of the last downloaded sherpa-onnx folder, offered for use.
+  const [downloadedId, setDownloadedId] = useState("");
   const lock = useRef(false);
   const live = useRef(true);
   const transferActive = useRef(false);
@@ -363,9 +366,12 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
               onClick={() =>
                 transfer(async () => {
                   const result = await api.downloadHfFolder(folder);
+                  if (!live.current) return;
+                  setDownloadedId(result.model_id);
+                  await onImported();
                   if (live.current)
                     setNotice(
-                      `Verified sherpa-onnx folder (${result.files} files) saved to ${result.path}. OpenMeet cannot run this folder yet, so it is not selectable as a speech model.`,
+                      `Verified sherpa-onnx folder (${result.files} files) saved to ${result.path}. Use this model, then save transcription settings.`,
                     );
                 })
               }
@@ -395,6 +401,19 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
         </>
       )}
       {notice && <p role="status">{notice}</p>}
+      {downloadedId && onUse && (
+        <button
+          disabled={disabled || busy}
+          onClick={() => {
+            onUse(downloadedId);
+            setNotice(
+              "Downloaded model selected. Save transcription settings to use it.",
+            );
+          }}
+        >
+          Use this model
+        </button>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}

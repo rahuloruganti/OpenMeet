@@ -457,7 +457,10 @@ export const api = {
       file,
     }),
   downloadHfFolder: (folder: HubFolder) =>
-    invoke<{ path: string; files: number }>("download_hf_folder", { folder }),
+    invoke<{ path: string; files: number; model_id: string }>(
+      "download_hf_folder",
+      { folder },
+    ),
   cancelModelDownload: () => invoke<void>("cancel_model_download"),
   /** Apps holding the microphone, reported when the stable list changes while detection is on. */
   onMicrophoneApps: (callback: (apps: MicApp[]) => void) =>

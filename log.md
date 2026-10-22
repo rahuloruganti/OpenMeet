@@ -696,3 +696,9 @@ Step 3b (sherpa-onnx, frontend and docs): the Settings engine card is now "On th
 - Complete sherpa-onnx folders (transducer, Moonshine, single-model layouts) download all-or-nothing into `sherpa/custom/`. Running them is not wired yet.
 - LLM GGUF downloads were removed from the Hub flow. Local GGUF scanning is unchanged.
 - Verified with Rust unit tests and local mock servers only. No real Hugging Face download was tested.
+
+## Downloaded sherpa-onnx folders selectable and runnable (v1 plan step 4 follow-up)
+
+- User request: make sherpa-onnx folders downloaded from Hugging Face selectable as speech models and runnable through the sherpa engine, without a new config option.
+- Outcome: a folder under `sherpa/custom/<name>` is selected as `sherpa-dir:<name>`. The name must be one plain folder name; separators, `..` and leading dots are rejected. The engine flags come from the file layout (transducer, Moonshine, or single-model treated as SenseVoice). Only the shared engine and VAD count as missing. The model library offers "Use this model" after a folder download.
+- Verified with Rust and frontend unit tests only. Not run on real sherpa-onnx transcription; transducer model type is left to the engine's own detection.

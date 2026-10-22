@@ -96,7 +96,7 @@ pub struct Status {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ModelStatus {
-    pub id: &'static str,
+    pub id: String,
     pub size: u64,
     pub installed: bool,
 }
@@ -170,6 +170,11 @@ pub(crate) fn model_files() -> impl Iterator<Item = ModelFile> {
     })
 }
 
+/// The speech model id for a folder downloaded into `sherpa/custom/<name>`.
+pub(crate) fn custom_model_id(name: &str) -> String {
+    format!("{}{name}", sherpa::CUSTOM_PREFIX)
+}
+
 /// Checks transcription settings before they are stored or passed to the engine.
 pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
     if !LANGUAGES.contains(&language) {
@@ -187,6 +192,16 @@ pub fn validate(language: &str, prompt: &str, model_id: &str) -> Result<()> {
     if sherpa::model(model_id).is_some() || model(model_id).is_ok() {
         return Ok(());
     }
+    if model_id.starts_with(sherpa::CUSTOM_PREFIX) {
+        return if sherpa::custom_name(model_id).is_some() {
+            Ok(())
+        } else {
+            Err(AppError::new(
+                "stt_settings",
+                "Choose a downloaded sherpa-onnx folder from the list.",
+            ))
+        };
+    }
     custom_model(model_id).map(|_| ())
 }
 
@@ -198,7 +213,7 @@ pub fn status(root: &Path, model_id: &str) -> Status {
     let mut models: Vec<ModelStatus> = MODELS
         .iter()
         .map(|(id, artifact)| ModelStatus {
-            id,
+            id: id.to_string(),
             size: artifact.size,
             installed: file_present(root, artifact),
         })
@@ -206,13 +221,36 @@ pub fn status(root: &Path, model_id: &str) -> Status {
     models.extend(sherpa::MODELS.iter().map(|model| {
         let parts = sherpa::installed(root, model);
         ModelStatus {
-            id: model.id,
+            id: model.id.to_string(),
             size: sherpa::total_size(model),
             installed: parts.engine && parts.model && parts.vad,
         }
     }));
+    // Downloaded folders are listed only when their files match a runnable layout.
+    models.extend(
+        sherpa::custom_models(root)
+            .into_iter()
+            .map(|(id, size)| ModelStatus {
+                id,
+                size,
+                installed: true,
+            }),
+    );
     if let Some(model) = sherpa::model(model_id) {
         let parts = sherpa::installed(root, model);
+        return Status {
+            engine: parts.engine,
+            model: parts.model,
+            vad: parts.vad,
+            installed: parts.engine && parts.model && parts.vad,
+            missing_bytes: parts.missing_bytes,
+            supported: sherpa::supported(),
+            models,
+            languages: &LANGUAGES,
+        };
+    }
+    if sherpa::custom_name(model_id).is_some() {
+        let parts = sherpa::custom_installed(root, model_id);
         return Status {
             engine: parts.engine,
             model: parts.model,
@@ -338,14 +376,21 @@ fn download_client() -> Result<reqwest::blocking::Client> {
 /// Downloads whatever is missing for the selected model. Each artifact is verified before it
 /// is installed. Other models already on disk are kept.
 pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) -> Result<Status> {
-    if let Some(model) = sherpa::model(model_id) {
+    if sherpa::is_sherpa(model_id) {
         if !sherpa::supported() {
             return Err(stt_error(
                 "The sherpa speech engine is available on Windows x64 only.",
             ));
         }
+        // A downloaded folder needs only the shared engine and VAD; the folder must already exist.
+        let pinned = sherpa::model(model_id);
+        if pinned.is_none() && !sherpa::custom_ready(root, model_id) {
+            return Err(stt_error(
+                "This downloaded speech model is missing or incomplete. Download it again in the model library.",
+            ));
+        }
         let _operation = crate::model_library::ArtifactOperation::begin()?;
-        sherpa::install(root, model, &download_client()?, &mut report)?;
+        sherpa::install(root, pinned, &download_client()?, &mut report)?;
         return Ok(status(root, model_id));
     }
     // A model used in place needs only the engine and VAD.
@@ -695,7 +740,7 @@ pub fn transcribe(
             "The speech engine and the selected model are not installed. Download them in Settings first.",
         ));
     }
-    let sherpa_engine = sherpa::model(&settings.stt_model).is_some();
+    let sherpa_engine = sherpa::is_sherpa(&settings.stt_model);
     run_tracks(
         tracks,
         cancel,
@@ -1044,6 +1089,48 @@ mod tests {
     }
 
     #[test]
+    fn downloaded_sherpa_folders_are_selectable_only_by_plain_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = custom_model_id("team--parakeet");
+        assert_eq!(id, "sherpa-dir:team--parakeet");
+        let folder_dir = dir
+            .path()
+            .join("sherpa")
+            .join("custom")
+            .join("team--parakeet");
+        fs::create_dir_all(&folder_dir).unwrap();
+        for name in ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"] {
+            fs::write(folder_dir.join(name), b"x").unwrap();
+        }
+        validate("en", "", &id).unwrap();
+        for bad in [
+            "sherpa-dir:../team",
+            "sherpa-dir:a/b",
+            "sherpa-dir:..",
+            "sherpa-dir:",
+        ] {
+            assert_eq!(
+                validate("en", "", bad).unwrap_err().code,
+                "stt_settings",
+                "{bad}"
+            );
+            assert!(!status(dir.path(), bad).installed, "{bad}");
+        }
+        let listed = status(dir.path(), &id);
+        assert!(listed.models.iter().any(|m| m.id == id && m.installed));
+        assert!(listed.model && !listed.engine && !listed.vad);
+        assert!(!listed.installed);
+        let missing = "sherpa-dir:team--absent";
+        validate("en", "", missing).unwrap();
+        assert!(!status(dir.path(), missing).model);
+        assert!(!status(dir.path(), missing)
+            .models
+            .iter()
+            .any(|m| m.id == missing));
+        assert!(install(dir.path(), missing, |_| {}).is_err());
+    }
+
+    #[test]
     fn progress_lines_are_parsed_and_noise_is_ignored() {
         assert_eq!(
             parse_progress("whisper_print_progress_callback: progress =  45%\r\n"),
@@ -1072,7 +1159,11 @@ mod tests {
             .unwrap();
         let small = status(dir.path(), "small");
         assert!(!small.model);
-        let installed: Vec<_> = small.models.iter().map(|m| (m.id, m.installed)).collect();
+        let installed: Vec<_> = small
+            .models
+            .iter()
+            .map(|m| (m.id.as_str(), m.installed))
+            .collect();
         // 33 Whisper catalog entries plus the three sherpa models.
         assert_eq!(installed.len(), 36);
         assert!(installed.contains(&("base", true)));

@@ -203,8 +203,10 @@ it("lists only downloadable speech results and saves a complete sherpa-onnx fold
   vi.mocked(api.downloadHfFolder).mockResolvedValue({
     path: "C:/stt/sherpa/custom/public--sherpa",
     files: 1,
+    model_id: "sherpa-dir:public--sherpa",
   });
-  render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
+  const onUse = vi.fn();
+  render(<ModelLibrary disabled={false} onImported={vi.fn()} onUse={onUse} />);
   await userEvent.type(screen.getByLabelText("Hugging Face search"), "speech");
   await userEvent.click(
     screen.getByRole("button", { name: "Search public models" }),
@@ -225,4 +227,6 @@ it("lists only downloadable speech results and saves a complete sherpa-onnx fold
   );
   expect(api.downloadHfFolder).toHaveBeenCalledWith(folder);
   await screen.findByText(/Verified sherpa-onnx folder \(1 files\) saved to/);
+  await userEvent.click(screen.getByRole("button", { name: "Use this model" }));
+  expect(onUse).toHaveBeenCalledWith("sherpa-dir:public--sherpa");
 });

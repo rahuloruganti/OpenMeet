@@ -36,7 +36,8 @@ Each step is its own commit to `main`.
 2. Remove the consent steps.
 3. First-run setup plus model and server detection.
    - 3b. sherpa-onnx engine and its pinned models. Backend and UI done (Parakeet TDT 0.6B v3, Moonshine base, SenseVoice small; Windows x64 only). Real-engine transcription is unverified.
-4. Fix Hugging Face search and download. Code done: speech-only search with Whisper ggml / sherpa-onnx / Other labels; any repository's verified `ggml-*.bin`; complete sherpa-onnx folders saved all-or-nothing under `sherpa/custom/`; GGUF downloads removed. Unverified: no real Hub download was run (mock-server tests only); the Hub search `full=true` siblings and the 15 s per-request transfer timeout are unproven on large files; sherpa folders are saved but not yet runnable by `sherpa.rs`; repos whose `tokens.txt` is not LFS-tracked are not offered.
+4. Fix Hugging Face search and download. Code done: speech-only search with Whisper ggml / sherpa-onnx / Other labels; any repository's verified `ggml-*.bin`; complete sherpa-onnx folders saved all-or-nothing under `sherpa/custom/`; GGUF downloads removed. Unverified: no real Hub download was run (mock-server tests only); the Hub search `full=true` siblings and the 15 s per-request transfer timeout are unproven on large files; repos whose `tokens.txt` is not LFS-tracked are not offered.
+   - Follow-up (done in code): downloaded sherpa-onnx folders are selectable as `sherpa-dir:<name>` and run through the sherpa engine (layout-based flags; a single-model folder is treated as SenseVoice). Unit-tested for listing, id validation, args per layout and missing folders. Unverified: no real sherpa-onnx transcription with a downloaded folder has run, and transducer model-type detection is left to the engine.
 5. Rename, new shortcut defaults, NSIS installer.
 6. Docs, third-party license notices, release notes → `v0.9.0`, built locally.
 

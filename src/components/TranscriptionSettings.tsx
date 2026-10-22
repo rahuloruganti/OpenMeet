@@ -131,8 +131,10 @@ export function TranscriptionSettings(props: {
                   (item) => item.id === props.sttDraft.stt_model,
                 ) && (
                   <option value={props.sttDraft.stt_model}>
-                    {props.sttDraft.stt_model.split(/[\\/]/).pop()} (used where
-                    it is on this computer)
+                    {speechModelLabel(props.sttDraft.stt_model)}
+                    {props.sttDraft.stt_model.startsWith("sherpa-dir:")
+                      ? ""
+                      : " (used where it is on this computer)"}
                   </option>
                 )}
               {stt?.models.map((item) => (

@@ -3,7 +3,7 @@
 use super::{download, stt_error, Artifact, Block, Progress};
 use crate::{
     domain::{Result, Segment, SegmentTiming, Settings},
-    model_library::check_cancel,
+    model_library::{check_cancel, sherpa_layout, SherpaLayout},
 };
 use std::{
     ffi::OsString,
@@ -13,6 +13,9 @@ use std::{
 };
 
 pub(super) const PREFIX: &str = "sherpa:";
+/// Downloaded folders in `sherpa/custom/<name>`, used in place: `sherpa-dir:<name>`.
+pub(super) const CUSTOM_PREFIX: &str = "sherpa-dir:";
+const CUSTOM: &str = "custom";
 const MARKER: &str = ".release";
 const EXE: &str = "sherpa-onnx-vad-with-offline-asr.exe";
 
@@ -45,6 +48,20 @@ fn flag(name: &str, value: impl AsRef<std::ffi::OsStr>) -> OsString {
     let mut arg = OsString::from(format!("--{name}="));
     arg.push(value);
     arg
+}
+
+fn sense_voice_args(model: PathBuf, tokens: PathBuf, language: &str) -> Vec<OsString> {
+    let language = if ["zh", "en", "ja", "ko", "yue"].contains(&language) {
+        language
+    } else {
+        "auto"
+    };
+    vec![
+        flag("sense-voice-model", model),
+        flag("tokens", tokens),
+        flag("sense-voice-language", language),
+        flag("sense-voice-use-itn", "1"),
+    ]
 }
 
 pub(super) const MODELS: [Model; 3] = [
@@ -97,17 +114,11 @@ pub(super) const MODELS: [Model; 3] = [
         },
         files: &["model.int8.onnx", "tokens.txt"],
         args: |dir, language| {
-            let language = if ["zh", "en", "ja", "ko", "yue"].contains(&language) {
-                language
-            } else {
-                "auto"
-            };
-            vec![
-                flag("sense-voice-model", dir.join("model.int8.onnx")),
-                flag("tokens", dir.join("tokens.txt")),
-                flag("sense-voice-language", language),
-                flag("sense-voice-use-itn", "1"),
-            ]
+            sense_voice_args(
+                dir.join("model.int8.onnx"),
+                dir.join("tokens.txt"),
+                language,
+            )
         },
     },
 ];
@@ -148,10 +159,14 @@ pub(super) struct Installed {
     pub(super) missing_bytes: u64,
 }
 
+fn vad_ready(root: &Path) -> bool {
+    fs::metadata(folder(root).join(VAD.file)).is_ok_and(|m| m.len() == VAD.size)
+}
+
 pub(super) fn installed(root: &Path, model: &Model) -> Installed {
     let engine = complete(&engine_dir(root), &ENGINE, &ENGINE_FILES);
     let model_ready = complete(&model_dir(root, model), &model.archive, model.files);
-    let vad = fs::metadata(folder(root).join(VAD.file)).is_ok_and(|m| m.len() == VAD.size);
+    let vad = vad_ready(root);
     let missing_bytes = [
         (engine, ENGINE.size),
         (model_ready, model.archive.size),
@@ -167,6 +182,122 @@ pub(super) fn installed(root: &Path, model: &Model) -> Installed {
         vad,
         missing_bytes,
     }
+}
+
+/// The folder name after `sherpa-dir:`, if it is one plain name: no separators, no `..`, no
+/// leading dot (so staging folders are never selectable).
+pub(super) fn custom_name(id: &str) -> Option<&str> {
+    let name = id.strip_prefix(CUSTOM_PREFIX)?;
+    let plain = !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains("..")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    plain.then_some(name)
+}
+
+/// Whether sherpa handles this id: a pinned model or a downloaded folder.
+pub(super) fn is_sherpa(id: &str) -> bool {
+    model(id).is_some() || custom_name(id).is_some()
+}
+
+fn custom_dir(root: &Path, id: &str) -> Option<PathBuf> {
+    custom_name(id).map(|name| folder(root).join(CUSTOM).join(name))
+}
+
+/// Regular files directly inside a folder, with their sizes.
+fn folder_files(dir: &Path) -> Vec<(String, u64)> {
+    fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let metadata = entry.metadata().ok()?;
+            let name = entry.file_name().into_string().ok()?;
+            metadata.is_file().then_some((name, metadata.len()))
+        })
+        .collect()
+}
+
+/// Bytes in a downloaded folder whose files match one sherpa layout, or None if the folder is
+/// missing or does not match any layout the download rules accept.
+fn custom_size(files: &[(String, u64)]) -> Option<u64> {
+    let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+    sherpa_layout(&names)?;
+    Some(files.iter().map(|(_, size)| size).sum())
+}
+
+/// Engine flags for a downloaded folder, built from its file names with the same layout rules
+/// that offered it. Only a single-model folder is passed as SenseVoice (`--sense-voice-model`);
+/// its compatibility is not checked beyond that, so another single-file model fails in the engine.
+pub(super) fn custom_args(
+    dir: &Path,
+    files: &[(String, u64)],
+    language: &str,
+) -> Option<Vec<OsString>> {
+    let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+    let (layout, needed) = sherpa_layout(&names)?;
+    Some(match (layout, needed.as_slice()) {
+        // Transducer model type is left to the engine's own model metadata detection.
+        (SherpaLayout::Transducer, [encoder, decoder, joiner, tokens]) => vec![
+            flag("encoder", dir.join(encoder)),
+            flag("decoder", dir.join(decoder)),
+            flag("joiner", dir.join(joiner)),
+            flag("tokens", dir.join(tokens)),
+        ],
+        (SherpaLayout::Moonshine, [encoder, decoder, tokens]) => vec![
+            flag("moonshine-encoder", dir.join(encoder)),
+            flag("moonshine-merged-decoder", dir.join(decoder)),
+            flag("tokens", dir.join(tokens)),
+        ],
+        (SherpaLayout::SingleModel, [model, tokens]) => {
+            sense_voice_args(dir.join(model), dir.join(tokens), language)
+        }
+        _ => return None,
+    })
+}
+
+/// Installed-state of a downloaded folder. Only the shared engine and VAD count as missing
+/// bytes; the folder itself was downloaded already.
+pub(super) fn custom_installed(root: &Path, id: &str) -> Installed {
+    let engine = complete(&engine_dir(root), &ENGINE, &ENGINE_FILES);
+    let vad = vad_ready(root);
+    let model_ready =
+        custom_dir(root, id).is_some_and(|dir| custom_size(&folder_files(&dir)).is_some());
+    let missing_bytes = [(engine, ENGINE.size), (vad, VAD.size)]
+        .iter()
+        .filter(|(have, _)| !have)
+        .map(|(_, size)| size)
+        .sum();
+    Installed {
+        engine,
+        model: model_ready,
+        vad,
+        missing_bytes,
+    }
+}
+
+/// Whether a downloaded folder selected by id is present and matches a runnable layout.
+pub(super) fn custom_ready(root: &Path, id: &str) -> bool {
+    custom_dir(root, id).is_some_and(|dir| custom_size(&folder_files(&dir)).is_some())
+}
+
+/// Status rows for downloaded folders that match a runnable layout: (id, bytes).
+pub(super) fn custom_models(root: &Path) -> Vec<(String, u64)> {
+    let Ok(entries) = fs::read_dir(folder(root).join(CUSTOM)) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(String, u64)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let id = format!("{CUSTOM_PREFIX}{}", entry.file_name().into_string().ok()?);
+            custom_name(&id)?;
+            Some((id, custom_size(&folder_files(&entry.path()))?))
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// Copies the wanted files out of a `.tar.bz2` by basename, so archive paths never choose
@@ -210,25 +341,27 @@ fn extract(archive: &Path, destination: &Path, wanted: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Downloads and verifies what the model still needs, then unpacks archives into place.
+/// Downloads and verifies what is still missing, then unpacks archives into place. A downloaded
+/// folder (`model` is None) needs only the shared engine and VAD.
 pub(super) fn install(
     root: &Path,
-    model: &Model,
+    model: Option<&Model>,
     client: &reqwest::blocking::Client,
     report: &mut impl FnMut(Progress),
 ) -> Result<()> {
     fs::create_dir_all(folder(root))?;
-    let before = installed(root, model);
-    let unpack = [
-        (before.engine, &ENGINE, engine_dir(root), &ENGINE_FILES[..]),
-        (
-            before.model,
+    let engine_ready = complete(&engine_dir(root), &ENGINE, &ENGINE_FILES);
+    let mut unpack = vec![(engine_ready, &ENGINE, engine_dir(root), &ENGINE_FILES[..])];
+    if let Some(model) = model {
+        let model_ready = complete(&model_dir(root, model), &model.archive, model.files);
+        unpack.push((
+            model_ready,
             &model.archive,
             model_dir(root, model),
             model.files,
-        ),
-    ];
-    if !before.vad {
+        ));
+    }
+    if !vad_ready(root) {
         check_cancel()?;
         download(client, &VAD, &folder(root).join(VAD.file), |downloaded| {
             report(Progress {
@@ -315,8 +448,16 @@ pub(super) fn command(
     output_base: &Path,
     cancel: &AtomicBool,
 ) -> Result<std::process::Command> {
-    let model = model(&settings.stt_model)
-        .ok_or_else(|| stt_error("Choose one of the listed speech models."))?;
+    let model_args = match model(&settings.stt_model) {
+        Some(model) => (model.args)(&model_dir(root, model), &settings.stt_language),
+        None => {
+            let dir = custom_dir(root, &settings.stt_model)
+                .ok_or_else(|| stt_error("Choose one of the listed speech models."))?;
+            custom_args(&dir, &folder_files(&dir), &settings.stt_language).ok_or_else(|| {
+                stt_error("This downloaded speech model is incomplete. Download it again.")
+            })?
+        }
+    };
     let wav = output_base.with_extension("wav");
     mono_pcm16(Path::new(&track.path), &wav, cancel)?;
     let threads = std::thread::available_parallelism()
@@ -326,10 +467,7 @@ pub(super) fn command(
     command
         .current_dir(engine_dir(root))
         .arg(flag("silero-vad-model", folder(root).join(VAD.file)))
-        .args((model.args)(
-            &model_dir(root, model),
-            &settings.stt_language,
-        ))
+        .args(model_args)
         .arg(flag("num-threads", threads.to_string()))
         .arg(&wav);
     Ok(command)
@@ -469,5 +607,118 @@ mod tests {
         assert_eq!(fs::read(out.join("onnxruntime.dll")).unwrap(), b"bin");
         assert!(out.join("tokens.txt").is_file() && !out.join("0.wav").exists());
         assert!(extract(&archive, &dir.path().join("x"), &["missing.onnx"]).is_err());
+    }
+
+    fn sized(names: &[&str]) -> Vec<(String, u64)> {
+        names.iter().map(|name| (name.to_string(), 1)).collect()
+    }
+
+    #[test]
+    fn downloaded_folders_are_listed_and_run_with_their_own_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let id = format!("{CUSTOM_PREFIX}team--parakeet");
+        let folder_dir = folder(root).join(CUSTOM).join("team--parakeet");
+        fs::create_dir_all(&folder_dir).unwrap();
+        let names = [
+            "encoder.int8.onnx",
+            "decoder.int8.onnx",
+            "joiner.int8.onnx",
+            "tokens.txt",
+            "openmeet-source.json",
+        ];
+        for name in names {
+            fs::write(folder_dir.join(name), b"x").unwrap();
+        }
+        assert_eq!(custom_models(root), vec![(id.clone(), 5)]);
+        let parts = custom_installed(root, &id);
+        assert!(parts.model && !parts.engine && !parts.vad);
+        assert_eq!(parts.missing_bytes, ENGINE.size + VAD.size);
+        assert!(custom_ready(root, &id));
+        let args = custom_args(&folder_dir, &folder_files(&folder_dir), "en").unwrap();
+        assert_eq!(
+            args,
+            vec![
+                flag("encoder", folder_dir.join("encoder.int8.onnx")),
+                flag("decoder", folder_dir.join("decoder.int8.onnx")),
+                flag("joiner", folder_dir.join("joiner.int8.onnx")),
+                flag("tokens", folder_dir.join("tokens.txt")),
+            ]
+        );
+        // A folder that matches no layout is neither listed nor counted as installed.
+        let broken = folder(root).join(CUSTOM).join("team--broken");
+        fs::create_dir_all(&broken).unwrap();
+        fs::write(broken.join("tokens.txt"), b"x").unwrap();
+        assert_eq!(custom_models(root).len(), 1);
+        assert!(!custom_ready(root, &format!("{CUSTOM_PREFIX}team--broken")));
+        // A folder that was never downloaded is not installed and takes no listing.
+        let absent = format!("{CUSTOM_PREFIX}team--absent");
+        assert!(!custom_installed(root, &absent).model);
+        assert!(!custom_ready(root, &absent));
+    }
+
+    #[test]
+    fn layouts_map_to_the_flags_their_pinned_models_use() {
+        let dir = Path::new("models");
+        let moonshine = custom_args(
+            dir,
+            &sized(&[
+                "encoder_model.ort",
+                "decoder_model_merged.ort",
+                "tokens.txt",
+            ]),
+            "en",
+        )
+        .unwrap();
+        assert_eq!(
+            moonshine,
+            vec![
+                flag("moonshine-encoder", dir.join("encoder_model.ort")),
+                flag(
+                    "moonshine-merged-decoder",
+                    dir.join("decoder_model_merged.ort")
+                ),
+                flag("tokens", dir.join("tokens.txt")),
+            ]
+        );
+        // SingleModel is treated as SenseVoice, with the same language rules as the pinned one.
+        let single = custom_args(dir, &sized(&["model.int8.onnx", "tokens.txt"]), "de").unwrap();
+        assert_eq!(
+            single,
+            vec![
+                flag("sense-voice-model", dir.join("model.int8.onnx")),
+                flag("tokens", dir.join("tokens.txt")),
+                flag("sense-voice-language", "auto"),
+                flag("sense-voice-use-itn", "1"),
+            ]
+        );
+        assert!(custom_args(
+            dir,
+            &sized(&["encoder.onnx", "decoder.onnx", "tokens.txt"]),
+            "en"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn custom_ids_cannot_name_paths_outside_the_custom_folder() {
+        for good in ["sherpa-dir:team--model_v1.2", "sherpa-dir:a-b"] {
+            assert!(custom_name(good).is_some(), "{good}");
+        }
+        for bad in [
+            "sherpa-dir:",
+            "sherpa-dir:.",
+            "sherpa-dir:..",
+            "sherpa-dir:../x",
+            "sherpa-dir:a/b",
+            r"sherpa-dir:a\b",
+            "sherpa-dir:C:x",
+            "sherpa-dir:.staging-1",
+            "sherpa-dir:a..b",
+            "sherpa-dir:a b",
+            "sherpa:parakeet-v3",
+        ] {
+            assert!(custom_name(bad).is_none(), "{bad}");
+        }
     }
 }
