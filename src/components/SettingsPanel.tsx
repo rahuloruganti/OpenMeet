@@ -349,7 +349,7 @@ export function SettingsPanel(props: Props) {
               <ShortcutField
                 label="Pause / resume shortcut"
                 value={props.shortcut}
-                placeholder="Control+Shift+F9"
+                placeholder="CommandOrControl+Shift+F9"
                 disabled={disabled}
                 onChange={props.onShortcut}
               />

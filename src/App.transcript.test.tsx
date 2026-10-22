@@ -67,7 +67,7 @@ describe("transcript and audio", () => {
         ...sample,
         tracks: [
           {
-            kind: "microphone",
+            kind: "mic",
             path: "fictional-mic.wav",
             device_name: "Fictional microphone",
             sample_rate: 48000,
@@ -85,7 +85,9 @@ describe("transcript and audio", () => {
         .closest("details");
       expect(details).toBeTruthy();
       expect(details?.open).toBe(false);
-      expect(details?.textContent).toContain("fictional-mic.wav");
+      expect(details?.textContent).toContain(
+        "You (microphone): fictional-mic.wav",
+      );
       await userEvent.click(screen.getByText("Audio track details"));
       expect(details?.open).toBe(true);
       expect(screen.getByText(/No transcript/)).toBeTruthy();

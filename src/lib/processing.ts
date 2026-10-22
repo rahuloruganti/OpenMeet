@@ -13,6 +13,24 @@ export const modeLabels: Record<ProcessingMode, string> = {
   both: "Live and final transcription",
 };
 const modes = Object.keys(modeLabels) as ProcessingMode[];
+
+/** Workflow stages and session states; unknown values fall back to their words. */
+const stageLabels: Partial<Record<string, string>> = {
+  prepared: "Ready",
+  live: "Recording",
+  finalizing_audio: "Finishing audio",
+  transcribing: "Transcribing",
+  awaiting_notes: "Waiting for your notes to save",
+  summarizing: "Writing summary",
+  completed: "Done",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  interrupted: "Interrupted",
+  needs_attention: "stopped because settings changed; retry when ready",
+};
+export const stageLabel = (stage: string) =>
+  stageLabels[stage] ?? stage.replaceAll("_", " ");
+
 /** Built-in summary templates in picker order. */
 export const builtinTemplates: { id: SummaryTemplate; label: string }[] = [
   { id: "general-v1", label: "General" },

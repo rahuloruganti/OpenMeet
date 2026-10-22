@@ -283,6 +283,29 @@ describe("speech engine and automatic processing", () => {
     ).toBeNull();
   });
 
+  it.each([
+    [1, "request"],
+    [3, "requests"],
+  ])(
+    "shows %i %s with readable sizes and a stage label",
+    async (requests, noun) => {
+      const snapshot = sessionSnapshot(5, "finalizing_audio");
+      if (!snapshot.workflow) throw new Error("Missing workflow");
+      snapshot.workflow.requests_used = requests;
+      snapshot.workflow.upload_bytes_used = 2_200_000;
+      snapshot.workflow.text_bytes_used = 4096;
+      vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
+      await ready();
+      await screen.findByRole("region", { name: "Session processing" });
+      expect(screen.getByText("Stage: Finishing audio")).toBeTruthy();
+      expect(
+        screen.getByText(
+          `Used ${requests} ${noun}, 2.1 MB of audio and 4 KB of text.`,
+        ),
+      ).toBeTruthy();
+    },
+  );
+
   it("acknowledges a tray stop without flushing another meeting's editor", async () => {
     const other = {
       ...sample,

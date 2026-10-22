@@ -734,3 +734,9 @@ Outcome: `src/App.test.tsx` is replaced by ten feature files (`src/App.recording
 User request: after a user-perspective review, fix the stale "after you confirm" privacy copy, the "Recording: recording" label, the silent rename discard on blur, the autofocused discard-and-quit button, the first-run default that turned on automatic processing, and the `12.3s` transcript times.
 
 Outcome: the privacy popover says text is sent "when you use them"; the recording bar shows "Recording"; blurring the title field saves it (Escape still cancels); with unsaved edits the quit dialog focuses "Keep working"; first-run setup leaves "transcribe every recording" unchecked; transcript segment times use the `[mm:ss]` format. Tests and the user guide are updated. Typecheck, lint, format check, tests (174) and build pass locally; no recordings, downloads or Rust checks were run.
+
+## Plain-language processing panel and empty states
+
+User request: "fix next" after the first six review fixes.
+
+Outcome: the processing panel shows readable stage names and human sizes ("Used 3 requests, 2.1 MB of audio and 4 KB of text") instead of raw byte counts; the empty workspace has clearer copy; the pause-shortcut placeholder matches the saved format; Audio track details use the "You (microphone)" / "Others (system audio)" labels. Typecheck, lint, format check, tests (176) and build pass locally; no recordings, downloads or Rust checks were run.

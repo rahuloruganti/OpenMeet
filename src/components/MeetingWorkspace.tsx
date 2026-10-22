@@ -282,20 +282,22 @@ export function MeetingWorkspace(props: Props) {
           <div className="empty-mark" aria-hidden="true">
             ✎
           </div>
-          <span className="eyebrow">A little room to think</span>
+          <span className="eyebrow">OpenMeet</span>
           {props.firstRun ? (
             <>
               <h2>Start your first note</h2>
               <p>
-                Choose New note or New recording in the sidebar. Your notes stay
-                on this device.
+                Use New note to write, or New recording to capture a
+                meeting&apos;s audio. Everything stays on this device unless you
+                choose an online service.
               </p>
             </>
           ) : (
             <>
-              <h2>Your meeting notes, on your device.</h2>
+              <h2>Select a meeting</h2>
               <p>
-                Select a meeting to edit notes and export a Markdown snapshot.
+                Pick a meeting from the sidebar to read or edit its notes,
+                transcript and summary.
               </p>
             </>
           )}
@@ -974,7 +976,7 @@ export function MeetingWorkspace(props: Props) {
               <summary>Audio track details</summary>
               {selected.tracks.map((track) => (
                 <p key={track.kind}>
-                  {track.kind}: {track.path}
+                  {trackLabels[track.kind] ?? track.kind}: {track.path}
                   {track.size_bytes === null
                     ? " (file missing)"
                     : ` (${formatBytes(track.size_bytes)})`}

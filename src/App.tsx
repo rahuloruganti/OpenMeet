@@ -35,8 +35,10 @@ import {
   processingDefault,
   forgetLegacyProcessing,
   legacyProcessing,
+  stageLabel,
   type ProcessingChoice,
 } from "./lib/processing";
+import { formatBytes } from "./lib/meeting-labels";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import {
   SettingsPanel,
@@ -873,12 +875,7 @@ export function App() {
                 <h3>Automatic processing</h3>
                 <p role="status">
                   Stage:{" "}
-                  {(processing.workflow?.stage ?? processing.state) ===
-                  "needs_attention"
-                    ? "stopped because settings changed; retry when ready"
-                    : (
-                        processing.workflow?.stage ?? processing.state
-                      ).replaceAll("_", " ")}
+                  {stageLabel(processing.workflow?.stage ?? processing.state)}
                 </p>
                 {processing.workflow?.error && (
                   <p role="alert">{processing.workflow.error}</p>
@@ -891,9 +888,13 @@ export function App() {
                 )}
                 {processing.workflow && (
                   <p>
-                    Used {processing.workflow.requests_used} requests,{" "}
-                    {processing.workflow.upload_bytes_used} audio bytes and{" "}
-                    {processing.workflow.text_bytes_used} UTF-8 text bytes.
+                    Used {processing.workflow.requests_used}{" "}
+                    {processing.workflow.requests_used === 1
+                      ? "request"
+                      : "requests"}
+                    , {formatBytes(processing.workflow.upload_bytes_used)} of
+                    audio and {formatBytes(processing.workflow.text_bytes_used)}{" "}
+                    of text.
                   </p>
                 )}
                 {awaitingNotes(processing) && (
