@@ -722,3 +722,9 @@ Outcome: removed `docs/consent.md`, `phase-3-consent-verification.md`, `unfinish
 User request: remove leftover consent-era naming and duplicate code without changing behaviour.
 
 Outcome: the processing stage/state `consent_required` is now `needs_attention` in Rust, TypeScript, and SQLite. Migration 029 rebuilds `processing_sessions` and `processing_runs` to change the CHECK constraint and converts existing rows, keeping notes and transcripts. The error code `session_consent_changed` is now `session_plan_changed`. The `consent-card` CSS class is now `dialog-card`. Obsolete consent unit tests were removed, and the phase-three synthetic workflow tests moved to `workflow_tests.rs`. `download_client` is shared from `model_library.rs`, and `stt` loads its catalog and sherpa modules normally. Stale per-action consent comments were rewritten. GGUF scanning stays because the model library still shows it. Checks passed locally; no recordings or downloads were run.
+
+## Split the App test file by feature
+
+User request: split the 3,500-line `src/App.test.tsx` into feature test files, keeping the shared setup in one module and leaving assertions unchanged.
+
+Outcome: `src/App.test.tsx` is replaced by ten feature files (`src/App.recording`, `drafts`, `layout`, `library`, `export`, `processing`, `summary`, `transcript`, `settings`, `providers` `.test.tsx`). Shared fixtures and helpers are in `src/test/app-harness.tsx`; the API mock factory is in `src/test/api-mock.ts` and is imported before `./App` in each file, which vi.mock hoisting requires. Test bodies moved unchanged and no exact duplicates were found, so the count stays at 172. Typecheck, lint, format check, tests and build pass locally; nothing was committed and no recordings or network calls were used.
