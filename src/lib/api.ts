@@ -65,7 +65,7 @@ export type SessionProcessingPlan = {
 export type SessionProcessingSnapshot = {
   meeting_id: string;
   revision: number;
-  state: "prepared" | "consent_required" | "cancelled" | "interrupted";
+  state: "prepared" | "needs_attention" | "cancelled" | "interrupted";
   plan: SessionProcessingPlan;
   started_at: number;
   authorized_until: number;
@@ -84,7 +84,7 @@ export type SessionWorkflow = {
     | "failed"
     | "cancelled"
     | "interrupted"
-    | "consent_required";
+    | "needs_attention";
   error: string | null;
   live_incomplete: boolean;
   transcript_done: boolean;

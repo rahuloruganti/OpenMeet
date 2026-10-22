@@ -484,7 +484,7 @@ export function MeetingWorkspace(props: Props) {
       />
       {deleting && !props.recordingThis && (
         <div
-          className="consent-card delete-card"
+          className="dialog-card delete-card"
           role="group"
           aria-label={
             deleting === "meeting"
@@ -543,7 +543,7 @@ export function MeetingWorkspace(props: Props) {
       </div>
       {recoverable && (
         <div
-          className="consent-card"
+          className="dialog-card"
           role="group"
           aria-label="Interrupted recording"
         >
@@ -844,7 +844,7 @@ export function MeetingWorkspace(props: Props) {
           )}
           {deletingThread && activeThread && (
             <div
-              className="consent-card"
+              className="dialog-card"
               role="group"
               aria-label="Confirm deleting question thread"
             >

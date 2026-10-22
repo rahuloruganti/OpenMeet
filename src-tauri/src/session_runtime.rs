@@ -83,7 +83,7 @@ fn run(
         }
         if snapshot.state != State::Prepared && !workflow.stage.terminal() {
             let _ = core(app, |core| {
-                core.fail_processing(id, &workflow.run_id, "session_consent_changed")
+                core.fail_processing(id, &workflow.run_id, "session_plan_changed")
             });
             notify(app, id);
             return;

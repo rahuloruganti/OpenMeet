@@ -2031,7 +2031,7 @@ describe("automatic session processing", () => {
     "completed",
     "cancelled",
     "interrupted",
-    "consent_required",
+    "needs_attention",
   ] satisfies NonNullable<SessionProcessingSnapshot["workflow"]>["stage"][])(
     "does not acknowledge or wait for notes in terminal stage %s",
     async (stage) => {

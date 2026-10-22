@@ -1,5 +1,5 @@
 //! Recipes: saved question prompts that fill the question box. Nothing is sent when one is chosen;
-//! the normal question review and consent still apply.
+//! the normal question send rules still apply.
 use crate::{
     domain::{AppError, Recipe, Result, Settings},
     storage::{Core, Named},

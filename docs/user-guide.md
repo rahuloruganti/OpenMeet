@@ -41,12 +41,12 @@ Sample and simulation creation has been removed. Those labels describe preserved
 
 ## Record
 
-Capture is not yet hardware-qualified. On Apple Silicon macOS 14.2 or newer, choose an output-only device. A device that also has an input is refused. Permission denial has not been tested. Apple Silicon transcription requires the separately pinned local whisper.cpp build; its integrated workflow remains unqualified. Read [recording consent](consent.md) and inform participants before starting. System audio can include unrelated applications.
+Capture is not yet hardware-qualified. On Apple Silicon macOS 14.2 or newer, choose an output-only device. A device that also has an input is refused. Permission denial has not been tested. Apple Silicon transcription requires the separately pinned local whisper.cpp build; its integrated workflow remains unqualified. Inform participants and follow the recording-consent laws that apply before starting. System audio can include unrelated applications.
 
 1. Click **New recording** and enter a title.
 2. Choose the microphone and system-output device you intend to capture.
 3. Choose the default **Automatic processing** under **Settings → AI notes** (**Recording only** by default; it is saved in the database). The New recording panel shows it, and every new recording runs it.
-4. Click **Start recording**. Telling participants and following recording-consent law is your responsibility; see [Recording consent](consent.md).
+4. Click **Start recording**. Telling participants and following recording-consent law is your responsibility; see [privacy](privacy.md).
 5. Use the microphone and system meters to check for incoming signals.
 6. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.
 

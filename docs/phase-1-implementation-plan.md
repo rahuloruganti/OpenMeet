@@ -28,7 +28,7 @@ Automatic meeting detection; live STT; diarization and named speakers; Parakeet;
 
 Phase 1 supports retrying failed processing. Rich regeneration with a different model/template belongs to Phase 2, although summary history is built now.
 
-**Current provider decision:** Users supply an OpenAI-compatible HTTPS base URL, API key, and model in Settings, independently for LLM and cloud STT. This supersedes Merge-specific/environment-import setup. Local Whisper remains the transcription default. Keys pass transiently through password input/IPC to the OS keychain, never into persistent frontend state. Text and audio submissions each require per-action consent. See [provider architecture](architecture.md#provider-requests) and the [provider-settings design](provider-settings-plan.md); live provider qualification remains open.
+**Current provider decision:** Users supply an OpenAI-compatible HTTPS base URL, API key, and model in Settings, independently for LLM and cloud STT. This supersedes Merge-specific/environment-import setup. Local Whisper remains the transcription default. Keys pass transiently through password input/IPC to the OS keychain, never into persistent frontend state. Text and audio submissions each require per-action consent. See [provider architecture](architecture.md#provider-requests) and the superseded provider-settings design (removed; see [v1 release plan](v1-release-plan.md)); live provider qualification remains open.
 
 ## 2. Prerequisites and decisions
 

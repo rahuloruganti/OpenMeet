@@ -1146,7 +1146,6 @@ mod tests {
     fn frontend_device_payload_preserves_both_ids() {
         let request = serde_json::json!({
             "title": "Untitled meeting",
-            "consent": true,
             "devices": { "microphoneId": "mic", "outputId": "out" }
         });
         let options: CaptureOptions = serde_json::from_value(request["devices"].clone()).unwrap();

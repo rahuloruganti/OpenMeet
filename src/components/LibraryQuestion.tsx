@@ -322,7 +322,7 @@ export function LibraryQuestion(props: Props) {
       )}
       {deletingAnswer && answered && (
         <div
-          className="consent-card"
+          className="dialog-card"
           role="group"
           aria-label="Confirm deleting saved answer"
         >

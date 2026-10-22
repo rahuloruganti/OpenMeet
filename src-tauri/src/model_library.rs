@@ -820,22 +820,14 @@ fn parse_files(metadata: HubMetadata, repo: &str, requested: Option<&str>) -> Re
     Ok(listing)
 }
 
-fn download_client() -> Result<Client> {
+/// Blocking client for model and engine downloads: a 15 second connect timeout, the shared
+/// transfer timeout, and at most five redirects, each accepted only when `allowed` approves it.
+pub(crate) fn download_client(allowed: fn(&Url) -> bool) -> Result<Client> {
     Client::builder()
-        .connect_timeout(Duration::from_secs(5))
+        .connect_timeout(Duration::from_secs(15))
         .timeout(TRANSFER_TIMEOUT)
-        .redirect(Policy::custom(|attempt| {
-            let url = attempt.url();
-            let allowed = url.scheme() == "https"
-                && url.port_or_known_default() == Some(443)
-                && url.username().is_empty()
-                && url.password().is_none()
-                && url.host_str().is_some_and(|host| {
-                    host == "huggingface.co"
-                        || host.ends_with(".huggingface.co")
-                        || host.ends_with(".hf.co")
-                });
-            if allowed && attempt.previous().len() < 5 {
+        .redirect(Policy::custom(move |attempt| {
+            if allowed(attempt.url()) && attempt.previous().len() < 5 {
                 attempt.follow()
             } else {
                 attempt.stop()
@@ -845,12 +837,31 @@ fn download_client() -> Result<Client> {
         .map_err(|_| error("Cannot prepare the model download."))
 }
 
+/// Hugging Face hosts over HTTPS with no credentials and the default port.
+fn huggingface_url(url: &Url) -> bool {
+    url.scheme() == "https"
+        && url.port_or_known_default() == Some(443)
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.host_str().is_some_and(|host| {
+            host == "huggingface.co"
+                || host.ends_with(".huggingface.co")
+                || host.ends_with(".hf.co")
+        })
+}
+
 pub fn download(
     root: &Path,
     proposed: HubFile,
     mut progress: impl FnMut(Progress),
 ) -> Result<DownloadedModel> {
-    download_at(root, proposed, &mut progress, HUB, &download_client()?)
+    download_at(
+        root,
+        proposed,
+        &mut progress,
+        HUB,
+        &download_client(huggingface_url)?,
+    )
 }
 
 fn download_at(
@@ -937,7 +948,13 @@ pub fn download_folder(
     proposed: HubFolder,
     mut progress: impl FnMut(Progress),
 ) -> Result<DownloadedFolder> {
-    download_folder_at(root, proposed, &mut progress, HUB, &download_client()?)
+    download_folder_at(
+        root,
+        proposed,
+        &mut progress,
+        HUB,
+        &download_client(huggingface_url)?,
+    )
 }
 
 fn folder_name(folder: &HubFolder) -> String {

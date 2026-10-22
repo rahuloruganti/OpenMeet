@@ -541,7 +541,7 @@ pre {
 .content-tabs,
 .document-canvas,
 .empty-workspace,
-.content-area > .consent-card {
+.content-area > .dialog-card {
   max-width: 880px;
   margin-right: auto;
   margin-left: auto;
@@ -1165,7 +1165,7 @@ textarea.notes-editor {
   border: 1px solid #d3dfd8;
   border-radius: 9px;
 }
-.consent-card {
+.dialog-card {
   margin: 12px 0 24px;
   padding: 18px;
   border: 1px solid var(--control-border);
@@ -1173,7 +1173,7 @@ textarea.notes-editor {
   background: #f8faf9;
   font-size: 0.8125rem;
 }
-.consent-card ul {
+.dialog-card ul {
   margin: 8px 0 12px;
   padding-left: 20px;
 }

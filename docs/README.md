@@ -11,7 +11,8 @@ OpenMeet is a desktop meeting notetaker built with Tauri, Rust, React, and TypeS
 | Understand which features are ready             | [Implementation status](implementation-status.md)                                     |
 | See the agreed v1 release scope and order       | [v1 release plan](v1-release-plan.md)                                                 |
 | Understand data storage and network requests    | [Privacy](privacy.md)                                                                 |
-| Prepare for a recording                         | [Recording consent](consent.md)                                                       |
+| Prepare for a recording                         | [Privacy](privacy.md) and [user guide](user-guide.md)                                 |
+| See what shipped in 0.9.0                       | [Release notes 0.9.0](release-notes-0.9.0.md)                                         |
 | Understand the code and data flow               | [Architecture](architecture.md)                                                       |
 | Find dependencies, versions, and their purposes | [Dependencies](dependencies.md)                                                       |
 | Develop, test, and build the app                | [Development guide](development.md)                                                   |
@@ -25,11 +26,11 @@ Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries
 
 ## Plans and evidence
 
-[The Phase 3 execution plan](phase-3-execution-plan.md) sequences live transcription, final processing, recovery, and qualification for issues #19 through #25.
+[The v1 release plan](v1-release-plan.md) is the agreed public Windows release scope and order; it supersedes the earlier planning documents, which were removed.
 
-[Phase 3 workflow verification](phase-3-workflow-verification.md) describes the integrated automatic workflow and its open qualification gates. [Phase 3 consent verification](phase-3-consent-verification.md) preserves the first backend increment as historical evidence.
+[The Phase 1 implementation plan](phase-1-implementation-plan.md) holds the original Phase 1 designs and acceptance checklist. [The Phase 3 execution plan](phase-3-execution-plan.md) sequences live transcription, final processing, recovery, and qualification for issues #19 through #25.
 
-[The implementation checklist](implementation-checklist.md) separates missing features from qualification work and lists the suggested delivery order. [The Granola/Otter comparison](granola-otter-comparison.md) records its source and product evidence.
+[Phase 3 workflow verification](phase-3-workflow-verification.md) describes the integrated automatic workflow and its open qualification gates.
 
 [Phase 2 settings verification](phase-2-settings-verification.md) records saved connections, model discovery/downloads, executed checks, and partial native qualification for issues #14–#18.
 
@@ -37,8 +38,6 @@ Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries
 
 [Phase 1 foundation verification](phase-1-foundation-verification.md) records the current fixes, executed tests, and open hardware/provider/native UI gates for issues #7–#13.
 
-[Implementation status](implementation-status.md) records implemented behavior, executed checks, and open gates. [The feature plan](feature-plan.md) tracks milestone acceptance criteria. [The phase plan](phase-1-implementation-plan.md) and [original development plan](../Open-source%20meeting%20notetaker%20development%20plan%20and%20tool%20inventory.md) contain proposed designs, including dependencies that were never added.
-
-[The provider-settings plan](provider-settings-plan.md) records the design for personal API keys, local/cloud speech-model selection, and removal of shipped demo features. [Implementation status](implementation-status.md) records executed checks and remaining qualification gates.
+[Implementation status](implementation-status.md) records implemented behavior, executed checks, and open gates. The [original development plan](../Open-source%20meeting%20notetaker%20development%20plan%20and%20tool%20inventory.md) contains proposed designs, including dependencies that were never added.
 
 For exact behavior, use the source and tests. For dependency versions, use [package.json](../package.json), [Cargo.toml](../src-tauri/Cargo.toml), and both lockfiles. [log.md](../log.md) preserves the work history; it is not the current feature reference.

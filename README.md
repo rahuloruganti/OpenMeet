@@ -156,7 +156,7 @@ Audio and timing files are under `audio/<meeting ID>/` in the same directory. Fi
 
 There is no telemetry or automatic cloud processing. Downloads and model discovery require explicit actions. Text and cloud audio are sent only when you trigger a summary, question, rewrite, or transcription, or choose automatic processing in Settings. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm. Exported snapshots remain untouched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
 
-Full capture qualification, long-run drift measurements, macOS support, and installers remain open. See [implementation status](docs/implementation-status.md), [feature plan](docs/feature-plan.md), [privacy](docs/privacy.md), and [consent](docs/consent.md).
+Full capture qualification, long-run drift measurements, macOS support, and installers remain open. See [implementation status](docs/implementation-status.md), [v1 release plan](docs/v1-release-plan.md), and [privacy](docs/privacy.md).
 
 ## License
 

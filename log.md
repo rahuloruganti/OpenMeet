@@ -710,3 +710,15 @@ Step 3b (sherpa-onnx, frontend and docs): the Settings engine card is now "On th
 - Checks and any installer build results are recorded in the step 5 report, not here.
 
 Installed the v0.9.0 NSIS installer per user on the dev PC and launched it: first-run setup, sherpa models listed, Parakeet recommended. Shortcut defaults not checkable on an existing profile. No recording.
+
+## Removed superseded planning documents
+
+User request: delete the planning documents superseded by `docs/v1-release-plan.md` and fix every reference to them.
+
+Outcome: removed `docs/consent.md`, `phase-3-consent-verification.md`, `unfinished-work-audit.md`, `execution-plan.md`, `feature-plan.md`, `granola-otter-comparison.md`, `granola-style-redesign-plan.md`, `settings-revamp-plan.md`, `provider-settings-plan.md`, `local-model-settings-design.md` and `implementation-checklist.md`. Repointed or removed dangling links in `README.md`, `docs/README.md`, `docs/privacy.md`, `docs/user-guide.md`, `docs/implementation-status.md` and `docs/phase-3-workflow-verification.md`; the index now lists the v1 plan, release notes and remaining records. Documentation-only change; no builds, tests or commits were run.
+
+## Cleanup of consent-era names and duplicated code
+
+User request: remove leftover consent-era naming and duplicate code without changing behaviour.
+
+Outcome: the processing stage/state `consent_required` is now `needs_attention` in Rust, TypeScript, and SQLite. Migration 029 rebuilds `processing_sessions` and `processing_runs` to change the CHECK constraint and converts existing rows, keeping notes and transcripts. The error code `session_consent_changed` is now `session_plan_changed`. The `consent-card` CSS class is now `dialog-card`. Obsolete consent unit tests were removed, and the phase-three synthetic workflow tests moved to `workflow_tests.rs`. `download_client` is shared from `model_library.rs`, and `stt` loads its catalog and sherpa modules normally. Stale per-action consent comments were rewritten. GGUF scanning stays because the model library still shows it. Checks passed locally; no recordings or downloads were run.

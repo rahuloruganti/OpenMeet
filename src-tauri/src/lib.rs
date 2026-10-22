@@ -10,8 +10,6 @@ mod live_audio;
 mod llm;
 mod meeting_detection;
 mod model_library;
-#[cfg(test)]
-mod phase_three_tests;
 mod processing_control;
 mod providers;
 mod question_threads;
@@ -23,6 +21,8 @@ mod session_workflow;
 mod storage;
 mod stt;
 mod transcript_edits;
+#[cfg(test)]
+mod workflow_tests;
 
 use domain::*;
 use std::{
@@ -143,7 +143,7 @@ fn tray_action(
 }
 
 /// Global shortcuts can pause/resume or stop. There is deliberately no start shortcut:
-/// starting always goes through setup and consent.
+/// starting always goes through recording setup.
 fn shortcut_action(app: &AppHandle, pressed: Shortcut) {
     tray_action(app, move |core| {
         let stop = core.settings()?.stop_shortcut;

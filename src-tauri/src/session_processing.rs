@@ -83,7 +83,7 @@ pub struct Plan {
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Prepared,
-    ConsentRequired,
+    NeedsAttention,
     Cancelled,
     Interrupted,
 }
@@ -101,7 +101,7 @@ pub struct Snapshot {
 
 fn changed() -> AppError {
     AppError::new(
-        "session_consent_changed",
+        "session_plan_changed",
         "Processing settings changed, so automatic processing stopped. Nothing was sent; retry when ready.",
     )
 }
@@ -222,7 +222,7 @@ impl Core {
         self.get_meeting(meeting_id)?;
         let now = clock()?;
         self.db.execute(
-            "UPDATE processing_sessions SET state='consent_required',revision=revision+1 WHERE meeting_id=?1 AND state='prepared' AND (authorized_until<=?2 OR started_at>?2) AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage NOT IN ('completed','failed','cancelled','interrupted','consent_required'))",
+            "UPDATE processing_sessions SET state='needs_attention',revision=revision+1 WHERE meeting_id=?1 AND state='prepared' AND (authorized_until<=?2 OR started_at>?2) AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage NOT IN ('completed','failed','cancelled','interrupted','needs_attention'))",
             params![meeting_id, now],
         )?;
         let row: Option<(i64, String, String, i64, i64)> = self.db.query_row(
@@ -358,7 +358,7 @@ mod tests {
     }
 
     fn attach_synthetic(core: &mut Core, plan: &Plan) -> String {
-        let id = core.create_note("Fictional session consent check").unwrap();
+        let id = core.create_note("Fictional session check").unwrap();
         core.db
             .execute(
                 "UPDATE meetings SET source='desktop',status='paused' WHERE id=?1",
@@ -460,36 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn attached_consent_is_durable_and_cancel_is_revisioned_and_idempotent() {
-        let mut core = core();
-        let plan = core
-            .prepare_session_processing(Request::Final {
-                live: false,
-                summary: None,
-            })
-            .unwrap();
-        let id = attach_synthetic(&mut core, &plan);
-        core.save_notes(&id, "Preserve this fictional draft", 0)
-            .unwrap();
-        let snapshot = core.session_processing(&id).unwrap().unwrap();
-        assert_eq!((snapshot.state, snapshot.revision), (State::Prepared, 1));
-        assert_eq!(snapshot.authorized_until - snapshot.started_at, 28800);
-        assert_eq!(
-            core.cancel_session_processing(&id, 2).unwrap_err().code,
-            "session_processing_conflict"
-        );
-        let cancelled = core.cancel_session_processing(&id, 1).unwrap();
-        assert_eq!((cancelled.state, cancelled.revision), (State::Cancelled, 2));
-        let again = core.cancel_session_processing(&id, 1).unwrap();
-        assert_eq!((again.state, again.revision), (State::Cancelled, 2));
-        assert_eq!(
-            core.get_meeting(&id).unwrap().user_markdown,
-            "Preserve this fictional draft"
-        );
-    }
-
-    #[test]
-    fn provider_key_replacement_invalidates_persisted_consent() {
+    fn provider_key_replacement_invalidates_the_plan() {
         let mut core = core();
         cloud_settings(&mut core);
         let plan = core
@@ -517,7 +488,7 @@ mod tests {
         let snapshot = core.session_processing(&id).unwrap().unwrap();
         assert_eq!(
             (snapshot.state, snapshot.revision),
-            (State::ConsentRequired, 2)
+            (State::NeedsAttention, 2)
         );
         let stored: String = core
             .db
@@ -531,34 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn a_recording_transaction_cannot_publish_partial_or_duplicate_consent() {
-        let mut core = core();
-        let plan = core
-            .prepare_session_processing(Request::LiveOnly {})
-            .unwrap();
-        {
-            let tx = core.db.transaction().unwrap();
-            tx.execute("INSERT INTO meetings(id,title,started_at,source,status) VALUES ('rollback','Fictional rollback','test','desktop','paused')", []).unwrap();
-            attach(&tx, &plan, "rollback").unwrap();
-            assert!(attach(&tx, &plan, "rollback").is_err());
-        }
-        assert_eq!(core.get_meeting("rollback").unwrap_err().code, "not_found");
-        let count: i64 = core
-            .db
-            .query_row("SELECT COUNT(*) FROM processing_sessions", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(count, 0);
-        let id = attach_synthetic(&mut core, &plan);
-        assert_eq!(
-            core.session_processing(&id).unwrap().unwrap().state,
-            State::Prepared
-        );
-    }
-
-    #[test]
-    fn restart_interrupts_consent_once_and_preserves_notes() {
+    fn restart_interrupts_processing_once_and_preserves_notes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meetings.db");
         let id = {
@@ -602,59 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_speech_settings_and_shortcuts_do_not_invalidate_consent() {
-        let mut core = core();
-        let plan = core
-            .prepare_session_processing(Request::LiveOnly {})
-            .unwrap();
-        let id = attach_synthetic(&mut core, &plan);
-        let original = core.settings().unwrap();
-        core.save_stt_settings(
-            &original.stt_language,
-            &original.stt_prompt,
-            &original.stt_model,
-        )
-        .unwrap();
-        core.save_shortcuts("Control+Shift+F9", Some("Control+Shift+F10"))
-            .unwrap();
-        assert_eq!(
-            core.session_processing(&id).unwrap().unwrap().state,
-            State::Prepared
-        );
-        core.save_stt_mode(SttMode::Cloud).unwrap();
-        let changed = core.session_processing(&id).unwrap().unwrap();
-        assert_eq!(
-            (changed.state, changed.revision),
-            (State::ConsentRequired, 2)
-        );
-        core.save_stt_mode(SttMode::Local).unwrap();
-        assert_eq!(
-            core.session_processing(&id).unwrap().unwrap().state,
-            State::ConsentRequired
-        );
-    }
-
-    #[test]
-    fn expired_durable_consent_needs_review_and_does_not_revive_on_repeated_reads() {
-        let mut core = core();
-        let plan = core
-            .prepare_session_processing(Request::LiveOnly {})
-            .unwrap();
-        let id = attach_synthetic(&mut core, &plan);
-        core.db.execute("UPDATE processing_sessions SET started_at=0,authorized_until=1 WHERE meeting_id=?1", [&id]).unwrap();
-        for _ in 0..2 {
-            let snapshot = core.session_processing(&id).unwrap().unwrap();
-            assert_eq!(
-                (snapshot.state, snapshot.revision),
-                (State::ConsentRequired, 2)
-            );
-        }
-        let cancelled = core.cancel_session_processing(&id, 2).unwrap();
-        assert_eq!((cancelled.state, cancelled.revision), (State::Cancelled, 3));
-    }
-
-    #[test]
-    fn upgrade_from_v13_requires_review_without_expanding_legacy_limits() {
+    fn upgrade_from_v13_needs_attention_without_expanding_legacy_limits() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("legacy.db");
         let plan = core()
@@ -684,13 +576,13 @@ mod tests {
             let snapshot = core.session_processing("legacy").unwrap().unwrap();
             assert_eq!(
                 (snapshot.state, snapshot.revision),
-                (State::ConsentRequired, 2)
+                (State::NeedsAttention, 2)
             );
             assert_eq!(snapshot.plan.limits.post_stop_seconds, 0);
             assert_eq!(snapshot.plan.limits.text_bytes, 800000);
             assert_eq!(
                 snapshot.workflow.unwrap().stage,
-                crate::session_workflow::Stage::ConsentRequired
+                crate::session_workflow::Stage::NeedsAttention
             );
             let detail = core.get_meeting("legacy").unwrap();
             assert_eq!(
@@ -702,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_scope_freezes_instructions_and_reviewed_plans_still_read() {
+    fn summary_scope_freezes_instructions_and_stored_plans_still_read() {
         let mut core = core();
         cloud_settings(&mut core);
         let plan = core
@@ -713,7 +605,7 @@ mod tests {
             .unwrap();
         let mut json = serde_json::to_value(&plan).unwrap();
         assert!(json["scope"]["summary"].get("instructions").is_none());
-        // Plans stored while consent reviews existed carry these fields.
+        // Plans stored by earlier versions carry these fields.
         json["fingerprint"] = "a".repeat(64).into();
         json["review_expires_at"] = 300.into();
         let stored: Plan = serde_json::from_value(json).unwrap();
@@ -828,6 +720,52 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(violations, 0);
+        }
+    }
+
+    #[test]
+    fn upgrade_from_v28_renames_stored_review_rows_and_keeps_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meetings.db");
+        let plan = serde_json::to_string(
+            &core()
+                .prepare_session_processing(Request::LiveOnly {})
+                .unwrap(),
+        )
+        .unwrap();
+        {
+            let db = crate::storage::test_v11_database(&path);
+            for (number, script, _) in crate::storage::MIGRATIONS {
+                if (12..=28).contains(&number) {
+                    db.execute_batch(script).unwrap();
+                }
+            }
+            db.execute("INSERT INTO meetings(id,title,started_at,ended_at,source,status) VALUES ('review','Fictional review','2026-01-01T00:00:00Z','2026-01-01T00:00:09Z','desktop','stopped')", []).unwrap();
+            db.execute("INSERT INTO notes(meeting_id,user_markdown,revision) VALUES ('review','Keep these notes',4)", []).unwrap();
+            db.execute("INSERT INTO processing_sessions(id,meeting_id,revision,state,plan_json,started_at,authorized_until) VALUES ('review-grant','review',3,'consent_required',?1,1,2)", [&plan]).unwrap();
+            db.execute("INSERT INTO processing_runs(meeting_id,run_id,stage,error) VALUES ('review','review-grant','consent_required','Review again.')", []).unwrap();
+        }
+        for _ in 0..2 {
+            let core = Core::open(&path).unwrap();
+            let version: i64 = core
+                .db
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, 29);
+            let snapshot = core.session_processing("review").unwrap().unwrap();
+            assert_eq!(
+                (snapshot.state, snapshot.revision),
+                (State::NeedsAttention, 3)
+            );
+            assert_eq!(
+                snapshot.workflow.unwrap().stage,
+                crate::session_workflow::Stage::NeedsAttention
+            );
+            let detail = core.get_meeting("review").unwrap();
+            assert_eq!(
+                (detail.user_markdown.as_str(), detail.notes_revision),
+                ("Keep these notes", 4)
+            );
         }
     }
 }

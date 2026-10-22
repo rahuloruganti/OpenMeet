@@ -59,7 +59,7 @@ Focused checks can be repeated without recording devices or an external provider
 ```sh
 corepack pnpm build
 corepack pnpm test
-cargo test --locked --manifest-path src-tauri/Cargo.toml phase_three_tests::
+cargo test --locked --manifest-path src-tauri/Cargo.toml workflow_tests::
 cargo test --locked --manifest-path src-tauri/Cargo.toml processing_control::
 cargo test --locked --manifest-path src-tauri/Cargo.toml live_audio::
 ```
@@ -70,4 +70,4 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml live_audio::
 
 Real-machine distinct audible tracks, queued/in-flight pause privacy, device loss/switch, sleep/wake, overflow/disk failures, and 60-minute relative drift below 100 ms remain separate gates. Earlier short recording permission does not authorize a new test. macOS and real-engine live inference remain unqualified. Real providers require separately authorized concrete content, destinations, and request limits. Provider qualification and the unexpected-exit investigation remain deferred as previously requested.
 
-See [architecture](architecture.md), [user guide](user-guide.md), [privacy](privacy.md), and the [historical consent report](phase-3-consent-verification.md).
+See [architecture](architecture.md), [user guide](user-guide.md), [privacy](privacy.md).

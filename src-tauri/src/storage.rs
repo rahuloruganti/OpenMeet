@@ -10,7 +10,7 @@ use uuid::Uuid;
 // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
 // (only switchable outside a transaction) and must pass foreign_key_check before commit.
 #[rustfmt::skip]
-const MIGRATIONS: [(i64, &str, bool); 27] = [
+pub(crate) const MIGRATIONS: [(i64, &str, bool); 28] = [
     (2, include_str!("../migrations/002_capture.sql"), true),
     (3, include_str!("../migrations/003_local_model.sql"), false),
     (4, include_str!("../migrations/004_merge_model.sql"), false),
@@ -38,6 +38,7 @@ const MIGRATIONS: [(i64, &str, bool); 27] = [
     (26, include_str!("../migrations/026_meeting_detection.sql"), false),
     (27, include_str!("../migrations/027_detection_app_names.sql"), false),
     (28, include_str!("../migrations/028_setup_done.sql"), false),
+    (29, include_str!("../migrations/029_needs_attention.sql"), false),
 ];
 /// Highest `user_version` this build understands: the last migration's.
 const LATEST_SCHEMA: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
@@ -1194,7 +1195,7 @@ impl Core {
         self.meeting_tags(id)
     }
 
-    /// Only preselects the recording review; each recording still needs its own consent.
+    /// Only preselects the recording setup; users remain responsible for recording-consent law.
     /// The summary is a built-in template, because automatic sessions take only those.
     pub fn save_processing_default(
         &mut self,

@@ -336,7 +336,7 @@ fn request_budgets_are_atomic_and_retry_rejects_stale_identity_and_changed_horiz
         .unwrap();
     assert_eq!(
         core.session_processing(&id).unwrap().unwrap().state,
-        State::ConsentRequired
+        State::NeedsAttention
     );
     assert!(core
         .check_processing(&id, &workflow.run_id, Stage::FinalizingAudio, false)

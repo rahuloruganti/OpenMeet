@@ -20,7 +20,7 @@ pub enum Stage {
     Failed,
     Cancelled,
     Interrupted,
-    ConsentRequired,
+    NeedsAttention,
 }
 impl Stage {
     pub fn as_str(self) -> &'static str {
@@ -34,7 +34,7 @@ impl Stage {
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
             Self::Interrupted => "interrupted",
-            Self::ConsentRequired => "consent_required",
+            Self::NeedsAttention => "needs_attention",
         }
     }
     pub fn terminal(self) -> bool {
@@ -44,7 +44,7 @@ impl Stage {
                 | Self::Failed
                 | Self::Cancelled
                 | Self::Interrupted
-                | Self::ConsentRequired
+                | Self::NeedsAttention
         )
     }
 }
@@ -401,7 +401,7 @@ impl Core {
 
     pub(crate) fn fail_processing(&mut self, id: &str, run: &str, code: &str) -> Result<()> {
         let (stage,message)=match code {
-            "processing_cancelled"|"session_consent_changed" => ("consent_required","Processing settings changed. Retry when ready."),
+            "processing_cancelled"|"session_plan_changed" => ("needs_attention","Processing settings changed. Retry when ready."),
             "processing_budget" => ("failed","The session processing limit was reached. Retry when ready."),
             "notes_conflict" => ("failed","Notes or transcript changed. Previous output is unchanged; retry when ready."),
             _ => ("failed","Processing failed. Original audio, notes, and earlier output are preserved. Retrying is safe; a previous request may already have been billed."),
@@ -465,8 +465,8 @@ impl Core {
     pub(crate) fn interrupt_processing(&mut self) -> Result<()> {
         self.quitting = true;
         let tx = self.db.transaction()?;
-        tx.execute("UPDATE processing_sessions SET state='interrupted',revision=revision+1 WHERE state='prepared' AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage NOT IN ('completed','failed','cancelled','interrupted','consent_required'))",[])?;
-        tx.execute("UPDATE processing_runs SET stage='interrupted',error='Processing stopped when the app closed. Retry when ready.' WHERE stage NOT IN ('completed','failed','cancelled','interrupted','consent_required')",[])?;
+        tx.execute("UPDATE processing_sessions SET state='interrupted',revision=revision+1 WHERE state='prepared' AND meeting_id IN (SELECT meeting_id FROM processing_runs WHERE stage NOT IN ('completed','failed','cancelled','interrupted','needs_attention'))",[])?;
+        tx.execute("UPDATE processing_runs SET stage='interrupted',error='Processing stopped when the app closed. Retry when ready.' WHERE stage NOT IN ('completed','failed','cancelled','interrupted','needs_attention')",[])?;
         tx.commit()?;
         Ok(())
     }
@@ -496,7 +496,7 @@ pub(crate) fn stopped(tx: &Transaction<'_>, id: &str, success: bool, quitting: b
             Some("Audio finalization failed. Recover complete audio before retrying processing."),
         )
     } else if now > started + i64::from(plan.limits.duration_seconds) {
-        ("consent_required",Some("The recording is longer than automatic processing allows. Use Transcribe audio on the Transcript tab instead."))
+        ("needs_attention",Some("The recording is longer than automatic processing allows. Use Transcribe audio on the Transcript tab instead."))
     } else if matches!(plan.scope, Scope::LiveOnly { .. }) {
         ("completed", None)
     } else {

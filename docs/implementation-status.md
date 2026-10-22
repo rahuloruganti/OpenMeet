@@ -10,7 +10,7 @@ The UI defaults to recording only. The default chosen in Settings (live-only, fi
 
 Rust now owns the accepted-sample live handoff, a shared operation owner for manual and automatic processing, durable workflow stages, cancellation, per-request accounting, atomic final transcript replacement, and saved-note acknowledgement before automatic summaries. The UI displays at most 200 provisional segments, preserves note drafts during notifications, and builds a fresh plan for retry. Restart interrupts unfinished work without replaying requests. Schema-v13 prepared plans are invalidated after migration.
 
-Implementation is present for issues #19 through #24. Their complete acceptance gates and combined qualification under #25 are not declared passed. Integrated Windows checks passed with 121 frontend tests and 125 Rust tests; two native tests remained ignored. Formatting, typecheck, lint, frontend build, all-target Clippy, Cargo build, and standalone Tauri debug build passed. See [workflow implementation and qualification](phase-3-workflow-verification.md), [the execution plan](phase-3-execution-plan.md), and [the historical consent increment](phase-3-consent-verification.md). No hardware or external provider result is inferred from the implementation.
+Implementation is present for issues #19 through #24. Their complete acceptance gates and combined qualification under #25 are not declared passed. Integrated Windows checks passed with 121 frontend tests and 125 Rust tests; two native tests remained ignored. Formatting, typecheck, lint, frontend build, all-target Clippy, Cargo build, and standalone Tauri debug build passed. See [workflow implementation and qualification](phase-3-workflow-verification.md) and [the execution plan](phase-3-execution-plan.md). No hardware or external provider result is inferred from the implementation.
 
 No platform has passed the full two-track capture gate. An earlier Windows attempt was blocked by a missing microphone. A later authorized two-second smoke test was recorded as passing in [log.md](../log.md), but it did not establish audible-content quality, pause privacy, device-failure behavior, or long-run drift. No recording was made during the recent UI and installation work.
 
@@ -44,7 +44,7 @@ Cloud API, Local, and General tabs, reusable connections, schema-v12 migration, 
 
 ## Feature batch (2026-10-12)
 
-The feature-plan M0–M5 implementation added summary history/templates/copy, rename, meters and stop shortcut, note-only entries, guarded deletion, FTS5 search, playback/seek, timestamps, speech settings/progress/cancel, chunked summaries, questions, export options, and interrupted-audio recovery. Deferred items include webview key entry, compression, encryption, local LLMs, and M6 release work. No milestone's complete native, hardware, and provider exit gate is claimed.
+The M0–M5 feature batch added summary history/templates/copy, rename, meters and stop shortcut, note-only entries, guarded deletion, FTS5 search, playback/seek, timestamps, speech settings/progress/cancel, chunked summaries, questions, export options, and interrupted-audio recovery. Deferred items include webview key entry, compression, encryption, local LLMs, and M6 release work. No milestone's complete native, hardware, and provider exit gate is claimed.
 
 The subsequent UI polish added a quieter workspace, dedicated settings/setup layouts, a first-export folder flow, dismissible notices, preserved drafts while panels are open, and playback failure handling. Installation documentation and just commands were added afterward.
 
@@ -119,4 +119,4 @@ Run a 60-minute two-track test with markers near both ends, recording device/dri
 - Complete transitive license notices and model attribution before distribution.
 - Deliver installers, signing/notarization, and release validation. Bundling remains disabled; no updater is implemented.
 
-Compression, encryption, managed local LLMs, diarization, bots, automatic meeting detection, and SharePoint integration are not delivered. See [feature-plan.md](feature-plan.md) for acceptance criteria and deferred scope.
+Compression, encryption, managed local LLMs, diarization, bots, automatic meeting detection, and SharePoint integration are not delivered. The [v1 release plan](v1-release-plan.md) sets the current scope and order.

@@ -34,9 +34,9 @@ const ENGINE: Artifact = Artifact {
     sha256: "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb",
     size: 8_928_640,
 };
-include!("stt_models.rs");
-#[path = "sherpa.rs"]
 mod sherpa;
+mod stt_models;
+use stt_models::MODELS;
 /// Whisper language codes offered in Settings; anything else is rejected before it reaches `-l`.
 pub const LANGUAGES: [&str; 35] = [
     "auto", "ar", "ca", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hr", "hu",
@@ -358,19 +358,8 @@ fn extract_engine(zip_path: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn download_client() -> Result<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.url().scheme() == "https" && attempt.previous().len() < 5 {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(crate::model_library::TRANSFER_TIMEOUT)
-        .build()
-        .map_err(|_| stt_error("Could not prepare the download client."))
+fn https_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
 }
 
 /// Downloads whatever is missing for the selected model. Each artifact is verified before it
@@ -390,7 +379,12 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
             ));
         }
         let _operation = crate::model_library::ArtifactOperation::begin()?;
-        sherpa::install(root, pinned, &download_client()?, &mut report)?;
+        sherpa::install(
+            root,
+            pinned,
+            &crate::model_library::download_client(https_url)?,
+            &mut report,
+        )?;
         return Ok(status(root, model_id));
     }
     // A model used in place needs only the engine and VAD.
@@ -404,7 +398,7 @@ pub fn install(root: &Path, model_id: &str, mut report: impl FnMut(Progress)) ->
         ));
     }
     let _operation = crate::model_library::ArtifactOperation::begin()?;
-    let client = download_client()?;
+    let client = crate::model_library::download_client(https_url)?;
     fs::create_dir_all(models_dir(root))?;
     let before = status(root, model_id);
     let pending = [

@@ -874,7 +874,7 @@ export function App() {
                 <p role="status">
                   Stage:{" "}
                   {(processing.workflow?.stage ?? processing.state) ===
-                  "consent_required"
+                  "needs_attention"
                     ? "stopped because settings changed; retry when ready"
                     : (
                         processing.workflow?.stage ?? processing.state
@@ -916,7 +916,7 @@ export function App() {
                   "cancelled",
                   "interrupted",
                   "failed",
-                  "consent_required",
+                  "needs_attention",
                 ].includes(processing.workflow?.stage ?? processing.state) && (
                   <button
                     disabled={busy}
@@ -938,7 +938,7 @@ export function App() {
                   "failed",
                   "cancelled",
                   "interrupted",
-                  "consent_required",
+                  "needs_attention",
                 ].includes(processing.workflow?.stage ?? processing.state) && (
                   <button
                     disabled={busy || active}
