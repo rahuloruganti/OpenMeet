@@ -13,7 +13,7 @@ The app-data root uses the identifier `dev.openmeet.preview`:
 
 | Path within the root                 | Contents                                                                                |
 | ------------------------------------ | --------------------------------------------------------------------------------------- |
-| `meetings.db`                        | Meeting metadata, notes, transcripts, summaries, settings, full-text search copies, processing grants, request digests/counters, provisional text, and frozen saved-note snapshots. |
+| `meetings.db`                        | Meeting metadata, notes, transcripts, summaries, settings, full-text search copies, processing plans, request digests/counters, provisional text, and frozen saved-note snapshots. |
 | `meetings.db-wal`, `meetings.db-shm` | SQLite sidecar files that can exist while WAL mode is active.                           |
 | `audio/<meeting ID>/`                | Microphone/system WAV files, timing indexes, and any repaired copies.                   |
 | `stt/engine/`                        | Downloaded local speech engine and its release marker.                                  |

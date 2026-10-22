@@ -154,7 +154,7 @@ The local database is `meetings.db` in:
 
 Audio and timing files are under `audio/<meeting ID>/` in the same directory. Files are **unencrypted**. OS backups and cloud-synced export folders may copy them off-device.
 
-There is no telemetry or automatic cloud processing. Downloads, model discovery, text submission, and cloud audio upload each require explicit actions. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm. Exported snapshots remain untouched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
+There is no telemetry or automatic cloud processing. Downloads and model discovery require explicit actions. Text and cloud audio are sent only when you trigger a summary, question, rewrite, or transcription, or choose automatic processing in Settings. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm. Exported snapshots remain untouched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
 
 Full capture qualification, long-run drift measurements, macOS support, and installers remain open. See [implementation status](docs/implementation-status.md), [feature plan](docs/feature-plan.md), [privacy](docs/privacy.md), and [consent](docs/consent.md).
 

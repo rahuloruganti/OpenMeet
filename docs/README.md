@@ -21,11 +21,11 @@ OpenMeet is a desktop meeting notetaker built with Tauri, Rust, React, and TypeS
 
 Windows x64 has capture and local transcription implementations. Apple Silicon macOS 14.2 or newer has a capture preview only. Full capture qualification remains open, and macOS permission denial has not been tested. Apple Silicon transcription requires a separately pinned local whisper.cpp build and remains unqualified. Builds and mocked tests do not establish recording reliability, transcript accuracy, or live summary quality.
 
-Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries/questions send text only after confirmation. Local Whisper keeps audio on-device; optional cloud STT requires a manual upload confirmation or an explicitly reviewed session scope. Recording-only is the default. See [privacy](privacy.md).
+Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries, questions, and rewrites send text when you trigger them or when automatic processing is chosen in Settings. Local Whisper keeps audio on-device; cloud STT uploads audio on the same triggers and is labelled Leaves this device. Recording-only is the default. See [privacy](privacy.md).
 
 ## Plans and evidence
 
-[The Phase 3 execution plan](phase-3-execution-plan.md) sequences session consent, live transcription, final processing, recovery, and qualification for issues #19 through #25.
+[The Phase 3 execution plan](phase-3-execution-plan.md) sequences live transcription, final processing, recovery, and qualification for issues #19 through #25.
 
 [Phase 3 workflow verification](phase-3-workflow-verification.md) describes the integrated automatic workflow and its open qualification gates. [Phase 3 consent verification](phase-3-consent-verification.md) preserves the first backend increment as historical evidence.
 

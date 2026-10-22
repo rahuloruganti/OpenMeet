@@ -101,7 +101,7 @@ Installation fetches the engine, selected Whisper model, and VAD as needed. Swit
 
 ## External service
 
-Users configure independent OpenAI-compatible LLM and cloud-STT API services. No provider SDK is bundled. Credentials belong in the OS keychain; meeting text and cloud audio each require per-action confirmation. Service costs, limits, supported models/formats, and retention are external to OpenMeet. Local Whisper stays the default. See [privacy](privacy.md#network-actions).
+Users configure independent OpenAI-compatible LLM and cloud-STT API services. No provider SDK is bundled. Credentials belong in the OS keychain; meeting text and cloud audio are sent when you trigger the action or choose automatic processing in Settings, and each cloud connection is labelled Leaves this device. Service costs, limits, supported models/formats, and retention are external to OpenMeet. Local Whisper stays the default. See [privacy](privacy.md#network-actions).
 
 Ollama, diarization engines, bots, SharePoint, telemetry, auto-updaters, and compression libraries described in older plans are not implemented integrations.
 

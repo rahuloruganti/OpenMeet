@@ -102,7 +102,7 @@ Before a backup, wait for **Saved** and close the app normally. Copy the complet
 ## Make a contribution
 
 1. Inspect affected callers, command bindings, tests, fixtures, settings, and exports.
-2. Make the smallest complete change. Preserve note errors, source distinctions, capture consent, and per-send cloud consent.
+2. Make the smallest complete change. Preserve note errors, source distinctions, recording-consent wording, and the "Leaves this device" disclosures.
 3. Add a small behavior test for nontrivial logic. Use synthetic samples instead of devices.
 4. Add numbered migrations for schema changes. Test an upgrade with populated notes and relationships.
 5. Run the relevant checks, including the full recipe for changes across the frontend and backend.
