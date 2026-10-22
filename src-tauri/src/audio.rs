@@ -3,6 +3,11 @@
 //! Windows opens an output device as loopback. macOS uses that same call only
 //! when the output has no input, which is cpal's process-tap path.
 use crate::domain::{AppError, Result};
+#[cfg(windows)]
+#[path = "app_loopback.rs"]
+mod app_loopback;
+#[cfg(windows)]
+pub(crate) use app_loopback::ID as APP_AUDIO_ID;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
     traits::{Consumer, Producer, Split},
@@ -105,6 +110,12 @@ pub fn devices() -> Result<Devices> {
             .map_err(audio_error)?
             .map(describe)
             .collect::<Result<_>>()?,
+        #[cfg(windows)]
+        outputs: vec![AudioDevice {
+            id: app_loopback::ID.into(),
+            name: app_loopback::NAME.into(),
+        }],
+        #[cfg(not(windows))]
         outputs: host
             .output_devices()
             .map_err(audio_error)?
@@ -169,6 +180,9 @@ impl Shared {
             self.counters[index].gaps.fetch_add(1, Ordering::Relaxed);
             return;
         }
+        self.fail_with(index, &error.to_string());
+    }
+    fn fail_with(&self, index: usize, error: &str) {
         if let Ok(mut detail) = self.detail.try_lock() {
             if detail.is_none() {
                 let track = if index == 0 {
@@ -176,7 +190,7 @@ impl Shared {
                 } else {
                     "system output"
                 };
-                let text: String = error.to_string().chars().take(200).collect();
+                let text: String = error.chars().take(200).collect();
                 *detail = Some(format!("{track}: {text}"));
             }
         }
@@ -271,28 +285,75 @@ struct Input {
     device: cpal::Device,
     config: cpal::SupportedStreamConfig,
 }
-fn inputs(options: &CaptureOptions) -> Result<[Input; 2]> {
+enum Source {
+    Device(Input),
+    #[cfg(windows)]
+    AppAudio,
+}
+impl Source {
+    fn name(&self) -> String {
+        match self {
+            Self::Device(input) => input.device.to_string(),
+            #[cfg(windows)]
+            Self::AppAudio => app_loopback::NAME.into(),
+        }
+    }
+    fn format(&self) -> (u32, u16) {
+        match self {
+            Self::Device(input) => (input.config.sample_rate(), input.config.channels()),
+            #[cfg(windows)]
+            Self::AppAudio => (app_loopback::RATE, app_loopback::CHANNELS),
+        }
+    }
+}
+fn inputs(options: &CaptureOptions) -> Result<[Source; 2]> {
     if !crate::capture_gate::supported() {
         return Err(crate::capture_gate::unsupported_reason());
     }
     let host = cpal::default_host();
     let mic = host.input_devices().map_err(audio_error)?.find(|d| d.id().is_ok_and(|id| id.to_string() == options.microphone_id))
         .ok_or_else(|| audio_error("Selected microphone is unavailable. Enable microphone access or remote microphone redirection, then refresh devices."))?;
-    let output = host
-        .output_devices()
-        .map_err(audio_error)?
-        .find(|d| d.id().is_ok_and(|id| id.to_string() == options.output_id))
-        .ok_or_else(|| {
-            audio_error("Selected system-output device is unavailable. Refresh devices.")
-        })?;
-    #[cfg(target_os = "macos")]
-    {
-        crate::capture_gate::ensure_permissions()?;
-        crate::capture_gate::reject_duplex_output(output.supports_input())?;
-    }
     let mic_config = mic.default_input_config().map_err(audio_error)?;
-    let output_config = output.default_output_config().map_err(audio_error)?;
-    for config in [&mic_config, &output_config] {
+    check_format(&mic_config)?;
+    let mic = Source::Device(Input {
+        device: mic,
+        config: mic_config,
+    });
+    // Windows records every app except OpenMeet, whichever endpoint plays it, so the
+    // output id is always app_loopback::ID there.
+    #[cfg(windows)]
+    {
+        let _ = &options.output_id;
+        Ok([mic, Source::AppAudio])
+    }
+    #[cfg(not(windows))]
+    {
+        let output = host
+            .output_devices()
+            .map_err(audio_error)?
+            .find(|d| d.id().is_ok_and(|id| id.to_string() == options.output_id))
+            .ok_or_else(|| {
+                audio_error("Selected system-output device is unavailable. Refresh devices.")
+            })?;
+        #[cfg(target_os = "macos")]
+        {
+            crate::capture_gate::ensure_permissions()?;
+            crate::capture_gate::reject_duplex_output(output.supports_input())?;
+        }
+        let config = output.default_output_config().map_err(audio_error)?;
+        check_format(&config)?;
+        Ok([
+            mic,
+            Source::Device(Input {
+                device: output,
+                config,
+            }),
+        ])
+    }
+}
+
+fn check_format(config: &cpal::SupportedStreamConfig) -> Result<()> {
+    {
         if config.channels() == 0
             || config.channels() > 8
             || !(8_000..=192_000).contains(&config.sample_rate())
@@ -302,19 +363,51 @@ fn inputs(options: &CaptureOptions) -> Result<[Input; 2]> {
             ));
         }
     }
-    Ok([
-        Input {
-            device: mic,
-            config: mic_config,
-        },
-        Input {
-            device: output,
-            config: output_config,
-        },
-    ])
+    Ok(())
+}
+
+enum Capture {
+    Device(cpal::Stream),
+    #[cfg(windows)]
+    App(app_loopback::AppLoopback),
+}
+impl Capture {
+    fn play(&self) -> Result<()> {
+        match self {
+            Self::Device(stream) => stream.play().map_err(audio_error),
+            #[cfg(windows)]
+            Self::App(_) => Ok(()), // Already reading; the shared gate decides what is kept.
+        }
+    }
+    fn pause(&self) {
+        match self {
+            Self::Device(stream) => {
+                let _ = stream.pause();
+            }
+            #[cfg(windows)]
+            Self::App(app) => app.pause(),
+        }
+    }
 }
 
 fn stream(
+    source: &Source,
+    shared: Arc<Shared>,
+    index: usize,
+) -> Result<(Capture, HeapCons<Block>)> {
+    match source {
+        Source::Device(input) => device_stream(input, shared, index)
+            .map(|(stream, queue)| (Capture::Device(stream), queue)),
+        #[cfg(windows)]
+        Source::AppAudio => {
+            let (producer, consumer) = HeapRb::<Block>::new(QUEUE_BLOCKS).split();
+            let app = app_loopback::AppLoopback::start(shared, index, producer)?;
+            Ok((Capture::App(app), consumer))
+        }
+    }
+}
+
+fn device_stream(
     input: &Input,
     shared: Arc<Shared>,
     index: usize,
@@ -374,15 +467,15 @@ fn stream(
     }
 }
 
-type LiveStreams = Vec<(cpal::Stream, HeapCons<Block>)>;
-fn open_streams(inputs: &[Input; 2], shared: &Arc<Shared>) -> Result<LiveStreams> {
+type LiveStreams = Vec<(Capture, HeapCons<Block>)>;
+fn open_streams(inputs: &[Source; 2], shared: &Arc<Shared>) -> Result<LiveStreams> {
     let mut streams = Vec::new();
     for (index, input) in inputs.iter().enumerate() {
         streams.push(stream(input, shared.clone(), index)?);
     }
     // The shared gate remains closed until BOTH streams have started.
     for (stream, _) in &streams {
-        stream.play().map_err(audio_error)?;
+        stream.play()?;
     }
     Ok(streams)
 }
@@ -395,9 +488,9 @@ struct TrackWriter {
     live: Option<crate::live_audio::Accumulator>,
 }
 impl TrackWriter {
-    fn new(folder: &Path, kind: &str, input: &Input) -> Result<Self> {
-        let (rate, channels) = (input.config.sample_rate(), input.config.channels());
-        Self::create(folder, kind, input.device.to_string(), rate, channels)
+    fn new(folder: &Path, kind: &str, source: &Source) -> Result<Self> {
+        let (rate, channels) = source.format();
+        Self::create(folder, kind, source.name(), rate, channels)
     }
     fn create(
         folder: &Path,
@@ -781,7 +874,7 @@ fn worker(
     ready: mpsc::Sender<Result<Vec<Track>>>,
     live: Option<crate::live_audio::Producer>,
 ) -> Report {
-    let initialized = (|| -> Result<([Input; 2], Vec<TrackWriter>, LiveStreams)> {
+    let initialized = (|| -> Result<([Source; 2], Vec<TrackWriter>, LiveStreams)> {
         let selected = inputs(&options)?;
         fs::create_dir(&folder)?; // UUID directory; never reuse or truncate prior recordings.
         let writers = vec![
@@ -835,9 +928,7 @@ fn worker(
                     streams.clear();
                     selected = inputs(&options)?;
                     for (input, writer) in selected.iter().zip(&writers) {
-                        if input.config.sample_rate() != writer.track.sample_rate
-                            || input.config.channels() != writer.track.channels
-                        {
+                        if input.format() != (writer.track.sample_rate, writer.track.channels) {
                             return Err(audio_error(
                                 "Device format changed. Stop and start a new recording.",
                             ));
@@ -873,7 +964,7 @@ fn worker(
         // On normal stop, stop producers first then drain already captured packets.
         if stopping {
             for (stream, _) in &streams {
-                let _ = stream.pause();
+                stream.pause();
             }
         }
         for (index, (_, consumer)) in streams.iter_mut().enumerate() {

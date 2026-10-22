@@ -1509,6 +1509,12 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                     vault_folder: row.get(0)?,
                     pause_shortcut: row.get(1)?,
                     microphone_id: row.get(2)?,
+                    // Windows records all app audio since 2026-10-22; a saved endpoint maps to it.
+                    #[cfg(windows)]
+                    output_id: row
+                        .get::<_, Option<String>>(3)?
+                        .map(|_| crate::audio::APP_AUDIO_ID.into()),
+                    #[cfg(not(windows))]
                     output_id: row.get(3)?,
                     saved_connections,
                     provider_assignments,
@@ -1828,7 +1834,10 @@ mod tests {
                 devices.microphone_id.as_deref(),
                 devices.output_id.as_deref()
             ),
-            (Some("mic"), Some("out"))
+            (
+                Some("mic"),
+                Some(if cfg!(windows) { "app-audio" } else { "out" })
+            )
         );
         assert!(core.save_default_devices("", "out").is_err());
         // Detection is off until turned on; ignored apps round-trip.
@@ -3000,7 +3009,13 @@ mod tests {
         let settings = core.settings().unwrap();
         assert_eq!(settings.vault_folder.as_deref(), Some("saved-folder"));
         assert_eq!(settings.microphone_id.as_deref(), Some("mic"));
-        assert_eq!(settings.output_id.as_deref(), Some("out"));
+        let saved_output: String = core
+            .db
+            .query_row("SELECT output_id FROM settings WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(saved_output, "out");
         assert_eq!(settings.llm, None);
         assert_eq!(
             core.db

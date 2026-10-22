@@ -82,9 +82,9 @@ Meeting switches, exports, and graceful close flush notes. A failed flush preser
 
 ## Capture and transcription
 
-Windows capture opens the explicitly selected microphone and system output. Callbacks enqueue samples into bounded buffers. A worker writes separate native-rate WAV files and timing JSONL. Pause generations reject queued samples from an earlier recording interval. Queue overflow and device failures are visible errors, not a fallback to one track.
+Windows capture opens the explicitly selected microphone and, for the system track, a process-loopback client (`app_loopback.rs`, `wasapi` crate) that records every app except OpenMeet's own process tree at 48 kHz stereo on its own reader thread, independent of the render endpoint. Callbacks enqueue samples into bounded buffers. A worker writes separate native-rate WAV files and timing JSONL. Pause generations reject queued samples from an earlier recording interval. Queue overflow and device failures are visible errors, not a fallback to one track.
 
-Control acknowledgements and real-device timing remain stabilization work. Synthetic pause tests do not qualify hardware pause privacy. Silent WASAPI loopback may deliver no frames.
+Control acknowledgements and real-device timing remain stabilization work. Synthetic pause tests do not qualify hardware pause privacy. Process loopback may deliver no frames while no app plays audio. Device packet timestamps jitter by about ±11 ms; the shared timing reader lays packets within 30 ms end to end and keeps larger gaps.
 
 Local transcription runs the downloaded Windows x64 CPU build of whisper.cpp with the selected model, Silero VAD, language, and vocabulary hint. Cloud mode independently selects a compatible endpoint/key/model and uploads frozen PCM16 WAV chunks after confirmation. Chunk boundaries respect pause generations and timing discontinuities. Both modes preserve `You` and `Others` track labels.
 

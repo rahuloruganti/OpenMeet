@@ -302,6 +302,7 @@ export function App() {
     const detail = await api.getMeeting(id);
     if (selectedIdRef.current === id && request === detailRequest.current)
       setSelected(detail);
+    return detail;
   }, []);
 
   // One in-flight task per lock; `mark` mirrors the lock into render state.
@@ -372,7 +373,7 @@ export function App() {
   const finishJob = async (id: string) => {
     await refreshList();
     // Do not yank the user back if they moved to another meeting meanwhile.
-    if (selectedIdRef.current === id) await refreshMeeting(id);
+    return selectedIdRef.current === id ? refreshMeeting(id) : null;
   };
 
   useEffect(() => {
@@ -1101,8 +1102,12 @@ export function App() {
                 setNotice(errorMessage(failure));
                 return;
               }
-              await finishJob(id);
-              setNotice("Transcript generated and saved.");
+              const detail = await finishJob(id);
+              setNotice(
+                detail?.segments.length === 0
+                  ? "No speech was found in the recording. Check the microphone level, then transcribe again."
+                  : "Transcript generated and saved.",
+              );
             });
           }}
           live={

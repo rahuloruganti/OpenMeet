@@ -397,6 +397,28 @@ describe("desktop foundation", () => {
     expect(screen.getByText(/No transcript/)).toBeTruthy();
   });
 
+  it("says which finalized track captured nothing", async () => {
+    const track = {
+      path: "fictional.wav",
+      device_name: "Fictional device",
+      sample_rate: 48000,
+      dropped_frames: 0,
+      finalized: true,
+      size_bytes: 44,
+    };
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...sample,
+      tracks: [
+        { ...track, kind: "mic", frames: 48000 },
+        { ...track, kind: "system", frames: 0 },
+      ],
+    });
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(screen.getByText(/system track is empty/)).toBeTruthy();
+    expect(screen.queryByText(/microphone track is empty/)).toBeNull();
+  });
+
   it("does not steal quit-confirmation focus when a settings panel is open", async () => {
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));

@@ -1127,6 +1127,15 @@ export function MeetingWorkspace(props: Props) {
               />
             </div>
           ))}
+          {selected.tracks
+            .filter((track) => track.finalized && track.frames === 0)
+            .map((track) => (
+              <p key={`empty-${track.kind}`} className="notice" role="status">
+                {track.kind === "mic"
+                  ? "The microphone track is empty: no microphone audio was captured. Check the selected microphone, its mute switch and Windows microphone access."
+                  : "The system track is empty: no other app played audio during the recording."}
+              </p>
+            ))}
           {selected.tracks.length > 0 && (
             <details className="track-details">
               <summary>Audio track details</summary>

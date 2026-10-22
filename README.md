@@ -62,7 +62,7 @@ Exported files appear in the chosen folder's `Meetings` directory. Export create
 ### Record and transcribe
 
 1. Click **New recording** and enter a title.
-2. Choose your microphone and system output. Start some output audio if you want to check the system track.
+2. Choose your microphone. On Windows the system track records **All app audio (except OpenMeet)**, whichever speaker or headset plays it, including Bluetooth headsets in call mode. Play some audio if you want to check the system track.
 3. Inform participants and acknowledge consent, then click **Start recording**.
 4. Use **Pause**, **Resume**, and **Stop** in the bottom bar. Check the microphone meter for a signal.
 5. Open **Settings**, choose a speech model, and download the speech engine and models if needed.

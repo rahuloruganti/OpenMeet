@@ -36,6 +36,7 @@ Exact direct versions and purposes are in [dependencies](docs/dependencies.md). 
 | `sha2`                                                                          | MIT OR Apache-2.0 | [RustCrypto hashes](https://github.com/RustCrypto/hashes)                          |
 | `zip`                                                                           | MIT               | [zip](https://github.com/zip-rs/zip2)                                              |
 | `winreg` (Windows only; reads the microphone privacy store for meeting detection) | MIT             | [winreg-rs](https://github.com/gentoo90/winreg-rs)                                 |
+| `wasapi` (Windows only; process-loopback capture of all app audio)                | MIT             | [wasapi-rs](https://github.com/HEnquist/wasapi-rs)                                 |
 | `http-range`, transitive through Tauri playback support                         | MIT               | [http-range](https://github.com/bancek/rust-http-range)                            |
 | `tokio`, transitive runtime dependency                                          | MIT               | [Tokio](https://github.com/tokio-rs/tokio)                                         |
 

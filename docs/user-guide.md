@@ -39,7 +39,7 @@ Capture remains a preview. On Apple Silicon macOS 14.2 or newer, choose an outpu
 5. Use the microphone and system meters to check for incoming signals.
 6. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.
 
-Saved device choices are not silently replaced when a device is unavailable. A missing device or capture failure must be resolved before trying again. A silent output can produce no loopback frames; the two track files can therefore have different lengths.
+Saved device choices are not silently replaced when a device is unavailable. A missing device or capture failure must be resolved before trying again. On Windows the system track records all app audio except OpenMeet (process loopback), so it follows audio to any output, including a Bluetooth headset that switches to its hands-free endpoint during a call. Saved output choices from earlier versions are read as this source. When no app plays audio the system track can stay empty; a finalized empty track is named on the meeting's Transcript tab, and the live meter warns when the microphone has no signal for 10 seconds.
 
 The New recording panel warns before you start when the selected speech engine cannot run: a local engine that is not downloaded, or a cloud speech connection missing either a stored key (or loopback destination) or a model. The warning does not block recording; the audio is kept and transcription fails visibly until the engine is set up in Settings.
 
