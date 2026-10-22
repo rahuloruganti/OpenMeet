@@ -82,7 +82,7 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
   const scanCommon = async () => {
     applyScan(await api.scanLocalModels(null));
   };
-  // Opening Settings scans the common model folders once. The scan is local and read-only.
+  // Mounting the library (first Models tab selection in a Settings session) scans the common model folders once. The scan is local and read-only.
   useEffect(() => {
     void scanCommon().catch((failure: unknown) => {
       if (live.current) setError(errorMessage(failure));
@@ -123,8 +123,7 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
       );
   };
   return (
-    <section className="model-library" aria-label="Local model library">
-      <h3>Local model library</h3>
+    <div className="model-library">
       <p className="muted">
         A model file is not a running server. Built-in speech processing uses
         Whisper ggml files and sherpa-onnx folders. GGUF files need an external
@@ -419,7 +418,7 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
           {error}
         </p>
       )}
-    </section>
+    </div>
   );
 }
 

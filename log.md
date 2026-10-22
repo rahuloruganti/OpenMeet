@@ -740,3 +740,9 @@ Outcome: the privacy popover says text is sent "when you use them"; the recordin
 User request: "fix next" after the first six review fixes.
 
 Outcome: the processing panel shows readable stage names and human sizes ("Used 3 requests, 2.1 MB of audio and 4 KB of text") instead of raw byte counts; the empty workspace has clearer copy; the pause-shortcut placeholder matches the saved format; Audio track details use the "You (microphone)" / "Others (system audio)" labels. Typecheck, lint, format check, tests (176) and build pass locally; no recordings, downloads or Rust checks were run.
+
+## Tidy Settings
+
+User request: merge the duplicate "Automatic processing" labels, move transcription auto-processing out of "AI notes", and make the Models tab less empty.
+
+Outcome: Automatic processing now lives on Settings → Recording (select renamed "When a recording stops"); New recording's "Change in Settings" opens that tab. Settings → Models shows the local model library directly under a heading instead of a collapsed disclosure; it still scans only when Models is first selected. User guide and architecture notes updated. Typecheck, lint, format check, tests (176) and build pass locally; no recordings, downloads or Rust checks were run.

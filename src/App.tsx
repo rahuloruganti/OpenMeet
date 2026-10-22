@@ -1001,7 +1001,7 @@ export function App() {
             active={active}
             processing={autoProcessing}
             onOpenSettings={() => {
-              setSettingsTab("ai");
+              setSettingsTab("recording");
               setPanel("settings");
             }}
             onTitle={setTitle}

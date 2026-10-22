@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type Ref } from "react";
+import { useEffect, useState, type KeyboardEvent, type Ref } from "react";
 import { version } from "../../package.json";
 import type {
   AudioDevice,
@@ -188,6 +188,11 @@ export function SettingsPanel(props: Props) {
     connectionId: string;
     models: ProviderModel[];
   } | null>(null);
+  // Mounted the first time Models is selected: it scans on mount, and a failure must be visible.
+  // Sticky on purpose: unmounting ModelLibrary cancels an in-flight download.
+  useEffect(() => {
+    if (section === "models") setModelsOpened(true);
+  }, [section]);
   const shortcutsDirty =
     !!settings &&
     (props.shortcut !== settings.pause_shortcut ||
@@ -291,6 +296,67 @@ export function SettingsPanel(props: Props) {
               <button disabled={disabled} onClick={props.onRefreshDevices}>
                 Refresh devices
               </button>
+            </section>
+            <section
+              className="settings-section"
+              aria-label="Automatic processing settings"
+            >
+              <h3>Automatic processing</h3>
+              <label>
+                When a recording stops
+                <select
+                  value={props.processing.mode}
+                  disabled={disabled}
+                  onChange={(event) =>
+                    props.onProcessing({
+                      mode: event.target.value as ProcessingChoice["mode"],
+                      summary:
+                        event.target.value === "final" ||
+                        event.target.value === "both"
+                          ? props.processing.summary
+                          : null,
+                    })
+                  }
+                >
+                  {Object.entries(modeLabels).map(([mode, label]) => (
+                    <option key={mode} value={mode}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(props.processing.mode === "final" ||
+                props.processing.mode === "both") && (
+                <label>
+                  Automatic summary
+                  <select
+                    value={props.processing.summary ?? ""}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      props.onProcessing({
+                        ...props.processing,
+                        summary:
+                          builtinTemplates.find(
+                            ({ id }) => id === event.target.value,
+                          )?.id ?? null,
+                      })
+                    }
+                  >
+                    <option value="">No automatic summary</option>
+                    {builtinTemplates.map(({ id, label }) => (
+                      <option key={id} value={id}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <p className="muted">
+                Runs after every recording. Audio and text go to the engines and
+                connections set in Transcription and AI notes. If they are not
+                ready, the recording is still kept and processing is skipped
+                with a notice.
+              </p>
             </section>
             <section
               className="settings-section"
@@ -430,67 +496,6 @@ export function SettingsPanel(props: Props) {
                 </select>
               </label>
             </section>
-            <section
-              className="settings-section"
-              aria-label="Automatic processing settings"
-            >
-              <h3>Automatic processing</h3>
-              <label>
-                Automatic processing
-                <select
-                  value={props.processing.mode}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    props.onProcessing({
-                      mode: event.target.value as ProcessingChoice["mode"],
-                      summary:
-                        event.target.value === "final" ||
-                        event.target.value === "both"
-                          ? props.processing.summary
-                          : null,
-                    })
-                  }
-                >
-                  {Object.entries(modeLabels).map(([mode, label]) => (
-                    <option key={mode} value={mode}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {(props.processing.mode === "final" ||
-                props.processing.mode === "both") && (
-                <label>
-                  Automatic summary
-                  <select
-                    value={props.processing.summary ?? ""}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      props.onProcessing({
-                        ...props.processing,
-                        summary:
-                          builtinTemplates.find(
-                            ({ id }) => id === event.target.value,
-                          )?.id ?? null,
-                      })
-                    }
-                  >
-                    <option value="">No automatic summary</option>
-                    {builtinTemplates.map(({ id, label }) => (
-                      <option key={id} value={id}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              <p className="muted">
-                Runs after every recording. Audio and text go to the engines and
-                connections set in Transcription and AI notes. If they are not
-                ready, the recording is still kept and processing is skipped
-                with a notice.
-              </p>
-            </section>
             <SummaryTemplates
               settings={settings}
               disabled={disabled}
@@ -516,14 +521,15 @@ export function SettingsPanel(props: Props) {
             )}
           </div>
           <div {...panel("models")}>
-            <details
-              className="settings-section advanced"
-              onToggle={(event) => {
-                if (event.currentTarget.open) setModelsOpened(true);
-              }}
+            <section
+              className="settings-section"
+              aria-label="Local model library"
             >
-              <summary>Advanced: local model library</summary>
-              {/* Mounted on first expand: it scans on mount, and a failure must be visible. */}
+              <h3>Local model library</h3>
+              <p className="muted">
+                Find speech models already on this computer, import them, or
+                search Hugging Face. Nothing is downloaded until you choose it.
+              </p>
               {modelsOpened && (
                 <ModelLibrary
                   disabled={disabled}
@@ -532,7 +538,7 @@ export function SettingsPanel(props: Props) {
                   onUse={(path) => props.onStt({ stt_model: path })}
                 />
               )}
-            </details>
+            </section>
           </div>
           <div {...panel("export")}>
             <section

@@ -1402,10 +1402,6 @@ textarea.notes-editor {
   align-items: end;
   gap: 8px;
 }
-.settings-section.advanced > summary {
-  cursor: pointer;
-  font-weight: 600;
-}
 .privacy-list {
   margin: 0 0 12px;
   padding-left: 20px;

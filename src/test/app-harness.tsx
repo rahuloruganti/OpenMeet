@@ -165,9 +165,9 @@ export const installed = {
 
 export async function chooseProcessing(mode: string, summary?: string) {
   await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-  await userEvent.click(screen.getByRole("tab", { name: "AI notes" }));
+  await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
   await userEvent.selectOptions(
-    screen.getByLabelText("Automatic processing"),
+    screen.getByLabelText("When a recording stops"),
     mode,
   );
   if (summary)

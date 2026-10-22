@@ -197,19 +197,17 @@ describe("settings and meeting detection", () => {
     expect(localStorage.getItem("openmeet.automaticProcessing")).not.toBeNull();
   });
 
-  it("scans for local models only once Models is expanded, and shows a failed scan", async () => {
+  it("scans for local models only once Models is selected, and shows a failed scan", async () => {
     vi.mocked(api.scanLocalModels).mockRejectedValue(
       new Error("Model folder unreadable"),
     );
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Models" }));
     expect(api.scanLocalModels).not.toHaveBeenCalled();
-    const details = screen
-      .getByText("Advanced: local model library")
-      .closest("details") as HTMLDetailsElement;
-    details.open = true;
-    fireEvent(details, new Event("toggle"));
+    await userEvent.click(screen.getByRole("tab", { name: "Models" }));
+    expect(
+      screen.getByRole("heading", { name: "Local model library" }),
+    ).toBeTruthy();
     expect(await screen.findByText("Model folder unreadable")).toBeTruthy();
     expect(api.scanLocalModels).toHaveBeenCalledWith(null);
   });

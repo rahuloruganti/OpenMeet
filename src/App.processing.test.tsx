@@ -385,7 +385,7 @@ describe("speech engine and automatic processing", () => {
     );
     expect(
       screen
-        .getByRole("tab", { name: "AI notes" })
+        .getByRole("tab", { name: "Recording" })
         .getAttribute("aria-selected"),
     ).toBe("true");
     await chooseProcessing("both", "general-v1");

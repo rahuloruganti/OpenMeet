@@ -45,7 +45,7 @@ Capture is not yet hardware-qualified. On Apple Silicon macOS 14.2 or newer, cho
 
 1. Click **New recording** and enter a title.
 2. Choose the microphone and system-output device you intend to capture.
-3. Choose the default **Automatic processing** under **Settings → AI notes** (**Recording only** by default; it is saved in the database). The New recording panel shows it, and every new recording runs it.
+3. Choose the default **Automatic processing** under **Settings → Recording**, using **When a recording stops** (**Recording only** by default; it is saved in the database). The New recording panel shows it, and every new recording runs it.
 4. Click **Start recording**. Telling participants and following recording-consent law is your responsibility; see [privacy](privacy.md).
 5. Use the microphone and system meters to check for incoming signals.
 6. Use **Pause**, **Resume**, and **Stop** in the bottom recording bar.
@@ -68,7 +68,7 @@ The prompt names the app and offers **Set up recording**, **Not now**, or **Neve
 
 ## Choose automatic processing
 
-1. In **Settings → AI notes**, choose **Live transcription only**, **Final transcription after stop**, or **Live and final transcription**.
+1. In **Settings → Recording**, under **Automatic processing**, set **When a recording stops** to **Live transcription only**, **Final transcription after stop**, or **Live and final transcription**.
 2. For either final option, optionally choose an **Automatic summary** template.
 3. Start recordings as usual. Each new recording runs the saved choice with the engines and connections set in Settings at that moment. If they are not ready, for example a summary with no model assigned, the recording still starts and a notice says processing is off for it.
 
@@ -112,7 +112,7 @@ For API transcription, create a named connection under **Settings → Connection
 
 ## Find and download local models
 
-Open **Settings → Models** and expand **Advanced: local model library**. Scan common folders or choose a folder explicitly. The scan reports examined folders and truncation; it reads file headers within limits of 4,096 entries, six levels, and 200 files. Discovery alone does not verify or activate a model. Import matching Whisper catalog candidates to verify their full hash and copy them into managed storage; the source remains untouched. Select and save the Whisper model separately.
+Open **Settings → Models**. The **Local model library** section is always visible there and scans common folders when you open the Models tab. Scan common folders or choose a folder explicitly. The scan reports examined folders and truncation; it reads file headers within limits of 4,096 entries, six levels, and 200 files. Discovery alone does not verify or activate a model. Import matching Whisper catalog candidates to verify their full hash and copy them into managed storage; the source remains untouched. Select and save the Whisper model separately.
 
 Search Hugging Face explicitly to see up to 20 public speech-recognition results. Each result is labelled Whisper ggml, sherpa-onnx, or Other; Other results are not downloadable. For a Whisper ggml file, the download is verified against the Hub SHA-256 and saved in the speech models folder, then listed under Found speech models; choose it there with **Use this file in place** and save transcription settings. A sherpa-onnx folder downloads as a whole: every file is checked, and none are kept if any check fails. After the download, **Use this model** selects it; save transcription settings to use it. Downloaded folders then appear in the model list as "`<folder>` (downloaded sherpa-onnx model)". The layout is read from the file names: a transducer (encoder, decoder, joiner, tokens), a Moonshine folder (encoder, merged decoder, tokens), or a single `model*.onnx` with `tokens.txt`. A single-model folder is run as SenseVoice only; other single-file models are not checked and will fail in the engine. Transducer folders are run with the engine's own model-type detection. Running downloaded folders is not verified on real hardware. Only the shared engine and VAD are needed on top of a downloaded folder. Review the repository, revision, size, and license before downloading. Cancel stops transfer and prevents publication at the cancellation boundary. GGUF (LLM) files are not downloaded here; use a separately managed server. Private/gated repositories and split models are unsupported.
 

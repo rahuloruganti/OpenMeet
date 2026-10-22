@@ -35,7 +35,7 @@ Model downloads are separate explicit network actions. Cloud transcription uploa
 | `src/components/Recipes.tsx` | Built-in and saved recipes: question-box chips and the Settings editor. |
 | `src/components/RewriteSelection.tsx` | Rewrite selected note text: presets and accept-to-replace result. |
 | `src/components/SetupPanel.tsx`                              | Device selection and the automatic-processing default shown before start.                                                                           |
-| `src/components/SettingsPanel.tsx` | Settings left navigation and sections: recording defaults and shortcut capture, AI notes, export and storage, privacy and about. |
+| `src/components/SettingsPanel.tsx` | Settings left navigation and sections: recording defaults, automatic processing and shortcut capture, AI notes, the local model library, export and storage, privacy and about. |
 | `src/components/TranscriptionSettings.tsx` | Engine choice cards (On this computer, API connection), local Whisper or sherpa-onnx setup and downloads, speech API assignment, language and vocabulary. |
 | `src/components/ProviderSettings.tsx` | One list of saved connections (badged This device / Leaves this device) and the per-task `Assignment`. |
 | `src/components/RecordingControls.tsx`                     | Backend capture state, pause/resume/stop, and audio meters.                                             |
