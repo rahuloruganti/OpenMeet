@@ -198,6 +198,8 @@ export type Settings = {
   detection_enabled: boolean;
   /** Apps never to prompt about; `name` is empty for ones ignored before names were kept. */
   detection_ignored: MicApp[];
+  /** First-run setup was finished or skipped. */
+  setup_done: boolean;
 };
 /** An app using the microphone: a Windows privacy-store key or a macOS bundle identifier. */
 export type MicApp = { id: string; name: string };
@@ -269,6 +271,15 @@ export type ProviderAssignment = {
   connection_id: string;
   model: string;
   revision: number;
+};
+/** A known AI or speech server answering on this machine. */
+export type LocalServer = {
+  name: string;
+  base_url: string;
+  kind: "chat" | "speech" | "both";
+  /** It answered but wants an API key (Unsloth Studio does). */
+  needs_key: boolean;
+  models: ProviderModel[];
 };
 export type ProviderSelection =
   | { kind: "unassigned" }
@@ -577,6 +588,10 @@ export const api = {
     invoke<string[]>("set_meeting_tags", { meetingId, tags }),
   saveExportOptions: (options: ExportOptions) =>
     invoke<Settings>("save_export_options", { options }),
+  /** Probes known local server ports on 127.0.0.1 only; sends just GET /models. */
+  detectLocalServers: () => invoke<LocalServer[]>("detect_local_servers"),
+  saveSetupDone: (done: boolean) =>
+    invoke<Settings>("save_setup_done", { done }),
   saveProcessingDefault: (mode: string, summary: string | null) =>
     invoke<Settings>("save_processing_default", { mode, summary }),
   saveSummaryDefault: (template: string) =>

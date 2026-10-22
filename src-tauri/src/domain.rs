@@ -321,6 +321,8 @@ pub struct Settings {
     pub detection_enabled: bool,
     /// Apps never to prompt about.
     pub detection_ignored: Vec<MicApp>,
+    /// First-run setup was finished or skipped.
+    pub setup_done: bool,
 }
 
 /// An app using the microphone: a Windows privacy-store key or a macOS bundle identifier.

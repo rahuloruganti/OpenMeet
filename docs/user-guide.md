@@ -2,6 +2,17 @@
 
 Install the prerequisites and run `just setup`, then `just dev`, as described in the [README](../README.md#install-and-run-on-windows). The native desktop app provides storage and recording. A browser-only preview disables desktop actions.
 
+## First-run setup
+
+OpenMeet opens **Set up OpenMeet** until you finish or skip it. **Settings → Privacy & about → Run setup again** shows it again. Every step can be skipped.
+
+1. **Welcome** says where data is kept and that recording consent is your responsibility.
+2. **Transcription**: choose **On this computer** or **Online API**. On this computer, OpenMeet lists Whisper `ggml` files it finds in the usual folders (its own, `~/.cache/whisper`, the Hugging Face cache, Ollama and LM Studio folders); **Use** keeps the file where it is, labelled "matches pinned …" when its name and size match a pinned download, otherwise "custom". You can instead download Whisper `base.en-q5_1` (English) or `small` (any language). Speech servers running on this computer, such as speaches or LocalAI, are offered too. Online API asks for a base URL and key, lists the provider's models with speech models first, and has **Show all models** and a field for any model ID.
+3. **AI notes**: choose an AI server found on this computer (Ollama, LM Studio, Unsloth Studio, LocalAI), the transcription connection, or another online API, then a chat model. Unsloth Studio needs its `sk-unsloth` key. Without a local server, install Ollama or LM Studio and run setup again.
+4. **Devices**: choose the default microphone and system audio, and whether every recording is transcribed (and summarized, when AI notes are set) when it stops. This is on by default.
+
+Detection only asks `GET /v1/models` of `127.0.0.1` ports 11434, 8888, 1234, 8000 and 8080, while setup is open. A server on another port can be added under **Settings → Connections**.
+
 ## Write and find notes
 
 1. Click **New note**. This creates a note without opening audio devices.

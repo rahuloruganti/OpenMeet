@@ -1547,6 +1547,11 @@ async fn save_summary_default(app: AppHandle, template: String) -> Result<Settin
 }
 
 #[tauri::command]
+async fn save_setup_done(app: AppHandle, done: bool) -> Result<Settings> {
+    with_core(app, false, move |core, _| core.save_setup_done(done)).await
+}
+
+#[tauri::command]
 async fn save_detection(app: AppHandle, enabled: bool) -> Result<Settings> {
     let flag = app.state::<AppState>().detection.clone();
     let settings = with_core(app, false, move |core, _| core.save_detection(enabled)).await?;
@@ -1894,6 +1899,7 @@ pub fn run() {
             close_application,
             list_audio_devices,
             detect_local_servers,
+            save_setup_done,
             provider_key_status,
             save_api_connection,
             delete_api_connection,

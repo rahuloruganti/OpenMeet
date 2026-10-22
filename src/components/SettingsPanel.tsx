@@ -79,6 +79,7 @@ type Props = {
   onDetection: (enabled: boolean) => void;
   onDetectionIgnored: (app: MicApp, ignored: boolean) => void;
   onRefreshDevices: () => void;
+  onRunSetup: () => void;
   initialSection?: SettingsSection;
 };
 
@@ -683,6 +684,9 @@ export function SettingsPanel(props: Props) {
             <section className="settings-section" aria-label="About">
               <h3>About OpenMeet</h3>
               <p>Version {version} (preview)</p>
+              <button disabled={props.disabled} onClick={props.onRunSetup}>
+                Run setup again
+              </button>
               <p className="muted">
                 Capture is not yet hardware-qualified. Third-party licenses are
                 listed in THIRD_PARTY_LICENSES.md in the source repository.

@@ -61,6 +61,7 @@ const settings: Settings = {
   summary_default: "general-v1",
   detection_enabled: false,
   detection_ignored: [],
+  setup_done: true,
 };
 const props = () => ({
   settings,

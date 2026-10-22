@@ -37,6 +37,7 @@ import {
   legacyProcessing,
   type ProcessingChoice,
 } from "./lib/processing";
+import { FirstRunSetup } from "./components/FirstRunSetup";
 import {
   SettingsPanel,
   type SettingsSection,
@@ -607,6 +608,14 @@ export function App() {
         `Devices refreshed: ${discovered.microphones.length} microphone${discovered.microphones.length === 1 ? "" : "s"}, ${discovered.outputs.length} output${discovered.outputs.length === 1 ? "" : "s"}.`,
       );
     });
+  // Shown until finished or skipped; any other panel takes precedence.
+  const firstRun =
+    desktop && !!settings && !settings.setup_done && panel === null;
+  const installStt = () =>
+    void runJob("install", async () => {
+      updateStt(await api.sttInstall());
+      setNotice("Speech engine and models downloaded and verified.");
+    });
   const dismissApp = (id: string) =>
     setDismissedApps((ids) => (ids.includes(id) ? ids : [...ids, id]));
   const openPanel = (
@@ -1037,7 +1046,7 @@ export function App() {
         <MeetingWorkspace
           pendingJump={pendingJump}
           onJumpDone={() => setPendingJump(null)}
-          hidden={panel !== null}
+          hidden={panel !== null || firstRun}
           selected={selected}
           firstRun={ready && meetings.length === 0}
           job={job}
@@ -1321,6 +1330,27 @@ export function App() {
           }}
         />
 
+        {firstRun && settings && (
+          <FirstRunSetup
+            panelRef={panelRef}
+            settings={settings}
+            devices={devices}
+            stt={stt}
+            sttProgress={sttProgress}
+            installing={job === "install"}
+            onInstallStt={installStt}
+            onRefreshDevices={refreshDevices}
+            onSettings={(next) => {
+              setSettings(next);
+              void api.sttStatus().then(updateStt, () => undefined);
+            }}
+            onKeyStatus={updateKeyStatus}
+            onDevices={(mic, out) => {
+              setMicrophone(mic);
+              setOutput(out);
+            }}
+          />
+        )}
         {panel === "settings" && (
           <SettingsPanel
             panelRef={panelRef}
@@ -1372,13 +1402,14 @@ export function App() {
             sttProgress={sttProgress}
             installing={job === "install"}
             onCancelStt={() => void api.cancelModelDownload().catch(report)}
-            onInstallStt={() =>
-              void runJob("install", async () => {
-                updateStt(await api.sttInstall());
-                setNotice("Speech engine and models downloaded and verified.");
+            onInstallStt={installStt}
+            onShortcut={setShortcut}
+            onRunSetup={() =>
+              void run(async () => {
+                setSettings(await api.saveSetupDone(false));
+                setPanel(null);
               })
             }
-            onShortcut={setShortcut}
             onClose={() => setPanel(null)}
             onChooseFolder={() =>
               void run(async () => {

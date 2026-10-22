@@ -50,6 +50,8 @@ just dev
 
 ## Use the app
 
+On first launch, **Set up OpenMeet** walks through transcription (a Whisper model on this computer, a local speech server, or an online API), AI notes (a local server such as Ollama, LM Studio or Unsloth Studio, or an online API), and default devices. It finds models and local servers already installed. Skip it or run it again from **Settings → Privacy & about**.
+
 ### Write a note
 
 1. Click **New note**.

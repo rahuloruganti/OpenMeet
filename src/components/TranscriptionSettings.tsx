@@ -124,6 +124,15 @@ export function TranscriptionSettings(props: {
                 props.onStt({ stt_model: event.target.value })
               }
             >
+              {stt &&
+                !stt.models.some(
+                  (item) => item.id === props.sttDraft.stt_model,
+                ) && (
+                  <option value={props.sttDraft.stt_model}>
+                    {props.sttDraft.stt_model.split(/[\\/]/).pop()} (used where
+                    it is on this computer)
+                  </option>
+                )}
               {stt?.models.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.id} ({formatBytes(item.size)}

@@ -10,7 +10,7 @@ use uuid::Uuid;
 // `true` marks a rebuild of a table other tables reference: it runs with foreign keys OFF
 // (only switchable outside a transaction) and must pass foreign_key_check before commit.
 #[rustfmt::skip]
-const MIGRATIONS: [(i64, &str, bool); 26] = [
+const MIGRATIONS: [(i64, &str, bool); 27] = [
     (2, include_str!("../migrations/002_capture.sql"), true),
     (3, include_str!("../migrations/003_local_model.sql"), false),
     (4, include_str!("../migrations/004_merge_model.sql"), false),
@@ -37,6 +37,7 @@ const MIGRATIONS: [(i64, &str, bool); 26] = [
     (25, include_str!("../migrations/025_settings_defaults.sql"), false),
     (26, include_str!("../migrations/026_meeting_detection.sql"), false),
     (27, include_str!("../migrations/027_detection_app_names.sql"), false),
+    (28, include_str!("../migrations/028_setup_done.sql"), false),
 ];
 /// Highest `user_version` this build understands: the last migration's.
 const LATEST_SCHEMA: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
@@ -1226,6 +1227,13 @@ impl Core {
     }
 
     /// Turns opt-in meeting detection on or off. Detection only ever offers a prompt.
+    /// Marks first-run setup finished (or skipped), or shows it again when `done` is false.
+    pub fn save_setup_done(&mut self, done: bool) -> Result<Settings> {
+        self.db
+            .execute("UPDATE settings SET setup_done = ?1 WHERE id = 1", [done])?;
+        self.settings()
+    }
+
     pub fn save_detection(&mut self, enabled: bool) -> Result<Settings> {
         self.db.execute(
             "UPDATE settings SET detection_enabled = ?1 WHERE id = 1",
@@ -1497,7 +1505,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(db.query_row(
-            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats, processing_mode, processing_summary, summary_default, detection_enabled FROM settings WHERE id = 1",
+            "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, export_transcript, export_summary, export_filename, stt_language, stt_prompt, stt_model, stop_shortcut, summary_instructions, export_transcript_formats, processing_mode, processing_summary, summary_default, detection_enabled, setup_done FROM settings WHERE id = 1",
             [],
             |row| {
                 Ok(Settings {
@@ -1540,6 +1548,7 @@ fn read_settings(db: &Connection) -> Result<Settings> {
                     processing_summary: row.get(15)?,
                     summary_default: row.get(16)?,
                     detection_enabled: row.get(17)?,
+                    setup_done: row.get(18)?,
                     detection_ignored,
                 })
             },
@@ -1838,6 +1847,8 @@ mod tests {
         // Detection is off until turned on; ignored apps round-trip.
         assert!(!devices.detection_enabled);
         assert!(core.save_detection(true).unwrap().detection_enabled);
+        assert!(!devices.setup_done);
+        assert!(core.save_setup_done(true).unwrap().setup_done);
         let ignored = core
             .set_detection_ignored("us.zoom.xos", "zoom.us", true)
             .unwrap();

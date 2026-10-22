@@ -9,6 +9,7 @@ import {
   type ProviderRole,
   type Settings,
 } from "../lib/api";
+import { modelsFor } from "../lib/models";
 import { useTask } from "../lib/use-task";
 
 type Publish = {
@@ -17,7 +18,7 @@ type Publish = {
 };
 
 /** Hands saved settings to App and refreshes both tasks' key status. */
-async function publishSettings(settings: Settings, to: Publish) {
+export async function publishSettings(settings: Settings, to: Publish) {
   to.onSaved(settings);
   for (const role of ["llm", "cloud_stt"] satisfies ProviderRole[]) {
     try {
@@ -398,7 +399,10 @@ export function Assignment({
         />
       </label>
       <datalist id={modelListId}>
-        {(models?.connectionId === id ? models.models : []).map((item) => (
+        {(models?.connectionId === id
+          ? modelsFor(models.models, role)
+          : []
+        ).map((item) => (
           <option key={item.id} value={item.id} />
         ))}
       </datalist>
