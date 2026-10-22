@@ -678,3 +678,5 @@ Step 2, part 2: removed the participant-consent checkbox and the automatic-proce
 A `cargo check --target aarch64-apple-darwin` of the changed capture code was blocked: cc-rs found no C compiler for that target on this Windows machine. The macOS branch remains uncompiled.
 
 Follow-up to step 2: the processing panel now reads "stopped because settings changed; retry when ready" instead of "consent required"; the skipped-processing notice shows only on its own meeting; recipe and settings wording no longer mention review; implementation-status.md was updated. Found and recorded (finding #14): automatic API transcription hits the 256 MiB upload budget after about 20 minutes because chunks are 16-bit at 48 kHz stereo for the system track; the user guide now says so. `src-tauri/build.rs` has no command list. Frontend 163 tests passed.
+
+Step 3 started. Finding #13 fixed: opening New recording lists audio devices again (filling only an empty choice, never replacing a saved unavailable one), so a headset connected after startup appears without Refresh devices. 164 frontend tests passed.

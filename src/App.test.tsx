@@ -777,6 +777,34 @@ describe("desktop foundation", () => {
     await screen.findByText("Recording: recording");
   });
 
+  it("lists a microphone connected after startup when New recording opens", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      microphone_id: null,
+    });
+    vi.mocked(api.listDevices)
+      .mockResolvedValueOnce({
+        capture_supported: true,
+        microphones: [],
+        outputs: [{ id: "out", name: "Speakers" }],
+      })
+      .mockResolvedValue({
+        capture_supported: true,
+        microphones: [{ id: "headset", name: "Headset" }],
+        outputs: [{ id: "out", name: "Speakers" }],
+      });
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "New recording" }),
+    );
+    expect(await screen.findByRole("option", { name: "Headset" })).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start recording" }),
+      ).toHaveProperty("disabled", false),
+    );
+  });
+
   it("shows a rejected capture request without claiming recording", async () => {
     await ready();
     await userEvent.click(
@@ -3422,7 +3450,7 @@ describe("meeting detection", () => {
 });
 
 describe("device refresh", () => {
-  it("lists a device connected after startup without replacing the chosen one", async () => {
+  it("lists a saved device connected after startup when New recording opens", async () => {
     vi.mocked(api.getSettings).mockResolvedValue({
       ...initialSettings,
       microphone_id: "headset",
@@ -3445,18 +3473,21 @@ describe("device refresh", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
     );
-    expect(screen.getByText(/Selected microphone is unavailable/)).toBeTruthy();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Refresh devices" }),
+    // Opening New recording lists devices again, so no manual refresh is needed.
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("combobox", {
+            name: "Microphone",
+          }) as HTMLSelectElement
+        ).value,
+      ).toBe("headset"),
     );
-    expect(
-      await screen.findByText(/Devices refreshed: 2 microphones/),
-    ).toBeTruthy();
-    const microphone = screen.getByRole("combobox", {
-      name: "Microphone",
-    }) as HTMLSelectElement;
-    expect(microphone.value).toBe("headset");
-    expect(screen.queryByText(/Selected microphone is unavailable/)).toBeNull();
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Selected microphone is unavailable/),
+      ).toBeNull(),
+    );
     expect(api.listDevices).toHaveBeenCalledTimes(2);
   });
 

@@ -574,19 +574,35 @@ export function App() {
   }, [detectedApp?.id]);
   // A device plugged in or allowed after startup appears without restarting. Only an empty choice
   // is filled; a chosen device that is unavailable is never replaced.
+  // Fills only an empty choice; a saved, unavailable device is never replaced.
+  const applyDevices = (discovered: AudioDevices) => {
+    setDevices(discovered);
+    setMicrophone(
+      (current) =>
+        current ||
+        (settings?.microphone_id ?? discovered.microphones[0]?.id ?? ""),
+    );
+    setOutput(
+      (current) =>
+        current || (settings?.output_id ?? discovered.outputs[0]?.id ?? ""),
+    );
+  };
+  // Devices connected after startup (a Bluetooth headset, say) appear without a manual refresh.
+  useEffect(() => {
+    if (panel !== "setup" || !desktop) return;
+    let live = true;
+    api.listDevices().then(
+      (discovered) => live && applyDevices(discovered),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [panel, desktop]);
   const refreshDevices = () =>
     void run(async () => {
       const discovered = await api.listDevices();
-      setDevices(discovered);
-      setMicrophone(
-        (current) =>
-          current ||
-          (settings?.microphone_id ?? discovered.microphones[0]?.id ?? ""),
-      );
-      setOutput(
-        (current) =>
-          current || (settings?.output_id ?? discovered.outputs[0]?.id ?? ""),
-      );
+      applyDevices(discovered);
       setNotice(
         `Devices refreshed: ${discovered.microphones.length} microphone${discovered.microphones.length === 1 ? "" : "s"}, ${discovered.outputs.length} output${discovered.outputs.length === 1 ? "" : "s"}.`,
       );

@@ -63,6 +63,6 @@ Native run of `just dev` with two authorized test recordings on a SoundCore 2 Bl
 | 11 | P2 | Most library entries read "Untitled meeting"; a default title with date and time would be scannable. | Open |
 | 12 | P2 | "Save notes now" duplicates autosave. | Open |
 | 14 | P1 | Automatic API transcription stops after about 20 minutes: chunks are 16-bit at the native rate, so the 48 kHz stereo system track alone uses about 192 kB/s against the 256 MiB plan budget. Downmix to 16 kHz mono in `cloud_stt::prepare` or scale the budget. | Open |
-| 13 | P1 | New recording listed only a stale "Saved microphone (unavailable)" until **Refresh devices**, although the SoundCore microphone was connected. | Open |
+| 13 | P1 | New recording listed only a stale "Saved microphone (unavailable)" until **Refresh devices**, although the SoundCore microphone was connected. | Fixed: New recording lists devices again each time it opens. |
 
 Pause exclusion held on the microphone track: the timing index has no blocks for the paused 10.5 s and the WAV length matches. Local transcription with Whisper `small` runs end to end. Summaries were not exercised because no connection has a key.
