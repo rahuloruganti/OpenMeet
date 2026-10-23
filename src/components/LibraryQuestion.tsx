@@ -9,7 +9,7 @@ import {
   type Recipe,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
-import { tagChoices } from "../lib/meeting-labels";
+import { formatDate, tagChoices } from "../lib/meeting-labels";
 import { parseTimestamp, segmentsAt } from "../lib/timestamps";
 import { RecipePicker } from "./Recipes";
 import {
@@ -257,7 +257,7 @@ export function LibraryQuestion(props: Props) {
                 <span>
                   {meeting.title}{" "}
                   <span className="muted">
-                    {new Date(meeting.started_at).toLocaleDateString()}
+                    {formatDate(meeting.started_at)}
                   </span>
                 </span>
               </label>
@@ -330,6 +330,7 @@ export function LibraryQuestion(props: Props) {
           </select>
           {answered && (
             <button
+              className="danger"
               disabled={disabled || working}
               onClick={() => setDeletingAnswer(true)}
             >
@@ -350,7 +351,7 @@ export function LibraryQuestion(props: Props) {
           </p>
           <div className="panel-actions">
             <button
-              className="primary"
+              className="danger danger-filled"
               onClick={() => {
                 const id = answered.answer.id;
                 setDeletingAnswer(false);

@@ -54,7 +54,7 @@ export function ActionItems({
   const locked = disabled || busy;
   return (
     <section className="action-items" aria-label="Tasks">
-      <h4>Tasks</h4>
+      <h3>Tasks</h3>
       {items.length === 0 && <p className="muted">No tasks yet.</p>}
       <ul>
         {items.map((item) => (
@@ -113,6 +113,7 @@ export function ActionItems({
                 ))}
             <button
               aria-label={`Delete task: ${item.text}`}
+              className="danger"
               disabled={locked}
               onClick={() =>
                 void run(() => api.deleteActionItem(meetingId, item.id))

@@ -23,5 +23,33 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
+/** "Oct 23, 2026" */
+export const formatDate = (iso: string) =>
+  new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(iso));
+
+/** "Oct 23, 2026, 10:15 AM" */
+export const formatDateTime = (iso: string) =>
+  new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+
+/** "Oct 23", plus the year when it is not the current year. */
+export const formatShortDate = (iso: string, now = new Date()) => {
+  const date = new Date(iso);
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  }).format(date);
+};
+
 /** A path without the Windows `\\?\` long-path prefix that Rust adds when it canonicalizes. */
 export const displayPath = (path: string) => path.replace(/^\\\\\?\\/, "");

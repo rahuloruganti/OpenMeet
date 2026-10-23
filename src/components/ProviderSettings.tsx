@@ -290,6 +290,7 @@ export function Connections(props: Props) {
             <span className="muted">Enter a name and a URL.</span>
           )}
           <button
+            className="danger"
             disabled={disabled || !connection || dirty || status !== "present"}
             onClick={() => {
               if (password.current) password.current.value = "";
@@ -300,6 +301,7 @@ export function Connections(props: Props) {
           </button>
           {removeReason && <span className="muted">{removeReason}</span>}
           <button
+            className="danger"
             disabled={
               disabled ||
               !connection ||

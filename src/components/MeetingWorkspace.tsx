@@ -26,7 +26,11 @@ import {
 import { MeetingTagsForm } from "./MeetingTags";
 import { SpeakerNamesForm } from "./SpeakerNames";
 import { TranscriptVersions } from "./TranscriptVersions";
-import { formatBytes, sourceLabels } from "../lib/meeting-labels";
+import {
+  formatBytes,
+  formatDateTime,
+  sourceLabels,
+} from "../lib/meeting-labels";
 import {
   formatTimestamp,
   parseTimestamp,
@@ -654,7 +658,7 @@ export function MeetingWorkspace(props: Props) {
           )}
           <div className="panel-actions">
             <button
-              className="danger"
+              className="danger danger-filled"
               disabled={
                 deleteDisabled || (needsTitle && typed !== meeting.title)
               }
@@ -681,7 +685,7 @@ export function MeetingWorkspace(props: Props) {
       <div className="meeting-meta">
         <span className="source-badge">{sourceLabels[meeting.source]}</span>
         <time dateTime={meeting.started_at}>
-          {new Date(meeting.started_at).toLocaleString()}
+          {formatDateTime(meeting.started_at)}
         </time>
         <span
           className={`save-status${props.notesStatus === "error" ? " error" : ""}`}
@@ -1046,6 +1050,7 @@ export function MeetingWorkspace(props: Props) {
               {activeThread && (
                 <button
                   disabled={disabled || job !== null}
+                  className="danger"
                   onClick={() => setDeletingThread(true)}
                 >
                   Delete thread
@@ -1067,7 +1072,7 @@ export function MeetingWorkspace(props: Props) {
               </p>
               <div className="panel-actions">
                 <button
-                  className="primary"
+                  className="danger danger-filled"
                   onClick={() => {
                     setDeletingThread(false);
                     props.onDeleteThread(activeThread.id);

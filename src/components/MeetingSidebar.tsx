@@ -1,7 +1,12 @@
 import { useState } from "react";
 import type { Meeting, SearchHit } from "../lib/api";
 import { groupMeetings } from "../lib/group-meetings";
-import { formatBytes, sourceLabels, tagChoices } from "../lib/meeting-labels";
+import {
+  formatBytes,
+  formatShortDate,
+  sourceLabels,
+  tagChoices,
+} from "../lib/meeting-labels";
 
 const hitLabels: Record<SearchHit["kind"], string> = {
   title: "Title",
@@ -148,10 +153,7 @@ export function MeetingSidebar(props: Props) {
                           ` · ${meeting.tags.join(", ")}`}
                       </span>
                       <time dateTime={meeting.started_at}>
-                        {new Date(meeting.started_at).toLocaleDateString(
-                          undefined,
-                          { month: "short", day: "numeric" },
-                        )}
+                        {formatShortDate(meeting.started_at)}
                       </time>
                     </span>
                   </button>
