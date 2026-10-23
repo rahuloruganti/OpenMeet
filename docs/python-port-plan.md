@@ -353,34 +353,27 @@ New recording with the title "Teams meeting" and did not start a recording. The 
 `Shift+A` with "Add Ctrl or Alt, or use an F-key.", and the saved shortcut was unchanged.
 6. **Frontend reorganisation.** Done in phase 6 (pure move); see its section.
 7. **Hardware qualification.** Recording and transcription stay unqualified until this phase
-   passes on real hardware. Nothing below has been run.
+   passes on real hardware. Nothing below has been run. The owner's checklist and pass rule are in
+   [docs/phase-7-hardware-qualification.md](phase-7-hardware-qualification.md).
 
-### Phase 7 manual qualification protocol
+### Phase 7 hardware qualification
 
-Run only with the owner's explicit authorization, on the target Windows machine, with the Python
-build from `py/dist/OpenMeet-py.exe`. Record each result with date, device names and the file
-evidence.
+The step-by-step checklist is [docs/phase-7-hardware-qualification.md](phase-7-hardware-qualification.md).
+The owner runs it personally on this Windows 11 PC against `py\dist\OpenMeet-py.exe`. It covers
+sections A to O: devices, two distinct tracks, audible content, paused-audio exclusion, device loss,
+sleep and wake, window close and crash, the 60-minute drift run, real-model transcription, automatic
+processing, global shortcuts, meeting detection, credentials and data safety.
 
-1. **Device enumeration.** Microphones and output loopbacks list with the expected names. The
-   loopback labels carry the "includes OpenMeet playback" text.
-2. **Hardware test.** `py\.venv\Scripts\python.exe -m pytest -m hardware` with
-   `OPENMEET_PY_HARDWARE_AUDIO=1` set. It records about 3 seconds from the first microphone and the
-   first output. A missing device fails the test. It does not prove audibility.
-3. **Distinct tracks.** Speak into the microphone while playing a known tone or speech through the
-   output. Open each WAV in an audio editor. Confirm that the microphone file has the voice and not
-   the tone, and that the system file has the tone and not the voice.
-4. **Pause privacy.** Record with a distinct sound during a pause. Confirm the sound is absent from
-   both files and that the timing index skips the pause.
-5. **Device loss and switch.** Unplug or disable the microphone mid-recording. Confirm the recording
-   pauses with the device error and the files are kept. Confirm the saved id does not silently switch
-   to another device on resume.
-6. **Sleep and wake.** Suspend the machine mid-recording and wake it. Confirm the recording pauses
-   with the sleep message and the files finalize on stop.
-7. **Long run.** Record 60 minutes with a steady tone on both tracks. Measure the drift between the
-   track clocks and the wall clock against the 100 ms target, using the timing index and the start and
-   stop times. Record the measured value, even if it fails.
-8. **Recovery.** Kill the process mid-recording. Restart. Confirm the meeting shows `interrupted`, and
-   that `recover_audio` writes a playable copy with whole frames and leaves the original unchanged.
+Helpers, read-only on recordings and never playing audio: `py\tools\make_test_audio.py` writes test
+WAV files, and `py\tools\verify_recording.py` checks a meeting folder or two WAV files. Their tests are in
+`py/tests/test_tools.py`.
+
+**Pass rule.** A PASS results table is the only basis for removing the "unqualified" labels. A BLOCKED
+step (for example, a missing device or model) is never a PASS. Until every section passes, nothing beyond
+the sections marked PASS is claimed. The labels, and which docs and UI strings to update, are listed in the
+checklist's sign-off section.
+
+The Rust app is outside this phase: `src-tauri/` cannot be compiled on this PC.
 
 ## Known gaps and deliberate simplifications
 

@@ -38,6 +38,8 @@ Notes, audio, transcripts, and exports are unencrypted. Configured LLM summaries
 
 [Phase 1 foundation verification](phase-1-foundation-verification.md) records the current fixes, executed tests, and open hardware/provider/native UI gates for issues #7–#13.
 
+[Phase 7 hardware qualification](phase-7-hardware-qualification.md) is the owner's step-by-step checklist for the Python build on real hardware (devices, pause privacy, failures, sleep, the 60-minute drift run, real models, shortcuts, detection and credentials). Only a PASS table removes the "unqualified" labels; the Rust app is out of its scope.
+
 [Implementation status](implementation-status.md) records implemented behavior, executed checks, and open gates. The [original development plan](../Open-source%20meeting%20notetaker%20development%20plan%20and%20tool%20inventory.md) contains proposed designs, including dependencies that were never added.
 
 For exact behavior, use the source and tests. For dependency versions, use [package.json](../package.json), [Cargo.toml](../src-tauri/Cargo.toml), and both lockfiles. [log.md](../log.md) preserves the work history; it is not the current feature reference.
