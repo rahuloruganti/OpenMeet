@@ -5,33 +5,110 @@
     BlinkMacSystemFont,
     system-ui,
     sans-serif;
-  color: #242832;
-  background: #fff;
+  color: var(--ink);
+  background: var(--workspace);
   line-height: 1.5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  color-scheme: light;
-  --workspace: #fff;
-  --sidebar: #f5f6f8;
-  --paper: #fff;
-  --ink: #242832;
-  --muted: #656d7b;
-  --divider: #e6e8ed;
-  --control-border: #808999;
-  --control-border-hover: #5d6573;
-  --control-height: 36px;
-  --control-height-compact: 32px;
+  color-scheme: dark;
+  --workspace: #111316;
+  --sidebar: #13161a;
+  --chrome: #15181b;
+  --paper: #0e1013;
+  --raised: #1e2227;
+  --hover: #191d21;
+  --active: #262a30;
+  --ink: #e4e6e8;
+  --muted: #9198a0;
+  --divider: #25282d;
+  --control-border: #6a717a;
+  --control-border-hover: #9aa1a9;
+  --control-height: 32px;
+  --control-height-compact: 28px;
   --control-font: 0.8125rem;
   --control-font-compact: 0.75rem;
-  --accent: #355d50;
-  --accent-hover: #264b40;
-  --selection: #e7eeeb;
-  --danger: #a3323d;
-  --warning: #87601a;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --accent: #f0b84d;
+  --accent-hover: #f5c968;
+  --accent-ink: #16130a;
+  --selection: #262a30;
+  --danger: #f2828b;
+  --danger-strong: #ff9aa2;
+  --danger-bg: #2a1719;
+  --danger-border: #5c2a30;
+  --danger-ink: #16130a;
+  --warning: #e3b45f;
+  --warning-bg: #2a2314;
+  --warning-border: #5a4a24;
+  --success: #6fcf97;
+  --success-bg: #14261b;
+  --success-border: #264b36;
+  --info-bg: #16212e;
+  --info-border: #2a3f58;
+  --focus: #7aa2e0;
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+/* Console: amber accent, light palette follows the OS. Dark is the default. */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --workspace: #fcfcfb;
+    --sidebar: #f3f4f5;
+    --chrome: #f6f7f8;
+    --paper: #ffffff;
+    --raised: #ffffff;
+    --hover: #eceef0;
+    --active: #e2e5e8;
+    --ink: #1b1d20;
+    --muted: #5b6168;
+    --divider: #dcdfe3;
+    --control-border: #7d848c;
+    --control-border-hover: #4f555c;
+    --accent: #8a5200;
+    --accent-hover: #6f4200;
+    --accent-ink: #ffffff;
+    --selection: #f1e8d3;
+    --danger: #a3323d;
+    --danger-strong: #87232e;
+    --danger-bg: #fff5f5;
+    --danger-border: #e0b9bf;
+    --danger-ink: #ffffff;
+    --warning: #87601a;
+    --warning-bg: #fff6e7;
+    --warning-border: #ecd2ca;
+    --success: #1f6b43;
+    --success-bg: #f2f8f5;
+    --success-border: #d0e2d9;
+    --info-bg: #f4f7fb;
+    --info-border: #cfdcea;
+    --focus: #2f5fa8;
+    --shadow: rgba(24, 34, 51, 0.15);
+  }
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--control-border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--control-border);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--control-border-hover);
+}
+::selection {
+  background: var(--selection);
+  color: var(--ink);
 }
 [hidden] {
   display: none !important;
@@ -61,9 +138,9 @@ summary {
 button {
   min-width: 0;
   min-height: var(--control-height);
-  padding: 7px 12px;
+  padding: 5px 10px;
   border: 1px solid var(--control-border);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--paper);
   font-size: var(--control-font);
   font-weight: 500;
@@ -75,7 +152,7 @@ button {
     border-color 0.12s;
 }
 button:hover:not(:disabled) {
-  background: #f0f2f5;
+  background: var(--hover);
   border-color: var(--control-border-hover);
 }
 button:active:not(:disabled) {
@@ -86,8 +163,8 @@ button:disabled {
   cursor: not-allowed;
 }
 :focus-visible {
-  outline: 3px solid #527cba;
-  outline-offset: 3px;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 input:not([type="checkbox"]):not([type="radio"]),
 textarea,
@@ -95,16 +172,16 @@ select {
   display: block;
   width: 100%;
   min-width: 0;
-  min-height: 38px;
-  padding: 9px 11px;
+  min-height: 30px;
+  padding: 6px 10px;
   border: 1px solid var(--control-border);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--paper);
   font-size: 0.875rem;
 }
 input::placeholder,
 textarea::placeholder {
-  color: #5f6777;
+  color: var(--muted);
   opacity: 1;
 }
 input[type="checkbox"],
@@ -195,13 +272,13 @@ pre {
   font: inherit;
 }
 .primary {
-  color: #fff;
+  color: var(--accent-ink);
   background: var(--accent);
   border-color: var(--accent);
 }
 .primary:hover:not(:disabled),
 .primary:active:not(:disabled) {
-  color: #fff;
+  color: var(--accent-ink);
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
@@ -225,7 +302,7 @@ pre {
   position: fixed;
   inset: 0;
   display: grid;
-  grid-template-columns: 244px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
   overflow: clip;
@@ -234,12 +311,14 @@ pre {
 .app.sidebar-collapsed {
   grid-template-columns: minmax(0, 1fr);
 }
+/* Full-bleed rows: each block pads itself by 12px so hover and the selected
+   edge sit against the sidebar border. */
 .sidebar {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 24px 14px 16px;
+  padding: 12px 0 10px;
   border-right: 1px solid var(--divider);
   background: var(--sidebar);
 }
@@ -247,53 +326,76 @@ pre {
 .sidebar-bottom {
   flex: 0 0 auto;
 }
+.sidebar-top {
+  padding-inline: 12px;
+}
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 0 10px 28px;
+  gap: 8px;
+  margin: 0 0 14px;
 }
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 31px;
-  height: 31px;
-  border-radius: 9px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
+}
+.brand-mark svg {
+  width: 14px;
+  height: 14px;
 }
 .brand-name {
-  font-size: 1.0625rem;
-  font-weight: 650;
-  letter-spacing: -0.04em;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .sidebar-new {
   width: 100%;
+  height: 30px;
+  min-height: 30px;
   text-align: left;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-inline: 13px;
+  gap: 6px;
+  padding: 0 10px;
 }
 .secondary-new {
-  margin-top: 7px;
+  margin-top: 6px;
+  border-color: var(--control-border);
   background: transparent;
 }
+.secondary-new:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--hover);
+}
 .search-label {
-  margin: 20px 0 24px;
+  margin: 12px 0 10px;
   font-weight: 400;
 }
 .search-label input {
-  background: #eceef2;
-  border-color: transparent;
+  min-height: 30px;
+  padding: 5px 9px;
+  border-color: var(--control-border);
+  background: var(--paper);
+  font-size: 0.8125rem;
+}
+.sidebar-top select {
+  margin-top: 6px;
+  min-height: 30px;
+  padding: 4px 8px;
   font-size: 0.8125rem;
 }
 .sidebar-section-title {
-  margin: 0 10px 8px;
+  margin: 0 12px 4px;
   color: var(--muted);
-  font-size: 0.6875rem;
-  font-weight: 650;
-  letter-spacing: 0.07em;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 .meeting-scroll {
@@ -301,15 +403,23 @@ pre {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 2px;
-  margin: 0 -2px 12px;
+  padding: 0;
+  margin: 0 0 8px;
   scrollbar-width: thin;
 }
 .meeting-group-title {
-  margin: 16px 10px 6px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 10px 12px 4px;
+  background: var(--sidebar);
   color: var(--muted);
-  font-size: 0.6875rem;
-  font-weight: 500;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .meeting-list {
   list-style: none;
@@ -317,83 +427,120 @@ pre {
   padding: 0;
 }
 .meeting-list li + li {
-  margin-top: 3px;
+  margin-top: 0;
 }
+/* Two flat lines per row, laid out from the existing markup: title + time on
+   the first line, source and tags on the second. */
 .meeting-list button {
-  display: block;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 8px;
   width: 100%;
-  padding: 10px;
-  border-color: transparent;
+  padding: 6px 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   text-align: left;
 }
 .meeting-list button:hover:not(:disabled) {
   border-color: transparent;
-  background: #eceef2;
+  border-left-color: transparent;
+  background: var(--hover);
 }
 .meeting-list button[aria-current="true"] {
-  border-color: #d7e1dd;
-  background: var(--selection);
-  box-shadow: inset 3px 0 var(--accent);
+  border-color: transparent;
+  border-left-color: var(--accent);
+  background: var(--raised);
 }
 .meeting-list strong {
-  display: -webkit-box;
+  grid-row: 1;
+  grid-column: 1;
+  min-width: 0;
   overflow: hidden;
   font-size: 0.8125rem;
   font-weight: 600;
-  line-height: 1.5;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  line-height: 1.45;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .meeting-list span,
 .meeting-list time {
   color: var(--muted);
-  font-size: 0.6875rem;
   font-weight: 400;
-  line-height: 1.5;
 }
+/* The wrapper only forwards its children into the grid above. */
 .meeting-list .meeting-item-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 5px;
+  display: contents;
 }
-.meeting-item-meta time {
-  flex: 0 0 auto;
+.meeting-list time {
+  grid-row: 1;
+  grid-column: 2;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: nowrap;
 }
 .meeting-item-text {
+  grid-row: 2;
+  grid-column: 1 / -1;
   min-width: 0;
-  flex: 1 1 auto;
-}
-.meeting-tags {
-  display: inline-block;
-  max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
   white-space: nowrap;
-  vertical-align: bottom;
+  text-overflow: ellipsis;
+}
+/* Search hits carry a snippet span instead of the meta wrapper; it gets the whole second row. */
+.meeting-list button > span:not(.meeting-item-meta) {
+  display: -webkit-box;
+  grid-row: 2;
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+/* Inline tag text inside .meeting-item-text: it inherits the mono/muted style and
+   the parent's ellipsis, so it must stay inline and never become a grid/flex row. */
+.meeting-list .meeting-tags {
+  display: inline;
 }
 .meeting-scroll > p {
-  padding: 10px;
+  padding: 10px 12px;
   font-size: 0.8125rem;
 }
 .sidebar-bottom {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 10px;
+  gap: 0;
+  padding-top: 6px;
   border-top: 1px solid var(--divider);
 }
 .sidebar-bottom button {
-  border-color: transparent;
+  min-height: 28px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
+  color: var(--muted);
   text-align: left;
+  font-size: var(--control-font-compact);
+}
+.sidebar-bottom button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
 }
 .local-storage-note {
-  margin: 10px 12px 0;
+  margin: 8px 12px 0;
   color: var(--muted);
-  font-size: 0.6875rem;
+  font-family: var(--mono);
+  font-size: 11px;
   line-height: 1.6;
 }
 
@@ -418,28 +565,40 @@ pre {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 60px;
-  padding: 10px 28px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--divider);
-  background: var(--workspace);
+  background: var(--chrome);
 }
 .toolbar-context {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
   min-width: 0;
-  font-size: 0.75rem;
+  font-size: 12px;
 }
+/* Command-bar ghost buttons: no chrome until hover. */
 .toolbar-context button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 6px;
-  border-color: transparent;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--muted);
   background: transparent;
+  font-size: 12px;
+}
+.toolbar-context button:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--hover);
+}
+.toolbar-context button[aria-expanded="true"] {
+  color: var(--ink);
 }
 .toolbar-context svg {
   stroke: currentColor;
@@ -449,16 +608,27 @@ pre {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 .collapsed-actions button {
-  color: inherit;
-  border-color: var(--control-border);
-  background: var(--paper);
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+}
+.collapsed-actions button:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--hover);
 }
 .toolbar-location {
   color: var(--muted);
-  padding-left: 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding-left: 12px;
   border-left: 1px solid var(--divider);
 }
 .eyebrow {
@@ -472,16 +642,22 @@ pre {
 }
 .privacy-details {
   position: relative;
-  font-size: 0.75rem;
+  font-size: 12px;
 }
 .privacy-details > summary {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   list-style: none;
   cursor: pointer;
   color: var(--muted);
-  padding: 7px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-height: 28px;
+  padding: 4px 0;
+}
+.privacy-details[open] > summary {
+  color: var(--ink);
 }
 .privacy-details > summary::-webkit-details-marker,
 .more-actions > summary::-webkit-details-marker {
@@ -495,13 +671,13 @@ pre {
 .privacy-popover {
   position: absolute;
   right: 0;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   width: min(340px, 70vw);
-  padding: 18px;
+  padding: 12px 14px;
   border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: var(--paper);
-  box-shadow: 0 8px 32px #18223318;
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
   font-size: 0.8125rem;
 }
 .privacy-popover strong {
@@ -515,7 +691,7 @@ pre {
 .feedback-stack {
   grid-row: 2;
   z-index: 20;
-  padding: 12px 28px 0;
+  padding: 10px 28px 0;
   font-size: 0.8125rem;
   max-height: 40dvh;
   overflow-y: auto;
@@ -531,9 +707,10 @@ pre {
   gap: 8px 16px;
   margin: 0 0 8px;
   padding: 10px 12px;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--divider);
   border-radius: 8px;
-  background: var(--selection);
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 .detection-card .panel-actions {
   margin: 0;
@@ -555,18 +732,19 @@ pre {
   margin: 0 0 8px;
   padding: 10px 12px;
   border: 1px solid var(--divider);
-  border-radius: 8px;
+  border-radius: 6px;
   overflow-wrap: anywhere;
+  font-size: 0.8125rem;
 }
 .error {
   color: var(--danger);
-  border-color: #edcbd0;
-  background: #fff5f5;
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
 }
 .notice {
-  color: #355a4d;
-  border-color: #d0e2d9;
-  background: #f2f8f5;
+  color: var(--success);
+  border-color: var(--success-border);
+  background: var(--success-bg);
 }
 .feedback-stack > div {
   display: flex;
@@ -584,7 +762,7 @@ pre {
 }
 /* Beats the transparent banner-button rule above; hover is covered by .primary:hover. */
 .feedback-stack .primary {
-  color: #fff;
+  color: var(--accent-ink);
   background: var(--accent);
   border-color: var(--accent);
 }
@@ -595,20 +773,21 @@ pre {
   grid-row: 3;
   min-width: 0;
   min-height: 0;
-  padding: 40px clamp(24px, 4vw, 64px) 32px;
+  padding: 14px 22px 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
+/* One left-aligned measure for the whole document, as in a console pane. */
 .meeting-heading,
 .meeting-meta,
 .content-tabs,
 .document-canvas,
 .empty-workspace,
 .content-area > .dialog-card {
-  max-width: 880px;
+  max-width: 760px;
   margin-right: auto;
-  margin-left: auto;
+  margin-left: 0;
 }
 .meeting-heading {
   position: relative;
@@ -616,29 +795,45 @@ pre {
   align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 8px 16px;
 }
 .meeting-title {
   flex: 1 1 220px;
   min-width: 0;
   margin: 0;
-  line-height: 1.25;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
 }
-.meeting-title:focus {
+/* The h1 takes focus programmatically after a rename; the rename input keeps its ring. */
+h1.meeting-title:focus {
   outline: none;
 }
 .meeting-title-input {
-  font-size: 1.875rem !important;
+  font-size: 19px !important;
   font-weight: 600;
+  padding: 1px 6px;
 }
 .meeting-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 .meeting-actions > button {
+  min-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--muted);
+  background: transparent;
+  font-size: var(--control-font-compact);
+}
+.meeting-actions > button:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--hover);
 }
 .more-actions {
   position: relative;
@@ -646,13 +841,18 @@ pre {
 .more-actions > summary {
   display: grid;
   place-items: center;
-  width: 32px;
-  min-height: 32px;
-  border: 1px solid var(--control-border);
-  border-radius: 7px;
+  width: 28px;
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
   cursor: pointer;
   list-style: none;
   letter-spacing: 1px;
+}
+.more-actions > summary:hover {
+  color: var(--ink);
+  background: var(--hover);
 }
 .action-menu {
   position: absolute;
@@ -661,39 +861,51 @@ pre {
   z-index: 10;
   display: grid;
   min-width: 180px;
-  padding: 5px;
+  padding: 4px;
   border: 1px solid var(--divider);
-  border-radius: 9px;
-  background: var(--paper);
-  box-shadow: 0 8px 24px #18223318;
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 .action-menu button {
+  min-height: var(--control-height-compact);
+  padding: 4px 8px;
   border: 0;
+  border-radius: 5px;
+  background: transparent;
   text-align: left;
   color: var(--danger);
+  font-size: 12px;
+}
+.action-menu button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
 }
 .meeting-meta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-top: 14px;
-  margin-bottom: 30px;
+  gap: 6px 12px;
+  margin-top: 6px;
+  margin-bottom: 12px;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-family: var(--mono);
+  font-size: 12px;
 }
 .source-badge {
   display: inline-flex;
-  padding: 3px 7px;
-  border-radius: 5px;
-  background: #f1f3f6;
-  color: #4f5767;
-  font-size: 0.6875rem;
+  padding: 0 6px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 500;
+  line-height: 1.7;
 }
 .save-status {
   margin-left: auto;
-  font-size: 0.6875rem;
+  font-size: 11px;
 }
 /* Global .error adds a red box; reset it so the status reads as text. */
 .save-status.error {
@@ -705,20 +917,24 @@ pre {
   color: var(--danger);
   font-weight: 600;
 }
+/* Flat underline tabs on the pane divider. */
 .content-tabs {
   display: flex;
-  gap: 24px;
-  margin-bottom: 24px;
+  gap: 2px;
+  margin-bottom: 16px;
   border-bottom: 1px solid var(--divider);
 }
 .content-tabs button {
-  padding: 10px 0 12px;
+  min-height: 32px;
+  margin-bottom: -1px;
+  padding: 8px 12px;
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
   color: var(--muted);
   background: transparent;
-  font-size: 0.8125rem;
+  font-size: 12px;
+  font-weight: 500;
 }
 .content-tabs button:hover:not(:disabled) {
   color: var(--ink);
@@ -726,13 +942,14 @@ pre {
   border-bottom-color: var(--control-border);
 }
 .content-tabs button[aria-selected="true"] {
-  color: var(--accent);
+  color: var(--ink);
   border-bottom-color: var(--accent);
-  font-weight: 650;
+  font-weight: 600;
 }
 .document-canvas {
   min-width: 0;
-  background: var(--paper);
+  padding: 20px 0 24px;
+  background: var(--workspace);
 }
 .notes-panel,
 .reading-panel {
@@ -742,11 +959,12 @@ pre {
 textarea.notes-editor {
   min-height: 240px;
   height: clamp(240px, 48dvh, 640px);
-  padding: 12px 2px;
-  border-color: var(--control-border);
+  padding: 4px 0 12px;
+  border: 0;
   border-radius: 0;
-  font-size: 0.9375rem;
-  line-height: 1.9;
+  background: transparent;
+  font-size: 14.5px;
+  line-height: 1.65;
   resize: vertical;
 }
 .notes-editor:focus-visible {
@@ -756,18 +974,34 @@ textarea.notes-editor {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 14px;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
   border-top: 1px solid var(--divider);
-  font-size: 0.6875rem;
+  color: var(--muted);
+  font-size: 12px;
+}
+.editor-footer > button {
+  min-height: 28px;
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+}
+.editor-footer > button:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--hover);
 }
 .editor-footer > .muted:last-child {
   margin-left: auto;
 }
 .reading-panel {
-  font-size: 0.9375rem;
-  line-height: 1.8;
+  max-width: 760px;
+  font-size: 14.5px;
+  line-height: 1.65;
 }
 .reading-panel h3 {
   margin-top: 0;
@@ -783,6 +1017,12 @@ textarea.notes-editor {
 .summary-heading h3 {
   margin: 0;
   max-width: 100%;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .summary-heading .panel-actions {
   margin: 0;
@@ -804,7 +1044,10 @@ textarea.notes-editor {
   margin: 24px 0 12px;
 }
 .summary-body {
+  max-width: 760px;
   overflow-wrap: anywhere;
+  font-size: 14.5px;
+  line-height: 1.65;
 }
 .summary-body ul,
 .summary-body ol {
@@ -817,8 +1060,8 @@ textarea.notes-editor {
 .summary-body code {
   padding: 1px 4px;
   border-radius: 4px;
-  background: #f1f3f6;
-  font-family: Consolas, "Cascadia Mono", monospace;
+  background: var(--hover);
+  font-family: var(--mono);
   font-size: 0.875em;
 }
 .summary-body pre {
@@ -827,7 +1070,7 @@ textarea.notes-editor {
   padding: 10px 12px;
   border: 1px solid var(--divider);
   border-radius: 6px;
-  background: #f8f9fb;
+  background: var(--hover);
   overflow-x: auto;
 }
 .summary-body pre code {
@@ -854,16 +1097,17 @@ textarea.notes-editor {
   vertical-align: top;
 }
 .md-table th {
-  background: #f8f9fb;
+  background: var(--hover);
   font-weight: 600;
 }
 .summary-version {
   margin: 12px 0 20px;
 }
 .highlighted-segment {
-  outline: 2px solid var(--divider);
+  outline: 1px solid var(--divider);
+  outline-offset: 2px;
   border-radius: 6px;
-  background: #f8f9fb;
+  background: var(--selection);
 }
 .segment-edit {
   display: inline-flex;
@@ -884,15 +1128,18 @@ textarea.notes-editor {
 }
 .action-items ul {
   display: grid;
-  gap: 8px;
+  gap: 0;
   padding: 0;
   list-style: none;
+  border-top: 1px solid var(--divider);
 }
 .action-items li {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--divider);
 }
 .action-items li input:not([type]) {
   flex: 1 1 160px;
@@ -903,12 +1150,12 @@ textarea.notes-editor {
 }
 .ask-meeting {
   display: grid;
-  gap: 8px;
-  margin-top: 32px;
-  padding: 20px;
+  gap: 10px;
+  margin-top: 28px;
+  padding: 14px 16px;
   border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: #f8f9fb;
+  border-radius: 8px;
+  background: var(--raised);
 }
 .ask-meeting label {
   margin: 0;
@@ -931,8 +1178,8 @@ textarea.notes-editor {
   min-height: var(--control-height-compact);
   padding: 2px 10px;
   border-color: var(--control-border);
-  border-radius: 999px;
-  background: var(--paper);
+  border-radius: 6px;
+  background: var(--raised);
   font-size: var(--control-font-compact);
 }
 .recipe-chip:hover:not(:disabled),
@@ -946,10 +1193,10 @@ textarea.notes-editor {
   order: 1;
   flex-basis: 100%;
   gap: 10px;
-  padding: 16px;
-  border: 1px solid var(--control-border);
-  border-radius: 10px;
-  background: #f8f9fb;
+  padding: 14px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised);
   font-size: 0.8125rem;
 }
 .rewrite-card p {
@@ -964,8 +1211,8 @@ textarea.notes-editor {
 }
 .rewrite-result {
   padding: 12px;
-  border: 1px solid var(--accent);
-  border-radius: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
   background: var(--paper);
   white-space: pre-wrap;
   font-size: 0.9375rem;
@@ -973,27 +1220,45 @@ textarea.notes-editor {
 .library-meetings {
   max-height: 240px;
   margin: 8px 0;
-  padding: 0 4px;
+  padding: 0 8px;
   overflow-y: auto;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--paper);
   list-style: none;
 }
+.library-meetings li + li {
+  border-top: 1px solid var(--divider);
+}
+.library-meetings .check {
+  margin: 6px 0;
+  font-size: 12px;
+}
 .section-intro {
-  margin-bottom: 20px;
+  max-width: 760px;
+  margin-bottom: 16px;
 }
 .section-intro h3 {
-  margin: 0 0 5px;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .section-intro p {
+  margin: 0;
   font-size: 0.8125rem;
 }
 .audio-player {
   display: grid;
   gap: 8px;
-  margin-block: 12px;
-  padding: 14px;
+  margin-block: 10px;
+  padding: 12px;
   border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: #f8f9fb;
+  border-radius: 8px;
+  background: var(--raised);
   font-size: 0.75rem;
 }
 .audio-player audio,
@@ -1001,9 +1266,9 @@ textarea.notes-editor {
   width: 100%;
 }
 .transcript-segment {
-  padding: 16px 0;
+  padding: 12px 0;
   margin: 0;
-  line-height: 1.8;
+  line-height: 1.75;
   overflow-wrap: anywhere;
 }
 .transcript-segment + .transcript-segment {
@@ -1020,10 +1285,27 @@ textarea.notes-editor {
   margin: 0 4px;
   padding: 2px 7px;
   border-color: transparent;
-  background: #edf2f0;
+  border-radius: 5px;
+  background: var(--selection);
   color: var(--accent);
-  font-size: var(--control-font-compact);
+  font-family: var(--mono);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+.seek-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--selection);
+}
+/* Earlier transcripts and the speaker-name form sit on the same flat grid. */
+.speaker-names,
+.transcript-versions {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+}
+.speaker-names > p,
+.transcript-versions > p {
+  margin: 0;
 }
 .track-details {
   margin: 16px 0;
@@ -1067,63 +1349,126 @@ textarea.notes-editor {
   font-size: 0.9375rem;
 }
 
+/* Bottom status bar: one dense mono line across the workspace, as in a console. */
 .recording-bar {
   grid-row: 4;
   z-index: 25;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px 18px;
-  min-height: 54px;
-  padding: 9px 28px;
+  gap: 6px 16px;
+  min-height: 36px;
+  padding: 4px 12px;
   border-top: 1px solid var(--divider);
-  background: #fafbfc;
+  background: var(--chrome);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
   isolation: isolate;
 }
+/* A live take tints only the top edge; the bar itself stays chrome. */
 .recording-bar.is-active {
-  background: #fff7f5;
-  border-top-color: #ecd2ca;
+  border-top-color: var(--accent);
 }
 .recording-indicator {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
+  order: 0;
 }
 .status-dot {
   width: 7px;
   height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: #8b94a3;
+  background: var(--muted);
 }
 .recording-state {
-  font-size: 0.75rem;
+  color: var(--ink);
+  font-size: 12px;
   font-weight: 500;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 .recording-state.recording {
-  color: var(--danger);
+  color: var(--accent);
+  font-weight: 600;
 }
 .recording-state.paused {
   color: var(--warning);
 }
+.recording-state.stopped {
+  color: var(--danger);
+}
+/* Live pulses; paused is a hollow ring, so the two differ by shape as well as hue. */
 .status-dot.recording {
-  background: var(--danger);
-  box-shadow: 0 0 0 4px #a3323d12;
+  background: var(--accent);
+  animation: status-pulse 1.4s ease-in-out infinite;
 }
 .status-dot.paused {
-  background: var(--warning);
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 2px solid var(--muted);
 }
-.stop-button {
+.status-dot.stopped {
   background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
 }
-.stop-button:hover:not(:disabled) {
-  background: #87232e;
-  border-color: #87232e;
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+/* Actions sit at the far right of the bar, like the console readout's controls. */
+.recording-bar .actions {
+  order: 2;
+  gap: 6px;
+  margin-left: auto;
+}
+.recording-bar .actions button {
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  padding: 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+}
+.recording-bar .actions button:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--hover);
+}
+.recording-bar .actions .stop-button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.recording-bar .actions .stop-button:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+/* Silence warning takes a full-width line instead of squeezing the buttons. */
+.recording-bar .error {
+  order: 1;
+  flex: 1 1 100%;
+  width: 100%;
+  margin: 2px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--danger-border);
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.5;
 }
 .actions,
 .panel-actions {
@@ -1138,20 +1483,54 @@ textarea.notes-editor {
 .level-meters {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
+  align-items: center;
+  gap: 2px 16px;
+  min-width: 0;
 }
 .level-meter {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
-  font-size: 0.6875rem;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
 }
 .level-meter meter {
-  width: 72px;
+  flex: 0 0 auto;
+  width: 80px;
+  height: 6px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--active);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.level-meter meter::-webkit-meter-bar {
+  height: 6px;
+  border: 0;
+  border-radius: 3px;
+  background: var(--active);
+}
+.level-meter meter::-webkit-meter-optimum-value,
+.level-meter meter::-webkit-meter-suboptimum-value {
+  border-radius: 3px;
+  background: var(--accent);
+}
+.level-meter meter::-moz-meter-bar {
+  border-radius: 3px;
+  background: var(--accent);
 }
 .level-meter.warn span {
+  color: var(--danger);
   font-weight: 600;
+}
+.level-meter.warn meter::-webkit-meter-optimum-value,
+.level-meter.warn meter::-webkit-meter-suboptimum-value,
+.level-meter.warn meter::-moz-meter-bar {
+  border-radius: 3px;
+  background: var(--danger);
 }
 
 /* Panels replace the reading area; mounted notes retain their draft and selection. */
@@ -1160,10 +1539,10 @@ textarea.notes-editor {
   grid-row: 3;
   min-width: 0;
   min-height: 0;
-  padding: 32px clamp(24px, 4vw, 64px);
+  padding: 22px 28px 32px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  background: #fafbfc;
+  background: var(--workspace);
   scrollbar-gutter: stable;
 }
 .panel-heading {
@@ -1171,61 +1550,128 @@ textarea.notes-editor {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 .panel-heading h2 {
   margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .panel-heading button {
+  min-height: var(--control-height-compact);
+  padding: 3px 9px;
+  border-color: transparent;
+  background: transparent;
   color: var(--muted);
+  font-size: 12px;
+}
+.panel-heading button:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--hover);
 }
 .panel-description {
+  max-width: 760px;
+  margin-bottom: 20px;
   color: var(--muted);
-  font-size: 0.875rem;
-  margin-bottom: 28px;
+  font-size: 12px;
+  line-height: 1.6;
 }
 .processing-review {
-  margin-block: 16px;
-  padding: 16px;
+  margin-block: 14px;
+  padding: 12px 14px;
   border: 1px solid var(--divider);
   border-radius: 8px;
-  background: var(--workspace);
+  background: var(--raised);
 }
 .processing-panel {
   max-height: 32vh;
+  margin: 0 0 12px;
   overflow-y: auto;
-  padding: 12px 28px;
-  border-bottom: 1px solid var(--divider);
-  background: #fafbfc;
-  font-size: 0.875rem;
+  padding: 10px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
+  font-size: 0.8125rem;
 }
 .processing-panel h3,
 .processing-panel h4 {
-  margin: 4px 0;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
+/* Sections are flat blocks: a mono label on a rule, then rows on dividers. */
 .settings-section {
   min-width: 0;
-  padding: 22px;
-  border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: #fff;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .settings-section > h3 {
-  margin: 0 0 12px;
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--divider);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.settings-section h4 {
+  margin: 16px 0 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .settings-section > p {
-  font-size: 0.8125rem;
+  max-width: 760px;
+  font-size: 12px;
+  line-height: 1.6;
 }
 .settings-section > button {
-  margin: 5px 4px 5px 0;
+  margin: 10px 4px 10px 0;
 }
 .settings-section > .panel-actions {
-  margin-bottom: 12px;
+  margin: 12px 0 0;
+}
+/* Every field is a row; dividers do the grouping, not borders. */
+.settings-section > label,
+.settings-section .field-row > label {
+  margin: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--divider);
+  font-size: 12px;
+  font-weight: 500;
+}
+.settings-section > label:first-of-type {
+  padding-top: 4px;
+  border-top: 0;
+}
+.workspace-panel input:not([type="checkbox"]):not([type="radio"]),
+.workspace-panel select {
+  min-height: 30px;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.workspace-panel fieldset {
+  border-color: var(--divider);
 }
 .help-details {
   color: var(--muted);
   margin: 12px 0;
-  font-size: 0.8125rem;
+  font-size: 12px;
 }
 .help-details p {
   margin-top: 10px;
@@ -1243,18 +1689,22 @@ textarea.notes-editor {
   margin: 0 8px 0 0;
 }
 .setup {
-  padding-inline: max(24px, calc((100% - 640px) / 2));
+  max-width: 760px;
+  padding-inline: 0;
 }
 .setup > [role="alert"] {
+  margin-bottom: 10px;
   padding: 10px 12px;
-  border-left: 3px solid var(--warning);
-  background: #fff6e7;
-  font-size: 0.8125rem;
+  border: 1px solid var(--warning-border);
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 12px;
 }
 .field-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 .field-row label {
   min-width: 0;
@@ -1263,27 +1713,28 @@ textarea.notes-editor {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  margin: 20px 0;
-  font-size: 0.875rem;
+  margin: 12px 0;
+  font-size: 12px;
   font-weight: 400;
-  line-height: 1.65;
+  line-height: 1.6;
 }
 .check span {
   flex: 1;
   min-width: 0;
 }
 .consent-check {
-  padding: 16px;
-  background: #eaf0ed;
-  border: 1px solid #d3dfd8;
-  border-radius: 9px;
+  padding: 12px;
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: 6px;
 }
 .dialog-card {
   margin: 12px 0 24px;
-  padding: 18px;
-  border: 1px solid var(--control-border);
-  border-radius: 10px;
-  background: #f8faf9;
+  padding: 12px 14px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
   font-size: 0.8125rem;
 }
 .dialog-card ul {
@@ -1294,12 +1745,12 @@ textarea.notes-editor {
 .delete-card {
   position: absolute;
   z-index: 15;
-  right: max(clamp(24px, 4vw, 64px), calc(50% - 440px));
+  right: max(28px, calc(50% - 440px));
   width: min(440px, 100%);
-  border-color: #e0b9bf;
-  border-radius: 10px;
-  background: #fff6f6;
-  box-shadow: 0 8px 24px #18223325;
+  border-color: var(--danger-border);
+  border-radius: 8px;
+  background: var(--danger-bg);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 .delete-card > p:first-child {
   margin-bottom: 8px;
@@ -1310,31 +1761,31 @@ textarea.notes-editor {
   border-color: var(--danger);
 }
 .danger:not(:disabled):is(:hover, :active) {
-  color: #87232e;
-  border-color: #87232e;
+  color: var(--danger-strong);
+  border-color: var(--danger-strong);
 }
 .danger.danger-filled {
-  color: #fff;
+  color: var(--danger-ink);
   background: var(--danger);
 }
 .danger.danger-filled:not(:disabled):is(:hover, :active) {
-  color: #fff;
-  background: #87232e;
-  border-color: #87232e;
+  color: var(--danger-ink);
+  background: var(--danger-strong);
+  border-color: var(--danger-strong);
 }
 .close-panel {
   position: fixed;
   z-index: 30;
   right: 24px;
-  bottom: 110px;
+  bottom: 76px;
   width: min(400px, calc(100vw - 48px));
-  max-height: calc(100dvh - 180px);
+  max-height: calc(100dvh - 140px);
   overflow-y: auto;
-  padding: 24px;
-  border: 1px solid var(--control-border);
-  border-radius: 12px;
-  background: var(--paper);
-  box-shadow: 0 12px 40px #18223325;
+  padding: 14px 16px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 .close-panel p {
   font-size: 0.875rem;
@@ -1357,7 +1808,7 @@ textarea.notes-editor {
 }
 @media (max-width: 1000px) {
   .content-area {
-    padding-top: 28px;
+    padding-top: 14px;
   }
 }
 @media (max-width: 800px) {
@@ -1365,31 +1816,36 @@ textarea.notes-editor {
     grid-template-columns: min(220px, 36vw) minmax(0, 1fr);
   }
   .sidebar {
-    padding: 20px 10px 12px;
+    padding: 10px 0 8px;
   }
   .toolbar-location {
     display: none;
   }
-  .workspace-toolbar,
+  .workspace-toolbar {
+    padding-inline: 12px;
+  }
+  /* The status bar keeps its own 4px/12px rhythm at every width. */
   .recording-bar {
-    padding-inline: 20px;
+    padding: 4px 12px;
+    gap: 6px 12px;
   }
   .feedback-stack {
     padding-inline: 20px;
   }
-  .content-area,
+  .content-area {
+    padding: 12px 16px 24px;
+  }
   .workspace-panel {
-    padding: 24px 20px;
+    padding: 16px 16px 28px;
   }
   .meeting-title {
-    font-size: 1.5rem;
+    font-size: 17px;
   }
   .meeting-meta {
-    margin-bottom: 22px;
+    margin-bottom: 12px;
   }
-  .meeting-item-meta {
-    flex-wrap: wrap;
-    gap: 2px !important;
+  .meeting-list button {
+    column-gap: 6px;
   }
   .field-row {
     grid-template-columns: minmax(0, 1fr);
@@ -1400,9 +1856,6 @@ textarea.notes-editor {
   .editor-footer > .muted:last-child {
     margin-left: 0;
   }
-  .settings-section {
-    padding: 18px;
-  }
 }
 @media (max-width: 720px) {
   .delete-card {
@@ -1412,14 +1865,19 @@ textarea.notes-editor {
   }
 }
 @media (max-width: 480px) {
-  .workspace-toolbar,
-  .recording-bar {
+  .workspace-toolbar {
     padding-inline: 12px;
     gap: 8px;
   }
-  .content-area,
+  .recording-bar {
+    padding: 6px 12px;
+    gap: 4px 12px;
+  }
+  .content-area {
+    padding: 10px 12px 20px;
+  }
   .workspace-panel {
-    padding: 20px 16px;
+    padding: 12px 12px 24px;
   }
   .feedback-stack {
     padding-inline: 12px;
@@ -1428,10 +1886,13 @@ textarea.notes-editor {
     display: none;
   }
   .privacy-details {
-    font-size: 0.6875rem;
+    font-size: 11px;
   }
   .content-tabs {
-    gap: 20px;
+    gap: 0;
+  }
+  .content-tabs button {
+    padding: 8px 10px;
   }
   .meeting-actions {
     gap: 4px;
@@ -1442,13 +1903,21 @@ textarea.notes-editor {
   .save-status {
     margin-left: 0;
   }
+  .level-meters {
+    gap: 0 12px;
+  }
   .recording-bar .actions {
-    flex-wrap: wrap;
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    margin-left: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   button {
     transition: none;
+  }
+  .status-dot.recording {
+    animation: none;
   }
 }
 @media (forced-colors: active) {
@@ -1477,34 +1946,53 @@ textarea.notes-editor {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
   align-items: start;
-  gap: 24px;
+  gap: 20px;
+  max-width: 980px;
 }
 .settings-nav {
   position: sticky;
   top: 0;
   display: grid;
-  gap: 2px;
+  gap: 1px;
+  padding-right: 12px;
+  border-right: 1px solid var(--divider);
 }
 .settings-nav [role="tab"] {
   justify-content: flex-start;
-  text-align: left;
+  min-height: var(--control-height-compact);
+  padding: 4px 10px;
   border-color: transparent;
+  border-radius: 5px;
   background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+}
+.settings-nav [role="tab"]:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--ink);
+  background: var(--hover);
 }
 .settings-nav [aria-selected="true"] {
   background: var(--selection);
-  box-shadow: inset 3px 0 var(--accent);
+  box-shadow: inset 2px 0 var(--accent);
+  color: var(--ink);
   font-weight: 600;
 }
 .unsaved-mark {
   color: var(--warning);
 }
+.settings-pages {
+  min-width: 0;
+}
+/* One left-aligned measure, like the console's settings pane. */
 .settings-page {
   display: grid;
-  gap: 20px;
+  gap: 22px;
   min-width: 0;
-  max-width: 880px;
-  margin-inline: auto;
+  max-width: 760px;
+  margin-inline: 0;
 }
 .choice-cards {
   display: grid;
@@ -1517,16 +2005,22 @@ textarea.notes-editor {
 .choice-cards legend {
   margin-bottom: 8px;
   padding: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .choice-card {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   margin: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--control-border);
-  border-radius: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--paper);
   cursor: pointer;
 }
 .choice-card:has(input:checked) {
@@ -1547,13 +2041,25 @@ textarea.notes-editor {
   align-items: end;
   gap: 8px;
 }
+/* Cloud disclosure: a tinted callout, not a second card. */
 .privacy-list {
   margin: 0 0 12px;
-  padding-left: 20px;
-  font-size: 0.875rem;
+  padding: 10px 12px 10px 28px;
+  border: 1px solid var(--warning-border);
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .privacy-list li {
   margin-bottom: 6px;
+}
+.privacy-list li:last-child {
+  margin-bottom: 0;
+}
+.privacy-list strong {
+  color: var(--warning);
 }
 @media (max-width: 960px) {
   .settings-layout {
@@ -1564,6 +2070,8 @@ textarea.notes-editor {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    padding-right: 0;
+    border-right: 0;
   }
 }
 .model-library {
@@ -1572,33 +2080,43 @@ textarea.notes-editor {
 }
 .model-library li {
   overflow-wrap: anywhere;
-  margin: 12px 0;
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--divider);
 }
 .model-library form {
   display: grid;
   gap: 12px;
 }
-.meeting-tags {
+/* Tag editor form; scoped to the reading pane so it never matches the sidebar span. */
+.content-area .meeting-tags {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  max-width: 880px;
-  margin: 8px auto 0;
+  gap: 6px;
+  max-width: 760px;
+  margin: 6px 0 0;
 }
-.meeting-tags input {
+.content-area .meeting-tags input {
   flex: 1 1 220px;
+  min-height: 30px;
+  font-size: 0.8125rem;
 }
 
 /* First-run setup */
 .setup-steps {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 16px;
+  gap: 4px 16px;
   margin: 0 0 16px;
-  padding: 0;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--divider);
   list-style: none;
   color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .setup-steps li[aria-current="step"] {
   color: var(--accent);
@@ -1606,19 +2124,19 @@ textarea.notes-editor {
 }
 .setup-list {
   display: grid;
-  gap: 8px;
+  gap: 0;
   margin: 0 0 16px;
   padding: 0;
   list-style: none;
+  border-top: 1px solid var(--divider);
 }
 .setup-list li {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--divider);
-  border-radius: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--divider);
 }
 .setup-list .muted {
   overflow-wrap: anywhere;
