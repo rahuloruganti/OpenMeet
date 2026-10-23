@@ -69,6 +69,10 @@ User-selected OpenAI-compatible services are governed by their provider terms, n
 
 The fictional meeting fixture and app icon were authored for this project under its MIT license. Meetily was reviewed as a reference; its source was not copied. Diarization and LLM weights are neither bundled nor downloaded by the current app.
 
+## Python build credential storage
+
+The Python desktop build (`py/`) stores provider API keys through `keyring` in the Windows Credential Manager. Pinned in `py/requirements.txt` with their Windows dependencies: keyring 25.7.0 (MIT), jaraco.classes 3.4.0, jaraco.context 6.1.2, jaraco.functools 4.6.0 and more-itertools 11.2.1 (MIT), and pywin32-ctypes 0.2.3 (BSD-3-Clause). Licenses are taken from upstream project metadata and are not yet audited against the installed wheels.
+
 ## User-selected model-library downloads
 
 Phase 2 adds no bundled models or dependencies. Public Hugging Face downloads display repository license metadata and retain it in a local provenance manifest. Generic GGUF models carry their own repository terms; discovery or a download entry is not a completed license audit. The existing pinned Whisper catalog remains the only directly importable speech-model catalog.

@@ -48,7 +48,7 @@ def test_startup_commands_return_harmless_idle_values(client: TestClient) -> Non
     assert invoke(client, "get_startup_warning") is None
     devices = invoke(client, "list_audio_devices")
     assert devices == {"capture_supported": False, "microphones": [], "outputs": []}
-    assert invoke(client, "provider_key_status", role="llm") == "unavailable"
+    assert invoke(client, "provider_key_status", role="llm") == "missing"
     speech = invoke(client, "stt_status")
     assert speech["installed"] is False and speech["models"] == []
     assert invoke(client, "detection_supported") is False

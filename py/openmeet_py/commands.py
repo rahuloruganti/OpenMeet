@@ -1,65 +1,45 @@
 """Command handlers for the Python build, keyed by the snake_case names the React UI invokes.
 
-Names and argument shapes follow src/lib/api.ts and src-tauri/src/lib.rs. Phase 1 implements the
-notes command set. Every other command is listed in NOT_AVAILABLE and answers HTTP 501.
+Names and argument shapes follow src/lib/api.ts and src-tauri/src/lib.rs. Phases 1 and 2 are
+implemented here and in the feature modules. Every other command is listed in NOT_AVAILABLE and
+answers HTTP 501.
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import inspect
 import re
 import sqlite3
 import threading
 import unicodedata
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from . import connections, questions, reads, summaries, tasks
+from .context import (
+    Context,
+    bool_arg,
+    int_arg,
+    now,
+    text_arg as _text,
+    int_arg as _int,
+    bool_arg as _bool,
+)
 from .errors import AppError, not_available
 from .exporter import write_snapshot
-from .store import Store, transaction
+from .reads import EXPORT_FORMATS, read_settings
+from .store import transaction
 
 MAX_NOTES_BYTES = 1024 * 1024
 MAX_TAGS = 20
 MAX_TAG_CHARS = 40
 MAX_SEARCH_CHARS = 200
-EXPORT_FORMATS = ("txt", "srt", "vtt")
 
-
-@dataclass
-class Context:
-    store: Store
-    emit: Callable[[str, Any], None]
-    # Native hooks, supplied by app.py only when a window exists. None means "not available".
-    pick_folder: Optional[Callable[[], Optional[str]]] = None
-    close_window: Optional[Callable[[], None]] = None
+__all__ = ["Context", "COMMANDS", "NOT_AVAILABLE", "dispatch", "snake_case"]
 
 
 # ---- helpers ---------------------------------------------------------------
-
-
-def _now() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def _text(value: Any, name: str) -> str:
-    if not isinstance(value, str):
-        raise AppError("invalid_args", f"{name} must be text.")
-    return value
-
-
-def _int(value: Any, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise AppError("invalid_args", f"{name} must be a whole number.")
-    return value
-
-
-def _bool(value: Any, name: str) -> bool:
-    if not isinstance(value, bool):
-        raise AppError("invalid_args", f"{name} must be true or false.")
-    return value
 
 
 def _validate_title(title: str) -> str:
@@ -70,36 +50,11 @@ def _validate_title(title: str) -> str:
 
 
 def _require_meeting(db: sqlite3.Connection, meeting_id: str) -> None:
-    exists = db.execute(
-        "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?1)", (meeting_id,)
-    ).fetchone()[0]
-    if not exists:
-        raise AppError("not_found", "Meeting not found.")
+    reads.require_meeting(db, meeting_id)
 
 
 def _tags_of(db: sqlite3.Connection, meeting_id: str) -> list[str]:
-    rows = db.execute(
-        "SELECT tag FROM meeting_tags WHERE meeting_id = ?1 ORDER BY tag", (meeting_id,)
-    ).fetchall()
-    return [row[0] for row in rows]
-
-
-MEETING_COLUMNS = (
-    "SELECT id, title, started_at, ended_at, status, source, capture_error FROM meetings"
-)
-
-
-def _meeting(row: tuple, tags: list[str]) -> dict[str, Any]:
-    return {
-        "id": row[0],
-        "title": row[1],
-        "started_at": row[2],
-        "ended_at": row[3],
-        "status": row[4],
-        "source": row[5],
-        "capture_error": row[6],
-        "tags": tags,
-    }
+    return reads.tags_of(db, meeting_id)
 
 
 # ---- meetings and notes ------------------------------------------------------
@@ -108,47 +63,19 @@ def _meeting(row: tuple, tags: list[str]) -> dict[str, Any]:
 def list_meetings(ctx: Context) -> list[dict[str, Any]]:
     with ctx.store.lock:
         db = ctx.store.db
-        rows = db.execute(MEETING_COLUMNS + " ORDER BY started_at DESC, id DESC").fetchall()
+        rows = db.execute(reads.MEETING_COLUMNS + " ORDER BY started_at DESC, id DESC").fetchall()
         tags: dict[str, list[str]] = {}
         for meeting_id, tag in db.execute(
             "SELECT meeting_id, tag FROM meeting_tags ORDER BY tag"
         ).fetchall():
             tags.setdefault(meeting_id, []).append(tag)
-    return [_meeting(row, tags.get(row[0], [])) for row in rows]
+    return [reads.meeting_dict(row, tags.get(row[0], [])) for row in rows]
 
 
 def get_meeting(ctx: Context, id: str) -> dict[str, Any]:
     _text(id, "id")
     with ctx.store.lock:
-        db = ctx.store.db
-        row = db.execute(MEETING_COLUMNS + " WHERE id = ?1", (id,)).fetchone()
-        if row is None:
-            raise AppError("not_found", "Meeting not found.")
-        user_markdown, revision = db.execute(
-            "SELECT user_markdown, revision FROM notes WHERE meeting_id = ?1", (id,)
-        ).fetchone()
-        # ponytail: Phase 1 writes no segments, summaries, tasks, speaker names, tracks, question
-        # threads or transcript versions, so their empty defaults are the real state. Phase 2 reads them.
-        return {
-            "meeting": _meeting(row, _tags_of(db, id)),
-            "user_markdown": user_markdown,
-            "notes_revision": revision,
-            "segments": [],
-            "summary": None,
-            "summary_provider": None,
-            "summary_model": None,
-            "transcript_provider": None,
-            "transcript_model": None,
-            "action_items": [],
-            "summary_edited": False,
-            "summary_stale": False,
-            "speaker_names": {"you": None, "others": None},
-            "segment_meta": [],
-            "transcript_versions": [],
-            "question_threads": [],
-            "tracks": [],
-            "summary_template": None,
-        }
+        return reads.meeting_detail(ctx.store.db, id)
 
 
 def create_note(ctx: Context, title: str) -> str:
@@ -159,7 +86,7 @@ def create_note(ctx: Context, title: str) -> str:
             db.execute(
                 "INSERT INTO meetings(id, title, started_at, source, status) "
                 "VALUES (?1, ?2, ?3, 'note', 'stopped')",
-                (meeting_id, title, _now()),
+                (meeting_id, title, now()),
             )
             db.execute("INSERT INTO notes(meeting_id) VALUES (?1)", (meeting_id,))
     ctx.emit("meeting_updated", None)
@@ -237,9 +164,9 @@ def delete_meeting(ctx: Context, id: str) -> None:
     with ctx.store.lock:
         db = ctx.store.db
         _require_meeting(db, id)
-        # ponytail: Phase 1 never writes audio, so there are no track files to remove. Recording
+        # ponytail: Phase 1-2 never write audio, so there are no track files to remove. Recording
         # (phase 3) must delete owned audio folders here before the rows go.
-        db.execute("DELETE FROM meetings WHERE id = ?1", (id,))  # notes, tags, search rows cascade
+        db.execute("DELETE FROM meetings WHERE id = ?1", (id,))  # notes, tags, search rows, answers cascade
     ctx.emit("meeting_updated", None)
 
 
@@ -281,17 +208,15 @@ def export_meeting(ctx: Context, id: str) -> dict[str, Any]:
 
 
 def list_summaries(ctx: Context, id: str) -> list[dict[str, Any]]:
-    # ponytail: no summary rows can exist in Phase 1, so the list is empty. Phase 2 reads them.
-    return []
+    return summaries.list_summaries(ctx, id)
 
 
 def list_library_answers(ctx: Context) -> list[dict[str, Any]]:
-    # ponytail: no library answers can be created in Phase 1. Phase 2 reads the table.
-    return []
+    return questions.list_library_answers(ctx)
 
 
 def get_session_processing(ctx: Context, id: str) -> None:
-    # No session processing runs in Phase 1, so there is no snapshot.
+    # No session processing runs until phase 5, so there is no snapshot.
     return None
 
 
@@ -323,10 +248,7 @@ def detection_supported(ctx: Context) -> bool:
 
 
 def provider_key_status(ctx: Context, role: str) -> str:
-    if role not in ("llm", "cloud_stt"):
-        raise AppError("invalid_args", "Unknown provider role.")
-    # Credentials live in the Windows keychain, which this build does not use yet.
-    return "unavailable"
+    return connections.provider_key_status(ctx, role)
 
 
 def stt_status(ctx: Context) -> dict[str, Any]:
@@ -343,7 +265,7 @@ def stt_status(ctx: Context) -> dict[str, Any]:
 
 
 def audio_usage(ctx: Context) -> int:
-    # Phase 1 writes no audio; count any audio folder a future build may have left behind.
+    # Phase 1-2 write no audio; count any audio folder a future build may have left behind.
     root = ctx.store.data_dir / "audio"
     if not root.is_dir():
         return 0
@@ -362,96 +284,6 @@ def audio_usage(ctx: Context) -> int:
 
 def _formats_value(formats: list[str]) -> str:
     return ",".join(fmt for fmt in EXPORT_FORMATS if fmt in formats)
-
-
-def _parse_formats(value: str) -> list[str]:
-    tokens = {token.strip() for token in value.split(",")}
-    return [fmt for fmt in EXPORT_FORMATS if fmt in tokens]
-
-
-def read_settings(db: sqlite3.Connection) -> dict[str, Any]:
-    """The Settings shape from src/lib/api.ts, read the way storage.rs read_settings does."""
-    saved_connections = [
-        {"id": row[0], "name": row[1], "base_url": row[2], "revision": row[3]}
-        for row in db.execute(
-            "SELECT id,name,base_url,revision FROM saved_connections ORDER BY name,id"
-        ).fetchall()
-    ]
-
-    def assignment(role: str) -> Optional[dict[str, Any]]:
-        row = db.execute(
-            "SELECT connection_id,model,revision FROM provider_assignments "
-            "WHERE role=?1 AND connection_id IS NOT NULL",
-            (role,),
-        ).fetchone()
-        if row is None:
-            return None
-        return {"connection_id": row[0], "model": row[1], "revision": row[2]}
-
-    def connection(role: str) -> Optional[dict[str, Any]]:
-        row = db.execute(
-            "SELECT c.base_url, a.model, a.revision FROM provider_assignments a "
-            "JOIN saved_connections c ON c.id = a.connection_id WHERE a.role = ?1",
-            (role,),
-        ).fetchone()
-        if row is None:
-            return None
-        return {"base_url": row[0], "model": row[1], "revision": row[2]}
-
-    templates = [
-        {"id": row[0], "name": row[1], "instructions": row[2]}
-        for row in db.execute(
-            "SELECT id,name,instructions FROM summary_templates ORDER BY name,id"
-        ).fetchall()
-    ]
-    recipes = [
-        {"id": row[0], "name": row[1], "prompt": row[2]}
-        for row in db.execute("SELECT id,name,prompt FROM recipes ORDER BY name,id").fetchall()
-    ]
-    # ponytail: apps ignored before names were kept get their id as the name; no rows exist in Phase 1.
-    ignored = [
-        {"id": row[0], "name": row[1] or row[0]}
-        for row in db.execute(
-            "SELECT app_id, name FROM detection_ignored_apps ORDER BY app_id"
-        ).fetchall()
-    ]
-    row = db.execute(
-        "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, "
-        "export_transcript, export_summary, export_filename, stt_language, stt_prompt, "
-        "stt_model, stop_shortcut, summary_instructions, export_transcript_formats, "
-        "processing_mode, processing_summary, summary_default, detection_enabled, setup_done "
-        "FROM settings WHERE id = 1"
-    ).fetchone()
-    return {
-        "vault_folder": row[0],
-        "pause_shortcut": row[1],
-        "microphone_id": row[2],
-        "output_id": row[3],
-        "saved_connections": saved_connections,
-        "provider_assignments": {"llm": assignment("llm"), "cloud_stt": assignment("cloud_stt")},
-        "llm": connection("llm"),
-        "cloud_stt": connection("cloud_stt"),
-        "stt_mode": "cloud" if row[4] == "cloud" else "local",
-        "stt_language": row[8],
-        "stt_prompt": row[9],
-        "stt_model": row[10],
-        "stop_shortcut": row[11],
-        "export": {
-            "transcript": bool(row[5]),
-            "summary": bool(row[6]),
-            "filename": "date_title" if row[7] == "date_title" else "title",
-            "transcript_formats": _parse_formats(row[13] or ""),
-        },
-        "summary_instructions": row[12],
-        "summary_templates": templates,
-        "recipes": recipes,
-        "processing_mode": row[14],
-        "processing_summary": row[15],
-        "summary_default": row[16],
-        "detection_enabled": bool(row[17]),
-        "detection_ignored": ignored,
-        "setup_done": bool(row[18]),
-    }
 
 
 def get_settings(ctx: Context) -> dict[str, Any]:
@@ -539,39 +371,37 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "save_setup_done": save_setup_done,
     "choose_vault_folder": choose_vault_folder,
     "close_application": close_application,
+    # Phase 2: providers, summaries, questions, tasks, library, rewrite, templates, recipes
+    "save_api_connection": connections.save_api_connection,
+    "delete_api_connection": connections.delete_api_connection,
+    "api_connection_key_status": connections.api_connection_key_status,
+    "save_provider_assignment": connections.save_provider_assignment,
+    "list_api_connection_models": connections.list_api_connection_models,
+    "generate_summary": summaries.generate_summary,
+    "save_summary_edit": summaries.save_summary_edit,
+    "save_summary_instructions": summaries.save_summary_instructions,
+    "save_summary_template": summaries.save_summary_template,
+    "delete_summary_template": summaries.delete_summary_template,
+    "save_summary_default": summaries.save_summary_default,
+    "save_processing_default": summaries.save_processing_default,
+    "save_recipe": summaries.save_recipe,
+    "delete_recipe": summaries.delete_recipe,
+    "save_speaker_names": summaries.save_speaker_names,
+    "ask_meeting": questions.ask_meeting,
+    "ask_library": questions.ask_library,
+    "delete_question_thread": questions.delete_question_thread,
+    "delete_library_answer": questions.delete_library_answer,
+    "rewrite_text": questions.rewrite_text,
+    "save_action_item": tasks.save_action_item,
+    "delete_action_item": tasks.delete_action_item,
+    "import_action_items": tasks.import_action_items,
 }
 
 # Command -> feature name for the 501 message. Each is planned for a later phase (docs/python-port-plan.md).
 NOT_AVAILABLE: dict[str, str] = {
-    # Phase 2: summaries, questions, tasks, library, providers
-    "save_api_connection": "AI provider connections",
-    "delete_api_connection": "AI provider connections",
-    "api_connection_key_status": "AI provider connections",
-    "save_provider_assignment": "AI provider assignments",
-    "list_api_connection_models": "AI provider models",
-    "generate_summary": "Summaries",
-    "save_summary_edit": "Summary editing",
-    "save_summary_instructions": "Summary instructions",
-    "save_summary_template": "Summary templates",
-    "delete_summary_template": "Summary templates",
-    "save_summary_default": "Summary defaults",
-    "ask_meeting": "Questions",
-    "ask_library": "Library questions",
-    "delete_question_thread": "Questions",
-    "delete_library_answer": "Library answers",
-    "rewrite_text": "Rewrite with AI",
-    "save_recipe": "Question recipes",
-    "delete_recipe": "Question recipes",
-    "save_action_item": "Tasks",
-    "delete_action_item": "Tasks",
-    "import_action_items": "Tasks",
-    "save_speaker_names": "Speaker names",
+    # Phase 4: transcript editing needs transcripts, which no phase before 4 can create
     "edit_segment": "Transcript editing",
     "get_transcript_version": "Transcript history",
-    "save_processing_default": "Processing defaults",
-    "acknowledge_processing_notes": "Session processing",
-    "retry_session_processing": "Session processing",
-    "cancel_session_processing": "Session processing",
     # Phase 3: capture and audio files
     "start_recording": "Recording",
     "pause_recording": "Recording",
@@ -601,6 +431,10 @@ NOT_AVAILABLE: dict[str, str] = {
     "save_detection": "Meeting detection",
     "set_detection_ignored": "Meeting detection",
     "request_attention": "Taskbar attention",
+    # Phase 5: session processing workflow
+    "acknowledge_processing_notes": "Session processing",
+    "retry_session_processing": "Session processing",
+    "cancel_session_processing": "Session processing",
 }
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")

@@ -1,7 +1,7 @@
 """Markdown snapshot export: a port of src-tauri/src/export.rs for notes-only meetings.
 
-Phase 1 never writes segments, summaries, tasks or tracks, so the transcript, summary and task
-sections are rendered only as the Rust app renders an empty meeting. Phase 2 adds those sections.
+Summaries and tasks render as export.rs does. The transcript and tracks stay empty until phases 3-4
+write them, so the transcript section is rendered as the Rust app renders an empty meeting.
 """
 
 from __future__ import annotations
@@ -34,10 +34,30 @@ def render(detail: Detail, options: dict[str, Any]) -> str:
         f"meeting_id: {_quote(meeting['id'])}\n"
         f"source: {_quote(meeting['source'])}\n"
     )
+    summary = detail.get("summary")
+    if options["summary"] and summary is not None:
+        if detail.get("summary_template"):
+            out += f"template: {_quote(detail['summary_template'])}\n"
+        if detail.get("summary_model"):
+            out += f"model: {_quote(detail['summary_model'])}\n"
+        if detail.get("summary_edited"):
+            out += "summary_edited: true\n"
     user_tags = "".join(f", {_quote(tag)}" for tag in meeting["tags"])
     out += f"tags: [meeting{user_tags}]\n---\n\n> OpenMeet export.\n\n"
     if options["summary"]:
-        out += "## Summary\n%%ai-start%%\nNo summary generated.\n%%ai-end%%\n\n"
+        body = summary if summary is not None else "No summary generated."
+        out += f"## Summary\n%%ai-start%%\n{body}\n%%ai-end%%\n\n"
+    # User-edited tasks sit outside the AI markers and are exported whenever any exist.
+    if detail.get("action_items"):
+        out += "## Tasks\n"
+        for item in detail["action_items"]:
+            check = "x" if item["done"] else " "
+            origin = "From summary" if item["source"] == "summary" else "Added manually"
+            out += (
+                f"- [{check}] {item['text']} — Owner: {item['owner'] or 'Unassigned'} — "
+                f"Due: {item['due_date'] or 'not set'} — {origin}\n"
+            )
+        out += "\n"
     out += f"## My notes\n{detail['user_markdown']}\n"
     if options["transcript"]:
         out += "\n## Transcript\nNo transcript generated.\n"

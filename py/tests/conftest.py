@@ -8,6 +8,10 @@ from typing import Any, Callable, Iterator, Optional
 import pytest
 from fastapi.testclient import TestClient
 
+from keyring.backend import KeyringBackend
+from keyring.errors import PasswordDeleteError
+
+from openmeet_py import keys
 from openmeet_py.server import TOKEN_HEADER, create_app
 
 TOKEN = "test-token"
@@ -50,3 +54,31 @@ def invoke_error(client: TestClient, cmd: str, **args: Any) -> tuple[int, dict[s
     )
     assert response.status_code >= 400, response.text
     return response.status_code, response.json()
+
+
+class MemoryKeyring(KeyringBackend):
+    """In-memory credential store. Tests never reach the Windows Credential Manager."""
+
+    priority = 1
+
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], str] = {}
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        self.items[(service, username)] = password
+
+    def get_password(self, service: str, username: str) -> Optional[str]:
+        return self.items.get((service, username))
+
+    def delete_password(self, service: str, username: str) -> None:
+        if (service, username) not in self.items:
+            raise PasswordDeleteError("no such credential")
+        del self.items[(service, username)]
+
+
+@pytest.fixture(autouse=True)
+def memory_keyring() -> Iterator[MemoryKeyring]:
+    backend = MemoryKeyring()
+    keys.use_backend(backend)
+    yield backend
+    keys.use_backend(None)

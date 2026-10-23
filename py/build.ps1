@@ -37,6 +37,7 @@ try {
         --hidden-import uvicorn.protocols.websockets.auto `
         --hidden-import uvicorn.lifespan.on `
         --collect-all webview `
+        --collect-submodules win32ctypes `
         (Join-Path $py "launcher.py")
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 } finally {
