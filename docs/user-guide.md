@@ -30,7 +30,7 @@ Use the sidebar search to find meeting titles. Queries of at least two character
 
 Add tags in the box under the meeting title (comma-separated, up to 20 per meeting, 40 characters each, case-insensitive) and click **Save tags**. Once any meeting has a tag, the sidebar **Filter by tag** menu limits both the meeting list and content matches to that tag. Tags are listed in the sidebar and in the exported Markdown frontmatter after `meeting`.
 
-The **Meetings** button collapses or opens the sidebar. Use **Tab** to move between controls. When a content tab has focus, **Left**, **Right**, **Home**, and **End** navigate the tabs.
+The **Meetings** button collapses or opens the sidebar. While the sidebar is collapsed, the toolbar next to it shows **New recording**, **New note**, and **Settings**. Narrow windows (800 px wide or less) collapse the sidebar on their own, and it also closes after you open a meeting, start a note, or pick a search match so the content is visible. Widening the window does not reopen it. Use **Tab** to move between controls. When a content tab has focus, **Left**, **Right**, **Home**, and **End** navigate the tabs.
 
 ## Distinguish meeting sources
 

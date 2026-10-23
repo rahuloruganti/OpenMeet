@@ -68,6 +68,8 @@ const awaitingNotes = (snapshot: SessionProcessingSnapshot) =>
     snapshot.workflow.stage,
   );
 
+const narrowWindowQuery = "(max-width: 800px)";
+
 export function App() {
   const desktop = api.isDesktop();
   const [ready, setReady] = useState(false);
@@ -85,6 +87,15 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(
     () => window.matchMedia?.("(min-width: 801px)").matches ?? true,
   );
+  // Narrowing to this width collapses navigation; widening again leaves it as the user set it.
+  useEffect(() => {
+    const media = window.matchMedia?.(narrowWindowQuery);
+    const collapse = (event: MediaQueryListEvent) => {
+      if (event.matches) setSidebarOpen(false);
+    };
+    media?.addEventListener?.("change", collapse);
+    return () => media?.removeEventListener?.("change", collapse);
+  }, []);
   const [tab, setTab] = useState<ContentTab>("notes");
   const [selected, setSelected] = useState<MeetingDetail | null>(null);
   const [notes, setNotes] = useState("");
@@ -754,6 +765,27 @@ export function App() {
     ? "Select a meeting first."
     : (llmBlocked?.message ??
       (!hasSummaryInput ? "Add notes or transcribe the audio first." : null));
+  // Shared by the sidebar and the collapsed toolbar so both use the same handlers and locks.
+  const newRecording = (trigger: HTMLButtonElement) =>
+    openPanel("setup", trigger);
+  const openSettingsPanel = (trigger: HTMLButtonElement) => {
+    setSettingsTab("transcription");
+    openPanel("settings", trigger);
+  };
+  // On narrow windows the opened content should be visible, so navigation closes.
+  const collapseIfNarrow = () => {
+    if (window.matchMedia?.(narrowWindowQuery).matches) setSidebarOpen(false);
+  };
+  const newNote = () =>
+    void run(async () => {
+      await writer.current?.flush();
+      const id = await api.createNote("Untitled note");
+      await refreshList();
+      await openMeeting(id);
+      setPanel(null);
+      setTab("notes");
+      collapseIfNarrow();
+    });
 
   return (
     <div className={`app${sidebarOpen ? "" : " sidebar-collapsed"}`}>
@@ -765,11 +797,8 @@ export function App() {
         disabled={disabled}
         recordingActive={active}
         onSearch={setSearch}
-        onNewRecording={(trigger) => openPanel("setup", trigger)}
-        onSettings={(trigger) => {
-          setSettingsTab("transcription");
-          openPanel("settings", trigger);
-        }}
+        onNewRecording={newRecording}
+        onSettings={openSettingsPanel}
         onLibrary={(trigger) => {
           setLibraryOpened(true);
           openPanel("library", trigger);
@@ -778,18 +807,10 @@ export function App() {
           void run(async () => {
             await openMeeting(id);
             setPanel(null);
+            collapseIfNarrow();
           })
         }
-        onNewNote={() =>
-          void run(async () => {
-            await writer.current?.flush();
-            const id = await api.createNote("Untitled note");
-            await refreshList();
-            await openMeeting(id);
-            setPanel(null);
-            setTab("notes");
-          })
-        }
+        onNewNote={newNote}
         hits={hits}
         onOpenHit={(hit) =>
           void run(async () => {
@@ -800,6 +821,7 @@ export function App() {
                 ? hit.kind
                 : "notes",
             );
+            collapseIfNarrow();
           })
         }
         audioBytes={audioBytes}
@@ -825,6 +847,24 @@ export function App() {
               </svg>
               <span>Meetings</span>
             </button>
+            {!sidebarOpen && (
+              <div className="collapsed-actions">
+                <button
+                  disabled={disabled || active}
+                  onClick={(event) => newRecording(event.currentTarget)}
+                >
+                  New recording
+                </button>
+                <button disabled={disabled} onClick={newNote}>
+                  New note
+                </button>
+                <button
+                  onClick={(event) => openSettingsPanel(event.currentTarget)}
+                >
+                  Settings
+                </button>
+              </div>
+            )}
             <span className="toolbar-location">
               {panel === "settings"
                 ? "Preferences"

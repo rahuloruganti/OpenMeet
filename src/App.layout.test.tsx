@@ -1,5 +1,11 @@
 import { mockApiModule } from "./test/api-mock";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -137,5 +143,86 @@ describe("layout and keyboard navigation", () => {
       "My draft stays mine",
     );
     expect(api.getMeeting).toHaveBeenCalledOnce();
+  });
+});
+
+describe("collapsed sidebar and narrow windows", () => {
+  it("keeps New recording, New note and Settings in the toolbar while the sidebar is collapsed", async () => {
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Toggle meetings" }),
+    );
+    expect(screen.getByRole("button", { name: "New recording" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "New note" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+  });
+
+  it("disables New recording in the collapsed toolbar while a recording is active", async () => {
+    vi.mocked(api.getRecordingState).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "desktop",
+      error: null,
+      recording_offset_ms: null,
+    });
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Toggle meetings" }),
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "New recording",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
+  it("collapses the sidebar when the window narrows to 800px and does not reopen it when it widens", async () => {
+    const narrowListeners: ((event: { matches: boolean }) => void)[] = [];
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(min-width: 801px)",
+        addEventListener: (
+          _type: string,
+          listener: (event: { matches: boolean }) => void,
+        ) => {
+          if (query === "(max-width: 800px)") narrowListeners.push(listener);
+        },
+        removeEventListener: vi.fn(),
+      })),
+    );
+    await ready();
+    const toggle = screen.getByRole("button", { name: "Toggle meetings" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    act(() =>
+      narrowListeners.forEach((listener) => listener({ matches: true })),
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    act(() =>
+      narrowListeners.forEach((listener) => listener({ matches: false })),
+    );
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("collapses the sidebar after a meeting is opened on a narrow window", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    await ready();
+    const toggle = screen.getByRole("button", { name: "Toggle meetings" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    await userEvent.click(screen.getByRole("button", { name: /Sample sync/ }));
+    await waitFor(() =>
+      expect(toggle.getAttribute("aria-expanded")).toBe("false"),
+    );
   });
 });

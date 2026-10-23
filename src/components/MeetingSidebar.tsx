@@ -131,6 +131,7 @@ export function MeetingSidebar(props: Props) {
                 <li key={meeting.id}>
                   <button
                     disabled={disabled}
+                    title={meeting.title}
                     aria-current={
                       selectedId === meeting.id ? "true" : undefined
                     }
