@@ -96,12 +96,12 @@ Sample and simulation creation has been removed. Existing historical samples rem
 Notes, recording, and local transcription work without a cloud key. Summaries and **Ask this meeting** use your provider's OpenAI-compatible chat API.
 
 1. Open **Settings → Connections**. Remote and local servers share one list; each is marked **This device** or **Leaves this device**.
-2. Name the connection, enter its API base URL including the API path, and paste its key into the masked field. Save the connection. Local loopback HTTP supports optional keys.
+2. Name the connection, enter its base URL including the API path, and paste its key into the masked field. Save the connection. Local loopback HTTP supports optional keys.
 3. Under **Settings → AI notes**, select the saved connection and a discovered or custom model ID for summaries, then save. Use **Refresh models** in Connections to fetch model IDs when needed.
 
 Keys pass briefly through the password field and IPC to Rust, then live in the OS keychain. They are not read back into Settings. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; refreshing models sends credentials only. Environment-key import has been removed.
 
-Open **Summary**, choose General, Stand-up, or One-to-one, and click **Enhance notes**. It sends notes and transcript text only. Questions send directly too, and earlier summaries remain available in the version picker.
+Open **Summary**, choose General, Stand-up, or One-to-one, and click **Create summary**. It sends notes and transcript text only. Questions send directly too, and earlier summaries remain available in the version picker.
 
 Compatible endpoints must implement the operation you select; a model list does not prove chat or transcription support. No automatic model/provider fallback occurs. Live provider quality has not yet been qualified.
 

@@ -169,33 +169,33 @@ it("preserves nonsecret drafts but clears keys when a tab hides and on unmount",
 });
 it("saves each task independently even when they share a connection", async () => {
   render(<Both {...props()} />);
-  await userEvent.clear(screen.getByLabelText("Summary model ID"));
+  await userEvent.clear(screen.getByLabelText("AI notes model ID"));
   await userEvent.type(
-    screen.getByLabelText("Summary model ID"),
+    screen.getByLabelText("AI notes model ID"),
     "chat-custom",
   );
   await userEvent.selectOptions(
-    screen.getByLabelText("Speech API connection"),
+    screen.getByLabelText("Speech to text connection"),
     "remote",
   );
   await userEvent.type(
-    screen.getByLabelText("Speech API model ID"),
+    screen.getByLabelText("Speech to text model ID"),
     "speech-custom",
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Save speech api assignment" }),
+    screen.getByRole("button", { name: "Save speech to text assignment" }),
   );
   expect(api.saveProviderAssignment).toHaveBeenLastCalledWith(
     "cloud_stt",
     { kind: "assigned", connection_id: "remote", model: "speech-custom" },
     null,
   );
-  expect(screen.getByLabelText("Summary model ID")).toHaveProperty(
+  expect(screen.getByLabelText("AI notes model ID")).toHaveProperty(
     "value",
     "chat-custom",
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Save summary assignment" }),
+    screen.getByRole("button", { name: "Save AI notes assignment" }),
   );
   expect(api.saveProviderAssignment).toHaveBeenLastCalledWith(
     "llm",
@@ -219,11 +219,11 @@ it("retains manual assignments after failed discovery and blocks an unsaved dest
   );
   await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
   await screen.findByText("Discovery unavailable");
-  expect(screen.getByLabelText("Summary model ID")).toHaveProperty(
+  expect(screen.getByLabelText("AI notes model ID")).toHaveProperty(
     "value",
     "saved-model",
   );
-  await userEvent.type(screen.getByLabelText("API base URL"), "/other");
+  await userEvent.type(screen.getByLabelText("Base URL"), "/other");
   expect(screen.getByRole("button", { name: "Refresh models" })).toHaveProperty(
     "disabled",
     true,
@@ -275,9 +275,9 @@ it("clears transient keys and retains assignment drafts after revision-only upda
     screen.getByLabelText("API key"),
     "synthetic-unsaved-key",
   );
-  await userEvent.clear(screen.getByLabelText("Summary model ID"));
+  await userEvent.clear(screen.getByLabelText("AI notes model ID"));
   await userEvent.type(
-    screen.getByLabelText("Summary model ID"),
+    screen.getByLabelText("AI notes model ID"),
     "keep-this-draft",
   );
   view.rerender(
@@ -299,7 +299,7 @@ it("clears transient keys and retains assignment drafts after revision-only upda
     />,
   );
   expect(screen.getByLabelText("API key")).toHaveProperty("value", "");
-  expect(screen.getByLabelText("Summary model ID")).toHaveProperty(
+  expect(screen.getByLabelText("AI notes model ID")).toHaveProperty(
     "value",
     "keep-this-draft",
   );
@@ -331,7 +331,7 @@ it("hides an assignment's save button until it differs and offers fetched model 
   ]);
   render(<Both {...props()} />);
   expect(
-    screen.queryByRole("button", { name: "Save summary assignment" }),
+    screen.queryByRole("button", { name: "Save AI notes assignment" }),
   ).toBeNull();
   await userEvent.selectOptions(
     screen.getByLabelText("Saved connection"),
@@ -344,12 +344,12 @@ it("hides an assignment's save button until it differs and offers fetched model 
   );
   await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
   await screen.findByText("fetched-model");
-  const input = screen.getByLabelText("Summary model ID") as HTMLInputElement;
+  const input = screen.getByLabelText("AI notes model ID") as HTMLInputElement;
   expect(
     input.list?.querySelector('option[value="fetched-model"]'),
   ).toBeTruthy();
   await userEvent.type(input, "-2");
   expect(
-    screen.getByRole("button", { name: "Save summary assignment" }),
+    screen.getByRole("button", { name: "Save AI notes assignment" }),
   ).toBeTruthy();
 });

@@ -867,7 +867,7 @@ export function App() {
             )}
             <span className="toolbar-location">
               {panel === "settings"
-                ? "Preferences"
+                ? "Settings"
                 : panel === "setup"
                   ? "New recording"
                   : panel === "library"
@@ -882,14 +882,9 @@ export function App() {
             <div className="privacy-popover">
               <strong>Your workspace is stored on this device.</strong>
               <p>
-                Recording saves microphone and system audio locally. Local
-                transcription stays on this computer. Cloud transcription
-                uploads audio, and summaries and questions send text to your
-                selected provider when you use them.
-              </p>
-              <p>
-                Capture is not yet hardware-qualified. Local files are
-                unencrypted.
+                Local transcription stays on this computer. Online transcription
+                uploads audio and AI notes send text to the connection you
+                chose, only when you use them.
               </p>
             </div>
           </details>
@@ -1052,17 +1047,21 @@ export function App() {
                     for final transcription.
                   </p>
                 )}
-                {processing.workflow && (
-                  <p>
-                    Used {processing.workflow.requests_used}{" "}
-                    {processing.workflow.requests_used === 1
-                      ? "request"
-                      : "requests"}
-                    , {formatBytes(processing.workflow.upload_bytes_used)} of
-                    audio and {formatBytes(processing.workflow.text_bytes_used)}{" "}
-                    of text.
-                  </p>
-                )}
+                {processing.workflow &&
+                  (processing.workflow.requests_used > 0 ||
+                    processing.workflow.upload_bytes_used > 0 ||
+                    processing.workflow.text_bytes_used > 0) && (
+                    <p>
+                      Used {processing.workflow.requests_used}{" "}
+                      {processing.workflow.requests_used === 1
+                        ? "request"
+                        : "requests"}
+                      , {formatBytes(processing.workflow.upload_bytes_used)} of
+                      audio and{" "}
+                      {formatBytes(processing.workflow.text_bytes_used)} of
+                      text.
+                    </p>
+                  )}
                 {awaitingNotes(processing) && (
                   <div>
                     <p>
@@ -1312,7 +1311,7 @@ export function App() {
               await api.generateSummary(id, template);
               await finishJob(id);
               setNotice(
-                "Summary generated and saved. Only notes and transcript text were sent to your selected provider.",
+                "Summary generated and saved. Only notes and transcript text were sent to your selected connection.",
               );
             });
           }}

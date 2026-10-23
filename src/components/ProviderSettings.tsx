@@ -35,7 +35,7 @@ export const destination = (baseUrl: string) =>
 
 const urlFormat = "Enter a full URL such as https://api.example.com/v1.";
 const urlRules =
-  "Enter an HTTPS API base URL, or HTTP on localhost, without credentials, query parameters or a fragment.";
+  "Enter an HTTPS base URL, or HTTP on localhost, without credentials, query parameters or a fragment.";
 const plainHttp =
   "Remote servers must use https. Plain http is only allowed for this computer (localhost or 127.0.0.1).";
 
@@ -191,13 +191,13 @@ export function Connections(props: Props) {
   return (
     <section
       className="settings-section provider-settings"
-      aria-label="API connections"
+      aria-label="Connections"
     >
-      <h3>API connections</h3>
+      <h3>Connections</h3>
       <p className="muted">
-        Reusable OpenAI-compatible connections. Refresh models sends saved
-        credentials to the saved destination. It sends no meeting content. Model
-        IDs do not establish task compatibility.
+        Reusable OpenAI-compatible connections. Refresh models sends your saved
+        key to that connection to list its models. It sends no meeting content.
+        Model IDs do not establish task compatibility.
       </p>
       <fieldset disabled={disabled}>
         <legend>Connection</legend>
@@ -234,7 +234,7 @@ export function Connections(props: Props) {
           />
         </label>
         <label>
-          API base URL
+          Base URL
           <input
             type="url"
             value={baseUrl}
@@ -402,7 +402,7 @@ export function Assignment({
     setId(assignment?.connection_id ?? "");
     setModel(assignment?.model ?? "");
   }, [assignment?.connection_id, assignment?.model]);
-  const label = role === "llm" ? "Summary" : "Speech API";
+  const label = role === "llm" ? "AI notes" : "Speech to text";
   const save = () =>
     run(async () => {
       await publishSettings(
@@ -423,7 +423,7 @@ export function Assignment({
   const chosen = settings.saved_connections.find((item) => item.id === id);
   return (
     <fieldset disabled={disabled || busy}>
-      <legend>{label} task</legend>
+      <legend>{label}</legend>
       <label>
         {label} connection
         <select
@@ -472,7 +472,7 @@ export function Assignment({
           disabled={disabled || busy || (!!id && !model.trim())}
           onClick={() => void save()}
         >
-          Save {label.toLowerCase()} assignment
+          Save {role === "llm" ? "AI notes" : "speech to text"} assignment
         </button>
       )}
       {notice && <p role="status">{notice}</p>}

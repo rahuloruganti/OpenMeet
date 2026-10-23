@@ -342,6 +342,18 @@ describe("speech engine and automatic processing", () => {
     },
   );
 
+  it("hides the usage line when nothing was used", async () => {
+    const snapshot = sessionSnapshot(5, "finalizing_audio");
+    if (!snapshot.workflow) throw new Error("Missing workflow");
+    snapshot.workflow.requests_used = 0;
+    snapshot.workflow.upload_bytes_used = 0;
+    snapshot.workflow.text_bytes_used = 0;
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
+    await ready();
+    await screen.findByRole("region", { name: "Session processing" });
+    expect(screen.queryByText(/^Used /)).toBeNull();
+  });
+
   it("acknowledges a tray stop without flushing another meeting's editor", async () => {
     const other = {
       ...sample,

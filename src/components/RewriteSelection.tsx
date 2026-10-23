@@ -61,7 +61,7 @@ export function RewriteSelection(props: {
         onMouseDown={(event) => event.preventDefault()}
         onClick={open}
       >
-        Rewrite selection…
+        Rewrite with AI…
       </button>
       {props.blocked && <span className="muted">{props.blocked.message}</span>}
       {props.blocked?.section && (
@@ -83,6 +83,9 @@ export function RewriteSelection(props: {
         >
           <p>
             <strong>Rewrite {selection.text.length} selected characters</strong>
+          </p>
+          <p className="muted">
+            Sends the selected text to your AI notes connection.
           </p>
           <blockquote className="rewrite-source">
             {selection.text.length > 280

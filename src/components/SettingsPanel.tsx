@@ -18,6 +18,7 @@ import {
   modeLabels,
   type ProcessingChoice,
 } from "../lib/processing";
+import { shortcutLabel } from "../lib/shortcut-label";
 import { tabTarget } from "../lib/tabs";
 import { ModelLibrary } from "./ModelLibrary";
 import { Assignment, Connections } from "./ProviderSettings";
@@ -194,6 +195,9 @@ function ShortcutField(props: {
           Add Ctrl or Alt, or use an F-key.
         </span>
       )}
+      {props.value.trim() !== "" && (
+        <p className="muted">Shown as: {shortcutLabel(props.value)}</p>
+      )}
     </div>
   );
 }
@@ -337,7 +341,7 @@ export function SettingsPanel(props: Props) {
                 }
               />
               <DeviceSelect
-                label="Default system output"
+                label="Default system audio"
                 value={settings?.output_id ?? ""}
                 devices={props.devices?.outputs ?? []}
                 disabled={disabled}
@@ -467,7 +471,7 @@ export function SettingsPanel(props: Props) {
               <ShortcutField
                 label="Pause / resume shortcut"
                 value={props.shortcut}
-                placeholder="CommandOrControl+Shift+F9"
+                placeholder="Ctrl+Shift+F9"
                 disabled={disabled}
                 onChange={props.onShortcut}
               />
@@ -517,11 +521,8 @@ export function SettingsPanel(props: Props) {
             />
           </div>
           <div {...panel("ai")}>
-            <section
-              className="settings-section"
-              aria-label="Summaries and questions"
-            >
-              <h3>Summaries and questions</h3>
+            <section className="settings-section" aria-label="AI notes">
+              <h3>AI notes</h3>
               {settings && (
                 <Assignment
                   role="llm"
@@ -619,7 +620,11 @@ export function SettingsPanel(props: Props) {
                 {props.audioBytes === null
                   ? "an unknown amount of space"
                   : formatBytes(props.audioBytes)}{" "}
-                on this device. Notes, audio and exports are unencrypted.
+                on this device.
+              </p>
+              <p className="notice">
+                <strong>OpenMeet doesn&apos;t encrypt files yet.</strong> Anyone
+                who can open these files can read them.
               </p>
             </section>
             {settings && (
@@ -718,8 +723,8 @@ export function SettingsPanel(props: Props) {
               <h3>What leaves this device</h3>
               <ul className="privacy-list">
                 <li>
-                  <strong>Recording and local transcription:</strong> nothing.
-                  Audio, notes and transcripts are stored here, unencrypted.
+                  <strong>Recording and local transcription:</strong> nothing
+                  leaves this device.
                 </li>
                 <li>
                   <strong>API transcription:</strong> recorded audio, sent to
@@ -735,8 +740,13 @@ export function SettingsPanel(props: Props) {
                   which apps use the microphone, on this device only.
                 </li>
                 <li>
-                  <strong>Model downloads:</strong> requests to github.com and
-                  huggingface.co. No meeting content.
+                  <strong>Model downloads and searches:</strong> requests to
+                  github.com and huggingface.co. Searches send the words you
+                  type; no meeting content.
+                </li>
+                <li>
+                  <strong>Refreshing models:</strong> your saved key is sent to
+                  that connection to list its models; no meeting content.
                 </li>
                 <li>
                   <strong>Exports:</strong> files in your export folder, which
@@ -756,8 +766,9 @@ export function SettingsPanel(props: Props) {
                 Run setup again
               </button>
               <p className="muted">
-                Capture is not yet hardware-qualified. Third-party licenses are
-                listed in THIRD_PARTY_LICENSES.md in the source repository.
+                Recording is still being tested on more computers. Third-party
+                licenses are included with OpenMeet&apos;s source code at
+                github.com/rahuloruganti/OpenMeet.
               </p>
             </section>
           </div>

@@ -144,11 +144,11 @@ describe("meeting library", () => {
       expect(screen.queryByRole("list", { name: "Setup status" })).toBeNull();
     });
 
-    it("offers a disabled Enhance notes slot that explains why", async () => {
+    it("offers a disabled Create summary slot that explains why", async () => {
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
       const button = screen.getByRole("button", {
-        name: "Enhance notes",
+        name: "Create summary",
       }) as HTMLButtonElement;
       expect(button.disabled).toBe(true);
       const hint = document.getElementById(
@@ -218,7 +218,7 @@ describe("meeting library", () => {
       expect(
         (
           screen.getByRole("button", {
-            name: "Enhance notes",
+            name: "Create summary",
           }) as HTMLButtonElement
         ).disabled,
       ).toBe(false);

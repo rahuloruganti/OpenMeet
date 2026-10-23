@@ -8,7 +8,7 @@ OpenMeet opens **Set up OpenMeet** until you finish or skip it. **Settings → P
 
 1. **Welcome** says where data is kept and that recording consent is your responsibility.
 2. **Transcription**: choose **On this computer** or **Online API**. On this computer, OpenMeet lists Whisper `ggml` files it finds in the usual folders (its own, `~/.cache/whisper`, the Hugging Face cache, Ollama and LM Studio folders); **Use** keeps the file where it is, labelled "matches pinned …" when its name and size match a pinned download, otherwise "custom". You can instead download Whisper `base.en-q5_1` (English) or `small` (any language), or a sherpa-onnx model (Windows x64): Parakeet TDT 0.6B v3 (English and European languages), Moonshine base (English, small and fast), or SenseVoice small (Chinese, Japanese, Korean, Cantonese, English). Setup recommends Parakeet v3 for English, auto-detect, and European languages, and Whisper small for others. Speech servers running on this computer, such as speaches or LocalAI, are offered too. Online API asks for a base URL and key, lists the provider's models with speech models first, and has **Show all models** and a field for any model ID.
-3. **AI notes**: choose an AI server found on this computer (Ollama, LM Studio, Unsloth Studio, LocalAI), the transcription connection, or another online API, then a chat model. Unsloth Studio needs its `sk-unsloth` key. Without a local server, install Ollama or LM Studio and run setup again. Change the connection and model later under **Settings → AI notes**.
+3. **AI notes**: choose an AI server found on this computer (Ollama, LM Studio, Unsloth Studio, LocalAI), the transcription connection, or another online connection, then a chat model. Unsloth Studio needs its `sk-unsloth` key. Without a local server, install Ollama or LM Studio and run setup again. Change the connection and model later under **Settings → AI notes**.
 4. **Devices**: choose the default microphone and system audio, and whether every recording is transcribed (and summarized, when AI notes are set) when it stops. This is off by default.
 
 Detection only asks `GET /v1/models` of `127.0.0.1` ports 11434, 8888, 1234, 8000 and 8080, while setup is open. A server on another port can be added under **Settings → Connections**.
@@ -45,10 +45,10 @@ Sample and simulation creation has been removed. Those labels describe preserved
 
 ## Record
 
-Capture is not yet hardware-qualified. On Apple Silicon macOS 14.2 or newer, choose an output-only device. A device that also has an input is refused. Permission denial has not been tested. Apple Silicon transcription requires the separately pinned local whisper.cpp build; its integrated workflow remains unqualified. Inform participants and follow the recording-consent laws that apply before starting. System audio can include unrelated applications.
+Recording is still being tested on more computers. Try a short test meeting first. On Apple Silicon macOS 14.2 or newer, choose an output-only device. A device that also has an input is refused. Permission denial has not been tested. Apple Silicon transcription requires the separately pinned local whisper.cpp build; its integrated workflow remains unqualified. Inform participants and follow the recording-consent laws that apply before starting. System audio can include unrelated applications.
 
 1. Click **New recording** and enter a title.
-2. Choose the microphone and system-output device you intend to capture.
+2. Choose the microphone and system audio device you intend to capture.
 3. Choose the default **Automatic processing** under **Settings → Recording**, using **When a recording stops** (**Recording only** by default; it is saved in the database). The New recording panel shows it, and every new recording runs it.
 4. Click **Start recording**. Telling participants and following recording-consent law is your responsibility; see [privacy](privacy.md).
 5. Use the microphone and system meters to check for incoming signals.
@@ -60,7 +60,7 @@ The New recording panel warns before you start when the selected speech engine c
 
 In **My notes**, **Insert timestamp** adds the current backend recording offset, on its own line when the cursor is in the middle of a line. **Ctrl+Shift+T** performs the same action while the editor has focus and no other task is running. Settings provide a pause/resume shortcut (default **Ctrl+Shift+F9**) and an optional stop shortcut (default **Ctrl+Shift+F10** for new installs; existing saved settings are kept). There is no global start shortcut. Settings refuses a stop shortcut that matches the pause shortcut, ignoring case and spacing, and disables **Save shortcuts** until they differ. When you press keys to record a shortcut, a press without Ctrl or Alt that is not an F-key is refused with a hint instead of being taken. If registration fails, use the on-screen controls and choose another shortcut.
 
-If a microphone or output is not listed, for example a headset connected after OpenMeet started or a device you just allowed in your privacy settings, press **Refresh devices** in New recording or **Settings → Recording**. A refresh lists the devices again but never replaces a device you already chose; an unavailable choice stays marked until you pick another one.
+If a microphone or system audio device is not listed, for example a headset connected after OpenMeet started or a device you just allowed in your privacy settings, press **Refresh devices** in New recording or **Settings → Recording**. A refresh lists the devices again but never replaces a device you already chose; an unavailable choice stays marked until you pick another one.
 
 The code excludes paused audio, but real-device pause privacy, device failures, and long-run timing remain unqualified. A meter signal or two WAV files does not establish a successful recording.
 
@@ -76,7 +76,7 @@ The prompt names the app and offers **Set up recording**, **Not now**, or **Neve
 2. For either final option, optionally choose an **Automatic summary** template.
 3. Start recordings as usual. Each new recording runs the saved choice with the engines and connections set in Settings at that moment. If they are not ready, for example a summary with no model assigned, the recording still starts and a notice says processing is off for it.
 
-Local Whisper stays on this device. An API speech destination receives audio. An API summary destination receives saved notes and final transcript text. Live plus final transcription uses separate requests and can incur separate charges. Starting a recording does not install a missing model.
+Local Whisper stays on this device. An online speech connection receives audio. An online AI notes connection receives saved notes and final transcript text. Live plus final transcription uses separate requests and can incur separate charges. Starting a recording does not install a missing model.
 
 Automatic processing allows up to 14,400 seconds (4 hours) of recording with local Whisper, 14,400 seconds of processing after stop, 256 MiB of uploaded audio, 1,000 requests, and 800,000 UTF-8 text bytes. Exceeding a limit does not stop recording or send more requests. Longer recordings are not processed automatically; use **Transcribe audio** on the Transcript tab. With an API speech connection the 256 MiB upload limit is reached after roughly 20 minutes, because the system track is 48 kHz stereo; longer recordings then stop with a budget error.
 
@@ -127,13 +127,13 @@ Search Hugging Face explicitly to see up to 20 public speech-recognition results
 Set up AI notes under **Settings → AI notes**: choose a connection and a chat model. A server on this computer needs no key; a remote one needs its key, which you add under **Settings → Connections**. Keys are saved in the OS keychain and not read back into the form. Model discovery is optional; the chosen model must support the chat endpoint. For background, see the [README setup](../README.md#set-up-optional-ai-summaries).
 
 1. Open **Summary** and choose **General**, **Stand-up**, **One-to-one**, or one of your custom templates.
-2. Click **Enhance notes**. Notes and transcript text, with your saved instructions and template, go to the AI notes connection.
+2. Click **Create summary**. Notes and transcript text, with your saved instructions and template, go to the AI notes connection.
 
-When AI notes are not ready, **Enhance notes**, **Rewrite selection…** and **Ask across meetings** stay disabled, show why, and offer **Open Settings** to the section that fixes it.
+When AI notes are not ready, **Create summary**, **Rewrite with AI…** and **Ask across meetings** stay disabled, show why, and offer **Open Settings** to the section that fixes it.
 
 Add custom templates and saved summary instructions in **Settings → AI notes → Summary templates**. **Default summary template** there sets the template the Summary tab starts at. A custom template describes the sections you want. Saved instructions, such as "Write in British English", are sent with every manual and automatic summary request. Built-in rules still apply: the model must not invent facts or follow instructions found inside notes or transcripts. Automatic summaries offer only the three built-in templates, and include the saved instructions as they were when the recording started. Deleting a template keeps earlier summaries; their history shows "Deleted custom template".
 
-Notes and transcript text leave the device when you click **Enhance notes**. Audio is never included. Longer transcripts can require several requests, including a final combination request. Inputs above the implementation's limits are refused rather than silently shortened. A failed request does not remove your notes or the last saved summary.
+Notes and transcript text leave the device when you click **Create summary**. Audio is never included. Longer transcripts can require several requests, including a final combination request. Inputs above the implementation's limits are refused rather than silently shortened. A failed request does not remove your notes or the last saved summary.
 
 Use the version picker to read earlier summaries. **Copy summary** and **Copy action items** write to the system clipboard, where other apps may read the text. Markdown export always uses the latest saved summary, regardless of the viewed version.
 
@@ -159,7 +159,7 @@ Recipes are saved questions. Both question boxes show them as buttons: **Catch m
 
 ### Rewrite selected notes
 
-Select text in **My notes** and click **Rewrite selection…**. Choose a preset (shorter, clearer, bullet points, fix spelling and grammar, more formal) or describe the change, then **Rewrite**. Only the selected characters and your request are sent, not the rest of your notes, the transcript or audio. The rewrite is shown beside the original and changes nothing until you click **Replace selection**. If your notes changed around the selection meanwhile, nothing is replaced; use **Copy** instead. The rewrite is not saved anywhere else.
+Select text in **My notes** and click **Rewrite with AI…**. The card says the selected text goes to your AI notes connection. Choose a preset (shorter, clearer, bullet points, fix spelling and grammar, more formal) or describe the change, then **Rewrite**. Only the selected characters and your request are sent, not the rest of your notes, the transcript or audio. The rewrite is shown beside the original and changes nothing until you click **Replace selection**. If your notes changed around the selection meanwhile, nothing is replaced; use **Copy** instead. The rewrite is not saved anywhere else.
 
 ## Export Markdown and transcripts
 

@@ -121,12 +121,12 @@ function ConnectAndPick(props: {
             <input
               value={name}
               maxLength={100}
-              placeholder="My provider"
+              placeholder="My connection"
               onChange={(event) => setName(event.target.value)}
             />
           </label>
           <label>
-            API base URL
+            Base URL
             <input
               type="url"
               value={baseUrl}
@@ -338,7 +338,7 @@ export function FirstRunSetup(props: Props) {
             OpenMeet records your microphone and the audio of your other apps,
             transcribes it, and writes AI notes. Recordings, notes and
             transcripts stay on this computer, unencrypted, unless you choose an
-            online service below.
+            online connection below.
           </p>
           <p>
             <strong>Recording consent is your responsibility.</strong> Tell
@@ -374,9 +374,9 @@ export function FirstRunSetup(props: Props) {
                 onChange={() => setRoute("api")}
               />
               <span>
-                <strong>Online API</strong>
+                <strong>Online connection</strong>
                 <span className="muted">
-                  Audio is uploaded to the service you choose.
+                  Audio is uploaded to the connection you choose.
                 </span>
               </span>
             </label>
@@ -556,7 +556,7 @@ export function FirstRunSetup(props: Props) {
                 />
                 <span>
                   <strong>The transcription connection</strong>
-                  <span className="muted">Same provider, a chat model.</span>
+                  <span className="muted">Same connection, a chat model.</span>
                 </span>
               </label>
             )}
@@ -568,7 +568,7 @@ export function FirstRunSetup(props: Props) {
                 onChange={() => setNotesChoice("api")}
               />
               <span>
-                <strong>Another online API</strong>
+                <strong>Another online connection</strong>
                 <span className="muted">
                   Notes and transcript text are sent to it.
                 </span>

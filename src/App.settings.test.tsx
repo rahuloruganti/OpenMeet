@@ -146,7 +146,7 @@ describe("settings and meeting detection", () => {
     )[1] as HTMLOptionElement;
     await userEvent.selectOptions(microphone, real.value);
     const output = (
-      screen.getByLabelText("Default system output") as HTMLSelectElement
+      screen.getByLabelText("Default system audio") as HTMLSelectElement
     ).value;
     expect(api.saveDefaultDevices).toHaveBeenCalledWith(real.value, output);
   });

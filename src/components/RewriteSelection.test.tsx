@@ -63,7 +63,7 @@ it("shows why rewriting is unavailable and links to the Settings section that fi
     />,
   );
   const rewrite = screen.getByRole("button", {
-    name: "Rewrite selection…",
+    name: "Rewrite with AI…",
   }) as HTMLButtonElement;
   expect(rewrite.disabled).toBe(true);
   expect(rewrite.title).toBe(
@@ -95,7 +95,7 @@ it("shows another running task as text without a Settings link", () => {
 it("asks for a selection first and sends nothing without one", async () => {
   render(<Harness initial="Keep this." />);
   await userEvent.click(
-    screen.getByRole("button", { name: "Rewrite selection…" }),
+    screen.getByRole("button", { name: "Rewrite with AI…" }),
   );
   expect(screen.getByRole("status").textContent).toContain("Select text");
   expect(api.rewriteText).not.toHaveBeenCalled();
@@ -111,7 +111,7 @@ it("sends only the selection and replaces it only when accepted", async () => {
   );
   select(7, 30);
   await userEvent.click(
-    screen.getByRole("button", { name: "Rewrite selection…" }),
+    screen.getByRole("button", { name: "Rewrite with AI…" }),
   );
   await userEvent.click(
     screen.getByRole("button", { name: "Make it shorter" }),
@@ -136,7 +136,7 @@ it("refuses to replace when the notes changed around the selection", async () =>
   render(<Harness initial="Alpha beta gamma" onApply={onApply} />);
   select(6, 10);
   await userEvent.click(
-    screen.getByRole("button", { name: "Rewrite selection…" }),
+    screen.getByRole("button", { name: "Rewrite with AI…" }),
   );
   await userEvent.type(
     screen.getByLabelText("How should it change?"),
@@ -163,7 +163,7 @@ it("shows a failed rewrite as an alert and leaves the notes unchanged", async ()
   render(<Harness initial="Alpha beta" />);
   select(0, 5);
   await userEvent.click(
-    screen.getByRole("button", { name: "Rewrite selection…" }),
+    screen.getByRole("button", { name: "Rewrite with AI…" }),
   );
   await userEvent.click(
     screen.getByRole("button", { name: "Make it clearer" }),

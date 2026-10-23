@@ -50,8 +50,8 @@ export function SetupPanel(props: Props) {
         </button>
       </div>
       <p className="panel-description">
-        Microphone and system audio are saved on this device. Capture is not yet
-        hardware-qualified.
+        Microphone and system audio are saved on this device. Recording is still
+        being tested on more computers. Try a short test meeting first.
       </p>
       {devices && !devices.capture_supported && (
         <p role="alert">
@@ -67,8 +67,8 @@ export function SetupPanel(props: Props) {
       )}
       {!outputAvailable && (
         <p role="alert">
-          Selected system output is unavailable. Choose an available output; no
-          device is substituted.
+          Selected system audio is unavailable. Choose an available system audio
+          device; no device is substituted.
         </p>
       )}
       <label>
@@ -92,9 +92,9 @@ export function SetupPanel(props: Props) {
             onChange: props.onMicrophone,
           },
           {
-            label: "System output",
-            empty: "No system output selected",
-            saved: "Saved system output (unavailable)",
+            label: "System audio",
+            empty: "No system audio selected",
+            saved: "Saved system audio (unavailable)",
             value: output,
             available: outputAvailable,
             options: devices?.outputs,

@@ -65,7 +65,7 @@ describe("saved connections and provider workflows", () => {
     await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
     await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
     expect(
-      screen.getByRole("button", { name: "Enhance notes" }),
+      screen.getByRole("button", { name: "Create summary" }),
     ).toHaveProperty("disabled", false);
   });
 
@@ -97,7 +97,7 @@ describe("saved connections and provider workflows", () => {
     ).toHaveProperty("disabled", true);
     expect(screen.getByText("Save the connection first.")).toBeTruthy();
     expect(screen.getByText("No saved key to remove.")).toBeTruthy();
-    const url = screen.getByLabelText("API base URL");
+    const url = screen.getByLabelText("Base URL");
     await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
     await userEvent.type(url, "provider.example/v1");
     expect(screen.getByRole("alert").textContent).toBe(
@@ -114,7 +114,7 @@ describe("saved connections and provider workflows", () => {
     await userEvent.clear(url);
     await userEvent.type(url, "https://user@provider.example/v1?key=1");
     expect(screen.getByRole("alert").textContent).toBe(
-      "Enter an HTTPS API base URL, or HTTP on localhost, without credentials, query parameters or a fragment.",
+      "Enter an HTTPS base URL, or HTTP on localhost, without credentials, query parameters or a fragment.",
     );
     await userEvent.clear(url);
     await userEvent.type(url, "http://127.0.0.1:1234/v1");
