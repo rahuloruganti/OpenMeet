@@ -304,6 +304,9 @@ export function App() {
       setNotesStatus("saved");
       selectedIdRef.current = id;
       setSelected(detail);
+      // A note has no transcript, so it opens on My notes instead of an empty Transcript tab.
+      if (detail.meeting.source === "note")
+        setTab((current) => (current === "transcript" ? "notes" : current));
       setProcessing(null);
       void refreshProcessing(id).catch(report);
     },
@@ -1191,6 +1194,12 @@ export function App() {
           selected={selected}
           firstRun={ready && meetings.length === 0}
           job={job}
+          processing={
+            processing &&
+            dismissedProcessing[processing.meeting_id] !== processing.revision
+              ? processing
+              : null
+          }
           speechReady={speechReady}
           sttMode={settings?.stt_mode ?? "local"}
           connectionRevision={`${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`}

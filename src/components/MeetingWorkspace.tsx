@@ -4,6 +4,7 @@ import {
   type ActionItem,
   type CustomTemplate,
   type Recipe,
+  type SessionProcessingSnapshot,
   type SpeakerNames,
   speakerLabel,
   type MeetingDetail,
@@ -20,6 +21,7 @@ import {
   OpenSettingsButton,
   type AiBlock,
   type OpenSettings,
+  type SettingsSection,
 } from "./SettingsPanel";
 import { MeetingTagsForm } from "./MeetingTags";
 import { SpeakerNamesForm } from "./SpeakerNames";
@@ -105,6 +107,8 @@ type Props = {
   disabled: boolean;
   /** "transcribe" | "summary" | "install" | "recover" while a background job runs. */
   job: string | null;
+  /** The selected meeting's automatic processing snapshot while its status is shown, or null. */
+  processing: SessionProcessingSnapshot | null;
   speechReady: boolean;
   /** Why summary generation is unavailable, or null when it can run. */
   enhanceBlocked: string | null;
@@ -215,6 +219,9 @@ export function MeetingWorkspace(props: Props) {
   const titleHeading = useRef<HTMLHeadingElement>(null);
   // Set by Enter or Escape in the title input, so focus returns to the heading once the input is gone.
   const focusTitle = useRef(false);
+  const [retranscribing, setRetranscribing] = useState(false);
+  const retranscribeButton = useRef<HTMLButtonElement>(null);
+  const retranscribeCancel = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     setQuestion("");
     setChosenThread(null);
@@ -224,8 +231,13 @@ export function MeetingWorkspace(props: Props) {
     setTitleDraft(null);
     setJumpHint("");
     setPlaybackError("");
+    setRetranscribing(false);
     if (actions.current) actions.current.open = false;
   }, [meetingId]);
+  // Opening the re-transcribe confirmation focuses Cancel, never the billable action.
+  useEffect(() => {
+    if (retranscribing) retranscribeCancel.current?.focus();
+  }, [retranscribing]);
   // A saved answer clears the box and shows its thread; a deleted thread closes the prompt.
   const newestThread = threads[0]?.id;
   useEffect(() => {
@@ -298,6 +310,22 @@ export function MeetingWorkspace(props: Props) {
   });
 
   if (!selected) {
+    const setupRows: {
+      label: string;
+      section: SettingsSection;
+      ready: boolean;
+    }[] = [
+      {
+        label: "Transcription",
+        section: "transcription",
+        ready: props.speechReady,
+      },
+      {
+        label: "AI notes",
+        section: props.llmBlocked?.section ?? "ai",
+        ready: props.llmBlocked === null,
+      },
+    ];
     return (
       <article className="content-area" hidden={props.hidden}>
         <div className="empty-workspace">
@@ -323,6 +351,30 @@ export function MeetingWorkspace(props: Props) {
               </p>
             </>
           )}
+          {/* Hidden until startup has loaded settings, so nothing reads as not set up before it is known. */}
+          {!props.disabled && setupRows.some((row) => !row.ready) && (
+            <>
+              <span className="eyebrow">Setup status</span>
+              <ul className="setup-list" aria-label="Setup status">
+                {setupRows.map((row) => (
+                  <li key={row.label}>
+                    <span>
+                      <strong>{row.label}</strong>{" "}
+                      <span className="muted">
+                        {row.ready ? "Ready" : "Not set up"}
+                      </span>
+                    </span>
+                    {!row.ready && (
+                      <OpenSettingsButton
+                        section={row.section}
+                        onOpenSettings={props.onOpenSettings}
+                      />
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       </article>
     );
@@ -331,6 +383,20 @@ export function MeetingWorkspace(props: Props) {
   const playable = playableTracks(selected);
   const transcribable = playable.length > 0;
   const hasTranscript = selected.segments.length > 0;
+  // The Transcript tab already says "No transcript yet." with the same action, so the card stays off it.
+  const nextSteps =
+    meeting.source === "desktop" &&
+    meeting.status === "stopped" &&
+    transcribable &&
+    !hasTranscript &&
+    tab !== "transcript" &&
+    (props.processing === null ||
+      (props.processing.workflow?.stage ?? props.processing.state) ===
+        "failed");
+  const speechReason =
+    props.sttMode === "cloud"
+      ? "Save a cloud speech connection and model in Settings first."
+      : "Download the speech engine in Settings first.";
   const audioBytes = selected.tracks.reduce(
     (total, track) => total + (track.size_bytes ?? 0),
     0,
@@ -403,7 +469,9 @@ export function MeetingWorkspace(props: Props) {
     const area = editor.current;
     if (offset === null || !area) return;
     const { selectionStart: start, selectionEnd: end, value } = area;
-    const stamp = `${formatTimestamp(offset)} `;
+    // A stamp typed mid-line would glue onto the previous word, so it starts a new line.
+    const newLine = start > 0 && value[start - 1] !== "\n" ? "\n" : "";
+    const stamp = `${newLine}${formatTimestamp(offset)} `;
     props.onNotes(value.slice(0, start) + stamp + value.slice(end));
     requestAnimationFrame(() => {
       area.focus();
@@ -647,6 +715,43 @@ export function MeetingWorkspace(props: Props) {
               Writes repaired copies next to the originals. The original files
               are not changed.
             </span>
+          </div>
+        </div>
+      )}
+      {nextSteps && (
+        <div className="dialog-card" role="group" aria-label="Next steps">
+          <p>This recording has no transcript yet.</p>
+          <div className="panel-actions">
+            {props.speechReady ? (
+              <button
+                className="primary"
+                disabled={disabled || job !== null}
+                // Progress and Cancel live on the Transcript tab, so show it while this runs.
+                onClick={() => {
+                  props.onTab("transcript");
+                  props.onTranscribe();
+                }}
+              >
+                {job === "transcribe"
+                  ? props.sttMode === "cloud"
+                    ? "Transcribing with cloud provider…"
+                    : "Transcribing locally…"
+                  : "Transcribe audio"}
+              </button>
+            ) : (
+              <>
+                <span className="muted">{speechReason}</span>
+                <OpenSettingsButton
+                  section="transcription"
+                  onOpenSettings={props.onOpenSettings}
+                />
+              </>
+            )}
+            {props.notes.trim() !== "" && (
+              <button onClick={() => props.onTab("summary")}>
+                Go to Summary
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1096,9 +1201,14 @@ export function MeetingWorkspace(props: Props) {
           {transcribable && (
             <div className="panel-actions">
               <button
-                className="primary"
+                ref={retranscribeButton}
+                className={hasTranscript ? undefined : "primary"}
                 disabled={disabled || job !== null || !props.speechReady}
-                onClick={props.onTranscribe}
+                onClick={
+                  hasTranscript
+                    ? () => setRetranscribing(true)
+                    : props.onTranscribe
+                }
               >
                 {job === "transcribe"
                   ? props.sttMode === "cloud"
@@ -1118,11 +1228,7 @@ export function MeetingWorkspace(props: Props) {
                 </span>
               )}
               {!props.speechReady && (
-                <span className="muted">
-                  {props.sttMode === "cloud"
-                    ? "Save a cloud speech connection and model in Settings first."
-                    : "Download the speech engine in Settings first."}
-                </span>
+                <span className="muted">{speechReason}</span>
               )}
               {job === "transcribe" && (
                 <>
@@ -1141,6 +1247,48 @@ export function MeetingWorkspace(props: Props) {
                   </span>
                 </>
               )}
+            </div>
+          )}
+          {retranscribing && (
+            <div
+              className="dialog-card"
+              role="group"
+              aria-label="Confirm re-transcription"
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.stopPropagation();
+                setRetranscribing(false);
+                retranscribeButton.current?.focus();
+              }}
+            >
+              <p>
+                <strong>Re-transcribe this audio?</strong> The current
+                transcript, including your edits, is kept under Earlier
+                transcripts.{" "}
+                {props.sttMode === "cloud"
+                  ? "With an online speech connection the audio is uploaded again and may be billed again."
+                  : "This runs on your computer and can take about as long as the recording."}
+              </p>
+              <div className="panel-actions">
+                <button
+                  disabled={disabled || job !== null || !props.speechReady}
+                  onClick={() => {
+                    setRetranscribing(false);
+                    props.onTranscribe();
+                  }}
+                >
+                  Re-transcribe
+                </button>
+                <button
+                  ref={retranscribeCancel}
+                  onClick={() => {
+                    setRetranscribing(false);
+                    retranscribeButton.current?.focus();
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
           {job === "transcribe" &&

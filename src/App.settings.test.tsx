@@ -184,6 +184,60 @@ describe("settings and meeting detection", () => {
     ).toHaveProperty("value", "CommandOrControl+Shift+S");
   });
 
+  it("explains a key press refused for lacking a modifier until a chord is accepted", async () => {
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    const capture = screen.getByRole("button", {
+      name: "Press keys for stop recording shortcut (optional)",
+    });
+    const hint = "Add Ctrl or Alt, or use an F-key.";
+    await userEvent.click(capture);
+    // A lone modifier is part of a chord still being pressed, not a refusal.
+    fireEvent.keyDown(capture, {
+      key: "Shift",
+      code: "ShiftLeft",
+      shiftKey: true,
+    });
+    expect(screen.queryByText(hint)).toBeNull();
+    fireEvent.keyDown(capture, { key: "s", code: "KeyS" });
+    expect(screen.getByText(hint)).toBeTruthy();
+    expect(
+      screen.getByLabelText("Stop recording shortcut (optional)"),
+    ).toHaveProperty("value", "");
+    fireEvent.keyDown(capture, { key: "F9", code: "F9" });
+    expect(screen.queryByText(hint)).toBeNull();
+    expect(
+      screen.getByLabelText("Stop recording shortcut (optional)"),
+    ).toHaveProperty("value", "F9");
+    // An accepted chord ends capture, so the next refused press needs a new click.
+    await userEvent.click(capture);
+    fireEvent.keyDown(capture, { key: "s", code: "KeyS" });
+    expect(screen.getByText(hint)).toBeTruthy();
+    act(() => capture.blur());
+    expect(screen.queryByText(hint)).toBeNull();
+  });
+
+  it("refuses a stop shortcut that matches pause, ignoring case and spacing", async () => {
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    const stop = screen.getByLabelText("Stop recording shortcut (optional)");
+    await userEvent.type(stop, " commandorcontrol+SHIFT+space ");
+    expect(
+      await screen.findByText("Pause and stop can't use the same shortcut."),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Save shortcuts" }),
+    ).toHaveProperty("disabled", true);
+    await userEvent.clear(stop);
+    await userEvent.type(stop, "Alt+Shift+S");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Save shortcuts" }),
+    ).toHaveProperty("disabled", false);
+  });
+
   it("keeps the old processing default when saving it fails", async () => {
     localStorage.setItem(
       "openmeet.automaticProcessing",

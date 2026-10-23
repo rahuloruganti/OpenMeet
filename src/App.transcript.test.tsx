@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +13,9 @@ import { App } from "./App";
 import { api, type MeetingDetail, type Settings } from "./lib/api";
 import {
   initialSettings,
+  installed,
   sample,
+  sessionSnapshot,
   ready,
   installDefaultMocks,
 } from "./test/app-harness";
@@ -496,6 +499,30 @@ describe("transcript and audio", () => {
       ).toBeNull();
     });
 
+    it("starts a stamp on its own line when the caret is mid-line", async () => {
+      const live = {
+        revision: 1,
+        status: "recording" as const,
+        meeting_id: "sample",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: 65_400,
+      };
+      vi.mocked(api.getRecordingState).mockResolvedValue(live);
+      await ready();
+      const editor = screen.getByDisplayValue(
+        "Original notes",
+      ) as HTMLTextAreaElement;
+      editor.setSelectionRange(8, 8);
+      await userEvent.click(
+        screen.getByRole("button", { name: "Insert timestamp" }),
+      );
+      await waitFor(() =>
+        expect(editor.value).toBe("Original\n[01:05]  notes"),
+      );
+      await waitFor(() => expect(editor.selectionStart).toBe(17));
+    });
+
     it("ignores the timestamp shortcut while another task is running", async () => {
       vi.mocked(api.getRecordingState).mockResolvedValue({
         revision: 1,
@@ -545,6 +572,296 @@ describe("transcript and audio", () => {
       // Positive control: once the task ends, the same shortcut inserts the stamp.
       fireEvent.keyDown(editor, { key: "T", ctrlKey: true, shiftKey: true });
       await waitFor(() => expect(editor.value).toBe("[01:05] Original notes"));
+    });
+  });
+
+  describe("next steps and re-transcription", () => {
+    const stopped: MeetingDetail = {
+      ...sample,
+      meeting: { ...sample.meeting, source: "desktop" },
+      summary: null,
+      summary_provider: null,
+      summary_model: null,
+      tracks: [
+        {
+          kind: "mic",
+          path: "mic.wav",
+          device_name: "Microphone",
+          sample_rate: 16000,
+          frames: 16000,
+          dropped_frames: 0,
+          finalized: true,
+          size_bytes: null,
+        },
+      ],
+    };
+    const transcribed: MeetingDetail = {
+      ...stopped,
+      segments: [
+        {
+          speaker: "Others",
+          timing: { kind: "timed", start_ms: 1000, end_ms: 2000 },
+          text: "Kickoff agreed",
+        },
+      ],
+      segment_meta: [{ id: 21, original_text: null }],
+    };
+
+    it("transcribes from the next steps card and shows that it is running", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(stopped);
+      // Never settles, so the running state stays on screen for the assertions.
+      vi.mocked(api.transcribeMeeting).mockReturnValue(new Promise(() => {}));
+      await ready();
+      const card = await screen.findByRole("group", { name: "Next steps" });
+      expect(
+        within(card).getByText("This recording has no transcript yet."),
+      ).toBeTruthy();
+      await userEvent.click(
+        within(card).getByRole("button", { name: "Transcribe audio" }),
+      );
+      await waitFor(() =>
+        expect(api.transcribeMeeting).toHaveBeenCalledWith("sample"),
+      );
+      // The card hides itself on the Transcript tab, where progress and Cancel live.
+      expect(
+        screen
+          .getByRole("tab", { name: "Transcript" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      expect(
+        screen.getByRole("button", { name: "Transcribing locally…" }),
+      ).toHaveProperty("disabled", true);
+    });
+
+    it("shows the card again once a cancelled processing status is dismissed", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(stopped);
+      vi.mocked(api.getSessionProcessing).mockResolvedValue(
+        sessionSnapshot(1, "cancelled"),
+      );
+      await ready();
+      await screen.findByRole("region", { name: "Session processing" });
+      expect(screen.queryByRole("group", { name: "Next steps" })).toBeNull();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Dismiss processing status" }),
+      );
+      expect(
+        await screen.findByRole("group", { name: "Next steps" }),
+      ).toBeTruthy();
+    });
+
+    it("jumps to the summary from the next steps card", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(stopped);
+      await ready();
+      const card = await screen.findByRole("group", { name: "Next steps" });
+      await userEvent.click(
+        within(card).getByRole("button", { name: "Go to Summary" }),
+      );
+      expect(
+        screen
+          .getByRole("tab", { name: "Summary" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+    });
+
+    it("explains the speech setup it needs instead of a transcribe button", async () => {
+      vi.mocked(api.getMeeting).mockResolvedValue(stopped);
+      await ready();
+      const card = await screen.findByRole("group", { name: "Next steps" });
+      expect(
+        within(card).getByText("Download the speech engine in Settings first."),
+      ).toBeTruthy();
+      expect(
+        within(card).queryByRole("button", { name: "Transcribe audio" }),
+      ).toBeNull();
+      expect(
+        within(card).getByRole("button", {
+          name: "Open Settings for Transcription",
+        }),
+      ).toBeTruthy();
+    });
+
+    it("leaves out the summary jump when there are no notes", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue({
+        ...stopped,
+        user_markdown: "",
+      });
+      render(<App />);
+      const card = await screen.findByRole("group", { name: "Next steps" });
+      expect(
+        within(card).queryByRole("button", { name: "Go to Summary" }),
+      ).toBeNull();
+    });
+
+    it("is not repeated on the Transcript tab, which already offers the action", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(stopped);
+      await ready();
+      await screen.findByRole("group", { name: "Next steps" });
+      await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+      expect(screen.queryByRole("group", { name: "Next steps" })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Transcribe audio" }),
+      ).toBeTruthy();
+    });
+
+    it.each([
+      ["a transcript exists", transcribed],
+      [
+        "the recording is still running",
+        {
+          ...stopped,
+          meeting: { ...stopped.meeting, status: "recording" as const },
+        },
+      ],
+      [
+        "the recording was interrupted",
+        {
+          ...stopped,
+          meeting: { ...stopped.meeting, status: "interrupted" as const },
+        },
+      ],
+      [
+        "the meeting is a note",
+        {
+          ...stopped,
+          meeting: { ...stopped.meeting, source: "note" as const },
+        },
+      ],
+    ])("hides the card when %s", async (_case, detail) => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(detail);
+      await ready();
+      expect(screen.queryByRole("group", { name: "Next steps" })).toBeNull();
+    });
+
+    it("waits while automatic processing runs and shows the card once it fails", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(stopped);
+      vi.mocked(api.getSessionProcessing).mockResolvedValue(
+        sessionSnapshot(1, "transcribing"),
+      );
+      await ready();
+      await screen.findByRole("region", { name: "Session processing" });
+      expect(screen.queryByRole("group", { name: "Next steps" })).toBeNull();
+    });
+
+    it("shows the card after automatic processing has failed", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(stopped);
+      vi.mocked(api.getSessionProcessing).mockResolvedValue(
+        sessionSnapshot(1, "failed"),
+      );
+      await ready();
+      await screen.findByRole("region", { name: "Session processing" });
+      expect(
+        await screen.findByRole("group", { name: "Next steps" }),
+      ).toBeTruthy();
+    });
+
+    it("asks before re-transcribing and keeps the transcript when cancelled", async () => {
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getMeeting).mockResolvedValue(transcribed);
+      vi.mocked(api.transcribeMeeting).mockResolvedValue(undefined);
+      await ready();
+      await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+      const trigger = screen.getByRole("button", {
+        name: "Re-transcribe audio",
+      });
+      expect(trigger.classList.contains("primary")).toBe(false);
+      await userEvent.click(trigger);
+      const card = screen.getByRole("group", {
+        name: "Confirm re-transcription",
+      });
+      expect(card.textContent).toContain(
+        "The current transcript, including your edits, is kept under Earlier transcripts.",
+      );
+      expect(card.textContent).toContain(
+        "This runs on your computer and can take about as long as the recording.",
+      );
+      expect(within(card).getByRole("button", { name: "Cancel" })).toBe(
+        document.activeElement,
+      );
+      expect(api.transcribeMeeting).not.toHaveBeenCalled();
+      await userEvent.click(
+        within(card).getByRole("button", { name: "Cancel" }),
+      );
+      expect(
+        screen.queryByRole("group", { name: "Confirm re-transcription" }),
+      ).toBeNull();
+      expect(trigger).toBe(document.activeElement);
+      expect(api.transcribeMeeting).not.toHaveBeenCalled();
+      await userEvent.click(trigger);
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-transcribe" }),
+      );
+      await waitFor(() =>
+        expect(api.transcribeMeeting).toHaveBeenCalledWith("sample"),
+      );
+    });
+
+    it("uses the online wording for a cloud speech connection and closes on Escape", async () => {
+      vi.mocked(api.getSettings).mockResolvedValue({
+        ...initialSettings,
+        stt_mode: "cloud",
+        cloud_stt: {
+          base_url: "https://speech.example/v1",
+          model: "speech-model",
+          revision: 2,
+        },
+      });
+      vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
+      vi.mocked(api.getMeeting).mockResolvedValue(transcribed);
+      await ready();
+      await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-transcribe audio" }),
+      );
+      const card = screen.getByRole("group", {
+        name: "Confirm re-transcription",
+      });
+      expect(card.textContent).toContain(
+        "With an online speech connection the audio is uploaded again and may be billed again.",
+      );
+      fireEvent.keyDown(card, { key: "Escape" });
+      expect(
+        screen.queryByRole("group", { name: "Confirm re-transcription" }),
+      ).toBeNull();
+      expect(screen.getByRole("button", { name: "Re-transcribe audio" })).toBe(
+        document.activeElement,
+      );
+      expect(api.transcribeMeeting).not.toHaveBeenCalled();
+    });
+
+    it("closes the confirmation when another meeting opens", async () => {
+      const other: MeetingDetail = {
+        ...transcribed,
+        meeting: { ...transcribed.meeting, id: "other", title: "Other sync" },
+      };
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.listMeetings).mockResolvedValue([
+        transcribed.meeting,
+        other.meeting,
+      ]);
+      vi.mocked(api.getMeeting).mockImplementation(async (id) =>
+        id === "other" ? other : transcribed,
+      );
+      await ready();
+      await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-transcribe audio" }),
+      );
+      expect(
+        screen.getByRole("group", { name: "Confirm re-transcription" }),
+      ).toBeTruthy();
+      await userEvent.click(screen.getByRole("button", { name: /Other sync/ }));
+      await screen.findByRole("heading", { name: "Other sync" });
+      expect(
+        screen.queryByRole("group", { name: "Confirm re-transcription" }),
+      ).toBeNull();
     });
   });
 });

@@ -652,6 +652,9 @@ describe("speech engine and automatic processing", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Re-transcribe audio" }),
       );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Re-transcribe" }),
+      );
       expect(
         screen
           .getByRole("button", { name: "Cancel transcription" })

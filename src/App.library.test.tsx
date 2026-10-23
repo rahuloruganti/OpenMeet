@@ -12,6 +12,7 @@ import { App } from "./App";
 import { api, type MeetingDetail } from "./lib/api";
 import {
   initialSettings,
+  installed,
   sample,
   ready,
   installDefaultMocks,
@@ -99,6 +100,48 @@ describe("meeting library", () => {
       expect(
         screen.queryByRole("button", { name: "Start simulation" }),
       ).toBeNull();
+    });
+
+    it("lists what is not set up on the empty workspace, once settings have loaded", async () => {
+      vi.mocked(api.listMeetings).mockResolvedValue([]);
+      render(<App />);
+      await screen.findByText("Start your first note");
+      const status = await screen.findByRole("list", { name: "Setup status" });
+      const [speech, notes] = within(status).getAllByRole("listitem");
+      expect(within(speech).getByText("Not set up")).toBeTruthy();
+      expect(
+        within(speech).getByRole("button", {
+          name: "Open Settings for Transcription",
+        }),
+      ).toBeTruthy();
+      expect(within(notes).getByText("Not set up")).toBeTruthy();
+      expect(
+        within(notes).getByRole("button", {
+          name: "Open Settings for AI notes",
+        }),
+      ).toBeTruthy();
+    });
+
+    it("hides the setup list when transcription and AI notes are ready", async () => {
+      vi.mocked(api.listMeetings).mockResolvedValue([]);
+      vi.mocked(api.sttStatus).mockResolvedValue(installed);
+      vi.mocked(api.getSettings).mockResolvedValue({
+        ...initialSettings,
+        llm: {
+          base_url: "http://127.0.0.1:1234/v1",
+          model: "chat",
+          revision: 1,
+        },
+      });
+      render(<App />);
+      await screen.findByText("Start your first note");
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "New note" })).toHaveProperty(
+          "disabled",
+          false,
+        ),
+      );
+      expect(screen.queryByRole("list", { name: "Setup status" })).toBeNull();
     });
 
     it("offers a disabled Enhance notes slot that explains why", async () => {
@@ -341,6 +384,27 @@ describe("meeting library", () => {
       expect(
         screen.queryByRole("button", { name: "Delete audio…" }),
       ).toBeNull();
+    });
+
+    it("opens a note on My notes even when the Transcript tab was selected", async () => {
+      vi.mocked(api.listMeetings).mockResolvedValue([
+        sample.meeting,
+        note.meeting,
+      ]);
+      vi.mocked(api.getMeeting).mockImplementation(async (id) =>
+        id === "note" ? note : sample,
+      );
+      await ready();
+      await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+      await userEvent.click(
+        screen.getByRole("button", { name: /Untitled note/ }),
+      );
+      await screen.findByRole("heading", { name: "Untitled note" });
+      expect(
+        screen
+          .getByRole("tab", { name: "My notes" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
     });
 
     it("deletes a meeting only after its exact title is typed", async () => {

@@ -33,6 +33,33 @@ export async function publishSettings(settings: Settings, to: Publish) {
 export const destination = (baseUrl: string) =>
   isLocalBase(baseUrl) ? "This device" : "Leaves this device";
 
+const urlFormat = "Enter a full URL such as https://api.example.com/v1.";
+const urlRules =
+  "Enter an HTTPS API base URL, or HTTP on localhost, without credentials, query parameters or a fragment.";
+const plainHttp =
+  "Remote servers must use https. Plain http is only allowed for this computer (localhost or 127.0.0.1).";
+
+/** The first reason an API base URL cannot be saved, mirroring validate_base_url in providers.rs. */
+function baseUrlError(value: string): string | null {
+  const text = value.trim();
+  if (text === "") return null;
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return urlFormat;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return urlFormat;
+  if (
+    /\s/.test(text) ||
+    /[?#]/.test(text) ||
+    url.username !== "" ||
+    url.password !== ""
+  )
+    return urlRules;
+  return url.protocol === "http:" && !isLocalBase(text) ? plainHttp : null;
+}
+
 type Props = Publish & {
   settings: Settings;
   active: boolean;
@@ -69,6 +96,21 @@ export function Connections(props: Props) {
     name !== (connection?.name ?? "") ||
     baseUrl !== (connection?.base_url ?? "");
   const disabled = props.disabled || busy;
+  const urlError = baseUrlError(baseUrl);
+  const missingFields = !name.trim() || !baseUrl.trim();
+  // One reason per disabled button, shown only for the cause that applies.
+  const refreshReason =
+    !connection || dirty
+      ? "Save the connection first."
+      : !isLocalBase(connection.base_url) && status === "missing"
+        ? "Add an API key first."
+        : null;
+  const removeReason =
+    !connection || status === "missing"
+      ? "No saved key to remove."
+      : dirty
+        ? "Save the connection first."
+        : null;
   useEffect(() => {
     if (password.current) password.current.value = "";
     setName(connection?.name ?? "");
@@ -200,6 +242,11 @@ export function Connections(props: Props) {
             onChange={(event) => setBaseUrl(event.target.value)}
           />
         </label>
+        {urlError && (
+          <p role="alert" className="error">
+            {urlError}
+          </p>
+        )}
         <label>
           API key
           <input
@@ -211,8 +258,10 @@ export function Connections(props: Props) {
         </label>
         <p className="muted">
           Keys briefly enter this window, then the OS keychain. Leave empty to
-          keep the saved key at the same URL. A new remote destination requires
-          its own key. Local HTTP servers must use loopback.
+          keep the saved key at the same URL. Changing a saved connection to a
+          remote URL needs its own key. A remote connection needs a saved key
+          before its models can be refreshed or used. Local HTTP servers must
+          use loopback.
         </p>
         <p role="status">
           {status === "present"
@@ -225,7 +274,7 @@ export function Connections(props: Props) {
         </p>
         <div className="panel-actions">
           <button
-            disabled={disabled || !name.trim() || !baseUrl.trim()}
+            disabled={disabled || missingFields || urlError !== null}
             onClick={() => {
               if (lock.current) return;
               const key = password.current?.value ?? "";
@@ -237,6 +286,9 @@ export function Connections(props: Props) {
           >
             Save connection
           </button>
+          {missingFields && (
+            <span className="muted">Enter a name and a URL.</span>
+          )}
           <button
             disabled={disabled || !connection || dirty || status !== "present"}
             onClick={() => {
@@ -246,6 +298,7 @@ export function Connections(props: Props) {
           >
             Remove key
           </button>
+          {removeReason && <span className="muted">{removeReason}</span>}
           <button
             disabled={
               disabled ||
@@ -299,6 +352,7 @@ export function Connections(props: Props) {
         >
           Refresh models
         </button>
+        {refreshReason && <span className="muted">{refreshReason}</span>}
         {models.length > 0 && (
           <ul aria-label="Discovered model IDs">
             {models.map((item) => (

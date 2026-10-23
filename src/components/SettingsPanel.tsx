@@ -119,10 +119,12 @@ type Props = {
   initialSection?: SettingsSection;
 };
 
+const modifierKeys = ["Control", "Shift", "Alt", "Meta"];
+
 /** A keyboard chord as a shortcut accelerator, or null for a lone modifier or a key without
  * one (a global shortcut on a bare key would capture it system-wide). F-keys may stand alone. */
 function accelerator(event: KeyboardEvent): string | null {
-  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return null;
+  if (modifierKeys.includes(event.key)) return null;
   const key =
     event.code === "Space"
       ? "Space"
@@ -147,6 +149,12 @@ function ShortcutField(props: {
   onChange: (value: string) => void;
 }) {
   const [capturing, setCapturing] = useState(false);
+  // Set when a key press was refused for lacking a modifier, so the refusal is not silent.
+  const [refused, setRefused] = useState(false);
+  const stopCapturing = () => {
+    setCapturing(false);
+    setRefused(false);
+  };
   return (
     <div className="shortcut-field">
       <label>
@@ -163,22 +171,29 @@ function ShortcutField(props: {
         aria-label={`Press keys for ${props.label.toLowerCase()}`}
         disabled={props.disabled}
         onClick={() => setCapturing(true)}
-        onBlur={() => setCapturing(false)}
+        onBlur={stopCapturing}
         onKeyDown={(event) => {
           // Tab still moves focus, so capturing never traps the keyboard.
           if (!capturing || event.key === "Tab") return;
           event.preventDefault();
           event.stopPropagation();
-          if (event.key === "Escape") return setCapturing(false);
+          if (event.key === "Escape") return stopCapturing();
           const chord = accelerator(event);
           if (chord) {
             props.onChange(chord);
-            setCapturing(false);
+            stopCapturing();
+          } else if (!modifierKeys.includes(event.key)) {
+            setRefused(true);
           }
         }}
       >
         {capturing ? "Press a key combination…" : "Press keys…"}
       </button>
+      {refused && (
+        <span className="muted" role="status">
+          Add Ctrl or Alt, or use an F-key.
+        </span>
+      )}
     </div>
   );
 }
@@ -229,6 +244,11 @@ export function SettingsPanel(props: Props) {
   useEffect(() => {
     if (section === "models") setModelsOpened(true);
   }, [section]);
+  // Compares the text only; the backend also refuses the same chord spelled in another order.
+  const sameShortcuts =
+    props.stopShortcut.trim() !== "" &&
+    props.stopShortcut.trim().toLowerCase() ===
+      props.shortcut.trim().toLowerCase();
   const unsaved: Partial<Record<SettingsSection, boolean>> = {
     recording: shortcutsDirty(settings, props.shortcut, props.stopShortcut),
     transcription: sttDirty(settings, props.sttDraft),
@@ -462,9 +482,14 @@ export function SettingsPanel(props: Props) {
                 There is no shortcut to start recording: starting always goes
                 through New recording.
               </p>
+              {sameShortcuts && (
+                <p role="alert" className="error">
+                  Pause and stop can&apos;t use the same shortcut.
+                </p>
+              )}
               {shortcutsDirty(settings, props.shortcut, props.stopShortcut) && (
                 <button
-                  disabled={disabled || !props.shortcut.trim()}
+                  disabled={disabled || !props.shortcut.trim() || sameShortcuts}
                   onClick={props.onSaveShortcut}
                 >
                   Save shortcuts

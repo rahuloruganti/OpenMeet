@@ -87,6 +87,78 @@ describe("saved connections and provider workflows", () => {
     expect(api.listApiConnectionModels).not.toHaveBeenCalled();
   });
 
+  it("checks the API base URL before saving and says why each button is unavailable", async () => {
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
+    expect(screen.getByText("Enter a name and a URL.")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Refresh models" }),
+    ).toHaveProperty("disabled", true);
+    expect(screen.getByText("Save the connection first.")).toBeTruthy();
+    expect(screen.getByText("No saved key to remove.")).toBeTruthy();
+    const url = screen.getByLabelText("API base URL");
+    await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
+    await userEvent.type(url, "provider.example/v1");
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Enter a full URL such as https://api.example.com/v1.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Save connection" }),
+    ).toHaveProperty("disabled", true);
+    await userEvent.clear(url);
+    await userEvent.type(url, "http://provider.example/v1");
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Remote servers must use https. Plain http is only allowed for this computer (localhost or 127.0.0.1).",
+    );
+    await userEvent.clear(url);
+    await userEvent.type(url, "https://user@provider.example/v1?key=1");
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Enter an HTTPS API base URL, or HTTP on localhost, without credentials, query parameters or a fragment.",
+    );
+    await userEvent.clear(url);
+    await userEvent.type(url, "http://127.0.0.1:1234/v1");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Save connection" }),
+    ).toHaveProperty("disabled", false);
+    expect(screen.queryByText("Enter a name and a URL.")).toBeNull();
+  });
+
+  it("explains the key rules and the unavailable reasons for a saved remote connection", async () => {
+    const saved = {
+      id: "remote",
+      name: "Remote",
+      base_url: textPlan.base_url,
+      revision: 1,
+    };
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      saved_connections: [saved],
+    });
+    vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("missing");
+    await ready();
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
+    await userEvent.selectOptions(
+      screen.getAllByLabelText("Saved connection")[0],
+      "remote",
+    );
+    expect(await screen.findByText("Add an API key first.")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Refresh models" }),
+    ).toHaveProperty("disabled", true);
+    expect(screen.getByText("No saved key to remove.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        /A remote connection needs a saved key before its models/,
+      ),
+    ).toBeTruthy();
+    await userEvent.type(screen.getByLabelText("Connection name"), " edited");
+    expect(screen.getByText("Save the connection first.")).toBeTruthy();
+    expect(screen.queryByText("Enter a name and a URL.")).toBeNull();
+  });
+
   describe("provider workflows", () => {
     const recorded: MeetingDetail = {
       ...sample,
