@@ -33,6 +33,12 @@ class Context:
     # One transcription at a time. stt_cancel is set only while a transcription job runs.
     stt_busy: threading.Lock = field(default_factory=threading.Lock)
     stt_cancel: Optional[threading.Event] = None
+    # Phase 5 services, set by server.create_app. Typed loosely to keep this module import-light.
+    processing: Any = None  # processing.Processing
+    hotkeys: Any = None  # hotkeys.HotkeyService
+    detection: Any = None  # detection.DetectionService
+    # Taskbar flash for the detection prompt; None when there is no window (tests, browser).
+    attention: Optional[Callable[[], None]] = None
 
 
 @contextmanager

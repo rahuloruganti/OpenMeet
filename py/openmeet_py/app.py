@@ -20,8 +20,10 @@ from typing import Any, Optional
 
 import uvicorn
 
+from .detection import consent_from_env
 from .paths import default_data_dir, web_dir
 from .server import TOKEN_HEADER, create_app
+from .win32 import win32_from_env
 
 TITLE = "OpenMeet"
 WINDOW_SIZE = (1100, 780)
@@ -106,6 +108,10 @@ def run_window(data_dir: Path) -> int:
         token=token,
         pick_folder=pick_folder,
         close_window=close_window,
+        # The real desktop only in the window: hotkeys, taskbar flashing and the Windows consent store.
+        # OPENMEET_PY_FAKE_HOTKEYS=1 and OPENMEET_PY_FAKE_DETECTION=1 select the fakes (browser check).
+        win32=win32_from_env(),
+        consent=consent_from_env(data_dir),
     )
     server = ServerThread(app, port)
     server.start()

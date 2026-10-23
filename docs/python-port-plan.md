@@ -11,6 +11,11 @@ transcribed, and transcription quality, speed and parity with the Rust app are u
 sherpa folders, local AI server detection) is **built in code and checked with a fake sherpa module, stub
 servers, a synthetic archive and MockTransport only. It is UNQUALIFIED: no sherpa model has been loaded, no
 archive has been downloaded from GitHub or Hugging Face, and no sherpa model has transcribed anything.**
+Phase 5 (automatic processing after a recording, meeting detection prompts, global pause/stop shortcuts,
+taskbar flashing) is **built in code and checked with fakes, a stub server, a browser check against fake
+devices, and an exe smoke run only. It is UNQUALIFIED: RegisterHotKey, the Windows consent store and
+FlashWindowEx have not run on a real desktop; live transcription has not run on a real model; the tray is
+deferred.** Every command the UI invokes is now implemented; none answers HTTP 501.
 Phase 7 still gates real use. Nothing in this build is a replacement for the Rust app yet.
 
 ## Why
@@ -124,6 +129,26 @@ integration, and processing" rule for this build only. The Rust app and `src-tau
       ports, with no credentials, no redirects, no proxies, a 2-second timeout and the 4 MiB cap. A server
       is reported when it lists models (`needs_key` false) or answers 401/403 (`needs_key` true, no models).
     - `app.py --check-sherpa-import` imports `sherpa_onnx` and prints its version. It loads no model.
+  - **Phase 5 (built; unqualified):**
+    - `processing.py` ports session_processing.rs, session_workflow.rs, session_runtime.rs and
+      processing_control.rs. The plan is built from the saved default at start and stored per meeting
+      (`processing_sessions`, `processing_runs`, `processing_requests`, `processing_provisional`). The
+      recorder's start transaction attaches it, and its stop transaction moves the stage
+      (`Processing.stopped`). The workflow is a synchronous `step()` driven by one worker thread per run.
+      Speech reuses `transcription/jobs.py` (`_local`, and `_cloud` with a per-upload reservation hook);
+      summaries reuse `llm.summarize`. Each publish re-checks the plan under the store lock. Settings and
+      provider changes move a prepared session to needs_attention through the migration triggers.
+    - `hotkeys.py` holds the accelerator parser and validation, the warning text, `HotkeyService` (all
+      RegisterHotKey calls run on the message-loop thread) and `save_settings`. A press runs
+      `recorder.toggle_pause` or `recorder.stop` on its own thread.
+    - `detection.py` holds the pure rules (display names, in-use, the debounce, the ignored list), the
+      `ConsentRegistry` readers, the poll thread (every 3 s), and the detection commands. It emits
+      `microphone_apps` only. It has no reference to the recorder.
+    - `win32.py`: `NativeWin32` is ctypes-only and loads user32 inside its methods. `FakeWin32` records
+      calls. `create_app` defaults to the fakes and an empty registry. Only `app.run_window` and
+      `create_app_from_env` choose the real wrappers, and `OPENMEET_PY_FAKE_HOTKEYS=1` /
+      `OPENMEET_PY_FAKE_DETECTION=1` choose the fakes. `tests/conftest.py` makes the real wrapper and
+      `winreg` reader unusable in every test.
   - `server.py` serves the API, events, files and the UI. Every API route needs a per-launch token
     that the server injects into `index.html`. Requests must come to `127.0.0.1` or `localhost`,
     which blocks DNS rebinding. Shutdown finalizes an active recording before the database closes.
@@ -197,27 +222,27 @@ Deliberate differences from the Rust app:
   error. A process crash leaves `interrupted`, recoverable with `recover_audio`.
 - Not ported: the Rust "timestamps moved backwards" fault (monotonic host time is used instead), the
   macOS capture path, and `live_audio` (live transcription is phase 4).
-- Automatic processing after recording (session workflow) is phase 5. `processing_notice` is always
-  null.
+- Automatic processing after recording: see "Session processing (phase 5)" below. `processing_notice` is set
+  when processing is skipped for a new recording and stays until the next start, as in Rust.
 
 ## Command status
 
-Counts from `openmeet_py.commands` after phase 4b: 71 implemented, 7 answer HTTP 501, 78 in total,
+Counts from `openmeet_py.commands` after phase 5: 78 implemented, 0 answer HTTP 501, 78 in total,
 matching `src/lib/api.ts`. `py/tests/test_commands.py` fails if the UI invokes a command the registry
-lacks.
+lacks, and checks that `NOT_AVAILABLE` is empty.
 
 | Status | Commands | Planned phase |
 | --- | --- | --- |
 | Implemented | list_meetings, get_meeting, create_note, save_notes, rename_meeting, set_meeting_tags, delete_meeting, search_meetings, export_meeting, choose_vault_folder, close_application, get_settings, save_export_options, save_setup_done | 1 |
 | Implemented (phase 2) | save_api_connection, delete_api_connection, api_connection_key_status, save_provider_assignment, list_api_connection_models, provider_key_status, list_summaries, generate_summary, save_summary_edit, save_summary_instructions, save_summary_template, delete_summary_template, save_summary_default, save_processing_default, save_recipe, delete_recipe, save_speaker_names, ask_meeting, delete_question_thread, ask_library, list_library_answers, delete_library_answer, rewrite_text, save_action_item, delete_action_item, import_action_items | 2 |
 | Implemented (phase 3, unqualified: fake backend only) | get_recording_state, list_audio_devices, save_default_devices, start_recording, pause_recording, resume_recording, stop_recording, delete_audio, recover_audio, audio_position, audio_usage. Also `audio_health` and `recording_state` events, track rows in get_meeting, and owned-folder deletion in delete_meeting | 3 |
-| Implemented, empty or unchanged (honest, not faked) | get_startup_warning, detection_supported, get_session_processing (null) | 1 |
+| Implemented, empty or unchanged (honest, not faked) | (none after phase 5) | 1 |
 | Implemented (phase 4a, unqualified: fake engine and stub servers only) | stt_status, save_stt_mode, save_stt_settings, stt_install, transcribe_meeting, cancel_transcription, edit_segment, get_transcript_version, choose_model_folder, scan_local_models, import_local_model, search_hf_models, list_hf_files, download_hf_model, cancel_model_download. Also `stt_progress` and `model_library_progress` events, and transcript provenance and versions in get_meeting. `save_speaker_names` was already implemented in phase 2 | 4 |
 | Implemented (phase 4b, unqualified: fake sherpa module, stub servers, MockTransport only) | download_hf_folder (all-or-nothing Hugging Face sherpa folder), detect_local_servers (five loopback ports). `stt_status`, `save_stt_settings` and `stt_install` now cover the sherpa ids | 4b |
-| 501: shortcuts, detection, taskbar attention | save_settings, save_detection, set_detection_ignored, request_attention | 5 |
-| 501: session processing workflow | acknowledge_processing_notes, retry_session_processing, cancel_session_processing | 5 |
+| Implemented (phase 5, unqualified: fake Win32, file or list consent registry, fake engine, stub server) | get_session_processing, acknowledge_processing_notes, retry_session_processing, cancel_session_processing (session processing); save_settings, get_startup_warning (global shortcuts); save_detection, set_detection_ignored, detection_supported (meeting detection); request_attention (taskbar). `microphone_apps`, `session_processing_changed` and `processing_notice` are now live | 5 |
 
-Only the 9 commands in the 501 rows answer HTTP 501. Each one names its feature in the message.
+No command answers HTTP 501 now. The `not_available` helper remains for the native folder picker when
+the window is absent.
 The sherpa-onnx entries in the model list show their real installed state. On a machine without the
 sherpa-onnx package (or outside Windows x64) they show a `reason`. `save_stt_settings` accepts the three
 sherpa ids and any downloaded `sherpa-dir:` folder whose name is plain.
@@ -243,8 +268,85 @@ sherpa ids and any downloaded `sherpa-dir:` folder whose name is plain.
    base, SenseVoice small), sherpa folder downloads from Hugging Face, and local AI server detection.
    Checked with a fake sherpa module, stub servers, synthetic archives and MockTransport. Not checked: a
    real sherpa model, a real GitHub or Hugging Face download, speed, accuracy, or the Rust sherpa run.
-5. **Session workflow, meeting detection, tray, global shortcuts.** Detection only offers a prompt,
-   as AGENTS.md requires.
+5. **Session workflow, meeting detection, global shortcuts, taskbar attention (built; unqualified). Tray
+   deferred.** Detection only offers a prompt, as AGENTS.md requires. Checked with fakes (366 tests), a
+   stub OpenAI-compatible server, a browser run against fake devices, and an exe smoke run. Not run: real
+   hotkeys, the real consent store, FlashWindowEx, real-model live transcription. The tray was not built:
+   Shell_NotifyIcon needs a message window and icon handling, which was out of the scope set for this phase.
+
+## Session processing (phase 5): behaviour and limits
+
+Ported from `session_processing.rs`, `session_workflow.rs`, `session_runtime.rs`, `processing_control.rs`
+and the "Choose automatic processing" section of `docs/user-guide.md`:
+
+- The plan is frozen at start from the saved default (`recording`, `live`, `final`, `both`; built-in
+  summary template; saved instructions). It holds ids, revisions and base URLs, never credentials.
+  A plan that cannot be built, such as a summary with no model, skips processing with a notice. The
+  recording still starts.
+- Stages: `live` (only with live or both), `finalizing_audio`, `transcribing`, `awaiting_notes`,
+  `summarizing`, then `completed`, `failed`, `cancelled`, `interrupted` or `needs_attention`.
+  `needs_attention` also covers a settings or provider change, a run past its deadline, and a recording
+  longer than 4 h.
+- Budgets (Rust values): 14,400 s recording, 14,400 s processing after stop, 256 MiB upload, 1,000 requests,
+  800,000 text bytes. Each billable request is counted under the store lock before it is sent. Over budget
+  sends nothing. Requests are fingerprinted (SHA-256) and stored.
+- The summary waits for `acknowledge_processing_notes` with the run id, the barrier and the saved notes
+  revision. A wrong barrier or stale run is `processing_cancelled`. A different revision is `notes_conflict`.
+- Cancel (revision checked) keeps the transcript. Retry runs for a stopped final recording with current
+  settings, fresh budgets and a new deadline. It keeps a completed transcript and continues with the
+  summary. A stopped live-only preview cannot retry.
+- Restart marks unfinished runs and sessions `interrupted` once, then starts nothing and replays no request.
+- Stop cancels an in-flight live chunk. A final pass uses the saved, finalized audio only.
+- Live preview: the writer copies each successfully written block into a bounded tap (about 10 s chunks,
+  queue of 3). `put_nowait` never blocks capture, and a full queue or a 200-row/1 MiB overflow marks the
+  preview incomplete. Provisional rows are kept in `processing_provisional`, not in `segments`, so search,
+  the transcript, summaries and exports never read them. Live is **unqualified**: it ran only with the fake
+  engine. Pywhispercpp and sherpa run per chunk and reload the model each time (unmeasured cost).
+- Shutdown: `quit` marks unfinished runs interrupted, the recorder finalizes, the poll and hotkey threads
+  stop, then the database closes.
+
+Deliberate differences from the Rust app:
+
+- The recorder inserts the meeting as `recording` (Rust inserts `paused`), so attaching the plan accepts
+  `recording`. The attach stays inside the start transaction.
+- Local speech is skipped with a notice when the engine or model is not installed. Rust does not skip at
+  start; it fails at finalization. The message comes from the start-time check instead.
+- The worker waits in `step()` at 0.1 s steps, not Rust's `sleep` loop. `retry` uses `POST_STOP_SECONDS`
+  for the new deadline, as Rust does.
+- Summary and speech share one slot each (`ctx.ai_busy`, `ctx.stt_busy`), taken without waiting. A busy
+  slot fails the run with a visible error. Rust uses one owner for both.
+
+## Global shortcuts, meeting detection and attention (phase 5): behaviour and limits
+
+- Accelerators: Ctrl/Control, Shift, Alt, Win/Super/Meta/Cmd and CommandOrControl (Control on Windows);
+  letters, digits, F1 to F24, and Space, Enter, Tab, Escape, Backspace, Delete, Insert, Home, End, PageUp,
+  PageDown and the arrows. Other key names are refused. This subset is written by hand and is **not
+  checked against the global-hotkey crate's parser**. A non-F key needs Ctrl or Alt. Pause and stop must
+  differ after normalization. The text is 100 characters at most.
+- Registration: RegisterHotKey with MOD_NOREPEAT, on the message-loop thread. Saving unregisters the old
+  pair, registers the new pair, and restores the old pair on failure with `shortcut_unavailable`. A failed
+  startup registration becomes a warning in `get_startup_warning` and a `backend_error` event. The app
+  keeps working with the on-screen controls. Shutdown unregisters and ends the loop.
+- No global start shortcut. A press runs the same `toggle_pause` and `stop` the buttons use.
+- Detection: the poll thread reads the Windows consent store every 3 s (HKCU `ConsentStore\microphone` and
+  its `NonPackaged` subkeys, entries with `LastUsedTimeStart > LastUsedTimeStop`). Apps need two polls in a
+  row. Ignored apps are never emitted, and "Prompt again" removes them from the list. OpenMeet's own
+  executable is excluded. Nothing is captured, consent is not checked, and no device is chosen. The
+  reader has not been run on a real machine.
+- Attention: `FlashWindowEx` with FLASHW_TRAY and FLASHW_TIMERNOFG on the window found by `FindWindowW`
+  with the title "OpenMeet". It never activates the window. pywebview's `window.native` handle is not used
+  (reading it needs the GUI thread). No window means no flash.
+- `OPENMEET_PY_FAKE_DETECTION=1` reads `<data folder>\fake-microphone-apps.json` (a JSON list of
+  `{"name", "start", "stop"}`). `OPENMEET_PY_FAKE_HOTKEYS=1` uses `FakeWin32`. Neither is set in an
+  installed exe.
+
+Browser check (phase 5, fake devices, uvicorn with the four `OPENMEET_PY_FAKE_*` variables, stub
+OpenAI-compatible server on 127.0.0.1, fresh data folder): processing "Final transcription after stop" with
+the General summary, one recording of about four seconds, stop. The panel showed "Stage: Done. Used 1
+request, 2 KB of text". The meeting had 8 transcript segments and a summary from `local-model`. A fake
+Teams microphone entry produced the "Teams is using your microphone" prompt. "Set up recording" opened
+New recording with the title "Teams meeting" and did not start a recording. The shortcut field refused
+`Shift+A` with "Add Ctrl or Alt, or use an F-key.", and the saved shortcut was unchanged.
 6. **Frontend reorganisation.** Feature-Sliced Design as a separate, pure-move change.
 7. **Hardware qualification.** Recording and transcription stay unqualified until this phase
    passes on real hardware. Nothing below has been run.
@@ -323,6 +425,15 @@ evidence.
   limitation, the id weakness, the timing source, the allocation and pause-drop behaviour.
 - Recording unqualified: the fake-backend tests do not establish audible content, pause privacy with
   real callbacks, device behaviour, or clock accuracy. The browser check used synthetic tones only.
+- Phase 5: the tray is not implemented (deferred): no tray icon, tray recording controls or tray tooltip.
+- Phase 5: the shortcut key-name subset is not checked against the global-hotkey crate. Real RegisterHotKey
+  behaviour (including taken chords, NOREPEAT and the message loop) is unverified.
+- Phase 5: a detection depends on the Windows consent store. The NonPackaged layout is read as Rust reads
+  it, but no real call has been detected. macOS detection is not ported.
+- Phase 5: live preview ran only with the fake engine. Its chunk timing matches the final-pass index format,
+  but nothing has been verified on a real model.
+- Phase 5: the cloud upload budget (256 MiB) and the cloud request count are covered only by the shared
+  reservation code path (the summary budget test). A cloud speech run was not made.
 - `websockets` was missing from the first phase-3 build, so events never reached the page. It is now
   pinned and collected. The exe was not run end-to-end in a window; its WebSocket path is checked
   only by the venv server run.

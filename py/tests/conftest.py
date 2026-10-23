@@ -119,6 +119,23 @@ def block_real_sherpa(request: pytest.FixtureRequest, monkeypatch: pytest.Monkey
 
 
 @pytest.fixture(autouse=True)
+def block_real_desktop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """No test may reach the real hotkeys, taskbar, or Windows consent store: the real wrappers refuse to exist.
+
+    Tests that need them inject fakes (win32.FakeWin32, a ConsentRegistry double). winreg is hidden too.
+    """
+    from openmeet_py import detection, win32
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("tests must not construct the real Windows desktop wrappers")
+
+    monkeypatch.setattr(win32, "NativeWin32", refuse)
+    monkeypatch.setattr(detection, "WindowsConsentRegistry", refuse)
+    monkeypatch.setitem(sys.modules, "winreg", None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def block_real_audio(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Outside hardware tests, `import pyaudiowpatch` fails, so no PortAudio code can open a device."""
     if request.node.get_closest_marker("hardware"):

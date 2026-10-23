@@ -73,7 +73,9 @@ def _cloud(
     tracks: list[dict[str, Any]],
     cancel: threading.Event,
     report: Any,
+    before_request: Any = None,
 ):
+    """`before_request(fingerprint, bytes)` runs before each upload; the default re-checks the settings."""
     if config is None:
         raise AppError("provider_missing", "Save a cloud transcription connection in Settings first.")
 
@@ -95,7 +97,7 @@ def _cloud(
             plan,
             cancel,
             report,
-            lambda _fingerprint, _bytes: unchanged(),
+            before_request or (lambda _fingerprint, _bytes: unchanged()),
         )
     finally:
         plan.close()

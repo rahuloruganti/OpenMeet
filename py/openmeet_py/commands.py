@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import connections, model_library, questions, reads, recording, stt, summaries, tasks, transcript_edits
+from . import connections, detection, hotkeys, model_library, processing, questions, reads, recording, stt, summaries, tasks, transcript_edits
 from .transcription import jobs
 from .context import (
     Context,
@@ -217,22 +217,6 @@ def list_library_answers(ctx: Context) -> list[dict[str, Any]]:
     return questions.list_library_answers(ctx)
 
 
-def get_session_processing(ctx: Context, id: str) -> None:
-    # No session processing runs until phase 5, so there is no snapshot.
-    return None
-
-
-# ---- startup (no warning yet) ----------------------------------------------------
-
-
-def get_startup_warning(ctx: Context) -> None:
-    return None
-
-
-def detection_supported(ctx: Context) -> bool:
-    return False
-
-
 def provider_key_status(ctx: Context, role: str) -> str:
     return connections.provider_key_status(ctx, role)
 
@@ -316,7 +300,6 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "export_meeting": export_meeting,
     "list_summaries": list_summaries,
     "list_library_answers": list_library_answers,
-    "get_session_processing": get_session_processing,
     # Phase 3: devices, recording and audio files
     "get_recording_state": recording.get_recording_state,
     "list_audio_devices": recording.list_audio_devices,
@@ -329,8 +312,17 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "recover_audio": recording.recover_audio,
     "audio_position": recording.audio_position,
     "audio_usage": recording.audio_usage,
-    "get_startup_warning": get_startup_warning,
-    "detection_supported": detection_supported,
+    # Phase 5: global shortcuts, meeting detection, taskbar attention, session processing
+    "get_startup_warning": hotkeys.get_startup_warning,
+    "save_settings": hotkeys.save_settings,
+    "detection_supported": detection.detection_supported,
+    "save_detection": detection.save_detection,
+    "set_detection_ignored": detection.set_detection_ignored,
+    "request_attention": detection.request_attention,
+    "get_session_processing": processing.get_session_processing,
+    "acknowledge_processing_notes": processing.acknowledge_processing_notes,
+    "retry_session_processing": processing.retry_session_processing,
+    "cancel_session_processing": processing.cancel_session_processing,
     "provider_key_status": provider_key_status,
     # Phase 4a: local and cloud speech, model library, transcripts
     "save_stt_mode": stt.save_stt_mode,
@@ -381,18 +373,9 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "import_action_items": tasks.import_action_items,
 }
 
-# Command -> feature name for the 501 message. Each is planned for a later phase (docs/python-port-plan.md).
-NOT_AVAILABLE: dict[str, str] = {
-    # Phase 5: shortcuts, detection, attention
-    "save_settings": "Keyboard shortcuts",
-    "save_detection": "Meeting detection",
-    "set_detection_ignored": "Meeting detection",
-    "request_attention": "Taskbar attention",
-    # Phase 5: session processing workflow
-    "acknowledge_processing_notes": "Session processing",
-    "retry_session_processing": "Session processing",
-    "cancel_session_processing": "Session processing",
-}
+# Commands that answer HTTP 501, mapped to the feature name. Empty after phase 5: every command the UI
+# invokes is implemented. Tray controls are deferred (docs/python-port-plan.md), but they have no command.
+NOT_AVAILABLE: dict[str, str] = {}
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
 

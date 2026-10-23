@@ -12,6 +12,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,13 +26,24 @@ from starlette.websockets import WebSocketDisconnect
 
 from .audio_backend import CaptureBackend, make_backend
 from .commands import Context, dispatch
+from .detection import DetectionService, EmptyConsentRegistry
 from .errors import AppError
+from .hotkeys import HotkeyService, press_action
+from .processing import Processing
 from .recorder import Recorder
+from .reads import read_settings
 from .store import DB_FILE, Store
+from .win32 import FakeWin32
 
 log = logging.getLogger("openmeet_py")
 TOKEN_HEADER = "x-openmeet-token"
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
+TITLE = "OpenMeet"  # the window title, also the taskbar-flash lookup
+
+
+def _start_hotkey_action(ctx: Context, kind: str) -> None:
+    """A press runs on its own thread, so a slow stop never holds the hotkey message loop."""
+    threading.Thread(target=press_action, args=(ctx, kind), name="openmeet-hotkey-action", daemon=True).start()
 
 
 class Hub:
@@ -69,12 +81,21 @@ def create_app(
     pick_folder: Optional[Callable[[], Optional[str]]] = None,
     close_window: Optional[Callable[[], None]] = None,
     backend: Optional[CaptureBackend] = None,
+    win32: Optional[Any] = None,
+    consent: Optional[Any] = None,
+    workers: bool = True,
 ) -> FastAPI:
+    """Builds the app. `win32` and `consent` default to fakes, so nothing here touches the desktop or the registry.
+
+    The window and create_app_from_env pass the real ones (win32.win32_from_env, detection.consent_from_env).
+    `workers=False` keeps the processing workflow out of background threads (tests step it themselves).
+    """
     token = token or secrets.token_urlsafe(32)
     hub = Hub()
     store = Store(Path(data_dir))
     backend = backend or make_backend()
     recorder = Recorder(store, backend, hub.emit, store.data_dir / "audio")
+    desktop: Any = win32 if win32 is not None else FakeWin32()
     ctx = Context(
         store=store,
         emit=hub.emit,
@@ -82,13 +103,29 @@ def create_app(
         close_window=close_window,
         recorder=recorder,
     )
+    ctx.processing = Processing(ctx, workers=workers)
+    recorder.processing = ctx.processing
+    ctx.hotkeys = HotkeyService(desktop, lambda kind: _start_hotkey_action(ctx, kind))
+    ctx.detection = DetectionService(ctx, consent if consent is not None else EmptyConsentRegistry())
+    ctx.attention = lambda: desktop.flash_window(TITLE)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         hub.loop = asyncio.get_running_loop()
+        with store.lock:
+            settings = read_settings(store.db)
+        warning = ctx.hotkeys.start(settings["pause_shortcut"], settings["stop_shortcut"])
+        if warning:
+            hub.emit("backend_error", warning)  # no client yet; get_startup_warning returns it too
+        ctx.detection.start()
         yield
-        # Finalize an active recording before the database closes, so its files are complete.
+        # Shutdown order: refuse processing work, finalize the recording (its stop marks the stage),
+        # then stop the poll and hotkey threads and wait for workers before the database closes.
+        ctx.processing.quit()
         recorder.shutdown()
+        ctx.detection.stop()
+        ctx.hotkeys.stop()
+        ctx.processing.join()
         store.close()
 
     app = FastAPI(title="OpenMeet (Python build)", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -106,7 +143,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"ok": True, "app": "openmeet-py", "phase": 4, "audio": backend.name}
+        return {"ok": True, "app": "openmeet-py", "phase": 5, "audio": backend.name}
 
     @app.post("/api/invoke/{cmd}")
     async def invoke(cmd: str, request: Request) -> JSONResponse:
@@ -199,8 +236,16 @@ def create_app(
 
 def create_app_from_env() -> FastAPI:
     """Factory for `uvicorn openmeet_py.server:create_app_from_env --factory` (manual runs)."""
+    from .detection import consent_from_env
     from .paths import default_data_dir, web_dir as bundled_web
+    from .win32 import win32_from_env
 
     data_dir = Path(os.environ.get("OPENMEET_DATA_DIR") or default_data_dir())
     token = os.environ.get("OPENMEET_TOKEN") or None
-    return create_app(data_dir, bundled_web(), token=token)
+    return create_app(
+        data_dir,
+        bundled_web(),
+        token=token,
+        win32=win32_from_env(),
+        consent=consent_from_env(data_dir),
+    )

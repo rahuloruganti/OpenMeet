@@ -134,10 +134,11 @@ _STOP = object()
 class Session:
     """One recording's files, queue and writer. The Recorder decides when it starts and stops."""
 
-    def __init__(self, meeting_id: str, folder: Path, tracks: list[_Track]):
+    def __init__(self, meeting_id: str, folder: Path, tracks: list[_Track], live: Any = None):
         self.meeting_id = meeting_id
         self.folder = folder
         self.tracks = tracks
+        self.live = live  # processing.LiveTap or None; fed by the writer after each successful write
         self.queue: "queue.Queue[Any]" = queue.Queue(QUEUE_BLOCKS)
         self.generation = 0
         self.accepting = False
@@ -279,6 +280,8 @@ class Session:
             self.fault |= IO_ERROR
             log.exception("audio writer failed")
         finally:
+            if self.live is not None:
+                self.live.flush_all()  # the last partial chunk goes to the preview before the files close
             self._finalize()
             self.finished.set()
 
@@ -297,6 +300,8 @@ class Session:
             self.fault |= IO_ERROR
             return
         track.frames += frames
+        if self.live is not None:
+            self.live.accept(index, data, frames, start_us, generation)
 
     def _flush(self, sync: bool) -> None:
         for track in self.tracks:
@@ -340,6 +345,10 @@ class Recorder:
         self.source: Optional[str] = None
         self.error: Optional[str] = None
         self.session: Optional[Session] = None
+        # Set by server wiring: processing.Processing (prepare, live_tap, attach, started, stopped, cancel_live).
+        self.processing: Any = None
+        # Why processing was skipped for the last start. Kept until the next start, as in Rust.
+        self.processing_notice: Optional[str] = None
 
     # State and events ------------------------------------------------------
 
@@ -355,7 +364,7 @@ class Recorder:
             "source": self.source,
             "error": self.error,
             "recording_offset_ms": offset,
-            "processing_notice": None,
+            "processing_notice": self.processing_notice,
         }
 
     def state(self) -> dict[str, Any]:
@@ -412,8 +421,11 @@ class Recorder:
                 raise AppError("audio_devices", "Select both a microphone and a system-output device.")
             mic = self._resolve(self.backend.input_devices, microphone_id, MIC_MISSING)
             out = self._resolve(self.backend.output_devices, output_id, OUTPUT_MISSING)
+            # Automatic processing is decided before any file exists. A skipped plan never blocks the recording.
+            plan, notice = self._prepare_processing()
+            tap = self.processing.live_tap(plan, mic, out) if plan is not None else None
             meeting_id = str(uuid.uuid4())
-            session = self._open_session(meeting_id, mic, out)
+            session = self._open_session(meeting_id, mic, out, tap)
             try:
                 with self.store.lock:
                     with transaction(self.store.db) as db:
@@ -441,6 +453,8 @@ class Recorder:
                             "UPDATE settings SET microphone_id = ?1, output_id = ?2 WHERE id = 1",
                             (microphone_id, output_id),
                         )
+                        if plan is not None:
+                            self.processing.attach(db, plan, meeting_id)
             except BaseException:
                 session.discard()
                 raise
@@ -450,10 +464,20 @@ class Recorder:
             self.source = "desktop"
             self.error = None
             self.status = "recording"
+            self.processing_notice = notice
             self._start_meter(session)
+            if plan is not None:
+                self.processing.started(meeting_id, plan["id"], tap)
             return self._publish()
 
-    def _open_session(self, meeting_id: str, mic: DeviceInfo, out: DeviceInfo) -> Session:
+    def _prepare_processing(self) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        if self.processing is None:
+            return None, None
+        return self.processing.prepare()
+
+    def _open_session(
+        self, meeting_id: str, mic: DeviceInfo, out: DeviceInfo, live: Any = None
+    ) -> Session:
         folder = self.audio_root / meeting_id
         self.audio_root.mkdir(parents=True, exist_ok=True)
         folder.mkdir()  # exclusive: a UUID folder is never reused or truncated
@@ -470,7 +494,7 @@ class Recorder:
                     wav.close()
                     raise
                 tracks.append(_Track(kind, device, wav_path, timing_path, wav, timing))
-            session = Session(meeting_id, folder, tracks)
+            session = Session(meeting_id, folder, tracks, live)
             for index, track in enumerate(tracks):
                 track.stream = self.backend.open_stream(track.device, _bind(session, index))
         except BackendError as error:
@@ -552,6 +576,8 @@ class Recorder:
             session = self.session
             if session is None:
                 return self._state_locked()
+            if self.processing is not None:
+                self.processing.cancel_live(session.meeting_id)  # an in-flight live chunk stops with the recording
             session.halt_streams()
             if not session.close_writer():
                 session.fault |= WORKER_ERROR
@@ -578,6 +604,15 @@ class Recorder:
             self.status = "stopped"
             self.error = error
             return self._publish()
+
+    def toggle_pause(self) -> dict[str, Any]:
+        """The global pause/resume shortcut: the same calls the buttons make."""
+        with self.lock:
+            if self.status == "recording":
+                return self.pause()
+            if self.status == "paused":
+                return self.resume()
+            raise AppError("invalid_state", "Recording is not active.")
 
     def shutdown(self) -> None:
         """Window or server closing: finalize an active recording so its files are complete."""
@@ -663,6 +698,11 @@ class Recorder:
                     "UPDATE meetings SET ended_at = ?1, status = ?2, capture_error = ?3 WHERE id = ?4",
                     (now(), "stopped" if error is None else "interrupted", error, session.meeting_id),
                 )
+                if self.processing is not None:
+                    # Same transaction as the meeting's final state: the stage moves with the recording.
+                    self.processing.stopped(
+                        db, session.meeting_id, all(track.finalized for track in session.tracks)
+                    )
 
 
 def _bind(session: Session, index: int) -> Callable[[bytes, int, bool], None]:
