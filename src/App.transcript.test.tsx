@@ -313,6 +313,15 @@ describe("transcript and audio", () => {
         meeting_ids: ["rec"],
       });
       vi.mocked(api.audioPosition).mockResolvedValue(2250);
+      vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
+      vi.mocked(api.getSettings).mockResolvedValue({
+        ...initialSettings,
+        llm: {
+          base_url: "https://provider.example/v1",
+          model: "test-chat",
+          revision: 1,
+        },
+      });
       await ready();
       await userEvent.click(
         screen.getByRole("button", { name: "Ask across meetings" }),

@@ -1,9 +1,14 @@
 import { mockApiModule } from "./test/api-mock";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { App } from "./App";
 import { api } from "./lib/api";
-import { ready, installDefaultMocks } from "./test/app-harness";
+import {
+  initialSettings,
+  ready,
+  installDefaultMocks,
+} from "./test/app-harness";
 
 vi.mock("./lib/api", async (original) =>
   mockApiModule(await original<typeof import("./lib/api")>()),
@@ -12,6 +17,43 @@ vi.mock("./lib/api", async (original) =>
 beforeEach(installDefaultMocks);
 
 describe("layout and keyboard navigation", () => {
+  it("returns focus to the workspace when a banner is dismissed", async () => {
+    vi.mocked(api.getStartupWarning).mockResolvedValue(
+      "Startup warning for test",
+    );
+    await ready();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Dismiss" }),
+    );
+    expect(screen.queryByText(/Startup warning for test/)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+  });
+
+  it("leaves focus alone while first-run setup opens, then returns it to the workspace", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      setup_done: false,
+    });
+    vi.mocked(api.scanLocalModels).mockResolvedValue({
+      models: [],
+      folders: [],
+      truncated: false,
+    });
+    vi.mocked(api.detectLocalServers).mockResolvedValue([]);
+    vi.mocked(api.saveSetupDone).mockResolvedValue({
+      ...initialSettings,
+      setup_done: true,
+    });
+    render(<App />);
+    const skip = await screen.findByRole("button", { name: "Skip setup" });
+    expect(document.activeElement).not.toBe(screen.getByRole("main"));
+    await userEvent.click(skip);
+    await waitFor(() => expect(api.saveSetupDone).toHaveBeenCalledWith(true));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("main")),
+    );
+  });
+
   it.each([
     ["New recording", "Settings"],
     ["Settings", "New recording"],

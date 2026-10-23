@@ -1,6 +1,11 @@
 import { useState, type RefObject } from "react";
 import { api } from "../lib/api";
 import { useTask } from "../lib/use-task";
+import {
+  OpenSettingsButton,
+  type OpenSettings,
+  type SettingsSection,
+} from "./SettingsPanel";
 
 const presets = [
   "Make it shorter",
@@ -18,8 +23,9 @@ export function RewriteSelection(props: {
   editor: RefObject<HTMLTextAreaElement | null>;
   notes: string;
   disabled: boolean;
-  /** Why AI actions are unavailable, or null when they can run. */
-  blocked: string | null;
+  /** Why AI actions are unavailable, with the Settings section that fixes it when it is configuration; null when they can run. */
+  blocked: { message: string; section: SettingsSection | null } | null;
+  onOpenSettings: OpenSettings;
   onApply: (notes: string) => void;
 }) {
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -50,13 +56,20 @@ export function RewriteSelection(props: {
     <>
       <button
         disabled={props.disabled || props.blocked !== null || !!selection}
-        title={props.blocked ?? "Rewrite the selected text with AI"}
+        title={props.blocked?.message ?? "Rewrite the selected text with AI"}
         // Keep the textarea selection when the button takes focus.
         onMouseDown={(event) => event.preventDefault()}
         onClick={open}
       >
         Rewrite selection…
       </button>
+      {props.blocked && <span className="muted">{props.blocked.message}</span>}
+      {props.blocked?.section && (
+        <OpenSettingsButton
+          section={props.blocked.section}
+          onOpenSettings={props.onOpenSettings}
+        />
+      )}
       {!selection && notice && (
         <span className="muted" role="status">
           {notice}

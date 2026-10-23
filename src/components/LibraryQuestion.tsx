@@ -12,6 +12,11 @@ import { renderMarkdown } from "../lib/markdown";
 import { tagChoices } from "../lib/meeting-labels";
 import { parseTimestamp, segmentsAt } from "../lib/timestamps";
 import { RecipePicker } from "./Recipes";
+import {
+  OpenSettingsButton,
+  type AiBlock,
+  type OpenSettings,
+} from "./SettingsPanel";
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -21,6 +26,9 @@ type Props = {
   recipes: Recipe[];
   /** Changes when the summary/question provider settings change. */
   connectionRevision: string;
+  /** Why AI notes cannot answer, with the Settings section that fixes it; null when they can. */
+  llmBlocked: AiBlock | null;
+  onOpenSettings: OpenSettings;
   disabled: boolean;
   onClose: () => void;
   /** Opens a meeting; `ms` is a cited transcript time to jump to, or null. */
@@ -165,6 +173,7 @@ export function LibraryQuestion(props: Props) {
   const canAsk =
     !disabled &&
     !working &&
+    !props.llmBlocked &&
     scope.length > 0 &&
     !tooMany &&
     question.trim().length > 0;
@@ -260,6 +269,15 @@ export function LibraryQuestion(props: Props) {
         {scope.length} meeting{scope.length === 1 ? "" : "s"} selected.
         {tooMany && " Choose at most 20."}
       </p>
+      {props.llmBlocked && (
+        <div className="panel-actions">
+          <span className="muted">{props.llmBlocked.message}</span>
+          <OpenSettingsButton
+            section={props.llmBlocked.section}
+            onOpenSettings={props.onOpenSettings}
+          />
+        </div>
+      )}
       <form
         className="ask-meeting"
         onSubmit={(event) => {

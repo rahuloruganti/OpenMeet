@@ -26,6 +26,7 @@ describe("note drafts and shutdown", () => {
     expect(document.activeElement).toBe(quit);
     await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
     expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 
   it("guards opening the active meeting when another meeting has an unsaved draft", async () => {

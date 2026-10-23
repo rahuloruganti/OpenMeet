@@ -1,10 +1,21 @@
 import { mockApiModule } from "./test/api-mock";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { api, type MeetingDetail } from "./lib/api";
-import { sample, ready, installDefaultMocks } from "./test/app-harness";
+import {
+  initialSettings,
+  sample,
+  ready,
+  installDefaultMocks,
+} from "./test/app-harness";
 
 vi.mock("./lib/api", async (original) =>
   mockApiModule(await original<typeof import("./lib/api")>()),
@@ -97,10 +108,112 @@ describe("meeting library", () => {
         name: "Enhance notes",
       }) as HTMLButtonElement;
       expect(button.disabled).toBe(true);
-      expect(
-        screen.getByText(/Save a summary API key in Settings first/),
-      ).toBeTruthy();
+      const hint = document.getElementById(
+        button.getAttribute("aria-describedby") ?? "",
+      );
+      expect(hint?.textContent).toContain("AI notes aren't set up yet");
       expect(screen.getByText("A fictional summary.")).toBeTruthy();
+    });
+
+    it("links an unassigned AI notes setup to its Settings section and returns focus", async () => {
+      await ready();
+      await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Settings for AI notes" }),
+      );
+      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+      expect(
+        screen
+          .getByRole("tab", { name: "AI notes" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Close panel" }),
+      );
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Open Settings for AI notes" }),
+      );
+    });
+
+    it("sends a remote AI notes connection without a key to Connections", async () => {
+      vi.mocked(api.getSettings).mockResolvedValue({
+        ...initialSettings,
+        llm: {
+          base_url: "https://provider.example/v1",
+          model: "test-chat",
+          revision: 1,
+        },
+      });
+      await ready();
+      await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+      expect(
+        within(screen.getByRole("tabpanel", { name: "Summary" })).getByText(
+          "The AI notes connection needs an API key. Add it under Settings → Connections.",
+        ),
+      ).toBeTruthy();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Settings for Connections" }),
+      );
+      expect(
+        screen
+          .getByRole("tab", { name: "Connections" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
+    });
+
+    it("does not ask for a key when AI notes uses a server on this computer", async () => {
+      vi.mocked(api.getSettings).mockResolvedValue({
+        ...initialSettings,
+        llm: {
+          base_url: "http://127.0.0.1:11434/v1",
+          model: "test-chat",
+          revision: 1,
+        },
+      });
+      await ready();
+      await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Enhance notes",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false);
+      expect(
+        screen.queryByText(/needs an API key|aren't set up yet|Choose a model/),
+      ).toBeNull();
+    });
+
+    it("disables Ask across meetings with the reason while AI notes is not set up", async () => {
+      await ready();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Ask across meetings" }),
+      );
+      await userEvent.click(screen.getByLabelText(/Sample sync/));
+      await userEvent.type(screen.getByLabelText("Question"), "What moved?");
+      const library = screen.getByRole("dialog", {
+        name: "Ask across meetings",
+      });
+      expect(
+        (
+          within(library).getByRole("button", {
+            name: "Ask",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+      expect(
+        within(library).getByText(/AI notes aren't set up yet/),
+      ).toBeTruthy();
+      await userEvent.click(
+        within(library).getByRole("button", {
+          name: "Open Settings for AI notes",
+        }),
+      );
+      expect(
+        screen
+          .getByRole("tab", { name: "AI notes" })
+          .getAttribute("aria-selected"),
+      ).toBe("true");
     });
 
     it("renames on Enter and restores the title on Escape", async () => {
@@ -113,6 +226,10 @@ describe("meeting library", () => {
       await userEvent.clear(input);
       await userEvent.type(input, "Discarded edit{Escape}");
       expect(screen.getByRole("heading", { name: "Sample sync" })).toBeTruthy();
+      // Escape ends the edit and leaves focus on the title, not on the page body.
+      expect(document.activeElement).toBe(
+        screen.getByRole("heading", { name: "Sample sync" }),
+      );
       expect(api.renameMeeting).not.toHaveBeenCalled();
       await userEvent.click(screen.getByRole("button", { name: "Rename" }));
       const again = screen.getByRole("textbox", { name: "Meeting title" });
@@ -124,9 +241,11 @@ describe("meeting library", () => {
         "  Planning review ",
       );
       expect(api.renameMeeting).toHaveBeenCalledOnce();
-      expect(
-        await screen.findByRole("heading", { name: "Planning review" }),
-      ).toBeTruthy();
+      const renamed = await screen.findByRole("heading", {
+        name: "Planning review",
+      });
+      expect(renamed).toBeTruthy();
+      expect(document.activeElement).toBe(renamed);
       expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
     });
 
@@ -138,9 +257,12 @@ describe("meeting library", () => {
       await userEvent.clear(input);
       await userEvent.type(input, "Blurred title");
       await userEvent.tab();
-      expect(
-        await screen.findByRole("heading", { name: "Blurred title" }),
-      ).toBeTruthy();
+      const blurred = await screen.findByRole("heading", {
+        name: "Blurred title",
+      });
+      expect(blurred).toBeTruthy();
+      // Leaving the field by clicking or tabbing away keeps the user's focus where they put it.
+      expect(document.activeElement).not.toBe(blurred);
       expect(api.renameMeeting).toHaveBeenCalledOnce();
       expect(api.renameMeeting).toHaveBeenCalledWith("sample", "Blurred title");
       await userEvent.click(screen.getByRole("button", { name: "Rename" }));
@@ -340,6 +462,75 @@ describe("meeting library", () => {
           }) as HTMLButtonElement
         ).disabled,
       ).toBe(true);
+    });
+
+    it("closes the ••• menu on Escape and returns focus to its summary", async () => {
+      await ready();
+      const summary = screen.getByLabelText("More meeting actions");
+      await userEvent.click(summary);
+      expect((summary.closest("details") as HTMLDetailsElement).open).toBe(
+        true,
+      );
+      await userEvent.keyboard("{Escape}");
+      expect((summary.closest("details") as HTMLDetailsElement).open).toBe(
+        false,
+      );
+      expect(document.activeElement).toBe(summary);
+    });
+
+    it("moves focus into the delete card and returns it to the ••• menu on Escape or Cancel", async () => {
+      await ready();
+      await userEvent.click(screen.getByLabelText("More meeting actions"));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Delete meeting…" }),
+      );
+      expect(document.activeElement).toBe(
+        screen.getByRole("textbox", {
+          name: "Type the meeting title to confirm",
+        }),
+      );
+      await userEvent.keyboard("{Escape}");
+      expect(
+        screen.queryByRole("group", { name: "Confirm meeting deletion" }),
+      ).toBeNull();
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("More meeting actions"),
+      );
+      await userEvent.click(screen.getByLabelText("More meeting actions"));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Delete meeting…" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(
+        screen.queryByRole("group", { name: "Confirm meeting deletion" }),
+      ).toBeNull();
+      expect(api.deleteMeeting).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(
+        screen.getByLabelText("More meeting actions"),
+      );
+    });
+
+    it("focuses Cancel, never the delete button, when an empty note needs no title", async () => {
+      vi.mocked(api.listMeetings).mockResolvedValue([note.meeting]);
+      vi.mocked(api.getMeeting).mockResolvedValue(note);
+      render(<App />);
+      await screen.findByRole("heading", { name: "Untitled note" });
+      await waitFor(() =>
+        expect(
+          (
+            screen.getByRole("button", {
+              name: "Save notes now",
+            }) as HTMLButtonElement
+          ).disabled,
+        ).toBe(false),
+      );
+      await userEvent.click(screen.getByLabelText("More meeting actions"));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Delete meeting…" }),
+      );
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Cancel" }),
+      );
     });
 
     it("shows full-text matches and opens the meeting on the matching tab", async () => {

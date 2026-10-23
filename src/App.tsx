@@ -43,6 +43,8 @@ import { FirstRunSetup } from "./components/FirstRunSetup";
 import {
   SettingsPanel,
   shortcutsDirty,
+  type AiBlock,
+  type OpenSettings,
   type SettingsSection,
   type SttDraft,
 } from "./components/SettingsPanel";
@@ -188,6 +190,9 @@ export function App() {
     useState<SettingsSection>("transcription");
   const panelRef = useRef<HTMLElement | null>(null);
   const panelTrigger = useRef<HTMLButtonElement | null>(null);
+  // Closing a banner, card or panel hands focus here, so Tab resumes from the workspace.
+  const workspace = useRef<HTMLElement | null>(null);
+  const focusWorkspace = () => workspace.current?.focus();
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
   const selectionRequest = useRef(0);
@@ -646,14 +651,28 @@ export function App() {
     panelTrigger.current = trigger;
     setPanel(next);
   };
+  const openSettings: OpenSettings = (section, trigger) => {
+    setSettingsTab(section);
+    openPanel("settings", trigger);
+  };
   useEffect(() => {
     if (panel) {
       panelRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
     } else {
-      if (panelTrigger.current?.isConnected) panelTrigger.current.focus();
+      const trigger = panelTrigger.current;
+      // A trigger inside a panel that is now hidden (the library behind Settings) cannot take focus.
+      if (trigger?.isConnected && !trigger.closest("[hidden]")) trigger.focus();
+      else if (trigger) focusWorkspace();
       panelTrigger.current = null;
     }
   }, [panel]);
+  // Finishing or skipping the first-run wizard hands focus to the workspace. A panel opened over
+  // the wizard also makes firstRun false, but it keeps its own focus.
+  const wasFirstRun = useRef(firstRun);
+  useEffect(() => {
+    if (wasFirstRun.current && !firstRun && panel === null) focusWorkspace();
+    wasFirstRun.current = firstRun;
+  }, [firstRun, panel]);
 
   // Unsaved shortcut or transcription drafts; closing Settings discards them after asking.
   const settingsDirty =
@@ -694,11 +713,23 @@ export function App() {
   const hasSummaryInput =
     notes.trim().length > 0 || (selected?.segments.length ?? 0) > 0;
   // Why the summary/question provider cannot be used; rewrites need nothing more.
-  const llmBlocked =
-    keyStatus.llm !== "present" && !isLocalBase(settings?.llm?.base_url ?? "")
-      ? "Save a summary API key in Settings first."
-      : !settings?.llm?.model
-        ? "Choose and save a summary model in Settings first."
+  const llmBlocked: AiBlock | null = !settings?.llm
+    ? {
+        message:
+          "AI notes aren't set up yet. Choose a connection and a model in Settings → AI notes. A server on this computer needs no key.",
+        section: "ai",
+      }
+    : !isLocalBase(settings.llm.base_url) && keyStatus.llm !== "present"
+      ? {
+          message:
+            "The AI notes connection needs an API key. Add it under Settings → Connections.",
+          section: "connections",
+        }
+      : !settings.llm.model
+        ? {
+            message: "Choose a model for AI notes in Settings → AI notes.",
+            section: "ai",
+          }
         : null;
   // The banner adds its own period, so drop the one the error message may already end with.
   const notesErrorReason = notesError.replace(/\.$/, "");
@@ -718,7 +749,7 @@ export function App() {
   const gapKey = `${recording.meeting_id}:${gapNotice}`;
   const enhanceBlocked = !selected
     ? "Select a meeting first."
-    : (llmBlocked ??
+    : (llmBlocked?.message ??
       (!hasSummaryInput ? "Add notes or transcribe the audio first." : null));
 
   return (
@@ -770,7 +801,7 @@ export function App() {
         }
         audioBytes={audioBytes}
       />
-      <main className="workspace">
+      <main className="workspace" ref={workspace} tabIndex={-1}>
         <header className="workspace-toolbar">
           <div className="toolbar-context">
             <button
@@ -844,11 +875,17 @@ export function App() {
                 >
                   Set up recording
                 </button>
-                <button onClick={() => dismissApp(detectedApp.id)}>
+                <button
+                  onClick={() => {
+                    focusWorkspace();
+                    dismissApp(detectedApp.id);
+                  }}
+                >
                   Not now
                 </button>
                 <button
                   onClick={() => {
+                    focusWorkspace();
                     dismissApp(detectedApp.id);
                     void run(async () =>
                       setSettings(
@@ -882,7 +919,15 @@ export function App() {
           )}
           {error && (
             <div className="error" role="alert">
-              {error} <button onClick={() => setError("")}>Dismiss</button>
+              {error}{" "}
+              <button
+                onClick={() => {
+                  focusWorkspace();
+                  setError("");
+                }}
+              >
+                Dismiss
+              </button>
             </div>
           )}
           {recording.error && captureKey !== dismissedCapture && (
@@ -890,7 +935,10 @@ export function App() {
               <span>Capture: {recording.error}</span>{" "}
               <button
                 aria-label="Dismiss capture error"
-                onClick={() => setDismissedCapture(captureKey)}
+                onClick={() => {
+                  focusWorkspace();
+                  setDismissedCapture(captureKey);
+                }}
               >
                 Dismiss
               </button>
@@ -907,7 +955,10 @@ export function App() {
               <span>{notice}</span>
               <button
                 aria-label="Dismiss notification"
-                onClick={() => setNotice("")}
+                onClick={() => {
+                  focusWorkspace();
+                  setNotice("");
+                }}
               >
                 Dismiss
               </button>
@@ -921,7 +972,10 @@ export function App() {
               <span>{gapNotice}</span>
               <button
                 aria-label="Dismiss audio gap notice"
-                onClick={() => setDismissedGaps(gapKey)}
+                onClick={() => {
+                  focusWorkspace();
+                  setDismissedGaps(gapKey);
+                }}
               >
                 Dismiss
               </button>
@@ -1058,12 +1112,13 @@ export function App() {
                 ) && (
                   <button
                     aria-label="Dismiss processing status"
-                    onClick={() =>
+                    onClick={() => {
+                      focusWorkspace();
                       setDismissedProcessing((dismissed) => ({
                         ...dismissed,
                         [processing.meeting_id]: processing.revision,
-                      }))
-                    }
+                      }));
+                    }}
                   >
                     Dismiss
                   </button>
@@ -1115,6 +1170,8 @@ export function App() {
             meetings={meetings}
             recipes={settings?.recipes ?? []}
             connectionRevision={`${settings?.llm?.revision ?? 0}`}
+            llmBlocked={llmBlocked}
+            onOpenSettings={openSettings}
             disabled={disabled}
             onClose={() => setPanel(null)}
             onOpen={(id, ms) =>
@@ -1139,6 +1196,7 @@ export function App() {
           connectionRevision={`${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`}
           enhanceBlocked={enhanceBlocked}
           llmBlocked={llmBlocked}
+          onOpenSettings={openSettings}
           onTranscribe={() => {
             const id = selected?.meeting.id;
             if (!id) return;
@@ -1621,7 +1679,10 @@ export function App() {
             <button
               autoFocus={unsavedEdits || notesStatus === "error"}
               disabled={busy || controlBusy}
-              onClick={() => setCloseRequested(false)}
+              onClick={() => {
+                focusWorkspace();
+                setCloseRequested(false);
+              }}
             >
               Keep working
             </button>

@@ -362,6 +362,9 @@ pre {
   min-width: 0;
   min-height: 0;
 }
+.workspace:focus {
+  outline: none;
+}
 .workspace-toolbar,
 .feedback-stack,
 .recording-bar {
@@ -564,6 +567,9 @@ pre {
   min-width: 0;
   margin: 0;
   line-height: 1.25;
+}
+.meeting-title:focus {
+  outline: none;
 }
 .meeting-title-input {
   font-size: 1.5rem !important;

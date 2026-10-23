@@ -138,6 +138,7 @@ describe("export", () => {
       screen.getByRole("button", { name: "Dismiss notification" }),
     );
     expect(screen.queryByText("Exported: C:/notes/sample.md")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 
   it("saves export options from Settings", async () => {

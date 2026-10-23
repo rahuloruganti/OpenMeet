@@ -368,6 +368,7 @@ describe("recording, capture and devices", () => {
       await screen.findByRole("button", { name: "Dismiss audio gap notice" }),
     );
     expect(screen.queryByText(/Audio gaps detected/)).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
     act(() => publish(gaps(3)));
     expect(screen.queryByText(/Audio gaps detected/)).toBeNull();
     act(() => publish(gaps(4)));
@@ -396,6 +397,7 @@ describe("recording, capture and devices", () => {
       await screen.findByRole("button", { name: "Dismiss capture error" }),
     );
     expect(screen.queryByText("Capture: Device lost")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
     // A changed message is shown again.
     act(() => publishState(stopped(2, "sample", "Device lost twice")));
     expect(screen.getByText("Capture: Device lost twice")).toBeTruthy();

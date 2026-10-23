@@ -8,7 +8,7 @@ OpenMeet opens **Set up OpenMeet** until you finish or skip it. **Settings → P
 
 1. **Welcome** says where data is kept and that recording consent is your responsibility.
 2. **Transcription**: choose **On this computer** or **Online API**. On this computer, OpenMeet lists Whisper `ggml` files it finds in the usual folders (its own, `~/.cache/whisper`, the Hugging Face cache, Ollama and LM Studio folders); **Use** keeps the file where it is, labelled "matches pinned …" when its name and size match a pinned download, otherwise "custom". You can instead download Whisper `base.en-q5_1` (English) or `small` (any language), or a sherpa-onnx model (Windows x64): Parakeet TDT 0.6B v3 (English and European languages), Moonshine base (English, small and fast), or SenseVoice small (Chinese, Japanese, Korean, Cantonese, English). Setup recommends Parakeet v3 for English, auto-detect, and European languages, and Whisper small for others. Speech servers running on this computer, such as speaches or LocalAI, are offered too. Online API asks for a base URL and key, lists the provider's models with speech models first, and has **Show all models** and a field for any model ID.
-3. **AI notes**: choose an AI server found on this computer (Ollama, LM Studio, Unsloth Studio, LocalAI), the transcription connection, or another online API, then a chat model. Unsloth Studio needs its `sk-unsloth` key. Without a local server, install Ollama or LM Studio and run setup again.
+3. **AI notes**: choose an AI server found on this computer (Ollama, LM Studio, Unsloth Studio, LocalAI), the transcription connection, or another online API, then a chat model. Unsloth Studio needs its `sk-unsloth` key. Without a local server, install Ollama or LM Studio and run setup again. Change the connection and model later under **Settings → AI notes**.
 4. **Devices**: choose the default microphone and system audio, and whether every recording is transcribed (and summarized, when AI notes are set) when it stops. This is off by default.
 
 Detection only asks `GET /v1/models` of `127.0.0.1` ports 11434, 8888, 1234, 8000 and 8080, while setup is open. A server on another port can be added under **Settings → Connections**.
@@ -118,10 +118,12 @@ Search Hugging Face explicitly to see up to 20 public speech-recognition results
 
 ## Generate summaries and ask questions
 
-Configure your independent LLM base URL, key, and model using the [README setup](../README.md#set-up-optional-ai-summaries). Keys are saved in the OS keychain and not read back into the form. Model discovery is optional; the chosen model must support the chat endpoint.
+Set up AI notes under **Settings → AI notes**: choose a connection and a chat model. A server on this computer needs no key; a remote one needs its key, which you add under **Settings → Connections**. Keys are saved in the OS keychain and not read back into the form. Model discovery is optional; the chosen model must support the chat endpoint. For background, see the [README setup](../README.md#set-up-optional-ai-summaries).
 
 1. Open **Summary** and choose **General**, **Stand-up**, **One-to-one**, or one of your custom templates.
 2. Click **Enhance notes**. Notes and transcript text, with your saved instructions and template, go to the AI notes connection.
+
+When AI notes are not ready, **Enhance notes**, **Rewrite selection…** and **Ask across meetings** stay disabled, show why, and offer **Open Settings** to the section that fixes it.
 
 Add custom templates and saved summary instructions in **Settings → AI notes → Summary templates**. **Default summary template** there sets the template the Summary tab starts at. A custom template describes the sections you want. Saved instructions, such as "Write in British English", are sent with every manual and automatic summary request. Built-in rules still apply: the model must not invent facts or follow instructions found inside notes or transcripts. Automatic summaries offer only the three built-in templates, and include the saved instructions as they were when the recording started. Deleting a template keeps earlier summaries; their history shows "Deleted custom template".
 

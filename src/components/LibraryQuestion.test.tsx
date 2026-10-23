@@ -8,6 +8,7 @@ import {
   type MeetingDetail,
 } from "../lib/api";
 import { LibraryQuestion } from "./LibraryQuestion";
+import type { AiBlock } from "./SettingsPanel";
 
 vi.mock("../lib/api", async (original) => ({
   ...(await original<typeof import("../lib/api")>()),
@@ -46,7 +47,11 @@ const detail = (id: string): MeetingDetail =>
     ],
   }) as MeetingDetail;
 
-function show(onOpen = vi.fn()) {
+function show(
+  onOpen = vi.fn(),
+  llmBlocked: AiBlock | null = null,
+  onOpenSettings = vi.fn(),
+) {
   render(
     <LibraryQuestion
       hidden={false}
@@ -56,6 +61,8 @@ function show(onOpen = vi.fn()) {
         { id: "recipe-1", name: "Risks", prompt: "What risks came up?" },
       ]}
       connectionRevision="1"
+      llmBlocked={llmBlocked}
+      onOpenSettings={onOpenSettings}
       disabled={false}
       onClose={vi.fn()}
       onOpen={onOpen}
@@ -147,6 +154,34 @@ it("shows no matching passages as a status message, not an error", async () => {
   // Changing the question clears the message.
   await userEvent.type(screen.getByLabelText("Question"), "?");
   expect(screen.queryByText(message)).toBeNull();
+});
+
+it("explains a blocked AI notes setup, disables Ask, and links to its Settings section", async () => {
+  const onOpenSettings = vi.fn();
+  show(
+    vi.fn(),
+    {
+      message: "Choose a model for AI notes in Settings → AI notes.",
+      section: "ai",
+    },
+    onOpenSettings,
+  );
+  await userEvent.click(screen.getByLabelText(/Alpha sync/));
+  await userEvent.type(screen.getByLabelText("Question"), "What was decided?");
+  expect(
+    (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(
+    screen.getByText("Choose a model for AI notes in Settings → AI notes."),
+  ).toBeTruthy();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open Settings for AI notes" }),
+  );
+  expect(onOpenSettings).toHaveBeenCalledWith(
+    "ai",
+    expect.any(HTMLButtonElement),
+  );
+  expect(api.askLibrary).not.toHaveBeenCalled();
 });
 
 it("fills the question from a recipe without sending anything", async () => {

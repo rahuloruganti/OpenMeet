@@ -252,6 +252,22 @@ describe("settings and meeting detection", () => {
       ).toBeTruthy();
     });
 
+    it("dismisses the prompt on Not now and returns focus to the workspace", async () => {
+      vi.mocked(api.getSettings).mockResolvedValue(detecting);
+      await ready();
+      deliver([zoom]);
+      await userEvent.click(
+        within(
+          await screen.findByRole("status", { name: "Meeting detected" }),
+        ).getByRole("button", { name: "Not now" }),
+      );
+      expect(
+        screen.queryByRole("status", { name: "Meeting detected" }),
+      ).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("main"));
+      expect(api.startCapture).not.toHaveBeenCalled();
+    });
+
     it("stops prompting for an app the user chose to ignore", async () => {
       vi.mocked(api.getSettings).mockResolvedValue(detecting);
       vi.mocked(api.setDetectionIgnored).mockResolvedValue({
@@ -263,6 +279,7 @@ describe("settings and meeting detection", () => {
       await userEvent.click(
         await screen.findByRole("button", { name: "Never for Zoom" }),
       );
+      expect(document.activeElement).toBe(screen.getByRole("main"));
       expect(api.setDetectionIgnored).toHaveBeenCalledWith(
         zoom.id,
         "Zoom",

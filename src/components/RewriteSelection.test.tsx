@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createRef, useState } from "react";
+import { createRef, useState, type ComponentProps } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api } from "../lib/api";
 import { RewriteSelection } from "./RewriteSelection";
@@ -10,7 +10,12 @@ vi.mock("../lib/api", async (original) => ({
   api: { rewriteText: vi.fn() },
 }));
 
-function Harness(props: { initial: string; onApply?: (text: string) => void }) {
+function Harness(props: {
+  initial: string;
+  onApply?: (text: string) => void;
+  blocked?: ComponentProps<typeof RewriteSelection>["blocked"];
+  onOpenSettings?: ComponentProps<typeof RewriteSelection>["onOpenSettings"];
+}) {
   const [notes, setNotes] = useState(props.initial);
   const editor = createRef<HTMLTextAreaElement>();
   return (
@@ -25,7 +30,8 @@ function Harness(props: { initial: string; onApply?: (text: string) => void }) {
         editor={editor}
         notes={notes}
         disabled={false}
-        blocked={null}
+        blocked={props.blocked ?? null}
+        onOpenSettings={props.onOpenSettings ?? vi.fn()}
         onApply={(text) => {
           props.onApply?.(text);
           setNotes(text);
@@ -42,6 +48,48 @@ const select = (start: number, end: number) =>
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.rewriteText).mockResolvedValue("Short.");
+});
+
+it("shows why rewriting is unavailable and links to the Settings section that fixes it", async () => {
+  const onOpenSettings = vi.fn();
+  render(
+    <Harness
+      initial="Keep this."
+      blocked={{
+        message: "Choose a model for AI notes in Settings → AI notes.",
+        section: "ai",
+      }}
+      onOpenSettings={onOpenSettings}
+    />,
+  );
+  const rewrite = screen.getByRole("button", {
+    name: "Rewrite selection…",
+  }) as HTMLButtonElement;
+  expect(rewrite.disabled).toBe(true);
+  expect(rewrite.title).toBe(
+    "Choose a model for AI notes in Settings → AI notes.",
+  );
+  expect(
+    screen.getByText("Choose a model for AI notes in Settings → AI notes."),
+  ).toBeTruthy();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Open Settings for AI notes" }),
+  );
+  expect(onOpenSettings).toHaveBeenCalledWith(
+    "ai",
+    expect.any(HTMLButtonElement),
+  );
+});
+
+it("shows another running task as text without a Settings link", () => {
+  render(
+    <Harness
+      initial="Keep this."
+      blocked={{ message: "Another task is running.", section: null }}
+    />,
+  );
+  expect(screen.getByText("Another task is running.")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: /Open Settings/ })).toBeNull();
 });
 
 it("asks for a selection first and sends nothing without one", async () => {

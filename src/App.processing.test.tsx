@@ -297,6 +297,7 @@ describe("speech engine and automatic processing", () => {
       expect(
         screen.queryByRole("region", { name: "Session processing" }),
       ).toBeNull();
+      expect(document.activeElement).toBe(screen.getByRole("main"));
       // A newer revision of the same meeting shows the panel again.
       const next = sessionSnapshot(6, stage);
       vi.mocked(api.getSessionProcessing).mockResolvedValue(next);

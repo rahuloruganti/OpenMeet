@@ -16,6 +16,11 @@ import { extractSection, renderMarkdown } from "../lib/markdown";
 import { ActionItems } from "./ActionItems";
 import { RecipePicker } from "./Recipes";
 import { RewriteSelection } from "./RewriteSelection";
+import {
+  OpenSettingsButton,
+  type AiBlock,
+  type OpenSettings,
+} from "./SettingsPanel";
 import { MeetingTagsForm } from "./MeetingTags";
 import { SpeakerNamesForm } from "./SpeakerNames";
 import { TranscriptVersions } from "./TranscriptVersions";
@@ -103,8 +108,9 @@ type Props = {
   speechReady: boolean;
   /** Why summary generation is unavailable, or null when it can run. */
   enhanceBlocked: string | null;
-  /** Why the summary/question provider cannot be used at all, or null. */
-  llmBlocked: string | null;
+  /** Why the summary/question provider cannot be used at all, with the Settings section that fixes it; null when it can. */
+  llmBlocked: AiBlock | null;
+  onOpenSettings: OpenSettings;
   sttMode: Settings["stt_mode"];
   connectionRevision: string;
   onTab: (tab: ContentTab) => void;
@@ -204,6 +210,11 @@ export function MeetingWorkspace(props: Props) {
   const meetingId = selected?.meeting.id;
   const [deleting, setDeleting] = useState<"meeting" | "audio" | null>(null);
   const [typed, setTyped] = useState("");
+  const deleteTyped = useRef<HTMLInputElement>(null);
+  const deleteCancel = useRef<HTMLButtonElement>(null);
+  const titleHeading = useRef<HTMLHeadingElement>(null);
+  // Set by Enter or Escape in the title input, so focus returns to the heading once the input is gone.
+  const focusTitle = useRef(false);
   useEffect(() => {
     setQuestion("");
     setChosenThread(null);
@@ -225,6 +236,17 @@ export function MeetingWorkspace(props: Props) {
     setQuestion("");
   }, [turnTotal]);
   useEffect(() => setDeletingThread(false), [activeThread?.id]);
+  // The blur that also ends a rename does not set focusTitle, so clicking elsewhere keeps that focus.
+  useEffect(() => {
+    if (titleDraft === null && focusTitle.current) {
+      focusTitle.current = false;
+      titleHeading.current?.focus();
+    }
+  }, [titleDraft]);
+  // Opening the confirmation focuses its typed title, or Cancel when none is needed, never the delete button.
+  useEffect(() => {
+    if (deleting) (deleteTyped.current ?? deleteCancel.current)?.focus();
+  }, [deleting]);
   useEffect(() => {
     if (tab !== "transcript" || props.hidden)
       Object.values(players.current).forEach((player) => player?.pause());
@@ -330,6 +352,8 @@ export function MeetingWorkspace(props: Props) {
     setTyped("");
     setDeleting(what);
   };
+  // Escape in the ••• menu, and Cancel or Escape in the delete card, return focus to its summary.
+  const focusActions = () => actions.current?.querySelector("summary")?.focus();
   // Viewing an older version is display-only; export keeps using the latest.
   const shown = versions.find((version) => version.id === versionId);
   const summary = shown?.markdown ?? selected.summary;
@@ -442,7 +466,12 @@ export function MeetingWorkspace(props: Props) {
     <article className="content-area" hidden={props.hidden}>
       <div className="meeting-heading">
         {titleDraft === null ? (
-          <h1 className="meeting-title" onClick={startRename}>
+          <h1
+            className="meeting-title"
+            ref={titleHeading}
+            tabIndex={-1}
+            onClick={startRename}
+          >
             {meeting.title}
           </h1>
         ) : (
@@ -457,10 +486,12 @@ export function MeetingWorkspace(props: Props) {
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
+                focusTitle.current = true;
                 settleTitle(true);
               } else if (event.key === "Escape") {
                 event.preventDefault();
                 event.stopPropagation();
+                focusTitle.current = true;
                 settleTitle(false);
               }
             }}
@@ -476,7 +507,17 @@ export function MeetingWorkspace(props: Props) {
           <button disabled={disabled} onClick={props.onExport}>
             Export Markdown
           </button>
-          <details className="more-actions" ref={actions} key={meeting.id}>
+          <details
+            className="more-actions"
+            ref={actions}
+            key={meeting.id}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || !actions.current?.open) return;
+              event.stopPropagation();
+              actions.current.open = false;
+              focusActions();
+            }}
+          >
             <summary aria-label="More meeting actions">•••</summary>
             <div className="action-menu">
               {selected.tracks.length > 0 && (
@@ -513,6 +554,12 @@ export function MeetingWorkspace(props: Props) {
               ? "Confirm meeting deletion"
               : "Confirm audio deletion"
           }
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.stopPropagation();
+            setDeleting(null);
+            focusActions();
+          }}
         >
           <p>
             <strong>
@@ -531,6 +578,7 @@ export function MeetingWorkspace(props: Props) {
             <label>
               Type the meeting title to confirm
               <input
+                ref={deleteTyped}
                 value={typed}
                 onChange={(event) => setTyped(event.target.value)}
               />
@@ -550,7 +598,15 @@ export function MeetingWorkspace(props: Props) {
             >
               {deleting === "meeting" ? "Delete meeting" : "Delete audio"}
             </button>
-            <button onClick={() => setDeleting(null)}>Cancel</button>
+            <button
+              ref={deleteCancel}
+              onClick={() => {
+                setDeleting(null);
+                focusActions();
+              }}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
@@ -659,8 +715,11 @@ export function MeetingWorkspace(props: Props) {
               notes={props.notes}
               disabled={disabled}
               blocked={
-                job !== null ? "Another task is running." : props.llmBlocked
+                job !== null
+                  ? { message: "Another task is running.", section: null }
+                  : props.llmBlocked
               }
+              onOpenSettings={props.onOpenSettings}
               onApply={props.onNotes}
             />
             {props.live && (
@@ -742,9 +801,19 @@ export function MeetingWorkspace(props: Props) {
             </p>
           )}
           {props.enhanceBlocked !== null && (
-            <p id="enhance-hint" className="muted">
-              {props.enhanceBlocked}
-            </p>
+            <>
+              <p id="enhance-hint" className="muted">
+                {props.enhanceBlocked}
+              </p>
+              {props.llmBlocked && (
+                <div className="panel-actions">
+                  <OpenSettingsButton
+                    section={props.llmBlocked.section}
+                    onOpenSettings={props.onOpenSettings}
+                  />
+                </div>
+              )}
+            </>
           )}
           {versions.length > 1 && (
             <label className="summary-version">

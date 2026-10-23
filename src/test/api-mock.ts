@@ -24,6 +24,8 @@ export function mockApiModule(actual: Record<string, unknown>) {
       deleteApiConnection: vi.fn(),
       onModelLibraryProgress: vi.fn(),
       scanLocalModels: vi.fn(),
+      detectLocalServers: vi.fn(),
+      saveSetupDone: vi.fn(),
       cancelModelDownload: vi.fn(),
       listApiConnectionModels: vi.fn(),
       saveProviderAssignment: vi.fn(),
