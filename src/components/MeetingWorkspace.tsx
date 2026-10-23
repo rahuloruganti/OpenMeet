@@ -314,6 +314,17 @@ export function MeetingWorkspace(props: Props) {
     0,
   );
   const deleteDisabled = disabled || job !== null || props.recordingThis;
+  // An empty note has nothing to lose, so deleting it needs no typed title.
+  const emptyNote =
+    meeting.source === "note" &&
+    props.notes.trim() === "" &&
+    selected.segments.length === 0 &&
+    !selected.summary &&
+    versions.length === 0 &&
+    selected.action_items.length === 0 &&
+    selected.question_threads.length === 0 &&
+    selected.tracks.length === 0;
+  const needsTitle = !(deleting === "meeting" && emptyNote);
   const askDelete = (what: "meeting" | "audio") => {
     if (actions.current) actions.current.open = false;
     setTyped("");
@@ -516,17 +527,21 @@ export function MeetingWorkspace(props: Props) {
               : `Removes ${selected.tracks.length} audio track${selected.tracks.length === 1 ? "" : "s"} (${formatBytes(audioBytes)}) and their timing files. Notes, transcript and summaries are kept.`}{" "}
             Exported Markdown snapshots are not touched. This cannot be undone.
           </p>
-          <label>
-            Type the meeting title to confirm
-            <input
-              value={typed}
-              onChange={(event) => setTyped(event.target.value)}
-            />
-          </label>
+          {needsTitle && (
+            <label>
+              Type the meeting title to confirm
+              <input
+                value={typed}
+                onChange={(event) => setTyped(event.target.value)}
+              />
+            </label>
+          )}
           <div className="panel-actions">
             <button
               className="danger"
-              disabled={deleteDisabled || typed !== meeting.title}
+              disabled={
+                deleteDisabled || (needsTitle && typed !== meeting.title)
+              }
               onClick={() => {
                 setDeleting(null);
                 if (deleting === "meeting") props.onDeleteMeeting();
@@ -613,13 +628,14 @@ export function MeetingWorkspace(props: Props) {
             id="notes"
             className="notes-editor"
             value={props.notes}
-            disabled={disabled}
+            readOnly={disabled}
             rows={10}
             placeholder="Start writing. Capture a thought, a decision, or what happens next…"
             ref={editor}
             onChange={(event) => props.onNotes(event.target.value)}
             onKeyDown={(event) => {
               if (
+                !disabled &&
                 props.live &&
                 event.shiftKey &&
                 (event.ctrlKey || event.metaKey) &&

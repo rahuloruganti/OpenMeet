@@ -54,7 +54,7 @@ Saved device choices are not silently replaced when a device is unavailable. A m
 
 The New recording panel warns before you start when the selected speech engine cannot run: a local engine that is not downloaded, or a cloud speech connection missing either a stored key (or loopback destination) or a model. The warning does not block recording; the audio is kept and transcription fails visibly until the engine is set up in Settings.
 
-In **My notes**, **Insert timestamp** adds the current backend recording offset. **Ctrl+Shift+T** performs the same action while the editor has focus. Settings provide a pause/resume shortcut (default **Ctrl+Shift+F9**) and an optional stop shortcut (default **Ctrl+Shift+F10** for new installs; existing saved settings are kept). There is no global start shortcut. If registration fails, use the on-screen controls and choose another shortcut.
+In **My notes**, **Insert timestamp** adds the current backend recording offset. **Ctrl+Shift+T** performs the same action while the editor has focus and no other task is running. Settings provide a pause/resume shortcut (default **Ctrl+Shift+F9**) and an optional stop shortcut (default **Ctrl+Shift+F10** for new installs; existing saved settings are kept). There is no global start shortcut. If registration fails, use the on-screen controls and choose another shortcut.
 
 If a microphone or output is not listed, for example a headset connected after OpenMeet started or a device you just allowed in your privacy settings, press **Refresh devices** in New recording or **Settings → Recording**. A refresh lists the devices again but never replaces a device you already chose; an unavailable choice stays marked until you pick another one.
 
@@ -156,7 +156,7 @@ Select text in **My notes** and click **Rewrite selection…**. Choose a preset 
 ## Export Markdown and transcripts
 
 1. Click **Export Markdown**.
-2. On the first export, choose a destination folder. Cancel to leave the destination unset.
+2. On the first export, a notice explains the choice, then the folder picker opens. Choose a destination folder. Cancel to leave the destination unset.
 3. Read the notification for the saved file path.
 
 Files are written under the destination's `Meetings` directory. **Settings → Export & storage → Markdown export** controls transcript inclusion, summary inclusion, and title or date-and-title filenames. The date prefix uses the stored UTC start date.
@@ -169,6 +169,6 @@ Exports contain source metadata, user notes, and the selected sections. They do 
 
 An interrupted desktop recording may offer **Recover audio**. Recovery writes repaired WAV copies beside the original partial files, preserving the originals. It needs additional disk space and cannot recreate missing audio. Each attempt uses a fresh filename so a database failure can be retried without overwriting a retained copy. Failed attempts can therefore use additional space. A playable recovered WAV does not establish valid pause timing: local/cloud transcription and transcript timestamp seeking refuse missing or damaged timing indexes instead of guessing.
 
-Open the meeting's **•••** menu for **Delete audio** or **Delete meeting**. Both require the meeting title as confirmation and refuse an active recording. Delete audio retains notes, transcripts, and summaries. Delete meeting removes the local meeting and its associated data. Exported snapshots remain unchanged. There is no undo or secure erasure guarantee.
+Open the meeting's **•••** menu for **Delete audio** or **Delete meeting**. Both require the meeting title as confirmation, except that an empty note (no text, transcript, summary, tasks, questions or audio) deletes after one confirmation. Both refuse an active recording. Delete audio retains notes, transcripts, and summaries. Delete meeting removes the local meeting and its associated data. Exported snapshots remain unchanged. There is no undo or secure erasure guarantee.
 
 See [data retention and backups](privacy.md#retention-deletion-and-backups) before deleting or moving data, and [troubleshooting](../README.md#troubleshooting) for startup, saving, device, and export problems.

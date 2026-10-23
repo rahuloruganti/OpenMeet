@@ -316,7 +316,7 @@ describe("recording, capture and devices", () => {
             kind: "system",
             frames: 100,
             dropped_frames: 0,
-            gaps: 0,
+            gaps: 1,
             peak: 0.1,
             callback_age_ms: 5,
           },
@@ -325,7 +325,7 @@ describe("recording, capture and devices", () => {
     );
     expect(
       (await screen.findByText(/Audio gaps detected/)).textContent,
-    ).toContain("mic: 3");
+    ).toContain("Microphone: 3, System audio: 1");
     expect(screen.getByText("Recording")).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement)

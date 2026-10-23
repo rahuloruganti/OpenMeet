@@ -1,8 +1,8 @@
 import { mockApiModule } from "./test/api-mock";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "./lib/api";
+import { api, type Settings } from "./lib/api";
 import {
   initialSettings,
   ready,
@@ -45,9 +45,77 @@ describe("export", () => {
       screen.getByRole("button", { name: "Export Markdown" }),
     );
     await waitFor(() => expect(api.chooseVaultFolder).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Export Markdown",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
     expect(api.exportMeeting).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
+    expect(
+      screen.getByText(/Choose a folder for exported Markdown files/),
+    ).toBeTruthy();
+  });
+
+  it("explains the first folder choice, then shows the export result", async () => {
+    let pickFolder: (value: Settings) => void = () => {};
+    vi.mocked(api.chooseVaultFolder).mockReturnValue(
+      new Promise<Settings>((resolve) => {
+        pickFolder = resolve;
+      }),
+    );
+    vi.mocked(api.exportMeeting).mockResolvedValue({
+      path: "C:/notes/sample.md",
+      created_copy: false,
+      transcript_paths: [],
+    });
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Export Markdown" }),
+    );
+    await waitFor(() => expect(api.chooseVaultFolder).toHaveBeenCalledOnce());
+    expect(
+      screen.getByText(/Choose a folder for exported Markdown files/),
+    ).toBeTruthy();
+    await act(async () =>
+      pickFolder({ ...initialSettings, vault_folder: "C:/notes" }),
+    );
+    await screen.findByText("Exported: C:/notes/sample.md");
+    expect(screen.queryByText(/Choose a folder for exported/)).toBeNull();
+  });
+
+  it("keeps the notes box read-only, not disabled, while the folder picker is open", async () => {
+    let pickFolder: (value: Settings) => void = () => {};
+    vi.mocked(api.chooseVaultFolder).mockReturnValue(
+      new Promise<Settings>((resolve) => {
+        pickFolder = resolve;
+      }),
+    );
+    await ready();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Export Markdown" }),
+    );
+    await waitFor(() => expect(api.chooseVaultFolder).toHaveBeenCalledOnce());
+    const notes = screen.getByRole("textbox", {
+      name: /My notes/,
+    }) as HTMLTextAreaElement;
+    expect(notes.readOnly).toBe(true);
+    expect(notes.disabled).toBe(false);
+    await act(async () => pickFolder(initialSettings));
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("textbox", {
+            name: /My notes/,
+          }) as HTMLTextAreaElement
+        ).readOnly,
+      ).toBe(false),
+    );
   });
 
   it("uses an existing export folder without asking again", async () => {

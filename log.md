@@ -746,3 +746,9 @@ Outcome: the processing panel shows readable stage names and human sizes ("Used 
 User request: merge the duplicate "Automatic processing" labels, move transcription auto-processing out of "AI notes", and make the Models tab less empty.
 
 Outcome: Automatic processing now lives on Settings → Recording (select renamed "When a recording stops"); New recording's "Change in Settings" opens that tab. Settings → Models shows the local model library directly under a heading instead of a collapsed disclosure; it still scans only when Models is first selected. User guide and architecture notes updated. Typecheck, lint, format check, tests (176) and build pass locally; no recordings, downloads or Rust checks were run.
+
+## Risky first-use behaviours
+
+User request: "fix next", taking the remaining review items: the notes box locking during unrelated tasks, deleting an empty note needing its title typed, and the first export opening an unexplained folder picker.
+
+Outcome: the notes box is read-only instead of disabled while a task runs, so it keeps focus and cursor; an empty note deletes after one confirmation with no typed title (every other delete still needs it); the first export shows a notice explaining the folder choice before the picker opens; the audio-gap notice says "Microphone" and "System audio". Typecheck, lint, format check, tests (181) and build pass locally; no recordings, downloads or Rust checks were run.

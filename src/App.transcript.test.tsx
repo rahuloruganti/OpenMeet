@@ -9,8 +9,13 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { api, type MeetingDetail } from "./lib/api";
-import { sample, ready, installDefaultMocks } from "./test/app-harness";
+import { api, type MeetingDetail, type Settings } from "./lib/api";
+import {
+  initialSettings,
+  sample,
+  ready,
+  installDefaultMocks,
+} from "./test/app-harness";
 
 vi.mock("./lib/api", async (original) =>
   mockApiModule(await original<typeof import("./lib/api")>()),
@@ -480,6 +485,57 @@ describe("transcript and audio", () => {
       expect(
         screen.queryByRole("button", { name: "Jump to audio" }),
       ).toBeNull();
+    });
+
+    it("ignores the timestamp shortcut while another task is running", async () => {
+      vi.mocked(api.getRecordingState).mockResolvedValue({
+        revision: 1,
+        status: "recording",
+        meeting_id: "sample",
+        source: "desktop",
+        error: null,
+        recording_offset_ms: 65_400,
+      });
+      let pickFolder: (value: Settings) => void = () => {};
+      vi.mocked(api.chooseVaultFolder).mockReturnValue(
+        new Promise<Settings>((resolve) => {
+          pickFolder = resolve;
+        }),
+      );
+      await ready();
+      const editor = screen.getByDisplayValue(
+        "Original notes",
+      ) as HTMLTextAreaElement;
+      await userEvent.click(
+        screen.getByRole("button", { name: "Export Markdown" }),
+      );
+      await waitFor(() => expect(api.chooseVaultFolder).toHaveBeenCalledOnce());
+      // Positive control: the timestamp control exists, and is disabled while busy.
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "Insert timestamp",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+      editor.setSelectionRange(0, 0);
+      const before = vi.mocked(api.getRecordingState).mock.calls.length;
+      fireEvent.keyDown(editor, { key: "T", ctrlKey: true, shiftKey: true });
+      expect(api.getRecordingState).toHaveBeenCalledTimes(before);
+      expect(editor.value).toBe("Original notes");
+      await act(async () => pickFolder(initialSettings));
+      await waitFor(() =>
+        expect(
+          (
+            screen.getByRole("button", {
+              name: "Insert timestamp",
+            }) as HTMLButtonElement
+          ).disabled,
+        ).toBe(false),
+      );
+      // Positive control: once the task ends, the same shortcut inserts the stamp.
+      fireEvent.keyDown(editor, { key: "T", ctrlKey: true, shiftKey: true });
+      await waitFor(() => expect(editor.value).toBe("[01:05] Original notes"));
     });
   });
 });

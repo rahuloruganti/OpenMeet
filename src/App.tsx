@@ -48,6 +48,12 @@ import {
 
 type Writer = ReturnType<typeof createNoteWriter>;
 
+/** Names for capture tracks in the audio-gap notice. */
+const gapTrackLabels: Record<string, string> = {
+  mic: "Microphone",
+  system: "System audio",
+};
+
 /** Final summary processing waits for this session's saved notes to be acknowledged. */
 const awaitingNotes = (snapshot: SessionProcessingSnapshot) =>
   snapshot.plan.scope.kind === "final" &&
@@ -854,7 +860,10 @@ export function App() {
               Audio gaps detected (
               {health.tracks
                 .filter((track) => track.gaps > 0)
-                .map((track) => `${track.kind}: ${track.gaps}`)
+                .map(
+                  (track) =>
+                    `${gapTrackLabels[track.kind] ?? track.kind}: ${track.gaps}`,
+                )
                 .join(", ")}
               ). Recording continues; exact positions are kept in the timing
               index.
@@ -1250,6 +1259,9 @@ export function App() {
               await writer.current?.flush();
               if (!selected) return;
               if (!settings?.vault_folder) {
+                setNotice(
+                  "Choose a folder for exported Markdown files. OpenMeet remembers it; change it later in Settings → Export & storage.",
+                );
                 const updated = await api.chooseVaultFolder();
                 setSettings(updated);
                 if (!updated.vault_folder) return;

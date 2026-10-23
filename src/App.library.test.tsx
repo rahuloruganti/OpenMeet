@@ -250,6 +250,79 @@ describe("meeting library", () => {
       expect(screen.queryByDisplayValue("Original notes")).toBeNull();
     });
 
+    it("deletes an empty note with one confirmation and no typed title", async () => {
+      vi.mocked(api.listMeetings).mockResolvedValue([note.meeting]);
+      vi.mocked(api.getMeeting).mockResolvedValue(note);
+      render(<App />);
+      await screen.findByRole("heading", { name: "Untitled note" });
+      await waitFor(() =>
+        expect(
+          (
+            screen.getByRole("button", {
+              name: "Save notes now",
+            }) as HTMLButtonElement
+          ).disabled,
+        ).toBe(false),
+      );
+      await userEvent.click(screen.getByLabelText("More meeting actions"));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Delete meeting…" }),
+      );
+      expect(
+        screen.getByText(/Permanently delete “Untitled note”/),
+      ).toBeTruthy();
+      expect(screen.getByText(/This cannot be undone/)).toBeTruthy();
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Type the meeting title to confirm",
+        }),
+      ).toBeNull();
+      const confirm = screen.getByRole("button", {
+        name: "Delete meeting",
+      }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(false);
+      vi.mocked(api.listMeetings).mockResolvedValue([]);
+      vi.mocked(api.deleteMeeting).mockResolvedValue();
+      await userEvent.click(confirm);
+      await screen.findByText(/Meeting deleted from this device/);
+      expect(api.deleteMeeting).toHaveBeenCalledOnce();
+      expect(api.deleteMeeting).toHaveBeenCalledWith("note");
+    });
+
+    it("still requires the typed title to delete a note that has text", async () => {
+      vi.mocked(api.listMeetings).mockResolvedValue([note.meeting]);
+      vi.mocked(api.getMeeting).mockResolvedValue({
+        ...note,
+        user_markdown: "Keep this",
+      });
+      render(<App />);
+      await screen.findByDisplayValue("Keep this");
+      await waitFor(() =>
+        expect(
+          (
+            screen.getByRole("button", {
+              name: "Save notes now",
+            }) as HTMLButtonElement
+          ).disabled,
+        ).toBe(false),
+      );
+      await userEvent.click(screen.getByLabelText("More meeting actions"));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Delete meeting…" }),
+      );
+      const confirm = screen.getByRole("button", {
+        name: "Delete meeting",
+      }) as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+      await userEvent.type(
+        screen.getByRole("textbox", {
+          name: "Type the meeting title to confirm",
+        }),
+        "Untitled note",
+      );
+      expect(confirm.disabled).toBe(false);
+    });
+
     it("refuses deletion controls for the meeting being recorded", async () => {
       vi.mocked(api.getRecordingState).mockResolvedValue({
         revision: 1,
