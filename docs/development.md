@@ -91,7 +91,7 @@ just build
 
 The recipe runs `corepack pnpm tauri build --no-bundle -- --locked`. Tauri builds the frontend and enables its production asset protocol. A plain `cargo build --release` leaves that protocol disabled and tries to load the development server instead. On Windows the result is `src-tauri/target/release/openmeet.exe`. Close a running release executable before rebuilding it.
 
-The executable embeds the frontend and does not require Vite. WebView2 remains a Windows runtime prerequisite. Local speech artifacts and independent provider credentials are configured in the app. Bundling is disabled in `tauri.conf.json`: this command produces no installer, signing, notarization, or updater.
+The executable embeds the frontend and does not require Vite. WebView2 remains a Windows runtime prerequisite. Local speech artifacts and independent provider credentials are configured in the app. This command passes `--no-bundle`, so it produces no installer, signing, notarization, or updater; the unsigned Windows installer comes from the manual workflow described under CI.
 
 ## Protect data during development
 
@@ -113,3 +113,5 @@ Keep both lockfiles tracked. Do not commit build output, `node_modules`, databas
 ## CI
 
 [ci.yml](../.github/workflows/ci.yml) configures Windows and macOS 15 frontend and Rust checks, production npm audit, and a Linux cargo-deny job. The macOS job requires an ARM64 runner. This describes workflow configuration, not the latest remote result. Local checks do not establish green remote CI or macOS capture support.
+
+[windows-installer.yml](../.github/workflows/windows-installer.yml) is a manual workflow (Actions -> Windows installer -> Run workflow). It runs `pnpm tauri build --ci` on a Windows runner and uploads the NSIS `.exe` as the private artifact `OpenMeet-windows-installer`, kept for 14 days. Download it from the run's Artifacts section; only people with repository access can see it. The installer is unsigned, so Windows SmartScreen will warn before it runs. The workflow does not sign, publish, or create releases.
