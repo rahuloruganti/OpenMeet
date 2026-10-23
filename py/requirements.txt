@@ -1,0 +1,8 @@
+# Python build dependencies. Pinned; every package here ships a prebuilt Windows wheel for Python 3.13,
+# so no C compiler, Visual Studio or Windows SDK is needed.
+fastapi==0.161.1
+uvicorn==0.54.0
+pywebview==6.2.1
+httpx==0.28.1
+pyinstaller==6.22.3
+pytest==9.1.1

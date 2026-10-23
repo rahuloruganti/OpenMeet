@@ -800,3 +800,9 @@ Outcome: summaries render tables, nested lists, code blocks, inline code and tas
 User request: open the app; when the local build failed (the Windows SDK is not installed), asked to repack it so it does not need the Windows SDK or Visual Studio.
 
 Outcome: a native Windows build always needs the Microsoft C++ libraries, so instead of removing that need I added a manual GitHub Actions workflow (`windows-installer.yml`) that builds the unsigned NSIS installer on GitHub's Windows runner and uploads it as a private artifact for 14 days. Nothing runs on push. Not yet run when committed; the first run is the real test.
+
+## Python desktop build, phase 1 (no Visual Studio or Windows SDK)
+
+User request: the Rust app cannot be built on this PC (no Windows SDK), so try a Python route: FastAPI, pywebview, PyInstaller exe, and later a Feature-Sliced Design frontend; chose a full Python port as the long-term goal.
+
+Outcome: new `py/` folder and `docs/python-port-plan.md`. A FastAPI server serves the unchanged React UI (built with a Vite config that swaps the Tauri API for an HTTP/WebSocket shim) inside a pywebview window; `py/build.ps1` builds a 19 MB `OpenMeet-py.exe` with PyInstaller using only prebuilt wheels. Phase 1 supports notes, tags, search, rename, delete, settings and Markdown export, using the same SQLite migrations in its own data folder `%APPDATA%\OpenMeetPy` (never the Rust app's profile). 54 of 78 commands (recording, speech, summaries, keychain, detection, tray) return a clear "not available in the Python build yet" error. The Rust app and `src/` are unchanged, which overrides AGENTS.md's Rust-owns-audio rule for this separate build only, at the owner's choice. Checked: 24 pytest tests, PyInstaller build, smoke run, a browser pass of the notes flow, and the exe opened a window titled OpenMeet; the window content was not visually inspected. Recording and transcription remain unimplemented and unqualified.

@@ -16,3 +16,12 @@ skills-lock.json
 # Local audit and agent worktree artifacts
 .audit/
 .claude/
+
+# Python desktop build (py/): virtualenv, generated UI, build output
+py/.venv/
+py/web/
+py/build/
+py/dist/
+py/*.spec
+__pycache__/
+.pytest_cache/
