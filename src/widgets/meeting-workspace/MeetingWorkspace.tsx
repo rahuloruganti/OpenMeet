@@ -22,7 +22,7 @@ import {
   type AiBlock,
   type OpenSettings,
   type SettingsSection,
-} from "../settings-panel";
+} from "../../shared/ui/settings-link";
 import { MeetingTagsForm } from "../../features/meeting-tags";
 import { SpeakerNamesForm } from "../../features/speaker-names";
 import { TranscriptVersions } from "../../features/transcript-versions";

@@ -38,7 +38,7 @@ type Props = {
 };
 
 /** Connects a server or API, then picks a model for one task. Keys go straight to the OS
- * keychain through Rust; the field is uncontrolled and cleared after use. */
+ * keychain through the backend; the field is uncontrolled and cleared after use. */
 function ConnectAndPick(props: {
   role: ProviderRole;
   settings: Settings;

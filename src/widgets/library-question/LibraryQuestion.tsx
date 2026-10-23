@@ -16,7 +16,7 @@ import {
   OpenSettingsButton,
   type AiBlock,
   type OpenSettings,
-} from "../settings-panel";
+} from "../../shared/ui/settings-link";
 
 type Props = {
   panelRef: Ref<HTMLElement>;

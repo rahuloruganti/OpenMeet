@@ -1,2 +1,2 @@
-# Keep LF everywhere so Prettier and rustfmt agree on every OS (Windows CI checks out CRLF otherwise).
+# Keep LF everywhere so Prettier and the Python tooling agree on every OS (Windows CI checks out CRLF otherwise).
 * text=auto eol=lf

@@ -8,7 +8,7 @@ import type {
 } from "../../shared/api/api";
 import { formatBytes } from "../../entities/meeting";
 import { speechModelLabel } from "../../shared/lib/models";
-import { Assignment } from "../provider-settings";
+import { Assignment } from "../../shared/ui/assignment";
 
 export type SttDraft = Pick<
   Settings,

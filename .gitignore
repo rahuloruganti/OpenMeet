@@ -1,8 +1,6 @@
 .pi/
 node_modules/
 dist/
-src-tauri/target/
-src-tauri/gen/
 *.log
 .env
 .env.*
@@ -17,11 +15,13 @@ skills-lock.json
 .audit/
 .claude/
 
-# Python desktop build (py/): virtualenv, generated UI, build output
-py/.venv/
-py/web/
-py/build/
-py/dist/
-py/*.spec
+# Python environment and generated UI (backend/web is written by the Vite build)
+backend/.venv/
+backend/web/
+
+# PyInstaller output: dist/OpenMeet.exe, intermediate build tree, generated spec
+packaging/build/
+packaging/dist/
+packaging/*.spec
 __pycache__/
 .pytest_cache/

@@ -1,5 +1,9 @@
-import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import {
+  convertFileSrc,
+  invoke,
+  isBackendConnected,
+  listen,
+} from "./transport";
 
 export function isLocalBase(value: string): boolean {
   try {
@@ -225,7 +229,7 @@ export type TranscriptVersion = {
 };
 /** Display names for the "You" (microphone) and "Others" (system audio) labels. */
 export type SpeakerNames = { you: string | null; others: string | null };
-/** "Rahul (You)" when named, otherwise the stored label; matches Rust `SpeakerNames::label`. */
+/** "Rahul (You)" when named, otherwise the stored label. */
 export const speakerLabel = (names: SpeakerNames, speaker: string) => {
   const name =
     speaker === "You" ? names.you : speaker === "Others" ? names.others : null;
@@ -354,7 +358,7 @@ export type SearchHit = {
   kind: "title" | "notes" | "transcript" | "summary";
   snippet: string;
 };
-/** Versioned template ids; must match `llm::Template` serde names in Rust. */
+/** Versioned template ids. */
 export type SummaryTemplate = "general-v1" | "standup-v1" | "one-to-one-v1";
 export type SummaryVersion = {
   id: number;
@@ -370,7 +374,7 @@ export type SummaryVersion = {
 };
 
 export const api = {
-  isDesktop: isTauri,
+  isDesktop: isBackendConnected,
   listMeetings: () => invoke<Meeting[]>("list_meetings"),
   getMeeting: (id: string) => invoke<MeetingDetail>("get_meeting", { id }),
   getRecordingState: () => invoke<RecordingState>("get_recording_state"),

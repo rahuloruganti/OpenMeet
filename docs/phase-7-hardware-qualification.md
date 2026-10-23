@@ -1,7 +1,7 @@
 # Phase 7 hardware qualification checklist (Python build)
 
 This checklist is for the owner to run personally on this Windows 11 PC. It qualifies the **Python
-build**, `py\dist\OpenMeet-py.exe`, on real audio hardware, real models and real power states. Nothing
+build**, `packaging\dist\OpenMeet.exe`, on real audio hardware, real models and real power states. Nothing
 in this document has been run by the agent that wrote it. Every result below is blank until the owner
 records it.
 
@@ -10,10 +10,10 @@ records it.
 - **Qualifies:** the Python build's recording (microphone and system audio), pause privacy, device and
   power failures, recovery, the 60-minute clock check, local and sherpa-onnx transcription, automatic
   processing, global shortcuts, meeting detection, Windows credential storage, and data deletion.
-- **Out of scope:** the Rust Tauri app. It cannot be compiled on this PC (no Windows SDK or MSVC), so
-  nothing here qualifies `src-tauri/`. Rust app behaviour is described only in `docs/user-guide.md`.
+- **Out of scope:** the retired Rust/Tauri app, which was removed from this repository after this
+  checklist was written (its last code is kept at git tag `rust-final`). Nothing here qualifies it.
 - **Not claimed until every box passes:** that recording is reliable, that transcripts are accurate, or
-  that the Python build can replace the Rust app. Until then the "unqualified" labels stay (see section O).
+  that the build is ready to rely on. Until then the "unqualified" labels stay (see section O).
 - A passing `pytest` run, a `--smoke` run, a browser check or a fake-device run is **not** a pass here.
 
 ## Consent and privacy rules
@@ -34,7 +34,7 @@ records it.
 | --- | --- | --- |
 | Windows 11 Pro, current updates | all | `winver` shows the build; record it |
 | WebView2 Runtime | the window (sections A onward) | installed (Edge ships it) |
-| Built exe: `py\dist\OpenMeet-py.exe` | all | build with `powershell -ExecutionPolicy Bypass -File py\build.ps1` from the repo root; record `Get-FileHash -Algorithm SHA256 py\dist\OpenMeet-py.exe` |
+| Built exe: `packaging\dist\OpenMeet.exe` | all | build with `powershell -ExecutionPolicy Bypass -File packaging\build.ps1` from the repo root; record `Get-FileHash -Algorithm SHA256 packaging\dist\OpenMeet.exe` |
 | Microphone privacy on | sections A, B, E | Settings > Privacy & security > Microphone: "Microphone access" On, and "Let desktop apps access your microphone" On |
 | Built-in or USB microphone | A, B, C | |
 | Speakers or headset (system output) | B, C, H, K, L | |
@@ -82,7 +82,7 @@ per run, for example `C:\OpenMeetQual\data-A`. The exe creates it on first start
 
 ```
 cd C:\Users\Rahul\Documents\personal\openmeet
-py\dist\OpenMeet-py.exe --data-dir C:\OpenMeetQual\data-A
+packaging\dist\OpenMeet.exe --data-dir C:\OpenMeetQual\data-A
 ```
 
 Other flags (used in section A only):
@@ -96,20 +96,20 @@ Other flags (used in section A only):
 1. Click **Stop** in the recording bar first, and wait for the recording bar to say stopped. Stop can take
    up to 20 seconds.
 2. Close the window with the X button, or use **Save and quit** if it is shown.
-3. Check that the process has ended: `Get-Process OpenMeet-py -ErrorAction SilentlyContinue` prints nothing.
+3. Check that the process has ended: `Get-Process OpenMeet -ErrorAction SilentlyContinue` prints nothing.
 
 Use **End task** in Task Manager only where a step says so (section G).
 
 ### Helper tools
 
 Both tools are read-only on inputs or write only new files. They never play audio and never open a device.
-Run them from the repo root with the venv Python.
+Run them from the repo root with `uv`; `uv run --project backend` uses the project's pinned environment.
 
 - Generate a test WAV (writes a file, never plays it):
 
   ```
-  py\.venv\Scripts\python.exe py\tools\make_test_audio.py --help
-  py\.venv\Scripts\python.exe py\tools\make_test_audio.py <out.wav> [--freq 440] [--marker-freq 1000] [--marker-every 60] [--duration 300] [--channels 2] [--format float32|pcm16] [--marker-drift-ppm 0]
+  uv run --project backend python backend\tools\make_test_audio.py --help
+  uv run --project backend python backend\tools\make_test_audio.py <out.wav> [--freq 440] [--marker-freq 1000] [--marker-every 60] [--duration 300] [--channels 2] [--format float32|pcm16] [--marker-drift-ppm 0]
   ```
 
   It refuses to overwrite an existing file. Duration may be up to 3900 s. `--marker-every 0` makes a plain
@@ -118,10 +118,10 @@ Run them from the repo root with the venv Python.
 - Check a meeting folder or two WAV files (read-only):
 
   ```
-  py\.venv\Scripts\python.exe py\tools\verify_recording.py --help
-  py\.venv\Scripts\python.exe py\tools\verify_recording.py "<meeting folder>" --tone-freq 440 --marker-every 60
-  py\.venv\Scripts\python.exe py\tools\verify_recording.py "<meeting folder>" --tone-freq 440 --marker-every 60 --wall-seconds 3600.0 --json > C:\OpenMeetQual\evidence\<step>-verify.json
-  py\.venv\Scripts\python.exe py\tools\verify_recording.py --mic "<mic.wav>" --system "<system.wav>"
+  uv run --project backend python backend\tools\verify_recording.py --help
+  uv run --project backend python backend\tools\verify_recording.py "<meeting folder>" --tone-freq 440 --marker-every 60
+  uv run --project backend python backend\tools\verify_recording.py "<meeting folder>" --tone-freq 440 --marker-every 60 --wall-seconds 3600.0 --json > C:\OpenMeetQual\evidence\<step>-verify.json
+  uv run --project backend python backend\tools\verify_recording.py --mic "<mic.wav>" --system "<system.wav>"
   ```
 
   Options: `--tone-freq` (expected tone on the system track), `--marker-freq` and `--marker-every` (must
@@ -134,7 +134,7 @@ Run them from the repo root with the venv Python.
 - Find a meeting id (read-only):
 
   ```
-  py\.venv\Scripts\python.exe -c "import sqlite3; db=sqlite3.connect('file:C:/OpenMeetQual/data-A/meetings.db?mode=ro', uri=True); [print(r) for r in db.execute('select id, title, status, started_at, ended_at from meetings order by started_at')]"
+  uv run --project backend python -c "import sqlite3; db=sqlite3.connect('file:C:/OpenMeetQual/data-A/meetings.db?mode=ro', uri=True); [print(r) for r in db.execute('select id, title, status, started_at, ended_at from meetings order by started_at')]"
   ```
 
   Change the data folder in the path to the run you are checking.
@@ -186,7 +186,7 @@ Rules:
 | E. Failure and device loss | 60 min | `[HW-USB]` for E1 to E4 |
 | F. Sleep and wake | 20 min | `[SLEEP]` (the PC sleeps) |
 | G. Window close and crash | 25 min | |
-| H. 60-minute drift | 90 min | `[LONG]` (60 min), disk about 3 GB |
+| H. 60-minute drift | 90 min | `[LONG]` (60 min), disk about 5 GB |
 | I. Transcription with a real model | 90 min | `[MODEL]` downloads; optional `[CLOUD]` |
 | J. Automatic processing and summaries | 60 min | `[AI]` (your own connection or local server) |
 | K. Global hotkeys | 20 min | a free chord for the conflict test |
@@ -203,10 +203,10 @@ data folder keeps its state.
 ## Preparation
 
 - [ ] **P1** Build the exe (10 min). From the repo root:
-  `powershell -ExecutionPolicy Bypass -File py\build.ps1`. Expect the last line `Built ...\py\dist\OpenMeet-py.exe`.
-  Record `Get-FileHash -Algorithm SHA256 py\dist\OpenMeet-py.exe`.
+  `powershell -ExecutionPolicy Bypass -File packaging\build.ps1`. Expect the last line `Built ...\packaging\dist\OpenMeet.exe`.
+  Record `Get-FileHash -Algorithm SHA256 packaging\dist\OpenMeet.exe`.
 - [ ] **P2** Run the env check above. The output must be empty.
-- [ ] **P3** Run the unit tests once (5 min). From `py\`: `py\.venv\Scripts\python.exe -m pytest -q -p no:warnings`.
+- [ ] **P3** Run the unit tests once (5 min). From the repo root: `uv run --project backend pytest -q -p no:warnings`.
   Record the count. This does not qualify anything; it confirms the tools work on this PC.
 - [ ] **P4** Create the scratch folders (see Prerequisites). Record `winver`.
 - [ ] **P5** Write down the devices you will use: microphone name, output name, and the USB/Bluetooth device if you
@@ -215,8 +215,8 @@ data folder keeps its state.
 - [ ] **P7** Generate the standard test files (5 min):
 
   ```
-  py\.venv\Scripts\python.exe py\tools\make_test_audio.py C:\OpenMeetQual\audio\tone-440-120s.wav --duration 120 --freq 440 --marker-every 10
-  py\.venv\Scripts\python.exe py\tools\make_test_audio.py C:\OpenMeetQual\audio\paused-2000hz-60s.wav --duration 60 --freq 2000 --marker-every 0
+  uv run --project backend python backend\tools\make_test_audio.py C:\OpenMeetQual\audio\tone-440-120s.wav --duration 120 --freq 440 --marker-every 10
+  uv run --project backend python backend\tools\make_test_audio.py C:\OpenMeetQual\audio\paused-2000hz-60s.wav --duration 60 --freq 2000 --marker-every 0
   ```
 
   Expected: each command prints `Wrote ...`. Do not overwrite these files later; generate new names instead.
@@ -229,13 +229,13 @@ data folder keeps its state.
 **Preconditions:** P1 to P5 done. `--data-dir C:\OpenMeetQual\data-A`.
 
 - [ ] **A1 Smoke** (2 min). Command:
-  `py\dist\OpenMeet-py.exe --smoke --data-dir C:\OpenMeetQual\data-A`.
+  `packaging\dist\OpenMeet.exe --smoke --data-dir C:\OpenMeetQual\data-A`.
   Expected: prints `OK: /health 200, list_meetings returned 0 meetings.` and exits with code 0 (check with `echo %errorlevel%`
   or `$LASTEXITCODE`). Evidence: the console line.
 - [ ] **A2 Import checks, no devices** (3 min). Run each:
-  `py\dist\OpenMeet-py.exe --check-audio-import`, `--check-stt-import`, `--check-sherpa-import`.
+  `packaging\dist\OpenMeet.exe --check-audio-import`, `--check-stt-import`, `--check-sherpa-import`.
   Expected: each prints `OK: ...` with its library name and "no ... was opened/loaded". Nothing else.
-- [ ] **A3 Launch the window** (2 min). `py\dist\OpenMeet-py.exe --data-dir C:\OpenMeetQual\data-A`.
+- [ ] **A3 Launch the window** (2 min). `packaging\dist\OpenMeet.exe --data-dir C:\OpenMeetQual\data-A`.
   Expected: a window titled **OpenMeet** opens (minimum size 720 by 580). If a **First-run setup** dialog appears,
   you may complete or dismiss it. Record which.
 - [ ] **A4 Devices in Settings** (4 min). Click **Settings** in the sidebar (or the collapsed toolbar), then the
@@ -284,7 +284,7 @@ you used). The file `C:\OpenMeetQual\audio\tone-440-120s.wav` open in a media pl
   `C:\OpenMeetQual\data-B\audio\<meeting-id>\`. Expected files: `mic.wav`, `system.wav`, `mic.timing.jsonl`,
   `system.timing.jsonl`. Record their sizes (`dir`).
 - [ ] **B7 Verify** (5 min). Run:
-  `py\.venv\Scripts\python.exe py\tools\verify_recording.py "C:\OpenMeetQual\data-B\audio\<meeting-id>" --tone-freq 440 --marker-every 10 --json > C:\OpenMeetQual\evidence\B7-verify.json`
+  `uv run --project backend python backend\tools\verify_recording.py "C:\OpenMeetQual\data-B\audio\<meeting-id>" --tone-freq 440 --marker-every 10 --json > C:\OpenMeetQual\evidence\B7-verify.json`
   and the same without `--json` to read the summary.
   Expected: `mic.header`, `system.header` PASS (float32, format tag 3). `mic.finalized` and `system.finalized` PASS.
   `mic.frames` and `system.frames` PASS (frames > 0). `pair.distinct` PASS. `system.tone` PASS (about 440 Hz). `system.timing` PASS.
@@ -338,7 +338,7 @@ the normal tone. The paused marker is a 2000 Hz tone.
 - [ ] **D6 Active tone after resume** (2 min). Play `tone-440-120s.wav` for 20 seconds, speaking one sentence. Stop the player.
 - [ ] **D7 Stop** (1 min). Click **Stop**. Record the stop clock time.
 - [ ] **D8 Verify paused-tone onsets** (5 min). Run:
-  `py\.venv\Scripts\python.exe py\tools\verify_recording.py "C:\OpenMeetQual\data-D\audio\<meeting-id>" --tone-freq 440 --marker-every 10 --paused-freq 2000 --json > C:\OpenMeetQual\evidence\D8-verify.json`.
+  `uv run --project backend python backend\tools\verify_recording.py "C:\OpenMeetQual\data-D\audio\<meeting-id>" --tone-freq 440 --marker-every 10 --paused-freq 2000 --json > C:\OpenMeetQual\evidence\D8-verify.json`.
   `system.paused_marker` and `mic.paused_marker` will show **FAIL** because D1 played the 2000 Hz tone while active. That FAIL is
   expected for this run. Judge the result by the onset times, not the status: open the JSON and read
   `tracks.system.paused_marker_onsets_s` and `tracks.mic.paused_marker_onsets_s`. Expected: every onset lies in the first
@@ -437,8 +437,8 @@ without touching the originals.
   Expected: `QUAL-G1` shows status **stopped** with no error; no **Interrupted recording** card. Run the verifier on the folder:
   `mic` and `system` finalized PASS, frames about 30 s.
 - [ ] **G2 Kill the process** (5 min). Start `QUAL-G2` (speak and play the tone for 40 seconds). Open Task Manager > Processes >
-  **OpenMeet-py** > **End task** (or `taskkill /IM OpenMeet-py.exe /F`). Expected: the window disappears. Record the time.
-- [ ] **G3 Restart and find interrupted** (4 min). Start `py\dist\OpenMeet-py.exe --data-dir C:\OpenMeetQual\data-G`. Expected:
+  **OpenMeet** > **End task** (or `taskkill /IM OpenMeet.exe /F`). Expected: the window disappears. Record the time.
+- [ ] **G3 Restart and find interrupted** (4 min). Start `packaging\dist\OpenMeet.exe --data-dir C:\OpenMeetQual\data-G`. Expected:
   `QUAL-G2` shows status **interrupted**. Open it: the **Interrupted recording** card appears with **Recover audio**.
   Before clicking, record `Get-FileHash -Algorithm SHA256` for `mic.wav`, `system.wav`, and both timing files.
 - [ ] **G4 Recover audio** (5 min). Click **Recover audio**. Expected: "Recovering..." then the card goes away. New files
@@ -457,18 +457,18 @@ without touching the originals.
 
 ## H. 60-minute drift (90 min) `[LONG]`
 
-**Goal:** over a full 60-minute run, the measured clock drift stays below 100 ms, as AGENTS.md requires, and the files match the
+**Goal:** over a full 60-minute run, the measured clock drift stays below the 100 ms limit stated in [the development guide](development.md) and the [v1 release plan](v1-release-plan.md), and the files match the
 wall clock.
 **Preconditions:** A to G passed. Free disk space of at least 5 GB. Sleep disabled for the whole run. Notifications off.
 Keep the PC plugged in. Do not use the PC for other work during the run.
 
 - [ ] **H0 Verifier control, short** (5 min). Confirm the verifier reports a known drift. Generate and check:
-  `py\.venv\Scripts\python.exe py\tools\make_test_audio.py C:\OpenMeetQual\audio\control-2000ppm-600s.wav --duration 600 --marker-every 60 --marker-drift-ppm 2000`
-  then `py\.venv\Scripts\python.exe py\tools\verify_recording.py --system C:\OpenMeetQual\audio\control-2000ppm-600s.wav --marker-every 60`.
+  `uv run --project backend python backend\tools\make_test_audio.py C:\OpenMeetQual\audio\control-2000ppm-600s.wav --duration 600 --marker-every 60 --marker-drift-ppm 2000`
+  then `uv run --project backend python backend\tools\verify_recording.py --system C:\OpenMeetQual\audio\control-2000ppm-600s.wav --marker-every 60`.
   Expected: `system.drift` FAIL (extrapolated 60-minute drift about 7200 ms). This proves the drift check can FAIL.
   Record the line. (`system.timing` will FAIL because there is no index; ignore that line.)
 - [ ] **H1 Generate the 60-minute marker tone** (5 min). Command:
-  `py\.venv\Scripts\python.exe py\tools\make_test_audio.py C:\OpenMeetQual\audio\marker-60min.wav --duration 3600 --freq 440 --marker-every 60`.
+  `uv run --project backend python backend\tools\make_test_audio.py C:\OpenMeetQual\audio\marker-60min.wav --duration 3600 --freq 440 --marker-every 60`.
   Expected: `Wrote ... 3600 s, ... 59 marker bursts every 60 s`. The file is about 1.4 GB for 48 kHz stereo float32.
   Record the size.
 - [ ] **H2 Start** (2 min). `--data-dir C:\OpenMeetQual\data-H`. Settings > Recording > Automatic processing: **When a recording stops**
@@ -477,7 +477,7 @@ Keep the PC plugged in. Do not use the PC for other work during the run.
 - [ ] **H3 Play the 60-minute file** (60 min). Open `marker-60min.wav` in the media player with **repeat off**. Play it fully from
   the start to the end without pausing, seeking or changing the volume. Keep the microphone open in the room (silent is fine).
 - [ ] **H4 Monitor every 10 minutes** (60 min, by the clock). Record, at 10, 20, 30, 40, 50 and 60 minutes: Task Manager
-  **OpenMeet-py.exe** CPU %, Memory (working set), free disk space on C:, and whether the **System** meter is showing "signal".
+  **OpenMeet.exe** CPU %, Memory (working set), free disk space on C:, and whether the **System** meter is showing "signal".
   Expected: no **Capture:** banner at any time. Any banner is a FAIL; record its text and the time.
 - [ ] **H5 Stop** (2 min). When the file ends, click **Stop**. Record the stop clock time and stop the stopwatch.
 - [ ] **H6 Read the meeting times and counts** (3 min). Save this as `C:\OpenMeetQual\h6_times.py` (copy it exactly; it opens the
@@ -497,10 +497,10 @@ Keep the PC plugged in. Do not use the PC for other work during the run.
       print(track)
   ```
 
-  Run it: `py\.venv\Scripts\python.exe C:\OpenMeetQual\h6_times.py C:/OpenMeetQual/data-H/meetings.db`.
+  Run it: `uv run --project backend python C:\OpenMeetQual\h6_times.py C:/OpenMeetQual/data-H/meetings.db`.
   Record `wall_seconds`, each track's `frames`, `dropped_frames` and `finalized`. `dropped_frames` must be 0 for both tracks.
 - [ ] **H7 Verify** (10 min). Run (use the `wall_seconds` value from H6):
-  `py\.venv\Scripts\python.exe py\tools\verify_recording.py "C:\OpenMeetQual\data-H\audio\<meeting-id>" --tone-freq 440 --marker-every 60 --wall-seconds <wall_seconds> --json > C:\OpenMeetQual\evidence\H7-verify.json`
+  `uv run --project backend python backend\tools\verify_recording.py "C:\OpenMeetQual\data-H\audio\<meeting-id>" --tone-freq 440 --marker-every 60 --wall-seconds <wall_seconds> --json > C:\OpenMeetQual\evidence\H7-verify.json`
   and read the summary. Record: `system.drift` (measured drift in ms over the run, and ppm), `system.wallclock`, `mic.wallclock`, `system.gaps`,
   `mic.gaps`, `system.markers` (count), `pair.duration`.
 - [ ] **H8 Size check** (2 min). Expected size per file is about frames x channels x 4 bytes + 58 bytes header, plus about 4 kB per second of
@@ -629,7 +629,7 @@ released on quit. There is no shortcut to start a recording.
 - [ ] **K7 No start shortcut** (1 min). Read the text under the shortcut fields: "There is no shortcut to start recording: starting always goes through New recording."
   Record it.
 - [ ] **K8 Released on quit** (5 min). Save and quit the app (or close the window). Start a second instance:
-  `py\dist\OpenMeet-py.exe --data-dir C:\OpenMeetQual\data-K2`. Set **Pause / resume shortcut** to `Ctrl+Shift+F9` and **Save shortcuts**.
+  `packaging\dist\OpenMeet.exe --data-dir C:\OpenMeetQual\data-K2`. Set **Pause / resume shortcut** to `Ctrl+Shift+F9` and **Save shortcuts**.
   Expected: no "could not be registered" error (the first instance released the chord). Close the second instance.
 
 **Evidence:** K2 to K8 texts and counts.
@@ -690,7 +690,7 @@ released on quit. There is no shortcut to start a recording.
 
 ## N. Data safety (25 min)
 
-**Goal:** deleting audio or a meeting touches only that meeting's files, exports never overwrite, and the Rust app's data is not touched.
+**Goal:** deleting audio or a meeting touches only that meeting's files, exports never overwrite, and no other profile folder is touched.
 **Preconditions:** A to M done. `--data-dir C:\OpenMeetQual\data-N`.
 
 - [ ] **N1 Delete audio** (6 min). Create `QUAL-N1` with a 30-second tone recording (Stop when done). Place a decoy file outside its
@@ -704,13 +704,13 @@ released on quit. There is no shortcut to start a recording.
   Expected notice: "Existing file preserved; created a new snapshot: ...". Record `Get-FileHash` of the first file before and after: unchanged.
 - [ ] **N3 Delete meeting** (5 min). Open `QUAL-N2` > **•••** > **Delete meeting…**, type the title, confirm. Expected: the meeting is gone,
   its audio folder is gone, and the exported snapshots in `C:\OpenMeetQual\export` are untouched (notice "Exported Markdown snapshots were not touched").
-- [ ] **N4 Rust profile untouched** (4 min). Before the first run of this checklist, list `dir "$env:APPDATA\dev.openmeet*" -Recurse`
+- [ ] **N4 Legacy profile untouched** (4 min). Before the first run of this checklist, list `dir "$env:APPDATA\dev.openmeet*" -Recurse`
   (if nothing exists, record "none"). Compare the list now. Expected: identical names and last-write times.
 - [ ] **N5 Default data folder untouched** (4 min). Record the last-write time of `%APPDATA%\OpenMeetPy\meetings.db` if it exists. Expected: unchanged after
   every run in this checklist (every run used `--data-dir`). If it did not exist, expected: still does not exist.
 
 **Evidence:** N1 folder listing before and after, N2 hashes, N3 notice, N4 and N5 listings.
-**Failure:** any decoy removed, any exported snapshot changed, or a change to a Rust or default-profile folder is a FAIL. Keep everything and stop.
+**Failure:** any decoy removed, any exported snapshot changed, or a change to a legacy or default-profile folder is a FAIL. Keep everything and stop.
 
 ---
 
@@ -718,7 +718,7 @@ released on quit. There is no shortcut to start a recording.
 
 **Goal:** the owner removes test data, records the outcome, and decides which labels can change.
 
-- [ ] **O1 Stop everything.** Stop any recording; Save and quit the app; `Get-Process OpenMeet-py -ErrorAction SilentlyContinue` prints nothing.
+- [ ] **O1 Stop everything.** Stop any recording; Save and quit the app; `Get-Process OpenMeet -ErrorAction SilentlyContinue` prints nothing.
 - [ ] **O2 Restore settings.** Restore the sleep setting (F7), Microphone access On (E7), and any Windows audio or power setting you changed.
 - [ ] **O3 Remove the synthetic credential.** If the **Remove key** step did not already do so, delete the entry from Credential Manager
   (only the entry named in M2 for the synthetic key).
@@ -734,7 +734,7 @@ released on quit. There is no shortcut to start a recording.
 Owner:
 Date:
 PC (model, Windows build from winver):
-Exe SHA-256 (Get-FileHash py\dist\OpenMeet-py.exe):
+Exe SHA-256 (Get-FileHash packaging\dist\OpenMeet.exe):
 Commit (git rev-parse --short HEAD):
 Results file (path, not contents):
 
@@ -755,14 +755,15 @@ a unit test, a browser check, a verifier PASS on a file you did not record yours
 
 When every section is PASS, update these, and no others:
 
-- `docs/python-port-plan.md`: the status paragraph at the top, the "Phases" entries 3, 4 and 5 (remove "unqualified") and Phase 7's
-  status. Record the sign-off date and the results file path there.
-- The README and user guide: `docs/user-guide.md` describes the Rust app, so do not change its wording for the Python build. Update the
-  "Notes for Python-build users" section of `docs/python-port-plan.md` and `README.md` only if its wording is contradicted by the results.
+- `docs/rebuild-status.md`: the status paragraph at the top, the rows for phases 3, 4a, 4b and 5 of its phase history
+  table (remove "unqualified"), its open items, and Phase 7's own row. Record the sign-off date and the results file path
+  there.
+- The README and user guide (`README.md`, `docs/user-guide.md`) describe this build; update them only where the
+  results contradict their wording.
 - The **New recording notice**: `src/widgets/setup-panel/SetupPanel.tsx` shows "Recording is still being tested on more computers. Try a
   short test meeting first." Change it only after all sections pass. Update the same text in any test that asserts it.
 
-After a partial pass, change nothing except the sections you can name as PASS in the plan's "Known gaps" list.
+After a partial pass, change nothing except the sections you can name as PASS in `docs/rebuild-status.md`'s open items.
 
 ---
 

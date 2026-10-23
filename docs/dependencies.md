@@ -1,114 +1,152 @@
 # Dependencies
 
-This inventory describes direct dependencies in the current checkout. It is not a list of packages proposed in the original plan, and it is not a complete redistribution notice bundle.
+This inventory describes the direct dependencies of the Python-only build (version 0.9.0, Windows 11 x64). It is not a complete redistribution notice bundle; the license labels are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
 
-JavaScript versions come from [package.json](../package.json) and [pnpm-lock.yaml](../pnpm-lock.yaml). Rust requirements come from [Cargo.toml](../src-tauri/Cargo.toml), with resolved versions from [Cargo.lock](../src-tauri/Cargo.lock). License labels are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
+Python versions are pinned in [backend/pyproject.toml](../backend/pyproject.toml) with resolutions in `backend/uv.lock`. JavaScript versions come from [package.json](../package.json) and `pnpm-lock.yaml`. License labels were read from installed package metadata in `backend/.venv` and `node_modules`, not from a legal review.
+
+"Network" says when a package or artifact talks to the network during normal use. Nothing here sends telemetry.
 
 ## Build and system tools
 
-| Tool                                  | Project requirement                                     | Purpose                                                            |
-| ------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
-| Node.js                               | 24 for development and CI; manifest allows 24 or newer. | Run package tools, frontend development, and builds.               |
-| pnpm                                  | 12.10.1, pinned in `packageManager`.                    | Install JavaScript dependencies from the lockfile.                 |
-| Corepack                              | Separately installed if absent.                         | Select the project's pinned pnpm version.                          |
-| Rust                                  | 1.99.0, pinned in `rust-toolchain.toml`.                | Build the native backend.                                          |
-| rustfmt and Clippy                    | Components pinned with the Rust toolchain.              | Format and lint Rust.                                              |
-| just                                  | Separately installed; commands verified with 1.58.0.    | Run setup, development, checks, and release build recipes.         |
-| Git                                   | Required to clone and contribute.                       | Source control.                                                    |
-| MSVC C++ tools, Windows SDK, WebView2 | Windows x64 prerequisites.                              | Native compilation and the Windows webview.                        |
-| Xcode command-line tools              | Apple Silicon development prerequisite.                 | macOS shell compilation; does not enable capture or transcription. |
-| cargo-deny                            | Optional locally; installed by dependency-hygiene CI.   | Check Rust advisories, allowed licenses, and dependency sources.   |
+| Tool | Requirement | Purpose | Network |
+| --- | --- | --- | --- |
+| Windows 11 x64 | Only supported platform | WebView2, WASAPI capture, `RegisterHotKey`, Credential Manager | — |
+| Python | 3.13 (`>=3.13,<3.14` in `pyproject.toml`) | Run the backend, tests and the packaging build | — |
+| pip | Not required | Environment creation and installs go through `uv`; no `pip install` step exists | — |
+| uv | Required to build; `uv sync --locked` from `backend/uv.lock` fills `backend/.venv` and `uv run` invokes PyInstaller | Reproduce the exact pinned environment | Package index during sync only |
+| Node.js | 24 or newer | Build the React UI, run frontend tests and lint | — |
+| pnpm | 12.10.1, pinned in `packageManager`; run through Corepack | Install JavaScript dependencies from the lockfile | Registry during install only |
+| WebView2 Runtime | Present on Windows 11 (ships with Edge) | Render the UI inside the app window | — |
+| PowerShell | 5.1 or newer, run with `-ExecutionPolicy Bypass` | Run `packaging/build.ps1` | — |
+| PyInstaller | 6.22.3 (dev group) | Build the one-file `OpenMeet.exe` | — |
+| pytest | 9.1.1 (dev group) | Backend test suite, including the `hardware` and `real_model` markers | — |
+| Git | Required to clone and contribute | Source control | — |
 
-The current downloaded speech engine is prebuilt. Building OpenMeet does not require compiling whisper.cpp or installing Python, CMake, Ollama, or a separate SQLite server.
+The build needs no C compiler, Visual Studio, Windows SDK, CMake or language toolchain: every native piece arrives as a prebuilt wheel, and no speech engine is compiled during the build.
+
+## Python runtime dependencies
+
+Pinned in `[project].dependencies` in [backend/pyproject.toml](../backend/pyproject.toml). All are installed from wheels and bundled into `OpenMeet.exe` by PyInstaller.
+
+| Package | Version | License | Purpose | Network |
+| --- | --- | --- | --- | --- |
+| `fastapi` | 0.161.1 | MIT | HTTP command API and the `/ws` event stream | Loopback only |
+| `uvicorn` | 0.54.0 | BSD-3-Clause | ASGI server bound to `127.0.0.1` on a free port | Loopback only |
+| `pywebview` | 6.2.1 | BSD-3-Clause | Desktop window and native folder picker (WebView2 on Windows) | None |
+| `httpx` | 0.28.1 | BSD-3-Clause | Outbound HTTPS to model hosts and to configured API connections, with the system proxy ignored so loopback traffic never leaves the machine | Outbound on explicit actions |
+| `keyring` | 25.7.0 | MIT | API keys in the Windows Credential Manager (`WinVaultKeyring`) | None |
+| `jaraco.classes` | 3.4.0 | MIT | `keyring` support package | None |
+| `jaraco.context` | 6.1.2 | MIT | `keyring` support package | None |
+| `jaraco.functools` | 4.6.0 | MIT | `keyring` support package | None |
+| `more-itertools` | 11.2.1 | MIT | `keyring` support package | None |
+| `pywin32-ctypes` | 0.2.3 | BSD-3-Clause | Win32 bindings `keyring` uses for the Credential Manager | None |
+| `PyAudioWPatch` | 0.2.12.9 | Apache-2.0 (wheel); bundles PortAudio | WASAPI microphone capture and system-audio loopback as separate streams | None |
+| `pywhispercpp` | 1.5.1 | MIT; bundles whisper.cpp and ggml libraries | Local Whisper transcription in-process | None |
+| `numpy` | 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | Sample buffers, resampling and level meters | None |
+| `sherpa-onnx` | 1.13.8 | Apache-2.0 | Second local speech engine (Python API over ONNX Runtime) | None |
+| `sherpa-onnx-core` | 1.13.8 | Apache-2.0 | Native runtime shipped with `sherpa-onnx` (`onnxruntime.dll`) | None |
+| `websockets` | 15.0.1 | BSD-3-Clause | WebSocket protocol for the event stream; pinned explicitly because `uvicorn` runs without its `standard` extra | Loopback only |
+
+Notes:
+
+- `uvicorn` is installed bare, not with the `standard` extra, so `httptools`, `watchfiles`, `uvloop` and `python-dotenv` are not part of the build. No `.env` file is read.
+- `opentelemetry-api` (Apache-2.0) is installed because FastAPI 0.161.1 declares it. OpenMeet configures no tracer, exporter or endpoint; nothing is sent.
+- `torch`, a separately packaged `onnxruntime`, `ffmpeg`, SQLite server packages and provider SDKs are not dependencies. SQLite comes from Python's standard library, with FTS5.
+
+## Python transitive packages bundled by the one-file build
+
+Installed in `backend/.venv` and collected by PyInstaller. Listed because they ship inside the executable.
+
+| Package | Version | License | Pulled in by |
+| --- | --- | --- | --- |
+| `starlette` | 1.9.0 | BSD-3-Clause | `fastapi` |
+| `pydantic` | 2.14.1 | MIT | `fastapi` |
+| `pydantic-core` | 2.50.1 | MIT | `pydantic` |
+| `annotated-doc` | 0.0.5 | MIT | `fastapi` |
+| `annotated-types` | 0.8.0 | MIT | `pydantic` |
+| `typing-inspection` | 0.4.4 | MIT | `fastapi` |
+| `typing_extensions` | 4.16.0 | PSF-2.0 | `fastapi`, `pywebview` |
+| `anyio` | 4.15.1 | MIT | `fastapi`, `httpx` |
+| `h11` | 0.16.0 | MIT | `uvicorn` |
+| `click` | 8.5.0 | BSD-3-Clause | `uvicorn` |
+| `opentelemetry-api` | 1.45.1 | Apache-2.0 | `fastapi` (unused; no exporter) |
+| `certifi` | 2026.10.23 | MPL-2.0 | `httpx` |
+| `idna` | 3.20 | BSD-3-Clause | `httpx` |
+| `httpcore` | 1.0.9 | BSD-3-Clause | `httpx` |
+| `requests` | 2.34.2 | Apache-2.0 | `pywhispercpp` |
+| `urllib3` | 2.8.0 | MIT | `requests` |
+| `charset-normalizer` | 3.5.2 | MIT | `requests` |
+| `tqdm` | 4.70.1 | MPL-2.0 AND MIT | `pywhispercpp` |
+| `platformdirs` | 4.13.5 | MIT | `pywhispercpp` |
+| `bottle` | 0.13.4 | MIT | `pywebview` |
+| `pythonnet` | 3.2.1 | MIT | `pywebview` (WebView2 host) |
+| `clr_loader` | 0.3.1 | unverified (no license field in installed metadata) | `pythonnet` |
+| `proxy_tools` | 0.1.0 | MIT | `pywebview` |
+| `packaging` | 26.3 | Apache-2.0 OR BSD-2-Clause | `pywhispercpp` |
+
+Build-only packages (PyInstaller, `altgraph` MIT, `pefile` MIT, `pyinstaller-hooks-contrib` Apache-2.0/GPLv2 with the PyInstaller exception, `setuptools` MIT) belong to the build environment, not to the shipped application code.
 
 ## Frontend runtime packages
 
-| Package           | Version | Use                                                              |
-| ----------------- | ------- | ---------------------------------------------------------------- |
-| `@tauri-apps/api` | 2.12.2  | Commands, events, runtime detection, and local audio asset URLs. |
-| `react`           | 19.3.0  | Components, state, and effects.                                  |
-| `react-dom`       | 19.3.0  | Mount the workspace into the webview document.                   |
+Bundled into the UI the backend serves from `backend/web`, built by Vite.
 
-Styling uses plain CSS. Notes use a textarea. Markdown rendering is implemented in the project. Tailwind, Tiptap, shadcn/ui, Radix, and a global state library are not dependencies.
+| Package | Version | License | Use |
+| --- | --- | --- | --- |
+| `react` | 19.3.0 | MIT | Components, state and effects |
+| `react-dom` | 19.3.0 | MIT | Mount the workspace into the document |
+
+Styling is plain CSS. Notes use a textarea, Markdown rendering is implemented in the project, and there is no Tailwind, Tiptap, shadcn/ui, Radix or global state library.
 
 ## Frontend development packages
 
-| Package                       | Version | Use                                                      |
-| ----------------------------- | ------- | -------------------------------------------------------- |
-| `@tauri-apps/cli`             | 2.12.1  | Native development commands.                             |
-| `vite`                        | 8.3.4   | Local frontend server and production assets.             |
-| `@vitejs/plugin-react`        | 6.1.2   | React integration with Vite.                             |
-| `typescript`                  | 5.9.3   | Static type checking.                                    |
-| `@types/react`                | 19.3.0  | React type declarations.                                 |
-| `@types/react-dom`            | 19.3.0  | React DOM type declarations.                             |
-| `eslint`                      | 10.12.0 | Frontend linting.                                        |
-| `@eslint/js`                  | 10.0.1  | Base JavaScript lint configuration.                      |
-| `typescript-eslint`           | 8.71.1  | TypeScript lint integration.                             |
-| `prettier`                    | 3.9.9   | Source and Markdown formatting.                          |
-| `vitest`                      | 5.0.3   | Frontend test runner.                                    |
-| `jsdom`                       | 30.1.2  | DOM environment for frontend tests.                      |
-| `@testing-library/react`      | 16.3.3  | Render and query components as users interact with them. |
-| `@testing-library/user-event` | 14.6.7  | Simulate keyboard and pointer interactions in tests.     |
+Not shipped to users; they build, check and test the UI.
 
-These packages support development; they are not additional native services required on a user's machine.
-
-## Rust packages
-
-The requirement column is the manifest's version constraint. `=` pins an exact version; other requirements can resolve to compatible versions in the lockfile.
-
-| Crate                          | Requirement | Locked version | Use and selected features                                                                                                          |
-| ------------------------------ | ----------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `tauri`                        | `=2.12.2`   | 2.12.2         | Desktop shell, IPC, tray icon, and scoped audio asset protocol.                                                                    |
-| `tauri-build`                  | `2`         | 2.7.1          | Build dependency for Tauri configuration and resources.                                                                            |
-| `tauri-plugin-dialog`          | `2`         | 2.8.1          | Native export-folder picker.                                                                                                       |
-| `tauri-plugin-global-shortcut` | `2`         | 2.4.0          | Pause/resume and optional stop shortcuts.                                                                                          |
-| `tauri-plugin-single-instance` | `2`         | 2.5.2          | Focus the existing app instead of opening a second backend.                                                                        |
-| `rusqlite`                     | `=0.40.2`   | 0.40.2         | SQLite access, with `bundled` SQLite and FTS5 search.                                                                              |
-| `serde`                        | `1`         | 1.0.229        | Payload serialization and deserialization with `derive`.                                                                           |
-| `serde_json`                   | `1`         | 1.0.151        | Engine output, fixtures, timing indexes, and HTTP payloads.                                                                        |
-| `thiserror`                    | `2`         | 2.0.21         | Backend error definitions.                                                                                                         |
-| `uuid`                         | `1`         | 1.27.0         | Version-4 meeting IDs and export filename identity.                                                                                |
-| `time`                         | `0.3`       | 0.3.55         | RFC 3339 timestamps, with `formatting`.                                                                                            |
-| `tempfile`                     | `3`         | 3.27.0         | Temporary downloads, inference output, export publication, and tests.                                                              |
-| `cpal`                         | `=0.18.2`   | 0.18.2         | Native audio devices, microphone capture, and Windows output loopback.                                                             |
-| `ringbuf`                      | `0.5.2`     | 0.5.3          | Bounded audio sample buffers.                                                                                                      |
-| `hound`                        | `3.5`       | 3.5.1          | WAV writing, reading, and recovery.                                                                                                |
-| `reqwest`                      | `=0.13.5`   | 0.13.5         | Backend downloads/provider HTTP and multipart audio uploads; defaults disabled, `blocking`, `native-tls`, and `multipart` enabled. |
-| `keyring`                      | `4`         | 4.2.0          | API key storage through native OS credential stores.                                                                               |
-| `sha2`                         | `0.11`      | 0.11.0         | SHA-256 verification of downloaded artifacts.                                                                                      |
-| `zip`                          | `9`         | 9.0.1          | Extract the speech engine; defaults disabled, `deflate` enabled.                                                                   |
-
-Platform adapters, TLS libraries, and async runtimes also appear transitively. For example, Tauri and reqwest bring runtime dependencies even though OpenMeet does not declare a direct Tokio dependency. Do not remove a transitive crate merely because the application does not import it.
+| Package | Version | License | Use |
+| --- | --- | --- | --- |
+| `vite` | 8.3.4 | MIT | Production bundle; development server on `127.0.0.1` |
+| `@vitejs/plugin-react` | 6.1.2 | MIT | React integration with Vite |
+| `typescript` | 5.9.3 | Apache-2.0 | Static type checking |
+| `@types/react` | 19.3.0 | MIT | React type declarations |
+| `@types/react-dom` | 19.3.0 | MIT | React DOM type declarations |
+| `eslint` | 10.12.0 | MIT | Linting |
+| `@eslint/js` | 10.0.1 | MIT | Base lint configuration |
+| `typescript-eslint` | 8.71.1 | MIT | TypeScript lint integration |
+| `prettier` | 3.9.9 | MIT | Source formatting |
+| `vitest` | 5.0.3 | MIT | Frontend test runner |
+| `jsdom` | 30.1.2 | MIT | DOM environment for tests |
+| `@testing-library/react` | 16.3.3 | MIT | Render and query components as a user would |
+| `@testing-library/user-event` | 14.6.7 | MIT | Simulate keyboard and pointer input in tests |
 
 ## Speech engine and model downloads
 
-These artifacts are downloaded only from **Settings**. They are not bundled with the executable or downloaded by `just setup`. The authoritative URLs, byte lengths, and SHA-256 hashes are in [stt.rs](../src-tauri/src/stt.rs).
+Nothing in this table is bundled. Each artifact is downloaded only from **Settings**, and each is checked against a pinned size and SHA-256 before use. The authoritative URLs, sizes and hashes are in `backend/openmeet_py/speech/stt_catalog.py`.
 
-| Artifact                           | Pinned release or file         | Download size in bytes | Source and role                                                                                       |
-| ---------------------------------- | ------------------------------ | ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| whisper.cpp Windows x64 CPU engine | `b5454`, `whisper-bin-x64.zip` | 8,928,640              | [ggml-org/whisper.cpp](https://github.com/ggml-org/whisper.cpp), local subprocess.                    |
-| Whisper base                       | `ggml-base.bin`                | 147,951,465            | [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp), selectable multilingual model. |
-| Whisper small                      | `ggml-small.bin`               | 487,601,967            | Same model repository; default selection.                                                             |
-| Whisper large-v3-turbo             | `ggml-large-v3-turbo.bin`      | 1,624,555,275          | Same model repository; selectable multilingual model.                                                 |
-| Silero VAD                         | `ggml-silero-v5.1.2.bin`       | 885,098                | [ggml-org/whisper-vad](https://huggingface.co/ggml-org/whisper-vad), voice-activity detection.        |
-| sherpa-onnx Windows x64 runtime    | `v1.13.8`, shared MT no-TTS `.tar.bz2` | 23,271,851     | [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), second local engine (Windows x64 only). |
-| Silero VAD for sherpa-onnx         | `silero_vad.onnx`              | 643,854                | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models), voice-activity detection for sherpa models. |
-| Parakeet TDT 0.6B v3 (int8)        | sherpa `.tar.bz2` archive      | 487,170,055            | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models); English and European languages. |
-| Moonshine base (quantized, English) | sherpa `.tar.bz2` archive     | 111,266,225            | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models); English only. |
-| SenseVoice small (int8)            | sherpa `.tar.bz2` archive      | 165,783,878            | [sherpa-onnx asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models); Chinese, Japanese, Korean, Cantonese, English. |
+| Artifact | Pinned file | Size (bytes) | Source and role |
+| --- | --- | --- | --- |
+| Whisper base (English, q5_1) | `ggml-base.en-q5_1.bin` | 59,721,011 | [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp) at commit `5359861c…`; smallest English model |
+| Whisper small | `ggml-small.bin` | 487,601,967 | Same repository; default multilingual model |
+| Whisper large-v3-turbo | `ggml-large-v3-turbo.bin` | 1,624,555,275 | Same repository; largest selectable model |
+| Silero VAD (whisper.cpp) | `ggml-silero-v5.1.2.bin` | 885,098 | [ggml-org/whisper-vad](https://huggingface.co/ggml-org/whisper-vad); voice-activity gate |
+| sherpa-onnx Silero VAD | `silero_vad.onnx` | 643,854 | [sherpa-onnx `asr-models`](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) |
+| Parakeet TDT 0.6B v3 (int8) | `sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2` | 487,170,055 | Same release; English and European languages |
+| Moonshine base (English, quantized) | `sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2` | 111,266,225 | Same release; English only, small and fast |
+| SenseVoice small (int8) | `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2` | 165,783,878 | Same release; Chinese, Japanese, Korean, Cantonese, English |
 
-Installation fetches the engine, selected Whisper model, and VAD as needed. Switching models retains existing artifacts. Network transfers, extraction space, inference memory, and audio storage are separate from these download sizes. No measured performance guarantee is implied by model selection.
+The whole Whisper catalog is selectable (tiny through large-v3, including `.en` and quantized variants); the table lists the ones the UI recommends. Model archives come only from `github.com`, `objects.githubusercontent.com` and `release-assets.githubusercontent.com`; Hugging Face files come from `huggingface.co` and its `.hf.co` download hosts. A downloaded sherpa-onnx folder is fetched file by file from the Hub, checked against the Hub's SHA-256, and kept only if every file passes.
 
-**Python desktop build (`py/`, phase 4b, unverified).** The sherpa-onnx engine is the pip package `sherpa-onnx` 1.13.8 with `sherpa-onnx-core` 1.13.8, pinned in `py/requirements.txt` and installed from wheels only; it is not downloaded. The Python build downloads only the Silero VAD and the selected sherpa archive, so its listed size is the VAD plus the archive (the Rust engine row above is not downloaded). Archives come from GitHub release hosts only (`github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`). A downloaded Hugging Face sherpa-onnx folder is fetched file by file, checked against the Hub SHA-256, and kept only if every file passes. Pinned sizes and hashes are in [py/openmeet_py/stt_catalog.py](../py/openmeet_py/stt_catalog.py). Licences are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md#python-build-speech-sherpa-onnx-phase-4b).
+Download size is not a performance guarantee: extraction space, inference memory and audio storage are separate.
 
-## External service
+## External services
 
-Users configure independent OpenAI-compatible LLM and cloud-STT API services. No provider SDK is bundled. Credentials belong in the OS keychain; meeting text and cloud audio are sent when you trigger the action or choose automatic processing in Settings, and each cloud connection is labelled Leaves this device. Service costs, limits, supported models/formats, and retention are external to OpenMeet. Local Whisper stays the default. See [privacy](privacy.md#network-actions).
+Speech and AI are OpenAI-compatible endpoints you configure; no provider SDK is bundled. Credentials live in the Windows Credential Manager, and each connection is labelled **This device** or **Leaves this device**. Meeting text and cloud audio are sent only when you trigger an action or choose automatic processing in Settings. Provider costs, limits, model support and retention are outside OpenMeet. Local Whisper and sherpa-onnx stay on the device and remain the default. See [privacy](privacy.md#network-actions).
 
-Ollama, diarization engines, bots, SharePoint, telemetry, auto-updaters, and compression libraries described in older plans are not implemented integrations.
+Local servers (Ollama, LM Studio, Unsloth Studio, speaches, LocalAI) are detected over loopback only; OpenMeet installs and starts none of them. Diarization, bots, SharePoint, telemetry, auto-updaters and compression libraries are not integrated.
 
 ## Inspect or update the inventory
 
-Run `corepack pnpm list --depth 0` for installed JavaScript packages and `cargo tree --locked --manifest-path src-tauri/Cargo.toml --depth 1` for direct Rust dependencies. The full lockfiles include transitive packages and multiple versions of some crates.
+- Installed Python packages: `backend/.venv/Scripts/python.exe -c "import importlib.metadata as m; print(sorted(d.metadata['Name'] for d in m.distributions()))"`.
+- Direct JavaScript packages: `corepack pnpm list --depth 0`; why a package is present: `corepack pnpm why <name>`.
+- Frontend bundle contents: `corepack pnpm build`, then inspect `backend/web` (the Vite build output; `vite.config.ts` sets `build.outDir` to it).
 
-When a manifest or artifact changes, update this page and the license inventory together. Review feature flags, platform support, artifact licenses, and both lockfiles. Run the relevant checks in the [development guide](development.md#run-checks). License checks do not replace a complete release notice audit.
+When a pin, artifact or lockfile changes, update this page and [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md) together. Environment setup and checks are in the [development guide](development.md); no license check replaces a release notice audit.
+

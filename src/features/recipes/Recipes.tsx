@@ -1,5 +1,5 @@
 import { api, type Recipe, type Settings } from "../../shared/api/api";
-import { SavedTextEditor } from "../summary-templates";
+import { SavedTextEditor } from "../../shared/ui/saved-text-editor";
 
 /** Built-in recipes live in code; saved ones come from Settings. */
 export const builtinRecipes: Recipe[] = [

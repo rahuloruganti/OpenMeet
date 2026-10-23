@@ -1,72 +1,59 @@
 # v1 release plan
 
-Agreed with the user on 2026-10-22. These decisions supersede earlier plans and AGENTS.md rules where they conflict.
+Version 0.9.0 is a Python-only rebuild that has not been released and is not qualified on real hardware. This page records the decisions already taken and what still stands between this build and a 1.0 release.
 
-## Goal
+## Decided
 
-A public GitHub release of OpenMeet for Windows. macOS stays labelled as a preview. Features are frozen apart from the items below until the core loop (record → transcribe → summarize → export) works in a real meeting.
-
-## Decisions
-
-| # | Decision |
+| Decision | Value |
 | --- | --- |
-| Audience | Public GitHub release is the end goal. The repository stays private until v1 is ready; the user changes visibility, not an agent. |
-| Platform | Windows only for v1. macOS remains a labelled preview. |
-| Consent | Remove all four consent steps: per-request text confirmation cards (summary, question, rewrite, ask across meetings), cloud audio upload confirmation, the automatic-processing review, and the per-recording participant checkbox. Delete the consent records, fingerprints, and frozen plans behind them. Saved cloud connections keep their "Leaves this device" badge. The README states that users are responsible for local recording-consent laws. The tray recording indicator stays. |
-| Safety limits | Keep hard bounds (bytes, chunk counts, timeouts); stop displaying request counts and budgets. |
-| Automatic processing | Enabled during setup by default: after Stop, transcribe with the selected route, then summarize if AI notes are configured. Live transcription off by default. API failures show an error with Retry; never retry automatically. |
-| First-run setup | Skippable steps, rerunnable from Settings: (1) welcome and data location; (2) transcription: Local or API; (3) AI notes: API connection, reuse step 2's, local server, or skip; (4) default microphone and output with live meters. |
-| Local speech models | Scan for installed models and use them in place (store the path; no copy). Files matching a pinned list are checked once and labelled **Verified**; other runnable models are **Custom**. A missing file shows "Model missing, choose again" and never falls back. Models found but not runnable stay hidden. |
-| Speech engines | whisper.cpp (any Whisper `ggml`) plus **sherpa-onnx** as a second downloadable engine. Pinned sherpa models: Parakeet TDT 0.6B v3, Moonshine base, SenseVoice small. Detected sherpa folders (`.onnx` + `tokens.txt` in a known layout) appear as Custom. |
-| Default local model | Setup recommends Parakeet v3 for English/European languages and Whisper small for others, with download sizes; one click to pick. |
-| Local servers | When Local is chosen, probe loopback only, and only while setup or Settings is open: Ollama `:11434`, LM Studio `:1234`, Unsloth Studio `:8888` (needs an `sk-unsloth` key; a 401 reads "Unsloth Studio found, paste its key"), and OpenAI-compatible speech servers such as speaches `:8000` and LocalAI `:8080`. One click creates a "This device" connection with a model selected. No server: "No local AI server found" with install links. |
-| API route | After base URL and key, fetch `/models` automatically. Filter speech models (`whisper`, `transcribe`, `stt` in the ID) for transcription and the rest for AI notes, with "Show all" and a custom ID field. |
-| Hugging Face | Keep and fix. Search only `automatic-speech-recognition` models. Allow any Whisper `ggml` file from any repository and complete sherpa-onnx model folders (each file checksummed), labelled Custom. Drop LLM `.gguf` downloads. |
-| Shortcuts | New defaults: pause `Ctrl+Shift+F9`, stop `Ctrl+Shift+F10`. Saved shortcuts are unchanged. |
-| Name and version | Product name **OpenMeet**, window title without "foundation preview", version `0.9.0`. Keep the identifier `dev.openmeet.preview` so existing data does not move. |
-| Installer | Unsigned NSIS `-setup.exe`; README documents the SmartScreen "More info → Run anyway" steps. Signing later if downloads justify it. |
-| Updater | None in v1; add in v1.1. |
-| Release builds | Built locally with `just build` until the repository is public; then a `tauri-action` workflow builds releases on tags. |
+| Platform | Windows 11 x64 only. No macOS build, and no promise of one. |
+| Packaging | One unsigned file, `OpenMeet.exe`, built by `packaging/build.ps1` into `packaging/dist/`. No installer. |
+| Signing and installer | Deferred. Revisit only if download numbers justify the certificate and the installer maintenance. Until then the release notes must say the file is unsigned and Windows SmartScreen will warn. |
+| Updater | None in 1.0. An updater is a 1.1 candidate; there is no network check at startup. |
+| Data location | `%APPDATA%\OpenMeetPy\`. Data from the earlier build is brought across with `OpenMeet.exe --import-from <folder>`, never by pointing this build at that folder. |
+| Telemetry | None, and none planned. |
+| Request handling | Hard limits stay (14,400 s recording, 14,400 s post-stop, 256 MiB upload, 1,000 requests, 800,000 text bytes). No request-count or budget display, and no per-request confirmation cards. |
+| Consent | The app enforces no consent checkbox. The user guide and release notes state that recording-consent law is the user's responsibility. |
+| Local speech | whisper.cpp and sherpa-onnx run in-process; local Whisper is the default. Model downloads happen only on an explicit Settings action, verified against pinned sizes and SHA-256. |
+| Networking | Loopback-only server with a per-run token, and outbound requests only to hosts you configure or to the pinned model hosts. |
+
+## Required before 1.0
+
+1. **Phase 7 hardware qualification, run by the owner on this PC.** Nothing else can substitute for it. [The checklist](phase-7-hardware-qualification.md) covers the gates that decide whether the app can be called reliable:
+   - two distinct, audible tracks from a real meeting and a real meeting app;
+   - no audio from paused intervals, including queued buffers and resume boundaries;
+   - device loss, device switch, sleep/wake, disk full and recovery behavior;
+   - a 60-minute two-track run with markers at both ends and relative drift under 100 ms;
+   - a real local transcription (Whisper and sherpa-onnx), including progress, cancel and silence;
+   - global pause and stop shortcuts on a real desktop, including a chord already owned by another app;
+   - meeting detection during a real call;
+   - saving, replacing and removing a real API key in the Credential Manager, including a failure case;
+   - deletion, recovery and export against real files.
+2. **At least one live provider round trip** for cloud transcription and one for AI notes, with content you are allowed to send, recording the request sizes and the result.
+3. **Import verification.** Run `--import-from` against the real earlier data folder in place of the copy already exercised, and confirm the meeting, transcript, summary and task counts match. The importer is implemented and was run once from a copy of that folder (16 meetings, 46 audio files, schema 28 to 29) into a scratch destination, not into `%APPDATA%\OpenMeetPy`, and its path from the installed exe is unverified.
+4. **Clean-machine check.** Copy `OpenMeet.exe` to a Windows 11 machine without the dev environment: SmartScreen warning, first-run setup, device list, one short recording, one export.
+5. **License notices.** Finish [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md): confirm the ONNX Runtime notice bundled inside `sherpa-onnx-core`, the PortAudio license inside `PyAudioWPatch`, the whisper.cpp version inside `pywhispercpp`, and the model licenses (Parakeet v3 is CC-BY-4.0 and needs attribution; SenseVoice is not confirmed).
+6. **Release mechanics.** Version bump, release notes, SHA-256 of the exe published with it, and a tag. Repository visibility is the owner's decision, not an agent's.
 
 ## Order
 
-Each step is its own commit to `main`.
+1. Phase 7 sections A–H (capture, pause, failure, sleep, drift).
+2. Phase 7 sections I–J (real models, automatic processing and summaries).
+3. Phase 7 sections K–N (shortcuts, detection, credentials, data safety).
+4. Import verification, then the clean-machine check, on the same exe that would ship.
+5. License notices and release notes, then build and publish.
 
-1. Hands-on run of the native app, including one short authorized test recording with the user present → bug list.
-2. Remove the consent steps.
-3. First-run setup plus model and server detection.
-   - 3b. sherpa-onnx engine and its pinned models. Backend and UI done (Parakeet TDT 0.6B v3, Moonshine base, SenseVoice small; Windows x64 only). Real-engine transcription is unverified.
-4. Fix Hugging Face search and download. Code done: speech-only search with Whisper ggml / sherpa-onnx / Other labels; any repository's verified `ggml-*.bin`; complete sherpa-onnx folders saved all-or-nothing under `sherpa/custom/`; GGUF downloads removed. Unverified: no real Hub download was run (mock-server tests only); the Hub search `full=true` siblings and the 15 s per-request transfer timeout are unproven on large files; repos whose `tokens.txt` is not LFS-tracked are not offered.
-   - Follow-up (done in code): downloaded sherpa-onnx folders are selectable as `sherpa-dir:<name>` and run through the sherpa engine (layout-based flags; a single-model folder is treated as SenseVoice). Unit-tested for listing, id validation, args per layout and missing folders. Unverified: no real sherpa-onnx transcription with a downloaded folder has run, and transducer model-type detection is left to the engine.
-5. Rename, new shortcut defaults, NSIS installer. Done in code (2026-10-22): config, shortcut defaults, `just installer`, and docs updated; the installer itself is not built or installed here, and fresh-machine install stays open.
-6. Docs, third-party license notices, release notes → `v0.9.0`, built locally.
+Each step is a separate commit. A failing gate is recorded as unqualified in the release notes rather than papered over.
 
-## Still required before calling v1 done
+## Deliberately not in 1.0
 
-The capture qualification in AGENTS.md (distinct audible tracks, paused audio excluded, device loss/switch, sleep/wake, a 60-minute run with drift below 100 ms) and a fresh-machine install of the NSIS build. Record unmet gates in the release notes rather than claiming them.
+- Installer, code signing, notarization, auto-updater, tray icon.
+- macOS or Linux builds.
+- Encryption at rest, compression of audio, secure erasure.
+- Diarization, meeting bots, calendar or SharePoint integration.
+- Managed local LLM downloads (GGUF is not downloaded by the app).
+- Remote or multi-user access: the server stays bound to loopback.
 
-## Hands-on findings (2026-10-22)
+## Definition of done
 
-Native run of `just dev` with two authorized test recordings on a SoundCore 2 Bluetooth device (microphone and output). Driven through WebView2 remote debugging because desktop automation cannot send input into the webview.
-
-| # | Severity | Finding | Status |
-| --- | --- | --- | --- |
-| 1 | P0 | Dev window stayed blank: Vite scanned and watched the 21 GB `src-tauri/target`. | Fixed `147fdd1` |
-| 2 | P0 | Transcription refused every recording on this machine: device packet stamps jitter up to ±11 ms against a 2 ms tolerance. | Fixed `ea753a6` |
-| 3 | P0 | With the SoundCore 2, the system track is always empty. Opening its microphone switches it to hands-free mode; playback then goes to a "Hands-Free" render endpoint that cpal does not enumerate, and loopback of "Headphones (SoundCore 2)" receives nothing. A Noise THREE headset did capture system audio. Closing `voice-jev` did not change the result. | Fixed `531b79e`: Windows now records all app audio by process loopback; an in-app chime test captured it. Capture of a real meeting app is unverified. |
-| 4 | P0 | No warning when a track records nothing or near-silence, during recording or after stop. | Fixed `531b79e`: empty finalized tracks are named on the Transcript tab; the live 10 s microphone-silence warning already existed. |
-| 5 | P1 | Quiet Bluetooth microphone (−50 to −57 dBFS while speaking) gave 2 short segments from about 10 s of speech. | Open |
-| 6 | P1 | About 1.3 s of microphone audio is lost at start while the Bluetooth profile switches. | Open |
-| 7 | P1 | After a no-speech transcription the UI shows "Transcript generated and saved" above "No transcript yet." | Fixed `531b79e` |
-| 8 | P1 | Settings shows no warning that both API tasks use `merge-api`, which has no key, or that the speech model ID is a text-to-speech model. | Open (setup work) |
-| 9 | P2 | Export folder is shown with the `\?\` prefix. | Fixed: paths drop the prefix for display. |
-| 10 | P2 | Window size and position are not remembered. | Open |
-| 11 | P2 | Most library entries read "Untitled meeting"; a default title with date and time would be scannable. | Open |
-| 12 | P2 | "Save notes now" duplicates autosave. | Open |
-| 14 | P1 | Automatic API transcription stops after about 20 minutes: chunks are 16-bit at the native rate, so the 48 kHz stereo system track alone uses about 192 kB/s against the 256 MiB plan budget. Downmix to 16 kHz mono in `cloud_stt::prepare` or scale the budget. | Open |
-| 13 | P1 | New recording listed only a stale "Saved microphone (unavailable)" until **Refresh devices**, although the SoundCore microphone was connected. | Fixed: New recording lists devices again each time it opens. |
-
-Pause exclusion held on the microphone track: the timing index has no blocks for the paused 10.5 s and the WAV length matches. Local transcription with Whisper `small` runs end to end. Summaries were not exercised because no connection has a key.
-n- Release notes: `docs/release-notes-0.9.0.md`; installer built locally (not yet installed or tested on a clean machine).
-
-- Installer check (2026-10-22): the unsigned per-user installer installed silently to %LOCALAPPDATA%\OpenMeet and launched on this PC against the existing profile. First-run setup appeared, found ggml-small.bin and recommended Parakeet v3. The F9/F10 defaults apply to new databases only and were checked by a unit test, not in the app. A clean-machine install and SmartScreen prompt remain untested.
+1.0 means: the Phase 7 checklist is complete with every gate either passing or explicitly recorded as unqualified in the release notes; the documented loop of record → transcribe → summarize → export works on a clean Windows 11 machine with an exe that a stranger can download and run; the license notices are complete; and no page in `docs/` claims a qualification that has not been run.

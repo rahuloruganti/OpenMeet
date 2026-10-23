@@ -3,7 +3,8 @@ import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, type ProviderModel, type Settings } from "../../shared/api/api";
-import { Assignment, Connections } from "./ProviderSettings";
+import { Connections } from "./ProviderSettings";
+import { Assignment } from "../../shared/ui/assignment";
 vi.mock("../../shared/api/api", async (original) => ({
   ...(await original<typeof import("../../shared/api/api")>()),
   api: {

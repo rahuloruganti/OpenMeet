@@ -1,122 +1,58 @@
 # Implementation status
 
+Version 0.9.0 is a Python-only rebuild and is not released. This page says what exists in the code, what the automated tests actually exercise, and what is still unqualified. It is the honest boundary, not a feature wish list.
+
 ## Current boundary
 
-OpenMeet has a notes-first desktop workspace, SQLite persistence, Windows capture, local Windows transcription, and optional user-configured OpenAI-compatible LLM/cloud-STT connections. Schema v14 adds durable automatic-processing runs, bounded provisional transcripts, and request accounting to the processing plan records. Schema v15 adds custom summary templates and saved summary instructions. Schema v16 adds editable tasks. Schema v17 records user-edited summary versions. Schemas v18–v20 add speaker names, transcript edits with earlier transcripts, and summary freshness. Schema v22 adds saved question threads, v23 stores the optional transcript file formats, v24 adds recipes and saved answers across meetings, v25 stores the automatic-processing default (previously in webview storage) and the default summary template, v26 adds opt-in meeting detection on Windows, extended to macOS 14.2+ through CoreAudio process objects with v27 keeping ignored apps' names: a prompt when another app holds the microphone for two polls, once per microphone session, with a per-app ignore list. A prompt only opens recording setup. It is unqualified on a real call; the macOS path was type-checked for aarch64-apple-darwin but never run. New recording and Settings can refresh the device list without replacing a chosen device. This is a preview with open qualification gates, not a complete MVP.
+The application is a FastAPI backend (`backend/openmeet_py`, split into `api`, `audio`, `domain`, `infra`, `platform` and `speech`) serving a React 19 UI from `backend/web` inside a pywebview window, packaged as one unsigned `OpenMeet.exe`. Storage is SQLite with 29 append-only migrations in `backend/openmeet_py/migrations`. Every command the UI calls is implemented; the placeholder 501 table is empty.
 
-## Phase 3 workflow implemented, qualification open
+The qualification gap is unchanged and is the important part: **audio capture, local and cloud transcription, global shortcuts, meeting detection and Windows credential storage have been exercised only with fakes, stubs, synthetic audio and stub HTTP servers.** None of them has been qualified on real hardware in this build. [Phase 7](phase-7-hardware-qualification.md) is the checklist for closing that, and it has not been run.
 
-The UI defaults to recording only. The default chosen in Settings (live-only, final-only, or live plus final transcription and an optional final summary) runs for every new recording with finite processing budgets. On 2026-10-22 the user removed the participant-consent checkbox, the processing review, and the per-request confirmation cards; see `v1-release-plan.md`.
+## Status by area
 
-Rust now owns the accepted-sample live handoff, a shared operation owner for manual and automatic processing, durable workflow stages, cancellation, per-request accounting, atomic final transcript replacement, and saved-note acknowledgement before automatic summaries. The UI displays at most 200 provisional segments, preserves note drafts during notifications, and builds a fresh plan for retry. Restart interrupts unfinished work without replaying requests. Schema-v13 prepared plans are invalidated after migration.
+| Area | Built | Exercised by | Qualification |
+| --- | --- | --- | --- |
+| Notes, rename, autosave (400 ms, serialized, revision checks), draft preservation | Yes | Backend tests with a temp data folder; frontend tests | Unqualified in the packaged window |
+| Search: title filter, FTS5 over notes/transcript/summary, tags | Yes | Backend tests on real SQLite | Unqualified on a large library |
+| Two-track capture (microphone + system loopback), WAV + timing index | Yes, WASAPI through PortAudio | Fake capture backend only | **Unqualified**: no real device run; distinct tracks, pause privacy, device loss, sleep/wake and the 60-minute drift gate are open |
+| Pause/resume/stop, level meters, device refresh | Yes | Fake backend; unit tests reject samples from an earlier pause generation | **Unqualified** on real hardware |
+| Interrupted-recording recovery | Yes | Backend tests with synthetic partial WAVs and timing | Unqualified on real interrupted captures |
+| Local Whisper transcription | Yes, in-process through `pywhispercpp` | Synthetic audio; the `real_model` marker is excluded by default | **Unqualified**: no real model run recorded |
+| sherpa-onnx transcription (Parakeet v3, Moonshine, SenseVoice, downloaded folders) | Yes | Stub/fixture tests; `real_model` excluded by default | **Unqualified**: no real sherpa transcription recorded |
+| Cloud transcription (bounded WAV chunks, untimed results) | Yes | Stub HTTP servers | **Unqualified**: no live provider call |
+| Model library: folder scan, hash import, Hugging Face search/download | Yes | Stub HTTP; no real Hub download | **Unqualified**: Hub search, large downloads and folder verification unproven live |
+| Provider connections, masked key entry, Credential Manager storage | Yes, `keyring` → `WinVaultKeyring`, service `OpenMeetPy` | In-memory keyring backend in tests | **Unqualified**: no real key saved, replaced or removed on this machine |
+| Summaries: three templates, custom templates, saved instructions, chunking, version history, edits | Yes | Stub HTTP servers | **Unqualified** against real models |
+| Questions: per-meeting threads, follow-ups, library scope, saved answers, recipes, keyword retrieval | Yes | Stub HTTP servers; retrieval unit tests | **Unqualified** on long real meetings |
+| Rewrite selected notes | Yes | Stub HTTP servers | Unqualified against real models |
+| Tasks: manual entry, import from summary, export | Yes | Backend tests | Low risk; unqualified in the window |
+| Markdown export with optional TXT/SRT/VTT, non-overwriting snapshots | Yes | Backend tests with temp folders | Unqualified against a real export folder |
+| First-run setup and local server detection | Yes | Stub HTTP on loopback | **Unqualified** against real local servers |
+| Automatic processing default (live/final/summary) and retry | Yes | Fake capture + stub HTTP, stepped by tests | **Unqualified** end to end |
+| Global shortcuts (pause `Ctrl+Shift+F9`, stop `Ctrl+Shift+F10`) | Yes, `RegisterHotKey` | Fake Win32 message pump | **Unqualified**: registration on a real desktop, chord conflicts and behaviour while another app is focused are open |
+| Meeting detection (Windows microphone privacy store, 3 s poll, two-poll debounce) | Yes | Fake consent registry | **Unqualified** on a real call |
+| Import of an earlier build's data folder (`--import-from`) | Yes: `backend/openmeet_py/infra/importer.py`, invoked from `app.py` | Backend tests with synthetic data; one run from a copy of a real earlier folder into a scratch destination (16 meetings, 46 audio files, schema 28 to 29) | **Not run into the real `%APPDATA%\OpenMeetPy`**; the source is read-only, refusals, secret blanking and rollback are tested |
+| Local server boundary: loopback bind, per-run token, `Host` check, `/files` scoping | Yes | Backend tests, including token and `Host` refusal and the `/files` database refusal | Needs an independent end-to-end boundary review; not an audit |
+| One-file `OpenMeet.exe` build (`packaging/build.ps1`) | Yes | Build script only | Not installed or launched on a clean machine |
 
-Implementation is present for issues #19 through #24. Their complete acceptance gates and combined qualification under #25 are not declared passed. Integrated Windows checks passed with 121 frontend tests and 125 Rust tests; two native tests remained ignored. Formatting, typecheck, lint, frontend build, all-target Clippy, Cargo build, and standalone Tauri debug build passed. See [workflow implementation and qualification](phase-3-workflow-verification.md) and [the execution plan](phase-3-execution-plan.md). No hardware or external provider result is inferred from the implementation.
+## What a passing test run means
 
-No platform has passed the full two-track capture gate. An earlier Windows attempt was blocked by a missing microphone. A later authorized two-second smoke test was recorded as passing in [log.md](../log.md), but it did not establish audible-content quality, pause privacy, device-failure behavior, or long-run drift. No recording was made during the recent UI and installation work.
+The backend suite runs with `pytest` from `backend/`, with `hardware` and `real_model` tests excluded by default:
 
-macOS capture is an unqualified preview on Apple Silicon, macOS 14.2 or newer. Its local speech engine requires the separately pinned local whisper.cpp build. Permission denial and the integrated macOS workflow remain unqualified. Cloud STT processes finalized recording tracks or finalized temporary live chunks. Notes, audio, transcripts, summaries, and exports remain unencrypted. Production simulation/sample creation is removed; historical fictional records remain labeled and accessible.
+```
+backend\.venv\Scripts\python.exe -m pytest
+```
 
-## Implemented features
+Those tests use a fake capture backend, a fake Win32 layer, an in-memory keyring, temporary data folders and stub HTTP servers. They prove the code paths, the validation, the limits and the error handling; they prove nothing about a real microphone, a real model, a real provider, a real shortcut or the Credential Manager. A green run, a `--smoke` start, or a browser check is not a hardware result.
 
-| Area                    | Current implementation                                                                                                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace               | Collapsible meeting library, source labels, notes/summary/transcript tabs, dedicated setup/settings panels, and persistent recording controls.                             |
-| Notes                   | Notes-only entries, rename, Markdown textarea, 400 ms serialized autosave, revision checks, save-before-switch/export/quit, and failed-draft preservation.                 |
-| Search                  | Title filtering and SQLite FTS5 matches across notes, transcript segments, and summaries; user tags filter both and export in frontmatter.                                                                                  |
-| Capture                 | Windows selected microphone and output loopback, separate WAVs, timing JSONL, bounded queues, pause/resume/stop, tray controls, level meters, and configurable shortcuts.  |
-| Local transcription     | Explicit verified downloads of whisper.cpp, selected Whisper model, and Silero VAD; language/vocabulary settings, progress/cancel, stored segments, and timing conversion. |
-| Automatic processing    | Settings default applied to each recording, bounded live previews, final transcription, optional summary, saved-note acknowledgement, cancellation, and explicit retry.                       |
-| Playback                | Per-track players, transcript seeking, note timestamps, and visible playback errors.                                                                                       |
-| Transcript corrections  | Per-meeting speaker names, segment edits with revert, read-only earlier transcripts kept on re-transcription, and out-of-date summary notices.                          |
-| Provider settings       | Reusable cloud/local API connections, OS-keychain credentials, independent summary/speech assignments, optional discovery/custom IDs, and revision checks that stop stale work.          |
-| Cloud transcription     | Upload on Transcribe, frozen bounded WAV chunks, pause-aware timing, timed/untimed results, cancellation and atomic transcript/provenance replacement.              |
-| Summaries and questions | Configured chat API, three built-in templates plus custom templates and saved instructions, history/copy, user edits saved as labelled versions, bounded chunked summaries, and per-meeting questions saved as threads with contextual follow-ups (schema v22). Ask across meetings answers one question over 1 to 20 chosen meetings (or a tag's meetings) in a single request with validated `[M2 1:01]` source links; answers are saved with their scope and deleted with any of their meetings (schema v24). Recipes (five built in plus saved ones) fill either question box. Selected note text can be rewritten; only the selection and request are sent, and the result replaces the selection only when accepted. Content too long for one request is not refused: local lexical (FTS5 keyword) retrieval sends only matching transcript excerpts and notes, and a question with no match sends nothing and shows "insufficient evidence" (#35). Retrieval is keyword-based, not semantic; its quality on real long meetings is unverified. |
-| Tasks                   | Editable tasks with owner, done state, source, and optional due date; manual entry or explicit import from a summary's Action items; exported as a checklist.              |
-| Export                  | Folder picker, source-aware Markdown, optional transcript/summary, filename preferences, optional TXT/SRT/VTT transcript files, and non-overwriting snapshots.               |
-| Recovery and retention  | Interrupted-recording detection, repaired copies preserving originals, typed-confirmation delete audio/meeting, and disk usage.                                            |
-| Development             | Pinned toolchains and lockfiles, just recipes, automated frontend/Rust checks, and CI definitions.                                                                         |
+## Known limits carried into this build
 
-Implemented does not mean qualified. See [the user guide](user-guide.md), [architecture](architecture.md), and [privacy](privacy.md) for behavior and limits.
+- Audio and exports are unencrypted, and deletion is not secure erasure.
+- Live and final automatic processing can send the same audio twice, and the 256 MiB upload limit is reached after roughly 20 minutes with the 48 kHz stereo system track.
+- Untimed cloud results cannot produce timestamp links.
+- Keyword retrieval for long meetings is lexical, not semantic.
+- No auto-updater, no installer, no signing, no tray icon, no macOS support.
 
-## Phase 2 settings and model library (2026-10-14)
+## Supporting records
 
-Cloud API, Local, and General tabs, reusable connections, schema-v12 migration, bounded local model discovery, verified catalog import, and explicit public Hugging Face search/download are implemented. Routine checks passed with 104 frontend tests and 87 Rust tests; two native tests remained ignored. Native checks confirmed tabs, draft preservation, keyboard navigation, and opening the folder picker in an isolated empty profile. Completing folder selection was blocked by the Windows helper. Provider/keychain workflows and model-library end-to-end qualification remain open. See [Phase 2 verification](phase-2-settings-verification.md). Live transcription and automatic processing were deferred in that Phase 2 increment; the Phase 3 implementation is described above.
-
-## Feature batch (2026-10-12)
-
-The M0–M5 feature batch added summary history/templates/copy, rename, meters and stop shortcut, note-only entries, guarded deletion, FTS5 search, playback/seek, timestamps, speech settings/progress/cancel, chunked summaries, questions, export options, and interrupted-audio recovery. Deferred items include webview key entry, compression, encryption, local LLMs, and M6 release work. No milestone's complete native, hardware, and provider exit gate is claimed.
-
-The subsequent UI polish added a quieter workspace, dedicated settings/setup layouts, a first-export folder flow, dismissible notices, preserved drafts while panels are open, and playback failure handling. Installation documentation and just commands were added afterward.
-
-## Provider settings checks (2026-10-13)
-
-`just check` passed on Windows after restoring the missing Windows SDK. It ran frontend typecheck, lint, formatting, 88 tests and production build, then Rust formatting, Clippy with warnings denied, 67 passing tests and native debug build. The hardware test remained ignored. Additional synthetic SQLite upgrade checks covered populated v0/v2/v5/v9 databases and FTS/foreign-key preservation. Synthetic API servers do not establish live provider compatibility.
-
-`just build` produced a standalone release executable. The prior app closed through Save and quit, and the temporary Vite server was stopped. The rebuilt app loaded from `http://tauri.localhost/` with the existing library and Saved/Not recording states visible. Native Settings showed independent LLM fields, local model choices, and cloud speech fields/disclosure after switching modes. Switching back preserved the existing `small` local model. Local mode was restored, and the app was left running. The pause-shortcut warning remains. No real key was entered, content uploaded, or recording started; successful native key save/replace/remove and live provider compatibility remain unqualified.
-
-Provider settings use independent role revisions and OS-keychain references, not stored API keys. Cloud cancellation covers chunk preparation and final publication; settings changes before upload invalidate the plan. Local/cloud reruns replace generated transcript rows atomically, including untimed and empty results. Production fixture/simulation creators and their UI/IPC are absent; historical source interpretation and test fixtures remain.
-
-## Previous installation checks
-
-The installation work in this conversation ran the following on Windows against the current application code. These are executed results, not results inferred from this documentation edit.
-
-| Check                                             | Result                                                                                                                            |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `just setup`                                      | Passed using Rust 1.99.0 and pnpm 12.10.1.                                                                                        |
-| TypeScript, ESLint, frontend formatting and build | Passed through `just check`.                                                                                                      |
-| Vitest                                            | 76 tests passed across 5 files.                                                                                                   |
-| Rust formatting and Clippy with warnings denied   | Passed through `just check`.                                                                                                      |
-| Rust tests                                        | 57 passed; 1 hardware test deliberately ignored.                                                                                  |
-| Native debug build                                | Passed with `--locked`.                                                                                                           |
-| `just build`                                      | Passed; Windows release executable produced. It was not launched.                                                                 |
-| `just dev` native startup                         | Vite and the app started; the window initially stayed blank, then loaded the saved library and notes workspace. Delay unresolved. |
-| Shortcut registration                             | Pause shortcut reported unavailable; alternate shortcut registration was not checked.                                             |
-
-Checks used Node 24.21.0, installed Visual Studio 2022 C++ tools, and an existing temporary Rust installation. Fresh-machine setup and macOS were not tested. No real capture, playback, in-app transcription, live summary, question submission, recovery, deletion, or export was performed in that installation smoke check.
-
-Previous work recorded cargo-deny checks, a local engine spot check, and broader fixture-based UI checks. Those are historical evidence in [log.md](../log.md), not new qualification results. Current remote CI has not been rechecked here.
-
-On 2026-10-13, launching the earlier release executable reproduced `ERR_CONNECTION_REFUSED` at the development URL. The release recipe used plain Cargo without Tauri's production asset protocol. `just build` now invokes the Tauri CLI, but the rebuild was blocked by missing Windows SDK headers and libraries on this machine. The existing executable was relaunched with a local Vite preview server serving `dist/`; its saved library and notes workspace loaded. This verifies the temporary server-backed launch, not a rebuilt standalone executable. The pause-shortcut warning remains.
-
-## Foundation qualification follow-up
-
-[The follow-up report](foundation-qualification-follow-up.md) records a timing-write failure that could mark an incomplete track finalized, the correction and regression tests, an authorized short two-file capture, and partial native note/export checks. Further fixes reject damaged local timing, correct segment endpoints at pause boundaries, and allow recovery retries after failed SQLite publication while retaining all copies. Final full local checks passed with 105 frontend tests and 97 Rust tests, with two native tests ignored. Hardware privacy, failure scenarios, drift, complete shortcut/playback qualification, and providers remain open. Subsequent native note/export checks passed, closing #11. The earlier self-closing windows remain an unresolved report under #13; monitored retries have not reproduced it.
-
-## Open work
-
-The October 14 [Phase 1 foundation verification](phase-1-foundation-verification.md) records startup, draft-refresh, audio-health, and capture-worker fixes. `just check` passed with 98 frontend tests and 74 Rust tests, with two native tests ignored by the routine suite. Separately selected short hardware and synthetic Windows keychain tests each passed once. These results do not complete hardware, native UI, or provider qualification.
-
-### Stabilization and native UI
-
-- The startup pause-shortcut warning comes from another application owning CommandOrControl+Shift+Space (Windows error 1409). The warning now names every failing shortcut and chord; choose another shortcut in Settings. The default was the same until v0.9.0; new installs now default to Ctrl+Shift+F9 for pause and Ctrl+Shift+F10 for stop.
-- Verify repeated native cold starts after removing optional discovery from the saved-notes startup dependency.
-- Qualify native failures after bounding worker control waits and testing stalled workers, late finalization, and SQLite publication failure/retry.
-- Qualify audio-health cleanup and draft-preserving finalized metadata refresh in the native app; regression tests pass.
-- Exercise note persistence across restart, first export and cancelled folder selection, history/copy, settings, recovery, and guarded deletion in the native app.
-- Verify keyboard-only operation, 720×580 minimum size, 200% zoom, error visibility, and playback failure handling in the webview.
-- Validate clipboard permissions, asset-protocol refusal outside the audio folder, global stop registration, and filesystem symlink deletion bounds on a suitable Windows machine.
-- Check a fresh checkout and current Windows/macOS/dependency-hygiene CI. LF enforcement exists; a green remote workflow is not implied.
-
-### Windows capture qualification
-
-Use an explicitly authorized recording with identifiable synthetic signals. Verify distinct audible tracks, absence of audio from paused intervals including queued callbacks and resume boundaries, correct device selection, unavailable devices, permission denial, silent loopback, startup rollback, device loss/switch, sample-rate changes, sleep/wake, disk full, overflow, and recovery after interruption.
-
-Run a 60-minute two-track test with markers near both ends, recording device/driver details, offsets, drift, and dropped frames. Required relative drift is below 100 ms. Two finalized WAV files or a passing build cannot substitute for this gate.
-
-### Transcription and summaries
-
-- Qualify real-engine progress, cancellation, silence handling, accuracy, and performance across selected models/languages using licensed or consented audio.
-- Test the complete in-app record/transcribe/summarize/export path after a fresh install and restart.
-- Validate each configured provider/model combination with explicit content consent, including chat templates/questions, long-input chunking, audio limits, formats, failures, and request costs.
-- Qualify preservation of the last good transcript/summary through failed retries in the native app. Durable workflow state and explicit one-step retry are implemented; restart never replays inference or provider requests.
-- Qualify native Settings key entry, replacement/removal, OS-keychain failures, and publication/cleanup failures. The password field is transient; keys are not returned to frontend state or logs.
-
-### Platform, privacy, and release
-
-- Qualify the Apple Silicon tap path: audible distinct tracks, permission denial, duplex refusal on a real device, and the same 60-minute drift gate as Windows. Minimum OS is 14.2. The separately pinned local transcription path remains unqualified.
-- Run an egress-blocked local workflow and a separate cloud opt-in check. Complete end-to-end pause and privacy qualification.
-- Keep snapshot exports until a tested external-edit merge implementation exists.
-- Complete transitive license notices and model attribution before distribution.
-- Deliver installers, signing/notarization, and release validation. Bundling remains disabled; no updater is implemented.
-
-Compression, encryption, managed local LLMs, diarization, bots, automatic meeting detection, and SharePoint integration are not delivered. The [v1 release plan](v1-release-plan.md) sets the current scope and order.
+[Phase 7 hardware qualification](phase-7-hardware-qualification.md) is the checklist to run before any claim of reliability. [Dependencies](dependencies.md) lists what ships. [Privacy](privacy.md) lists what leaves the device. [v1 release plan](v1-release-plan.md) lists what remains before 1.0.

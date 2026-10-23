@@ -51,7 +51,7 @@ export const formatShortDate = (iso: string, now = new Date()) => {
   }).format(date);
 };
 
-/** A path without the Windows `\\?\` long-path prefix that Rust adds when it canonicalizes. */
+/** A path without the Windows `\\?\` long-path prefix the backend may add when it canonicalizes. */
 export const displayPath = (path: string) => path.replace(/^\\\\\?\\/, "");
 
 /** "9:30 AM", the start time without a date. */

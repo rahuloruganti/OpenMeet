@@ -5,7 +5,7 @@ import {
   OpenSettingsButton,
   type OpenSettings,
   type SettingsSection,
-} from "../../widgets/settings-panel";
+} from "../../shared/ui/settings-link";
 
 const presets = [
   "Make it shorter",

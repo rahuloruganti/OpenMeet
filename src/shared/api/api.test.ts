@@ -1,13 +1,14 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
-import { api } from "./api";
+import { convertFileSrc, invoke, listen } from "./transport";
+import type { Event } from "./transport";
+import { api, type RecordingState } from "./api";
 
-vi.mock("@tauri-apps/api/core", () => ({
+vi.mock("./transport", () => ({
   invoke: vi.fn(),
-  isTauri: vi.fn(),
+  listen: vi.fn(),
   convertFileSrc: vi.fn(),
+  isBackendConnected: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 beforeEach(() => vi.resetAllMocks());
 
@@ -82,6 +83,32 @@ it("starts real recordings with no consent or review argument", async () => {
   expect(Object.keys(api)).not.toContain("start");
   expect(Object.keys(api)).not.toContain("createFixture");
   expect(Object.keys(api)).not.toContain("prepareSessionProcessing");
+});
+
+it("routes audio and events through the transport", async () => {
+  vi.mocked(convertFileSrc).mockReturnValue("/files?path=audio.wav");
+  expect(api.audioSrc("audio.wav")).toBe("/files?path=audio.wav");
+  expect(convertFileSrc).toHaveBeenLastCalledWith("audio.wav");
+
+  const state: RecordingState = {
+    revision: 3,
+    status: "paused",
+    meeting_id: "meeting",
+    source: null,
+    error: null,
+    recording_offset_ms: 1200,
+  };
+  const received: RecordingState[] = [];
+  await api.onRecordingState((next) => received.push(next));
+  expect(listen).toHaveBeenLastCalledWith(
+    "recording_state",
+    expect.any(Function),
+  );
+  const handler = vi.mocked(listen).mock.calls.at(-1)![1] as (
+    event: Event<RecordingState>,
+  ) => void;
+  handler({ event: "recording_state", id: 1, payload: state });
+  expect(received).toEqual([state]);
 });
 
 it("binds automatic processing controls", async () => {

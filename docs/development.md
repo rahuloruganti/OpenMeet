@@ -2,24 +2,26 @@
 
 ## Set up and run
 
-Follow the [README prerequisites](../README.md#install-and-run-on-windows). From the repository root, run:
+Follow the [README prerequisites](../README.md#build-and-run-from-source). From the repository root:
 
 ```sh
 just setup
 just dev
 ```
 
-`setup` installs the toolchain selected by `rust-toolchain.toml` and JavaScript dependencies from the lockfile. It does not install native system prerequisites or speech artifacts. `dev` starts Vite on `127.0.0.1:1420`, builds Rust, and launches the desktop app. Keep the terminal open.
+`setup` installs the pinned Python environment with `uv` (Python 3.13, `backend/uv.lock`) and the JavaScript dependencies with the pinned pnpm version. It does not download speech models. `dev` builds the UI into the backend, starts the FastAPI server on a free loopback port, and opens the `pywebview` window. Keep the terminal open.
 
-Use `corepack pnpm dev` only for frontend preview. Native actions are disabled there; it is not a persistence, recording, or permission check. Stop an earlier frontend process before starting another on port 1420.
+`just ui` starts only the Vite dev server on `127.0.0.1:1420`; no backend is attached and there is no mock layer, so the page shows the not-connected notice and every command fails. It does not prove persistence, capture, shortcuts or permissions. Stop the earlier process before starting another on port 1420.
 
-Prefer a permanent rustup installation. Temporary Rust locations recorded in historical test logs are not project configuration and may disappear.
+`.preview/` is an untracked browser harness on port 1430 that serves fictional data and simulated recording; run it with `corepack pnpm exec vite --config .preview/vite.preview.config.ts`. Nothing in it touches a database, an audio device or the network.
 
 ## Find the relevant code
 
-Use the [architecture code map](architecture.md#code-ownership). React owns presentation and command orchestration. Rust owns audio, storage, HTTP, model files, credentials, and native controls. Command payloads must agree between `src/lib/api.ts`, Rust handlers, and `domain.rs`.
+Use the [architecture code map](architecture.md#code-ownership). The frontend follows Feature-Sliced Design: `app` > `pages` > `widgets` > `features` > `entities` > `shared`, imports only downward, and each slice exposes a public `index.ts`. ESLint's `no-restricted-imports` rule enforces the boundary.
 
-Follow [AGENTS.md](../AGENTS.md) when using coding agents, especially its recording, data-preservation, and repository rules. Consult [implementation status](implementation-status.md) for current capabilities; older plans contain superseded designs.
+The backend is `backend/openmeet_py/`: `api/` (HTTP surface and `commands.py` registry), `domain/` (meetings, notes, transcripts, summaries, settings, processing, provider HTTP, chat calls and export), `audio/`, `speech/` (engines, cloud STT, model library, safe archive), `platform/` (Windows integration), `infra/` (SQLite store and migrations, plus the read-only importer), plus `app.py`, `paths.py` and `migrations/`. Command arguments must agree between `src/shared/api/api.ts`, `api/commands.py` and the payload types the handlers return; `backend/tests/test_commands.py` catches a command the UI invokes but the backend does not serve.
+
+Follow [AGENTS.md](../AGENTS.md) when using coding agents, especially its recording, data-preservation and repository rules. Consult [implementation status](implementation-status.md) for current capabilities; [rebuild status](rebuild-status.md) explains how the Python build relates to the retired implementation.
 
 ## Run checks
 
@@ -29,89 +31,63 @@ just check
 
 The recipe runs, in order:
 
-| Check                     | Command                                                                                   |
-| ------------------------- | ----------------------------------------------------------------------------------------- |
-| TypeScript                | `corepack pnpm typecheck`                                                                 |
-| Frontend lint             | `corepack pnpm lint`                                                                      |
-| Frontend formatting       | `corepack pnpm format:check`                                                              |
-| Frontend behavior tests   | `corepack pnpm test`                                                                      |
-| Frontend production build | `corepack pnpm build`                                                                     |
-| Rust formatting           | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`                               |
-| Rust lint                 | `cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` |
-| Rust tests                | `cargo test --locked --manifest-path src-tauri/Cargo.toml`                                |
-| Native debug build        | `cargo build --locked --manifest-path src-tauri/Cargo.toml`                               |
+| Check | Command |
+| --- | --- |
+| TypeScript | `corepack pnpm typecheck` |
+| Frontend lint (includes the FSD import boundary) | `corepack pnpm lint` |
+| Frontend formatting | `corepack pnpm format:check` |
+| Frontend behavior tests | `corepack pnpm test` |
+| Frontend production build | `corepack pnpm build` |
+| Backend tests | `uv run --directory backend pytest` |
 
-Build the frontend before standalone Cargo checks. Outside development mode, Tauri embeds `dist/`. Neither compilation nor mocked tests establish hardware capture or real provider quality.
+Format frontend changes with `corepack pnpm format`. The formatting scripts exclude Markdown, so pass documents explicitly: `corepack pnpm exec prettier --check README.md docs/architecture.md`, and `--write` to fix them. `just --fmt --check` checks the justfile.
 
-Format frontend changes with `corepack pnpm format` and Rust changes with `cargo fmt --manifest-path src-tauri/Cargo.toml`. The package's formatting scripts exclude Markdown. Pass changed documents explicitly, for example `corepack pnpm exec prettier --check README.md docs/dependencies.md`. Use `--write` instead of `--check` to format them. `just --fmt --check` checks the justfile.
+Compilation and mocked tests do not establish hardware capture or live provider quality.
 
 ## Test at the right boundary
 
-| Area          | Existing coverage                                                                                                                  | What it does not establish                                                                         |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| React         | Vitest, jsdom, Testing Library, mocked Tauri commands/events.                                                                      | Native permissions, clipboard, playback devices, or webview behavior.                              |
-| Notes         | Debounced writes, stale revision refusal, save failure, draft retention, export and close ordering.                                | Survival of text never saved before power loss.                                                    |
-| Storage       | Populated-database upgrades, foreign keys, FTS5 updates, source labels, and deletion bounds.                                       | Secure erasure, live backup consistency, or every filesystem failure.                              |
-| Audio         | Synthetic samples, pause generations, WAV writing/repair, and capture internals.                                                   | Audible real-device content, sleep/wake, driver failures, or long-run drift.                       |
-| Transcription | Artifact validation, output parsing, timing, arguments, progress, and cancellation with fake engines.                              | Real-engine accuracy or performance across models and languages.                                   |
-| Providers     | Synthetic HTTP responses, discovery/custom IDs, redirects, errors, text/audio plans, timing, cancellation, and atomic publication. | Live billing, model quality, availability, provider retention, and native keychain fault behavior. |
+| Area | Existing coverage | What it does not establish |
+| --- | --- | --- |
+| React | Vitest, jsdom, Testing Library, mocked transport commands and events. | WebView2 behavior, permissions, playback devices. |
+| Notes | Debounced writes, stale revision refusal, save failure, draft retention, export and close ordering. | Survival of text never saved before power loss. |
+| Storage | Populated-database upgrades, foreign keys, FTS5 updates, source labels, deletion bounds. | Secure erasure, live backup consistency, every filesystem failure. |
+| Audio | Synthetic samples, pause generations, WAV writing and repair, capture internals with `OPENMEET_PY_FAKE_AUDIO=1`. | Audible real-device content, pause privacy on real callbacks, sleep/wake, driver failure, drift. |
+| Speech | Fake engines via `OPENMEET_PY_FAKE_STT=1`: argument building, output parsing, timing, cancellation. | whisper.cpp or sherpa-onnx accuracy and performance on real models. |
+| Providers | `httpx` mock transports: discovery, custom IDs, redirects, errors, text and audio plans, atomic publication. | Live billing, quality, availability, provider retention, Credential Manager fault behavior. |
 
-Routine tests use synthetic audio and fictional text. Do not start a recording or submit meeting content to a provider as part of normal verification.
+The fake switches exist for tests and the browser harness only. Never enable them in a build you hand to someone, and never present their output as real capture or a real transcript.
 
-The ignored `audio::tests::windows_devices_open_and_stop_writes_both_wavs` test opens actual devices. Run it only after explicit authorization for that test:
+Routine tests use synthetic audio and fictional text. Do not start a recording, open audio devices, or send meeting content to a provider during normal verification.
 
-```sh
-cargo test --locked --manifest-path src-tauri/Cargo.toml audio::tests::windows_devices_open_and_stop_writes_both_wavs -- --ignored --exact --nocapture
-```
+`just hardware` runs the opt-in real-hardware tests. Run it only with explicit authorization and only when real devices are the point; missing devices block the test rather than passing it. Hardware qualification also needs audible distinct tracks, absence of paused content, failure recovery, and a 60-minute run with measured relative drift below 100 ms. See [Phase 7 hardware qualification](phase-7-hardware-qualification.md).
 
-Do not run all ignored tests. Missing devices block the test; they do not count as a pass. Hardware qualification also needs audible distinct tracks, absence of paused content, failure recovery, and a 60-minute run with measured relative drift below 100 ms. See [open work](implementation-status.md#open-work).
-
-The separate ignored Windows keychain test creates and removes only a unique synthetic credential. It does not read configured keys or contact a provider. It exercises the actual credential store, so keep it separate from the routine suite:
-
-```sh
-cargo test --locked --manifest-path src-tauri/Cargo.toml providers::tests::windows_keychain_round_trip_uses_only_new_synthetic_credentials -- --ignored --exact --nocapture
-```
-
-Current executed results and remaining gates are recorded in [Phase 1 foundation verification](phase-1-foundation-verification.md).
-
-## Check dependency hygiene
-
-```sh
-corepack pnpm audit --prod --audit-level high
-cargo deny --manifest-path src-tauri/Cargo.toml check advisories licenses sources
-```
-
-Install cargo-deny separately if needed. [deny.toml](../deny.toml) defines allowed licenses, sources, and target platforms. Update [dependencies](dependencies.md) and [third-party licenses](../THIRD_PARTY_LICENSES.md) when a package or downloaded artifact changes. Passing these checks is not a complete release audit.
-
-## Build a release executable
+## Build the executable
 
 ```sh
 just build
 ```
 
-The recipe runs `corepack pnpm tauri build --no-bundle -- --locked`. Tauri builds the frontend and enables its production asset protocol. A plain `cargo build --release` leaves that protocol disabled and tries to load the development server instead. On Windows the result is `src-tauri/target/release/openmeet.exe`. Close a running release executable before rebuilding it.
+The recipe runs `packaging/build.ps1`, which builds the UI into `backend/web`, bundles it and the SQL migrations, and runs PyInstaller in one-file windowed mode. The result is `packaging/dist/OpenMeet.exe`: one unsigned file, no installer, no signing, no updater. Close a running `OpenMeet.exe` before rebuilding.
 
-The executable embeds the frontend and does not require Vite. WebView2 remains a Windows runtime prerequisite. Local speech artifacts and independent provider credentials are configured in the app. This command passes `--no-bundle`, so it produces no installer, signing, notarization, or updater; the unsigned Windows installer comes from the manual workflow described under CI.
+`just smoke` runs `OpenMeet.exe --smoke`, which starts the server, checks `/health` and one command, prints `OK` and exits. It proves the bundle starts; it does not prove capture or transcription.
 
 ## Protect data during development
 
-Development and release builds currently share the `dev.openmeet.preview` app identifier and app-data location. Tests normally use temporary storage, but manually launched builds can open existing meetings. Do not delete a database to resolve a development error.
+Source runs and the built executable use the same data folder, `%APPDATA%\OpenMeetPy\`. Tests and ad-hoc runs should pass `--data-dir` to a scratch folder instead. Do not delete a database to resolve a development error, and do not point a development build at a folder you have not backed up.
 
-Before a backup, wait for **Saved** and close the app normally. Copy the complete app-data directory, including audio and any SQLite sidecar files, and back up exported snapshots separately. Keep original partial recordings when investigating recovery. Do not replace a live app-data directory.
+Before a backup, wait for **Saved** and close the app normally. Copy the whole data folder, including `meetings.db-wal` and `meetings.db-shm` if present, plus exported snapshots separately. Keep original partial recordings when investigating recovery.
 
 ## Make a contribution
 
-1. Inspect affected callers, command bindings, tests, fixtures, settings, and exports.
-2. Make the smallest complete change. Preserve note errors, source distinctions, recording-consent wording, and the "Leaves this device" disclosures.
-3. Add a small behavior test for nontrivial logic. Use synthetic samples instead of devices.
-4. Add numbered migrations for schema changes. Test an upgrade with populated notes and relationships.
-5. Run the relevant checks, including the full recipe for changes across the frontend and backend.
-6. Update the affected guides, status, dependency inventory, and work log.
+1. Inspect affected callers, command bindings, tests, fixtures, settings and exports.
+2. Make the smallest complete change. Preserve note errors, source distinctions, recording-consent wording and the "Leaves this device" disclosures.
+3. Add a small behavior test for nontrivial logic. Use synthetic samples instead of devices and fake engines instead of real models.
+4. Add the next numbered migration for schema changes (append-only; currently `030`). Test an upgrade with populated notes and relationships.
+5. Run `just check`, plus `just smoke` for packaging changes.
+6. Update the affected guides, status, dependency inventory and work log.
 
-Keep both lockfiles tracked. Do not commit build output, `node_modules`, databases, recordings, credentials, or environment files. `.gitattributes` enforces LF line endings. Preserve unrelated changes, and commit or push only when requested.
+Keep both lockfiles tracked. Do not commit build output (`packaging/dist/`, `backend/web/`), `node_modules`, `.venv`, databases, recordings, credentials or environment files. `.gitattributes` enforces LF line endings. Preserve unrelated changes, and commit or push only as the repository rules allow.
 
 ## CI
 
-[ci.yml](../.github/workflows/ci.yml) configures Windows and macOS 15 frontend and Rust checks, production npm audit, and a Linux cargo-deny job. The macOS job requires an ARM64 runner. This describes workflow configuration, not the latest remote result. Local checks do not establish green remote CI or macOS capture support.
-
-[windows-installer.yml](../.github/workflows/windows-installer.yml) is a manual workflow (Actions -> Windows installer -> Run workflow). It runs `pnpm tauri build --ci` on a Windows runner and uploads the NSIS `.exe` as the private artifact `OpenMeet-windows-installer`, kept for 14 days. Download it from the run's Artifacts section; only people with repository access can see it. The installer is unsigned, so Windows SmartScreen will warn before it runs. The workflow does not sign, publish, or create releases.
+`.github/workflows/ci.yml` runs on `windows-latest`: pnpm install, typecheck, lint, format check, tests and the UI build, then `uv sync --project backend --locked` and `uv run --project backend pytest`. There is no installer workflow and no signing, publishing or release automation. This describes the workflow file, not a result this documentation observed; report remote CI status only from a run you actually saw.
