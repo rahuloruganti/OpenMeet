@@ -15,11 +15,11 @@ API_TS = REPO / "src" / "lib" / "api.ts"
 
 
 def test_unimplemented_command_returns_501_with_the_error_shape(client: TestClient) -> None:
-    status, body = invoke_error(client, "start_recording", title="x", devices={})
+    status, body = invoke_error(client, "transcribe_meeting", id="x")
     assert status == 501
     assert body == {
         "code": "not_available",
-        "message": "Recording is not available in the Python build yet.",
+        "message": "Transcription is not available in the Python build yet.",
     }
 
 
@@ -46,8 +46,11 @@ def test_startup_commands_return_harmless_idle_values(client: TestClient) -> Non
     state = invoke(client, "get_recording_state")
     assert state["status"] == "idle" and state["meeting_id"] is None
     assert invoke(client, "get_startup_warning") is None
+    # The test client runs the fake backend: synthetic devices only, no hardware.
     devices = invoke(client, "list_audio_devices")
-    assert devices == {"capture_supported": False, "microphones": [], "outputs": []}
+    assert devices["capture_supported"] is True
+    assert [d["id"] for d in devices["microphones"]] == ["fake-mic"]
+    assert [d["id"] for d in devices["outputs"]] == ["fake-output"]
     assert invoke(client, "provider_key_status", role="llm") == "missing"
     speech = invoke(client, "stt_status")
     assert speech["installed"] is False and speech["models"] == []

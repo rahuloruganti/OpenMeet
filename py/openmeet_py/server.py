@@ -23,8 +23,10 @@ from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
+from .audio_backend import CaptureBackend, make_backend
 from .commands import Context, dispatch
 from .errors import AppError
+from .recorder import Recorder
 from .store import DB_FILE, Store
 
 log = logging.getLogger("openmeet_py")
@@ -66,26 +68,33 @@ def create_app(
     token: Optional[str] = None,
     pick_folder: Optional[Callable[[], Optional[str]]] = None,
     close_window: Optional[Callable[[], None]] = None,
+    backend: Optional[CaptureBackend] = None,
 ) -> FastAPI:
     token = token or secrets.token_urlsafe(32)
     hub = Hub()
     store = Store(Path(data_dir))
+    backend = backend or make_backend()
+    recorder = Recorder(store, backend, hub.emit, store.data_dir / "audio")
     ctx = Context(
         store=store,
         emit=hub.emit,
         pick_folder=pick_folder,
         close_window=close_window,
+        recorder=recorder,
     )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         hub.loop = asyncio.get_running_loop()
         yield
+        # Finalize an active recording before the database closes, so its files are complete.
+        recorder.shutdown()
         store.close()
 
     app = FastAPI(title="OpenMeet (Python build)", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.token = token
     app.state.ctx = ctx
+    app.state.backend = backend
 
     def authorized(value: Optional[str]) -> bool:
         return value is not None and secrets.compare_digest(value, token)
@@ -97,7 +106,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"ok": True, "app": "openmeet-py", "phase": 2}
+        return {"ok": True, "app": "openmeet-py", "phase": 3, "audio": backend.name}
 
     @app.post("/api/invoke/{cmd}")
     async def invoke(cmd: str, request: Request) -> JSONResponse:

@@ -7,6 +7,7 @@ returns a credential: provider rows carry an internal account name that only key
 from __future__ import annotations
 
 import hashlib
+import os
 import sqlite3
 from typing import Any, Optional
 
@@ -25,6 +26,36 @@ def tags_of(db: sqlite3.Connection, meeting_id: str) -> list[str]:
         "SELECT tag FROM meeting_tags WHERE meeting_id = ?1 ORDER BY tag", (meeting_id,)
     ).fetchall()
     return [row[0] for row in rows]
+
+
+def tracks_of(db: sqlite3.Connection, meeting_id: str) -> list[dict[str, Any]]:
+    """Track rows in the Rust Track shape. size_bytes is None when the file is missing."""
+    rows = db.execute(
+        "SELECT kind, path, timing_path, device_name, sample_rate, channels, frames, dropped_frames, "
+        "finalized FROM tracks WHERE meeting_id = ?1 ORDER BY kind",
+        (meeting_id,),
+    ).fetchall()
+    tracks = []
+    for row in rows:
+        try:
+            size: Optional[int] = os.stat(row[1]).st_size
+        except OSError:
+            size = None
+        tracks.append(
+            {
+                "kind": row[0],
+                "path": row[1],
+                "timing_path": row[2],
+                "device_name": row[3],
+                "sample_rate": row[4],
+                "channels": row[5],
+                "frames": row[6],
+                "dropped_frames": row[7],
+                "finalized": bool(row[8]),
+                "size_bytes": size,
+            }
+        )
+    return tracks
 
 
 def meeting_dict(row: tuple, tags: list[str]) -> dict[str, Any]:
@@ -303,7 +334,7 @@ def meeting_detail(db: sqlite3.Connection, meeting_id: str) -> dict[str, Any]:
         "notes_revision": notes_revision,
         "segments": segments,
         **summary,
-        # ponytail: transcript provenance and tracks are written only by phases 3-4; empty until then.
+        # ponytail: transcript provenance is written only by phase 4; tracks exist since phase 3.
         "transcript_provider": None,
         "transcript_model": None,
         "action_items": action_items(db, meeting_id),
@@ -311,7 +342,7 @@ def meeting_detail(db: sqlite3.Connection, meeting_id: str) -> dict[str, Any]:
         "segment_meta": meta,
         "transcript_versions": [],
         "question_threads": question_threads(db, meeting_id),
-        "tracks": [],
+        "tracks": tracks_of(db, meeting_id),
     }
 
 

@@ -73,6 +73,10 @@ The fictional meeting fixture and app icon were authored for this project under 
 
 The Python desktop build (`py/`) stores provider API keys through `keyring` in the Windows Credential Manager. Pinned in `py/requirements.txt` with their Windows dependencies: keyring 25.7.0 (MIT), jaraco.classes 3.4.0, jaraco.context 6.1.2, jaraco.functools 4.6.0 and more-itertools 11.2.1 (MIT), and pywin32-ctypes 0.2.3 (BSD-3-Clause). Licenses are taken from upstream project metadata and are not yet audited against the installed wheels.
 
+## Python build audio capture
+
+The Python desktop build (`py/`) records microphone and WASAPI loopback audio through `PyAudioWPatch` 0.2.12.9, pinned in `py/requirements.txt` and installed from a prebuilt wheel only (`--only-binary=:all:`). Its license is Apache-2.0 (the `LICENSE.txt` in the wheel, copyright 2022 S0D3S). The wheel metadata says it is based on PyAudio v0.2.12, which its metadata describes as MIT licensed, and on PortAudio v19 at commit 8b6d16f26ad660e68a97743842ac29b939f3c0c1. The wheel bundles a PortAudio build (`_portaudiowpatch` extension). Neither the MIT text nor a PortAudio license text is in the wheel, so both must be collected from their upstream sources before any release. This entry is not a legal clearance.
+
 ## User-selected model-library downloads
 
 Phase 2 adds no bundled models or dependencies. Public Hugging Face downloads display repository license metadata and retain it in a local provenance manifest. Generic GGUF models carry their own repository terms; discovery or a download entry is not a completed license audit. The existing pinned Whisper catalog remains the only directly importable speech-model catalog.

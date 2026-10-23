@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import connections, questions, reads, summaries, tasks
+from . import connections, questions, reads, recording, summaries, tasks
 from .context import (
     Context,
     bool_arg,
@@ -161,12 +161,13 @@ def set_meeting_tags(ctx: Context, meeting_id: str, tags: list[str]) -> list[str
 
 def delete_meeting(ctx: Context, id: str) -> None:
     _text(id, "id")
-    with ctx.store.lock:
+    # Lock order: recorder, then store (see recorder.py).
+    with ctx.recorder.lock, ctx.store.lock:
         db = ctx.store.db
         _require_meeting(db, id)
-        # ponytail: Phase 1-2 never write audio, so there are no track files to remove. Recording
-        # (phase 3) must delete owned audio folders here before the rows go.
-        db.execute("DELETE FROM meetings WHERE id = ?1", (id,))  # notes, tags, search rows, answers cascade
+        # Track files first: a refused or failed delete leaves the meeting and its notes in place.
+        recording.delete_owned_audio(ctx, db, id)
+        db.execute("DELETE FROM meetings WHERE id = ?1", (id,))  # notes, tags, search, answers cascade
     ctx.emit("meeting_updated", None)
 
 
@@ -220,27 +221,11 @@ def get_session_processing(ctx: Context, id: str) -> None:
     return None
 
 
-# ---- recording state and startup (idle, harmless values) -------------------
-
-
-def get_recording_state(ctx: Context) -> dict[str, Any]:
-    return {
-        "revision": 0,
-        "status": "idle",
-        "meeting_id": None,
-        "source": None,
-        "error": None,
-        "recording_offset_ms": None,
-        "processing_notice": None,
-    }
+# ---- startup (no warning yet) ----------------------------------------------------
 
 
 def get_startup_warning(ctx: Context) -> None:
     return None
-
-
-def list_audio_devices(ctx: Context) -> dict[str, Any]:
-    return {"capture_supported": False, "microphones": [], "outputs": []}
 
 
 def detection_supported(ctx: Context) -> bool:
@@ -262,21 +247,6 @@ def stt_status(ctx: Context) -> dict[str, Any]:
         "models": [],
         "languages": [],
     }
-
-
-def audio_usage(ctx: Context) -> int:
-    # Phase 1-2 write no audio; count any audio folder a future build may have left behind.
-    root = ctx.store.data_dir / "audio"
-    if not root.is_dir():
-        return 0
-    total = 0
-    for folder in root.iterdir():
-        if not folder.is_dir() or folder.is_symlink():
-            continue
-        for entry in folder.iterdir():
-            if entry.is_file() and not entry.is_symlink():
-                total += entry.stat().st_size
-    return total
 
 
 # ---- settings ------------------------------------------------------------------
@@ -359,13 +329,22 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "list_summaries": list_summaries,
     "list_library_answers": list_library_answers,
     "get_session_processing": get_session_processing,
-    "get_recording_state": get_recording_state,
+    # Phase 3: devices, recording and audio files
+    "get_recording_state": recording.get_recording_state,
+    "list_audio_devices": recording.list_audio_devices,
+    "save_default_devices": recording.save_default_devices,
+    "start_recording": recording.start_recording,
+    "pause_recording": recording.pause_recording,
+    "resume_recording": recording.resume_recording,
+    "stop_recording": recording.stop_recording,
+    "delete_audio": recording.delete_audio,
+    "recover_audio": recording.recover_audio,
+    "audio_position": recording.audio_position,
+    "audio_usage": recording.audio_usage,
     "get_startup_warning": get_startup_warning,
-    "list_audio_devices": list_audio_devices,
     "detection_supported": detection_supported,
     "provider_key_status": provider_key_status,
     "stt_status": stt_status,
-    "audio_usage": audio_usage,
     "get_settings": get_settings,
     "save_export_options": save_export_options,
     "save_setup_done": save_setup_done,
@@ -402,15 +381,6 @@ NOT_AVAILABLE: dict[str, str] = {
     # Phase 4: transcript editing needs transcripts, which no phase before 4 can create
     "edit_segment": "Transcript editing",
     "get_transcript_version": "Transcript history",
-    # Phase 3: capture and audio files
-    "start_recording": "Recording",
-    "pause_recording": "Recording",
-    "resume_recording": "Recording",
-    "stop_recording": "Recording",
-    "save_default_devices": "Audio devices",
-    "delete_audio": "Audio deletion",
-    "recover_audio": "Audio recovery",
-    "audio_position": "Audio playback",
     # Phase 4: local and cloud speech
     "save_stt_mode": "Speech settings",
     "save_stt_settings": "Speech settings",

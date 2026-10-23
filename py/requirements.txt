@@ -12,3 +12,8 @@ jaraco.context==6.1.2
 jaraco.functools==4.6.0
 more-itertools==11.2.1
 pywin32-ctypes==0.2.3
+# Audio capture (phase 3). Prebuilt wheel with PortAudio and WASAPI loopback; Apache-2.0.
+# Installed with --only-binary=:all: so no compiler is ever needed.
+PyAudioWPatch==0.2.12.9
+# WebSocket transport for uvicorn: live recording_state, audio_health and meeting events. Pure-Python wheel.
+websockets==15.0.1

@@ -7,12 +7,15 @@ import threading
 import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional
 
 import httpx
 
 from .errors import AppError
 from .store import Store
+
+if TYPE_CHECKING:
+    from .recorder import Recorder
 
 
 @dataclass
@@ -24,6 +27,7 @@ class Context:
     close_window: Optional[Callable[[], None]] = None
     # Tests inject httpx.MockTransport here; None uses the real network stack.
     transport: Optional[httpx.BaseTransport] = None
+    recorder: Optional["Recorder"] = None
     # One provider request at a time, like the Rust processing owner.
     ai_busy: threading.Lock = field(default_factory=threading.Lock)
 

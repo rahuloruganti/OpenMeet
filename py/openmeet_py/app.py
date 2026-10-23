@@ -3,6 +3,7 @@
     python -m openmeet_py.app                 open the window
     python -m openmeet_py.app --smoke         start, check /health and one command, print OK, exit
     python -m openmeet_py.app --data-dir DIR  use DIR instead of %APPDATA%\\OpenMeetPy (tests)
+    python -m openmeet_py.app --check-audio-import  import the audio library, print its version, no device
 """
 
 from __future__ import annotations
@@ -121,13 +122,31 @@ def run_window(data_dir: Path) -> int:
     return 0
 
 
+def check_audio_import() -> int:
+    # Import only. PyAudio() is never constructed here, so no PortAudio stream or device is opened.
+    try:
+        import pyaudiowpatch
+    except ImportError as error:
+        print(f"FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    print(f"OK: pyaudiowpatch {pyaudiowpatch.__version__} imported; no audio device was opened.")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="openmeet-py", description="OpenMeet Python desktop build")
     parser.add_argument("--smoke", action="store_true", help="check the server and exit; no window")
     parser.add_argument(
         "--data-dir", type=Path, default=None, help="data folder (default: %%APPDATA%%\\OpenMeetPy)"
     )
+    parser.add_argument(
+        "--check-audio-import",
+        action="store_true",
+        help="import the audio library and print its version; opens no device",
+    )
     args = parser.parse_args(argv)
+    if args.check_audio_import:
+        return check_audio_import()
     data_dir = args.data_dir or default_data_dir()
     if args.smoke:
         return smoke(data_dir)

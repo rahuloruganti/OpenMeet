@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
@@ -12,6 +13,7 @@ from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
 
 from openmeet_py import keys
+from openmeet_py.audio_backend import FakeBackend
 from openmeet_py.server import TOKEN_HEADER, create_app
 
 TOKEN = "test-token"
@@ -22,8 +24,18 @@ def make_client(tmp_path: Path) -> Iterator[Callable[..., TestClient]]:
     """Builds a client; `pick_folder` answers the native folder picker for export tests."""
     opened: list[TestClient] = []
 
-    def build(pick_folder: Optional[Callable[[], Optional[str]]] = None) -> TestClient:
-        app = create_app(tmp_path / "data", None, token=TOKEN, pick_folder=pick_folder)
+    def build(
+        pick_folder: Optional[Callable[[], Optional[str]]] = None,
+        backend: Optional[FakeBackend] = None,
+    ) -> TestClient:
+        # Every client gets a fake audio backend unless a test asks for another one.
+        app = create_app(
+            tmp_path / "data",
+            None,
+            token=TOKEN,
+            pick_folder=pick_folder,
+            backend=backend or FakeBackend(auto_pump=False),
+        )
         client = TestClient(app, base_url="http://127.0.0.1")
         client.__enter__()
         opened.append(client)
@@ -82,3 +94,13 @@ def memory_keyring() -> Iterator[MemoryKeyring]:
     keys.use_backend(backend)
     yield backend
     keys.use_backend(None)
+
+
+@pytest.fixture(autouse=True)
+def block_real_audio(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Outside hardware tests, `import pyaudiowpatch` fails, so no PortAudio code can open a device."""
+    if request.node.get_closest_marker("hardware"):
+        yield
+        return
+    monkeypatch.setitem(sys.modules, "pyaudiowpatch", None)
+    yield

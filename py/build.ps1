@@ -13,7 +13,7 @@ if (-not (Test-Path $python)) {
     py -3.13 -m venv $venv
     if ($LASTEXITCODE -ne 0) { throw "Could not create $venv with Python 3.13." }
 }
-& $python -m pip install --prefer-binary --quiet -r (Join-Path $py "requirements.txt")
+& $python -m pip install --only-binary=:all: --quiet -r (Join-Path $py "requirements.txt")
 if ($LASTEXITCODE -ne 0) { throw "pip install failed." }
 
 Push-Location $repo
@@ -37,6 +37,9 @@ try {
         --hidden-import uvicorn.protocols.websockets.auto `
         --hidden-import uvicorn.lifespan.on `
         --collect-all webview `
+        --collect-all pyaudiowpatch `
+        --collect-all websockets `
+        --hidden-import _portaudiowpatch `
         --collect-submodules win32ctypes `
         (Join-Path $py "launcher.py")
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
