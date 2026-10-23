@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Optional
 
-from .. import cloud_stt, providers, reads, stt, transcript_edits
+from .. import cloud_stt, providers, reads, sherpa_models, stt, transcript_edits
 from ..connections import plan_changed
 from ..context import Context, text_arg
 from ..errors import AppError
@@ -51,8 +51,15 @@ def _local(ctx: Context, settings: dict[str, Any], tracks: list[dict[str, Any]],
             "stt",
             "The speech engine and the selected model are not installed. Download them in Settings first.",
         )
-    model_path = None if fake else stt.selected_model_path(root, settings["stt_model"])
-    engine = engine_module.make_engine(model_path, stt.vad_path(root), fake)
+    if sherpa_models.is_sherpa(settings["stt_model"]):
+        # Provider stays "whisper" for every local run, as lib.rs records it.
+        spec = None if fake else sherpa_models.spec_for(root, settings["stt_model"])
+        engine = engine_module.make_engine(
+            None, None if fake else sherpa_models.vad_path(root), fake, spec
+        )
+    else:
+        model_path = None if fake else stt.selected_model_path(root, settings["stt_model"])
+        engine = engine_module.make_engine(model_path, stt.vad_path(root), fake)
     segments = pipeline.run_tracks(
         tracks, engine, settings["stt_language"], settings["stt_prompt"], cancel, report
     )

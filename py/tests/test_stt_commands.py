@@ -42,9 +42,11 @@ def test_status_lists_the_catalog_and_marks_sherpa_as_unavailable(client: TestCl
     assert by_id["base.en-q5_1"]["size"] == 59721011
     assert by_id["small"]["size"] == 487601967
     assert by_id["base"]["size"] == 147951465
+    # Under the import guard the sherpa-onnx package is absent, so every sherpa row is unavailable with a reason.
     for sherpa in ["sherpa:parakeet-v3", "sherpa:moonshine-base-en", "sherpa:sense-voice"]:
         assert by_id[sherpa]["installed"] is False
-        assert "phase 4b" in by_id[sherpa]["reason"]
+        assert by_id[sherpa]["engine"] == "sherpa-onnx"
+        assert "sherpa-onnx" in by_id[sherpa]["reason"]
     assert speech["supported"] in (True, False)
     assert "auto" in speech["languages"] and len(speech["languages"]) == 35
 
@@ -54,7 +56,9 @@ def test_stt_settings_validate_and_persist(client: TestClient) -> None:
     assert (status, body["code"]) == (400, "stt_settings")
     status, body = invoke_error(client, "save_stt_settings", language="en", prompt="bad\x07", model="small")
     assert body["code"] == "stt_settings"
-    status, body = invoke_error(client, "save_stt_settings", language="en", prompt="", model="sherpa:parakeet-v3")
+    # sherpa ids are accepted in phase 4b; a downloaded-folder id must be one plain name.
+    assert invoke(client, "save_stt_settings", language="en", prompt="", model="sherpa:parakeet-v3")["stt_model"] == "sherpa:parakeet-v3"
+    status, body = invoke_error(client, "save_stt_settings", language="en", prompt="", model="sherpa-dir:../team")
     assert body["code"] == "stt_settings"
     settings = invoke(client, "save_stt_settings", language="de", prompt="  Kubernetes, Okta  ", model="base")
     assert (settings["stt_language"], settings["stt_prompt"], settings["stt_model"]) == ("de", "Kubernetes, Okta", "base")

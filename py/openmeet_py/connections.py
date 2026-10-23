@@ -256,3 +256,43 @@ def list_api_connection_models(ctx: Context, id: Any, expected_revision: Any) ->
     with ctx.store.lock:
         current()
     return models
+
+
+# Default ports and kinds from src-tauri/src/providers.rs LOCAL_SERVERS, in the same order.
+LOCAL_SERVERS: tuple[tuple[str, int, str], ...] = (
+    ("Ollama", 11434, "chat"),
+    ("LM Studio", 1234, "chat"),
+    ("Unsloth Studio", 8888, "chat"),
+    ("speaches", 8000, "speech"),
+    ("LocalAI", 8080, "both"),
+)
+LOCAL_PROBE_TIMEOUT = 2.0
+
+
+def _probe(name: str, port: int, kind: str, transport: Any) -> Optional[dict[str, Any]]:
+    """GET http://127.0.0.1:port/v1/models with no credentials. Reported only if it answers as Rust does:
+    any listable answer, or 401/403 (it wants a key). Every other failure is skipped."""
+    connection = providers.Connection(f"http://127.0.0.1:{port}/v1", None, "", transport)
+    try:
+        models = providers.list_models(connection, timeout=LOCAL_PROBE_TIMEOUT)
+    except AppError as error:
+        if error.code == "provider_unauthorized":
+            return {"name": name, "base_url": connection.base_url, "kind": kind, "needs_key": True, "models": []}
+        return None
+    return {"name": name, "base_url": connection.base_url, "kind": kind, "needs_key": False, "models": models}
+
+
+def probe_local_servers(targets: tuple[tuple[str, int, str], ...], transport: Any = None) -> list[dict[str, Any]]:
+    """Probes each target in parallel and keeps the answering ones, in target order."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not targets:
+        return []
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        futures = [pool.submit(_probe, name, port, kind, transport) for name, port, kind in targets]
+        found = [future.result() for future in futures]
+    return [item for item in found if item is not None]
+
+
+def detect_local_servers(ctx: Context) -> list[dict[str, Any]]:
+    return probe_local_servers(LOCAL_SERVERS, ctx.transport)

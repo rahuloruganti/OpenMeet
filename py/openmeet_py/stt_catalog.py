@@ -123,12 +123,53 @@ VAD = Artifact(
     '29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf', 885_098,
 )
 
-# sherpa-onnx models: listed for phase 4b, not downloadable or runnable in this build.
-SHERPA_ENGINE_SIZE = 23271851
-SHERPA_VAD_SIZE = 643854
-SHERPA_MODELS: tuple[tuple[str, int], ...] = (
-    ('sherpa:parakeet-v3', 487170055),
-    ('sherpa:moonshine-base-en', 111266225),
-    ('sherpa:sense-voice', 165783878),
+# sherpa-onnx (second engine, phase 4b). Copied from src-tauri/src/stt/sherpa.rs (VAD and archives).
+# The engine itself is the pip package sherpa-onnx, not a download, so there is no engine entry here.
+SHERPA_VAD = Artifact(
+    'sherpa-silero', 'silero_vad.onnx',
+    'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx',
+    '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6', 643_854,
+)
+
+
+class SherpaModel(NamedTuple):
+    id: str          # speech model id Settings stores
+    folder: str      # folder under sherpa/ (Rust: id without the "sherpa:" prefix)
+    archive: Artifact
+    files: tuple[str, ...]  # files the engine needs, extracted by basename
+    family: str      # transducer | moonshine | sense_voice
+
+
+SHERPA_MODELS: tuple[SherpaModel, ...] = (
+    SherpaModel(
+        'sherpa:parakeet-v3', 'parakeet-v3',
+        Artifact(
+            'sherpa-parakeet-v3', 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2',
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2',
+            '5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf', 487_170_055,
+        ),
+        ('encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'),
+        'transducer',
+    ),
+    SherpaModel(
+        'sherpa:moonshine-base-en', 'moonshine-base-en',
+        Artifact(
+            'sherpa-moonshine-base-en', 'sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2',
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-quantized-2026-02-27.tar.bz2',
+            '43232c1d13013d37317163baec3135bd771a186a4356f28c889bab453bb0e891', 111_266_225,
+        ),
+        ('encoder_model.ort', 'decoder_model_merged.ort', 'tokens.txt'),
+        'moonshine',
+    ),
+    SherpaModel(
+        'sherpa:sense-voice', 'sense-voice',
+        Artifact(
+            'sherpa-sense-voice', 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2',
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09.tar.bz2',
+            '7305f7905bfcf77fa0b39388a313f3da35c68d971661a65475b56fb2162c8e63', 165_783_878,
+        ),
+        ('model.int8.onnx', 'tokens.txt'),
+        'sense_voice',
+    ),
 )
 

@@ -147,6 +147,20 @@ def allowed_url(url: httpx.URL) -> bool:
     return host == "huggingface.co" or host.endswith(".huggingface.co") or host.endswith(".hf.co")
 
 
+GITHUB_HOSTS = frozenset({"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"})
+
+
+def allowed_release_url(url: httpx.URL) -> bool:
+    """True for sherpa-onnx release assets: HTTPS to the GitHub hosts only (test hosts override, as above)."""
+    if url.username or url.password:
+        return False
+    host = (url.host or "").lower()
+    hosts = _test_hosts()
+    if hosts is not None:
+        return url.scheme in ("http", "https") and host in hosts
+    return url.scheme == "https" and url.port in (None, 443) and host in GITHUB_HOSTS
+
+
 def _client(transport: Optional[httpx.BaseTransport]) -> httpx.Client:
     return httpx.Client(
         timeout=httpx.Timeout(TRANSFER_TIMEOUT, connect=CONNECT_TIMEOUT),
@@ -156,11 +170,11 @@ def _client(transport: Optional[httpx.BaseTransport]) -> httpx.Client:
     )
 
 
-def _open_stream(client: httpx.Client, url: httpx.URL) -> httpx.Response:
+def _open_stream(client: httpx.Client, url: httpx.URL, allowed: Callable[[httpx.URL], bool] = allowed_url) -> httpx.Response:
     """Sends a GET and follows redirects by hand, validating every hop. Caller closes the response."""
     current = url
     for hop in range(REDIRECT_LIMIT + 1):
-        if not allowed_url(current):
+        if not allowed(current):
             raise _error("The model download redirected to a host that is not allowed. Existing files were preserved.")
         request = client.build_request("GET", current)
         response = client.send(request, stream=True)
@@ -237,6 +251,18 @@ def _publish(temp: Path, destination: Path, cancel: Optional[threading.Event]) -
         temp.unlink(missing_ok=True)
 
 
+def publish_directory(staging: Path, destination: Path, cancel: Optional[threading.Event]) -> None:
+    """Renames a finished staging folder into place. Refuses if the destination exists (never overwrites)."""
+    with _PUBLICATION:
+        check_cancel(cancel)
+        if destination.exists():
+            raise _error("This folder already exists. It was preserved. Scan local models to inspect it.")
+        try:
+            os.rename(staging, destination)
+        except OSError as error:
+            raise _error("Folder publication failed. Existing files were preserved.") from error
+
+
 def _check_disk(folder: Path, size: int) -> None:
     free = shutil.disk_usage(folder).free
     if free < size + DISK_MARGIN:
@@ -256,12 +282,13 @@ def fetch_verified(
     progress: Callable[[int], None],
     cancel: Optional[threading.Event],
     transport: Optional[httpx.BaseTransport] = None,
+    allowed: Callable[[httpx.URL], bool] = allowed_url,
 ) -> Path:
     """Downloads one file into folder/filename: verified, no-clobber, no resume. Returns the path."""
     destination = folder / filename
     if destination.exists():
         raise _error("This destination already exists. It was preserved. Scan local models to inspect it.")
-    temp = _download_to_temp(url, folder, size, sha256, progress, cancel, transport)
+    temp = _download_to_temp(url, folder, size, sha256, progress, cancel, transport, allowed)
     _publish(temp, destination, cancel)
     return destination
 
@@ -758,12 +785,13 @@ def _download_to_temp(
     progress: Callable[[int], None],
     cancel: Optional[threading.Event],
     transport: Optional[httpx.BaseTransport],
+    allowed: Callable[[httpx.URL], bool] = allowed_url,
 ) -> Path:
     """Streams one pinned file to a verified temporary file in folder. The caller publishes it."""
     _check_disk(folder, size)
     with _client(transport) as client:
         try:
-            response = _open_stream(client, httpx.URL(url))
+            response = _open_stream(client, httpx.URL(url), allowed)
         except httpx.HTTPError as error:
             raise _error("Cannot download this model. Existing files were preserved.") from error
         try:
@@ -778,6 +806,77 @@ def _download_to_temp(
                 raise _error("Model transfer interrupted. Retry explicitly; existing files were preserved.") from error
         finally:
             response.close()
+
+
+CUSTOM_FOLDER_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+FOLDER_MANIFEST = "openmeet-source.json"
+
+
+def folder_name(folder: dict[str, Any]) -> str:
+    """Name under sherpa/custom: repo--folder, with / replaced by --. Same rule as model_library.rs."""
+    repo = folder["repo_id"].replace("/", "--")
+    return repo if not folder["folder"] else f"{repo}--{folder['folder'].replace('/', '--')}"
+
+
+def download_hf_folder(
+    root: Path,
+    proposed: dict[str, Any],
+    progress: Callable[[dict[str, int]], None],
+    transport: Optional[httpx.BaseTransport] = None,
+) -> dict[str, Any]:
+    """All-or-nothing download of a sherpa-onnx folder the user confirmed (model_library.rs download_folder_at).
+
+    The listing is re-read at the pinned revision and must equal the confirmed folder. Every file is
+    streamed to a verified temporary file in a hidden staging folder; the folder is renamed into
+    sherpa/custom only after the last checksum passed. Any failure removes the staging folder.
+    """
+    fields = ("repo_id", "revision", "folder", "layout", "license", "files")
+    if not isinstance(proposed, dict) or any(key not in proposed for key in fields):
+        raise _error("Confirm the model download again.")
+    if not isinstance(proposed["repo_id"], str) or not isinstance(proposed["revision"], str):
+        raise _error("Confirm the model download again.")
+    with artifact_operation() as cancel:
+        listing = list_files(proposed["repo_id"], transport, proposed["revision"])
+        approved = next((folder for folder in listing["folders"] if folder == proposed), None)
+        if approved is None:
+            raise _error("Model metadata changed. Refresh and confirm the download again.")
+        check_cancel(cancel)
+        name = folder_name(approved)
+        if not CUSTOM_FOLDER_RE.match(name) or name.startswith(".") or ".." in name:
+            raise _error("This folder name cannot be stored. Choose another model.")
+        custom = managed_folder(root, ["sherpa", "custom"])
+        destination = custom / name
+        if destination.exists():
+            raise _error("This folder already exists. It was preserved. Scan local models to inspect it.")
+        total = sum(item["size"] for item in approved["files"])
+        _check_disk(custom, total)
+        staging = Path(tempfile.mkdtemp(dir=custom, prefix=".staging-"))
+        try:
+            done = 0
+            for item in approved["files"]:
+                filename = item["filename"].rsplit("/", 1)[-1]
+                path = "/".join(quote(part) for part in approved["repo_id"].split("/"))
+                url = f"{HUB}/{path}/resolve/{approved['revision']}/" + "/".join(
+                    quote(part) for part in item["filename"].split("/")
+                )
+                temp = _download_to_temp(
+                    url,
+                    staging,
+                    item["size"],
+                    item["sha256"],
+                    lambda n, base=done: progress({"downloaded": base + n, "total": total}),
+                    cancel,
+                    transport,
+                    allowed_url,
+                )
+                _publish(temp, staging / filename, cancel)
+                done += item["size"]
+            (staging / FOLDER_MANIFEST).write_text(json.dumps(approved, indent=2), encoding="utf-8")
+            publish_directory(staging, destination, cancel)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+    return {"path": str(destination), "files": len(approved["files"]), "model_id": f"sherpa-dir:{name}"}
 
 
 # ---- command handlers ----------------------------------------------------------------
@@ -828,3 +927,16 @@ def download_hf_model_command(ctx: Context, file: Any) -> dict[str, Any]:
 
 def cancel_model_download(ctx: Context) -> None:
     cancel_download()
+
+
+def download_hf_folder_command(ctx: Context, folder: Any) -> dict[str, Any]:
+    from .stt import stt_root
+
+    if not isinstance(folder, dict):
+        raise AppError("invalid_args", "folder must be an object.")
+    return download_hf_folder(
+        stt_root(ctx),
+        folder,
+        lambda progress: ctx.emit("model_library_progress", progress),
+        ctx.transport,
+    )

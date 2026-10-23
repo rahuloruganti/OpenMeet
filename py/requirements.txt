@@ -20,5 +20,9 @@ PyAudioWPatch==0.2.12.9
 # wheels for Windows x64 Python 3.13. Installed with --only-binary=:all:.
 pywhispercpp==1.5.1
 numpy==2.5.4
+# Second local speech engine (phase 4b): sherpa-onnx 1.13.8 (Apache-2.0) and its runtime package
+# sherpa-onnx-core (Apache-2.0), both Windows x64 cp313 wheels. Imported only inside engine methods.
+sherpa-onnx==1.13.8
+sherpa-onnx-core==1.13.8
 # WebSocket transport for uvicorn: live recording_state, audio_health and meeting events. Pure-Python wheel.
 websockets==15.0.1

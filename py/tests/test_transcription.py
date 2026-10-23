@@ -150,12 +150,16 @@ def test_settings_validation_matches_stt_validate() -> None:
     stt.validate("en", "é" * 500, "small")
 
 
-def test_sherpa_models_are_listed_but_refused_until_phase_4b() -> None:
-    for model_id in ["sherpa:parakeet-v3", "sherpa-dir:team--parakeet"]:
+def test_sherpa_ids_are_accepted_and_downloaded_folder_names_must_be_plain() -> None:
+    for model_id in ["sherpa:parakeet-v3", "sherpa:moonshine-base-en", "sherpa:sense-voice", "sherpa-dir:team--parakeet"]:
+        stt.validate("en", "", model_id)
+    for model_id in ["sherpa-dir:", "sherpa-dir:..", "sherpa-dir:a/b", "sherpa-dir:.hidden"]:
         with pytest.raises(AppError) as info:
             stt.validate("en", "", model_id)
         assert info.value.code == "stt_settings"
-        assert "phase 4b" in info.value.message
+    with pytest.raises(AppError) as info:
+        stt.validate("en", "", "sherpa:unlisted")  # not a catalog id, not a file: refused like any unknown model
+    assert info.value.code == "stt_settings"
 
 
 def test_a_scanned_whisper_file_is_used_in_place_and_anything_else_is_refused(tmp_path: Path) -> None:

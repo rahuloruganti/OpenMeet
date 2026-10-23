@@ -151,6 +151,23 @@ def check_stt_import() -> int:
     return 0
 
 
+def check_sherpa_import() -> int:
+    # Import only. No recognizer or VAD is constructed, so no model file is opened and nothing can be downloaded.
+    try:
+        import sherpa_onnx
+
+        version = getattr(sherpa_onnx, "__version__", None)
+        if version is None:
+            from importlib.metadata import version as package_version
+
+            version = package_version("sherpa-onnx")
+    except Exception as error:  # report the failure type and message only
+        print(f"FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    print(f"OK: sherpa-onnx {version} imported; no speech model was loaded.")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="openmeet-py", description="OpenMeet Python desktop build")
     parser.add_argument("--smoke", action="store_true", help="check the server and exit; no window")
@@ -167,11 +184,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="import the speech library and print its version; loads no model",
     )
+    parser.add_argument(
+        "--check-sherpa-import",
+        action="store_true",
+        help="import sherpa-onnx and print its version; loads no model",
+    )
     args = parser.parse_args(argv)
     if args.check_audio_import:
         return check_audio_import()
     if args.check_stt_import:
         return check_stt_import()
+    if args.check_sherpa_import:
+        return check_sherpa_import()
     data_dir = args.data_dir or default_data_dir()
     if args.smoke:
         return smoke(data_dir)

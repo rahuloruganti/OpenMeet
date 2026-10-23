@@ -6,8 +6,12 @@ timing files, pause, recovery, audio deletion) is **built in code and checked wi
 only. It is UNQUALIFIED.** Phase 4a (whisper.cpp transcription, cloud STT, transcript editing and
 history, model library) is **built in code and checked with a fake engine, stub servers and
 synthetic audio only. It is UNQUALIFIED: no real model has been loaded, no real speech has been
-transcribed, and transcription quality, speed and parity with the Rust app are unverified.** Phase 7
-still gates real use. Nothing in this build is a replacement for the Rust app yet.
+transcribed, and transcription quality, speed and parity with the Rust app are unverified.** Phase 4b
+(sherpa-onnx as a second local engine: Parakeet TDT 0.6B v3, Moonshine base, SenseVoice small, downloaded
+sherpa folders, local AI server detection) is **built in code and checked with a fake sherpa module, stub
+servers, a synthetic archive and MockTransport only. It is UNQUALIFIED: no sherpa model has been loaded, no
+archive has been downloaded from GitHub or Hugging Face, and no sherpa model has transcribed anything.**
+Phase 7 still gates real use. Nothing in this build is a replacement for the Rust app yet.
 
 ## Why
 
@@ -94,6 +98,32 @@ integration, and processing" rule for this build only. The Rust app and `src-tau
       copied into `transcript_versions` before a replacement; `edit_segment` keeps the engine text in
       `original_text`, refuses a changed base text, and clears the edit on revert. Summaries become
       stale through the existing transcript hash.
+  - **Phase 4b speech (built; unqualified):**
+    - `sherpa_models.py` holds the sherpa catalog helpers (pinned ids `sherpa:parakeet-v3`,
+      `sherpa:moonshine-base-en`, `sherpa:sense-voice`, and downloaded `sherpa-dir:<name>` folders),
+      layout detection by file names (`model_library.sherpa_layout`: transducer = encoder, decoder,
+      joiner, tokens; Moonshine = encoder, merged decoder, tokens; a single `model*.onnx` with
+      `tokens.txt` = SenseVoice), installed state, the runnable `Spec` and the install. The engine is the
+      pip package `sherpa-onnx` 1.13.8 (with `sherpa-onnx-core`), not a download.
+    - `safe_archive.py` extracts the pinned `.tar.bz2` archives. Every member is validated before anything
+      is written: absolute, drive, backslash, colon, `..`, empty or duplicate names (case-folded), links,
+      devices, FIFOs, too many members (4,096), 2 GiB per file, 4 GiB declared in total. Only the wanted
+      basenames are written, with exclusive create into a `.staging-*` folder that is renamed into place
+      with a `.release` marker holding the archive SHA-256.
+    - `transcription/engine.py` `SherpaEngine`: `OfflineRecognizer.from_transducer` (Parakeet, with
+      `model_type="nemo_transducer"`; downloaded transducers with `""`), `from_moonshine_v2` (encoder plus
+      merged decoder), `from_sense_voice` (`use_itn=True`). Speech comes from `VoiceActivityDetector`
+      (Silero VAD, 10 s chunks), so each segment is timed by its start sample. Cancel is checked between
+      chunks and segments. `OPENMEET_PY_FAKE_STT=1` still selects `FakeEngine` for sherpa ids.
+    - Downloads: the VAD and the pinned archives stream through `model_library` (sha256, size cap,
+      no-clobber), with the GitHub release hosts only (`github.com`, `objects.githubusercontent.com`,
+      `release-assets.githubusercontent.com`). `download_hf_folder` is all-or-nothing: the listing is
+      re-read at the pinned revision, every file is verified in a hidden staging folder, and the folder is
+      renamed into `sherpa/custom/<repo>--<folder>` only after the last check.
+    - `connections.py` `detect_local_servers`: GET `http://127.0.0.1:<port>/v1/models` on the five Rust
+      ports, with no credentials, no redirects, no proxies, a 2-second timeout and the 4 MiB cap. A server
+      is reported when it lists models (`needs_key` false) or answers 401/403 (`needs_key` true, no models).
+    - `app.py --check-sherpa-import` imports `sherpa_onnx` and prints its version. It loads no model.
   - `server.py` serves the API, events, files and the UI. Every API route needs a per-launch token
     that the server injects into `index.html`. Requests must come to `127.0.0.1` or `localhost`,
     which blocks DNS rebinding. Shutdown finalizes an active recording before the database closes.
@@ -172,7 +202,7 @@ Deliberate differences from the Rust app:
 
 ## Command status
 
-Counts from `openmeet_py.commands` after phase 4a: 69 implemented, 9 answer HTTP 501, 78 in total,
+Counts from `openmeet_py.commands` after phase 4b: 71 implemented, 7 answer HTTP 501, 78 in total,
 matching `src/lib/api.ts`. `py/tests/test_commands.py` fails if the UI invokes a command the registry
 lacks.
 
@@ -183,13 +213,14 @@ lacks.
 | Implemented (phase 3, unqualified: fake backend only) | get_recording_state, list_audio_devices, save_default_devices, start_recording, pause_recording, resume_recording, stop_recording, delete_audio, recover_audio, audio_position, audio_usage. Also `audio_health` and `recording_state` events, track rows in get_meeting, and owned-folder deletion in delete_meeting | 3 |
 | Implemented, empty or unchanged (honest, not faked) | get_startup_warning, detection_supported, get_session_processing (null) | 1 |
 | Implemented (phase 4a, unqualified: fake engine and stub servers only) | stt_status, save_stt_mode, save_stt_settings, stt_install, transcribe_meeting, cancel_transcription, edit_segment, get_transcript_version, choose_model_folder, scan_local_models, import_local_model, search_hf_models, list_hf_files, download_hf_model, cancel_model_download. Also `stt_progress` and `model_library_progress` events, and transcript provenance and versions in get_meeting. `save_speaker_names` was already implemented in phase 2 | 4 |
-| 501: sherpa-onnx folder downloads and local AI server detection (phase 4b) | download_hf_folder, detect_local_servers | 4b |
+| Implemented (phase 4b, unqualified: fake sherpa module, stub servers, MockTransport only) | download_hf_folder (all-or-nothing Hugging Face sherpa folder), detect_local_servers (five loopback ports). `stt_status`, `save_stt_settings` and `stt_install` now cover the sherpa ids | 4b |
 | 501: shortcuts, detection, taskbar attention | save_settings, save_detection, set_detection_ignored, request_attention | 5 |
 | 501: session processing workflow | acknowledge_processing_notes, retry_session_processing, cancel_session_processing | 5 |
 
 Only the 9 commands in the 501 rows answer HTTP 501. Each one names its feature in the message.
-The sherpa-onnx entries in the model list show as not installed, with a reason. They are a phase 4b
-feature, and `save_stt_settings` refuses to select one with a message saying so.
+The sherpa-onnx entries in the model list show their real installed state. On a machine without the
+sherpa-onnx package (or outside Windows x64) they show a `reason`. `save_stt_settings` accepts the three
+sherpa ids and any downloaded `sherpa-dir:` folder whose name is plain.
 
 ## Phases
 
@@ -208,7 +239,10 @@ feature, and `save_stt_settings` refuses to select one with a message saying so.
    editing and versions. Checked with fake engines, stub servers, MockTransport and synthetic audio.
    Not checked: a real model, real speech, quality, speed, or parity with the Rust app's whisper.cpp
    `b5454` (the bundled version is not stated in the pywhispercpp metadata).
-   4b (not started): sherpa-onnx, sherpa folder downloads, local AI server detection.
+   4b (built, unqualified): sherpa-onnx 1.13.8 as a second engine (Parakeet TDT 0.6B v3 int8, Moonshine
+   base, SenseVoice small), sherpa folder downloads from Hugging Face, and local AI server detection.
+   Checked with a fake sherpa module, stub servers, synthetic archives and MockTransport. Not checked: a
+   real sherpa model, a real GitHub or Hugging Face download, speed, accuracy, or the Rust sherpa run.
 5. **Session workflow, meeting detection, tray, global shortcuts.** Detection only offers a prompt,
    as AGENTS.md requires.
 6. **Frontend reorganisation.** Feature-Sliced Design as a separate, pure-move change.
@@ -251,6 +285,26 @@ evidence.
   boundary can be split. Segments are not deduplicated across windows.
 - Phase 4a: the Markdown export still writes "No transcript generated." for every meeting. The
   transcript rendering and the txt, srt and vtt files of `export.rs` are not ported yet.
+- Phase 4b: sherpa-onnx runs in-process through the Python package. The Rust app ran a downloaded
+  `sherpa-onnx-vad-with-offline-asr` subprocess. Its command flags are mirrored as factory arguments, but
+  the Python factories are not the CLI, so the mapping is unverified against a real model.
+- Phase 4b: Moonshine uses `from_moonshine_v2` (encoder plus merged decoder), which matches the pinned
+  layout's `--moonshine-merged-decoder` flag. Parakeet passes `model_type="nemo_transducer"`. A downloaded
+  transducer passes `model_type=""`, which mirrors the Rust CLI's absence of the flag. What `""` does in
+  the C++ layer is unverified.
+- Phase 4b: the VAD thresholds are the package defaults (threshold 0.5, minimum silence 0.5 s, minimum
+  speech 0.25 s, maximum speech 20 s). The Rust CLI's own defaults are not confirmed, so segment boundaries
+  may differ.
+- Phase 4b: sherpa models ignore the vocabulary hint, as the Rust sherpa command does. Parakeet and
+  Moonshine ignore the language setting; SenseVoice takes `zh`, `en`, `ja`, `ko`, `yue` and runs anything
+  else as auto. The Rust app has no "Moonshine is English only" refusal, so none is added.
+- Phase 4b: the sherpa download host check is stricter than Rust's. Rust accepts any HTTPS host on the
+  sherpa download client. The Python build accepts only the three GitHub release hosts.
+- Phase 4b: the sherpa size shown is the VAD plus the archive (what this build downloads). Rust also adds
+  the 23 MB engine archive, which this build does not download because the engine is the pip package.
+- Phase 4b: an existing incomplete model folder blocks a re-install with a message. Rust re-extracts into it.
+- Phase 4b: detection probes use no proxies and no redirects (Rust's client follows the system proxy
+  settings).
 - Phase 4a: `stt_status` reports the speech files as installed, without creating any file, when
   `OPENMEET_PY_FAKE_STT=1`. That mode is for tests and the browser check only.
 - Phase 4a: a corrupt file already at the destination blocks a re-download with "already exists", as
@@ -287,3 +341,7 @@ These notes are for this build only. `docs/user-guide.md` describes the Rust app
 - Transcription (phase 4a) is **unqualified**: no real model has been run, so results are not verified
   for accuracy, speed, or parity with the Rust app. Downloads need an explicit Settings action and the
   pinned checksums. The Silero VAD URL points at the repository's `main` branch.
+- sherpa-onnx speech (phase 4b) is **unqualified** for the same reasons. Parakeet, Moonshine and SenseVoice
+  archives come from GitHub release assets with pinned checksums. A downloaded Hugging Face folder is
+  checked file by file and kept only if every file passes. Nothing has been run with a real sherpa model.
+  The SenseVoice model's license is not confirmed (see `THIRD_PARTY_LICENSES.md`).

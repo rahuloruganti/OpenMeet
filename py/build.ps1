@@ -46,6 +46,9 @@ try {
         --hidden-import pywhispercpp.utils `
         --hidden-import _pywhispercpp `
         --hidden-import _portaudiowpatch `
+        --collect-all sherpa_onnx `
+        --collect-binaries sherpa_onnx `
+        --hidden-import sherpa_onnx.lib._sherpa_onnx `
         --collect-submodules win32ctypes `
         (Join-Path $py "launcher.py")
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }

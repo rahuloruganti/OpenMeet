@@ -346,7 +346,9 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "search_hf_models": model_library.search_hf_models,
     "list_hf_files": model_library.list_hf_files,
     "download_hf_model": model_library.download_hf_model_command,
+    "download_hf_folder": model_library.download_hf_folder_command,
     "cancel_model_download": model_library.cancel_model_download,
+    "detect_local_servers": connections.detect_local_servers,
     "stt_status": stt.stt_status,
     "get_settings": get_settings,
     "save_export_options": save_export_options,
@@ -381,9 +383,6 @@ COMMANDS: dict[str, Callable[..., Any]] = {
 
 # Command -> feature name for the 501 message. Each is planned for a later phase (docs/python-port-plan.md).
 NOT_AVAILABLE: dict[str, str] = {
-    # Phase 4b: sherpa-onnx folders and the local servers that need its runtime
-    "download_hf_folder": "Sherpa-onnx folder downloads",
-    "detect_local_servers": "Local AI server detection",
     # Phase 5: shortcuts, detection, attention
     "save_settings": "Keyboard shortcuts",
     "save_detection": "Meeting detection",

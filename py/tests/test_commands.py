@@ -15,11 +15,12 @@ API_TS = REPO / "src" / "lib" / "api.ts"
 
 
 def test_unimplemented_command_returns_501_with_the_error_shape(client: TestClient) -> None:
-    status, body = invoke_error(client, "download_hf_folder", folder={})
+    # download_hf_folder and detect_local_servers are implemented in phase 4b; a phase-5 command stands in here.
+    status, body = invoke_error(client, "save_settings", shortcuts={})
     assert status == 501
     assert body == {
         "code": "not_available",
-        "message": "Sherpa-onnx folder downloads is not available in the Python build yet.",
+        "message": "Keyboard shortcuts is not available in the Python build yet.",
     }
 
 

@@ -94,6 +94,22 @@ The Python desktop build (`py/`) transcribes in-process through `pywhispercpp` 1
 
 Model files are downloaded only by an explicit Settings action and are checked against the pinned SHA-256 (see `py/openmeet_py/stt_catalog.py`, generated from `src-tauri/src/stt/stt_models.rs`). Their license entries are the existing ones above (Whisper ggml models and Silero VAD, MIT as recorded for the Rust app); this change did not re-verify them. The Silero VAD URL names the repository branch `main`, not a commit; the pinned SHA-256 is what guards its content. No model file is bundled in the executable.
 
+## Python build speech, sherpa-onnx (phase 4b)
+
+The Python desktop build (`py/`) runs sherpa-onnx in-process, pinned in `py/requirements.txt` to 1.13.8 and installed from wheels only. License labels are the installed wheels' metadata (`METADATA` and `licenses/LICENSE` in each `.dist-info`), not a legal review. The model rows repeat the Rust app's entries above; they were not re-verified from any installed file, and the Python build downloads them only through the pinned SHA-256 catalog (`py/openmeet_py/stt_catalog.py`).
+
+| Component | License | Source |
+| --- | --- | --- |
+| `sherpa-onnx` 1.13.8 (Python package) | Apache-2.0 (`licenses/LICENSE` in the wheel is the Apache License 2.0 text) | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) |
+| `sherpa-onnx-core` 1.13.8 (native runtime, `sherpa_onnx/lib`) | Apache-2.0 (metadata only; the wheel has no license file) | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) |
+| ONNX Runtime, as bundled in `sherpa-onnx-core` (`onnxruntime.dll`) | Not confirmed from the wheel. Verify the bundled version and notice text before release. | [ONNX Runtime](https://github.com/microsoft/onnxruntime) |
+| Silero VAD `silero_vad.onnx` (sherpa-onnx `asr-models` release) | MIT, as recorded for the Rust app. Verify before release. | [Silero VAD](https://github.com/snakers4/silero-vad) |
+| NVIDIA Parakeet TDT 0.6B v3, int8 sherpa-onnx export | CC-BY-4.0 (attribution required), as recorded for the Rust app. Verify against the pinned repository card before release. | [NVIDIA model card](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) |
+| Moonshine base (English), quantized sherpa-onnx export | MIT (verify), as recorded for the Rust app | [Useful Sensors Moonshine](https://github.com/usefulsensors/moonshine) |
+| SenseVoice small (zh/en/ja/ko/yue), int8 sherpa-onnx export | **UNCONFIRMED.** The Rust app records "Verify before release"; a FunASR license is expected but not confirmed from a local model card. | [FunASR SenseVoice](https://github.com/FunAudioLLM/SenseVoice) |
+
+The sherpa-onnx packages carry no model. Downloaded models are not bundled in `py/dist`. This is not a legal clearance.
+
 ## User-selected model-library downloads
 
 Phase 2 adds no bundled models or dependencies. Public Hugging Face downloads display repository license metadata and retain it in a local provenance manifest. Generic GGUF models carry their own repository terms; discovery or a download entry is not a completed license audit. The existing pinned Whisper catalog remains the only directly importable speech-model catalog.

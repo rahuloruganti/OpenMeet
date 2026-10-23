@@ -108,6 +108,17 @@ def block_real_whisper(request: pytest.FixtureRequest, monkeypatch: pytest.Monke
 
 
 @pytest.fixture(autouse=True)
+def block_real_sherpa(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Outside the opt-in real-model test, `import sherpa_onnx` fails. Tests that need it inject a fake module."""
+    if request.node.get_closest_marker("real_model"):
+        yield
+        return
+    for name in ("sherpa_onnx", "sherpa_onnx.lib", "sherpa_onnx.lib._sherpa_onnx"):
+        monkeypatch.setitem(sys.modules, name, None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def block_real_audio(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Outside hardware tests, `import pyaudiowpatch` fails, so no PortAudio code can open a device."""
     if request.node.get_closest_marker("hardware"):

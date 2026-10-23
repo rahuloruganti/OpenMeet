@@ -1,10 +1,12 @@
 """Local speech-to-text: status, settings validation and the explicit install (src-tauri/src/stt.rs).
 
-Port notes. The Rust app ran whisper.cpp b5454 as a downloaded subprocess. This build runs
+Port notes. Whisper: the Rust app ran whisper.cpp b5454 as a downloaded subprocess. This build runs
 pywhispercpp in-process (the package is installed with the app), so the "engine" flag means the
-package imports and no engine download exists. Only the selected model and the Silero VAD file are
-downloaded, and only by stt_install. OPENMEET_PY_FAKE_STT=1 replaces the engine with a fake for
-tests and browser checks; it reports the speech files as installed without creating any file.
+package imports and no engine download exists. sherpa-onnx (phase 4b): the engine is the pip package
+sherpa-onnx; models and the Silero VAD are downloaded by stt_install (see sherpa_models.py).
+Only the selected model and the VAD file are downloaded, and only by stt_install.
+OPENMEET_PY_FAKE_STT=1 replaces the engine with a fake for tests and browser checks; it reports the
+speech files as installed without creating any file.
 """
 
 from __future__ import annotations
@@ -17,11 +19,11 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Optional
 
-from . import model_library
+from . import model_library, sherpa_models
 from .context import Context, text_arg
 from .errors import AppError
-from .stt_catalog import SHERPA_ENGINE_SIZE, SHERPA_MODELS, SHERPA_VAD_SIZE, VAD, WHISPER_MODELS, Artifact
 from .reads import read_settings
+from .stt_catalog import SHERPA_MODELS, VAD, WHISPER_MODELS, Artifact
 
 LANGUAGES = (
     "auto", "ar", "ca", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hr", "hu",
@@ -30,13 +32,11 @@ LANGUAGES = (
 )
 PROMPT_LIMIT = 500
 FAKE_ENV = "OPENMEET_PY_FAKE_STT"
-SHERPA_REASON = (
-    "sherpa-onnx speech models are not available in this build yet (planned for phase 4b). "
-    "Use a Whisper model."
-)
 MODEL_ERROR = "Choose one of the listed speech models."
 CUSTOM_ERROR = "That speech model file is missing or is not a Whisper ggml model. Choose again."
+SHERPA_FOLDER_ERROR = "Choose a downloaded sherpa-onnx folder from the list."
 GGML_MAGIC = (b"lmgg", b"ggml")
+WHISPER_ENGINE = "whisper.cpp"
 
 
 def fake_engine() -> bool:
@@ -44,7 +44,7 @@ def fake_engine() -> bool:
 
 
 def engine_available() -> bool:
-    """Whether the speech engine package is importable. Uses find_spec, so nothing is imported."""
+    """Whether the whisper speech engine package is importable. Uses find_spec, so nothing is imported."""
     if fake_engine():
         return True
     return importlib.util.find_spec("pywhispercpp") is not None
@@ -56,10 +56,6 @@ def supported() -> bool:
 
 def stt_root(ctx: Context) -> Path:
     return ctx.store.data_dir / "stt"
-
-
-def _is_sherpa(model_id: str) -> bool:
-    return model_id.startswith("sherpa:") or model_id.startswith("sherpa-dir:")
 
 
 def _catalog(model_id: str) -> Optional[Artifact]:
@@ -85,10 +81,12 @@ def validate(language: str, prompt: str, model_id: str) -> None:
         raise AppError("stt_settings", "Choose one of the listed transcription languages.")
     if len(prompt) > PROMPT_LIMIT or any(_is_control(char) for char in prompt):
         raise AppError("stt_settings", "Keep the vocabulary hint to one line of at most 500 characters.")
-    if _catalog(model_id) is not None:
+    if _catalog(model_id) is not None or sherpa_models.pinned(model_id) is not None:
         return
-    if _is_sherpa(model_id):
-        raise AppError("stt_settings", SHERPA_REASON)
+    if model_id.startswith(sherpa_models.CUSTOM_PREFIX):
+        if sherpa_models.custom_name(model_id) is None:
+            raise AppError("stt_settings", SHERPA_FOLDER_ERROR)
+        return
     if not _custom_ok(model_id):
         raise AppError("stt_settings", CUSTOM_ERROR)
 
@@ -112,21 +110,28 @@ def _present(root: Path, artifact: Artifact) -> bool:
 def _models_listing(root: Path) -> list[dict[str, Any]]:
     listing: list[dict[str, Any]] = []
     for entry in WHISPER_MODELS:
-        listing.append({"id": entry.id, "size": entry.size, "installed": _present(root, entry)})
-    for model_id, archive_size in SHERPA_MODELS:
         listing.append(
-            {
-                "id": model_id,
-                "size": SHERPA_ENGINE_SIZE + SHERPA_VAD_SIZE + archive_size,
-                "installed": False,
-                "reason": SHERPA_REASON,
-            }
+            {"id": entry.id, "size": entry.size, "installed": _present(root, entry), "engine": WHISPER_ENGINE}
         )
+    reason = sherpa_models.unavailable_reason()
+    for model in SHERPA_MODELS:
+        state = sherpa_models.installed(root, model.id)
+        row: dict[str, Any] = {
+            "id": model.id,
+            "size": sherpa_models.download_size(model),
+            "installed": state.engine and state.model and state.vad,
+            "engine": sherpa_models.ENGINE_LABEL,
+        }
+        if reason is not None:
+            row["reason"] = reason
+        listing.append(row)
+    for model_id, size in sherpa_models.custom_models(root):
+        listing.append({"id": model_id, "size": size, "installed": True, "engine": sherpa_models.ENGINE_LABEL})
     return listing
 
 
 def status(root: Path, model_id: str) -> dict[str, Any]:
-    """The SttStatus shape from src/lib/api.ts. Extra per-model "reason" keys are additive."""
+    """The SttStatus shape from src/lib/api.ts. Extra per-model "engine" and "reason" keys are additive."""
     models = _models_listing(root)
     languages = list(LANGUAGES)
     if fake_engine():
@@ -141,23 +146,31 @@ def status(root: Path, model_id: str) -> dict[str, Any]:
             "languages": languages,
             "reason": None,
         }
+    if sherpa_models.is_sherpa(model_id):
+        state = sherpa_models.installed(root, model_id)
+        reason = sherpa_models.unavailable_reason()
+        return {
+            "engine": state.engine,
+            "model": state.model,
+            "vad": state.vad,
+            "installed": state.engine and state.model and state.vad and reason is None,
+            "missing_bytes": state.missing_bytes,
+            "supported": sherpa_models.supported(),
+            "models": models,
+            "languages": languages,
+            "reason": reason,
+        }
     engine = engine_available()
-    reason: Optional[str] = None
-    if _is_sherpa(model_id):
-        reason = SHERPA_REASON
-        model_ok = False
-        model_size = 0
+    selected = _catalog(model_id)
+    if selected is not None:
+        model_ok = _present(root, selected)
+        model_size = selected.size
     else:
-        selected = _catalog(model_id)
-        if selected is not None:
-            model_ok = _present(root, selected)
-            model_size = selected.size
-        else:
-            model_ok = _custom_ok(model_id)
-            model_size = 0
+        model_ok = _custom_ok(model_id)
+        model_size = 0
     vad_ok = _present(root, VAD)
     missing = (0 if model_ok else model_size) + (0 if vad_ok else VAD.size)
-    installed = engine and model_ok and vad_ok and reason is None
+    installed = engine and model_ok and vad_ok
     return {
         "engine": engine,
         "model": model_ok,
@@ -167,12 +180,12 @@ def status(root: Path, model_id: str) -> dict[str, Any]:
         "supported": supported(),
         "models": models,
         "languages": languages,
-        "reason": reason,
+        "reason": None,
     }
 
 
 def selected_model_path(root: Path, model_id: str) -> Path:
-    """Absolute path of the model file the engine loads. Raises if it is not installed."""
+    """Absolute path of the Whisper model file the engine loads. Raises if it is not installed."""
     selected = _catalog(model_id)
     if selected is not None:
         if not _present(root, selected):
@@ -192,10 +205,10 @@ def install(ctx: Context) -> dict[str, Any]:
     root = stt_root(ctx)
     with ctx.store.lock:
         model_id = read_settings(ctx.store.db)["stt_model"]
-    if _is_sherpa(model_id):
-        raise AppError("stt", SHERPA_REASON)
     if fake_engine():
         return status(root, model_id)
+    if sherpa_models.is_sherpa(model_id):
+        return _install_sherpa(ctx, root, model_id)
     if not supported():
         raise AppError("stt", "Local speech-to-text needs Windows x64 in this build.")
     if not engine_available():
@@ -227,6 +240,27 @@ def install(ctx: Context) -> dict[str, Any]:
                 transport=ctx.transport,
             )
         return status(root, model_id)
+
+
+def _install_sherpa(ctx: Context, root: Path, model_id: str) -> dict[str, Any]:
+    """Downloads the shared VAD and, for a pinned model, its archive. A downloaded folder needs only the VAD."""
+    if not sherpa_models.supported():
+        raise AppError("stt", "The sherpa-onnx speech engine is available on Windows x64 only.")
+    model = sherpa_models.pinned(model_id)
+    if model is None and not sherpa_models.custom_ready(root, model_id):
+        raise AppError(
+            "stt",
+            "This downloaded speech model is missing or incomplete. Download it again in the model library.",
+        )
+    if not sherpa_models.engine_available():
+        raise AppError("stt", "The sherpa-onnx speech engine is missing from this build. Reinstall OpenMeet.")
+
+    def progress(stage: str, done: int, total: int) -> None:
+        ctx.emit("stt_progress", {"stage": stage, "downloaded": done, "total": total})
+
+    with model_library.artifact_operation() as cancel:
+        sherpa_models.install(root, model, progress, cancel, ctx.transport)
+    return status(root, model_id)
 
 
 # ---- command handlers ----------------------------------------------------------------
