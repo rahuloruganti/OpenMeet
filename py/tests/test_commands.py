@@ -12,7 +12,7 @@ from openmeet_py import detection
 from openmeet_py.commands import COMMANDS, NOT_AVAILABLE
 
 REPO = Path(__file__).resolve().parents[2]
-API_TS = REPO / "src" / "lib" / "api.ts"
+API_TS = REPO / "src" / "shared" / "api" / "api.ts"
 
 
 def test_no_command_answers_501_after_phase_five() -> None:

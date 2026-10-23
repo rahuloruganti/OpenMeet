@@ -16,6 +16,7 @@ taskbar flashing) is **built in code and checked with fakes, a stub server, a br
 devices, and an exe smoke run only. It is UNQUALIFIED: RegisterHotKey, the Windows consent store and
 FlashWindowEx have not run on a real desktop; live transcription has not run on a real model; the tray is
 deferred.** Every command the UI invokes is now implemented; none answers HTTP 501.
+Phase 6 moves the frontend into Feature-Sliced Design layers as a pure move; see its section.
 Phase 7 still gates real use. Nothing in this build is a replacement for the Rust app yet.
 
 ## Why
@@ -26,11 +27,12 @@ integration, and processing" rule for this build only. The Rust app and `src-tau
 
 ## Architecture
 
-- **Frontend, unchanged.** `src/` is not edited. `py/vite.py.config.ts` builds it into `py/web`
+- **Frontend, moved only (phase 6).** `src/` was reorganised into FSD layers: import paths changed, no
+  logic edited (see the phase 6 section). `py/vite.py.config.ts` builds it into `py/web`
   with two aliases: `@tauri-apps/api/core` to `py/shim/core.ts` and `@tauri-apps/api/event` to
   `py/shim/event.ts`.
   - `invoke(cmd, args)` posts JSON to `/api/invoke/{cmd}`. Non-2xx responses throw the
-    `{code, message}` body, which `src/lib/api.ts` already reads.
+    `{code, message}` body, which `src/shared/api/api.ts` already reads.
   - `listen(event, cb)` shares one WebSocket, `/ws`, which carries `{event, payload}`.
   - `convertFileSrc(p)` returns `/files?path=…&token=…`.
 - **Backend.** FastAPI and uvicorn in `py/openmeet_py/`:
@@ -228,7 +230,7 @@ Deliberate differences from the Rust app:
 ## Command status
 
 Counts from `openmeet_py.commands` after phase 5: 78 implemented, 0 answer HTTP 501, 78 in total,
-matching `src/lib/api.ts`. `py/tests/test_commands.py` fails if the UI invokes a command the registry
+matching `src/shared/api/api.ts`. `py/tests/test_commands.py` fails if the UI invokes a command the registry
 lacks, and checks that `NOT_AVAILABLE` is empty.
 
 | Status | Commands | Planned phase |
@@ -273,6 +275,8 @@ sherpa ids and any downloaded `sherpa-dir:` folder whose name is plain.
    stub OpenAI-compatible server, a browser run against fake devices, and an exe smoke run. Not run: real
    hotkeys, the real consent store, FlashWindowEx, real-model live transcription. The tray was not built:
    Shell_NotifyIcon needs a message window and icon handling, which was out of the scope set for this phase.
+6. **Frontend layout (Feature-Sliced Design, pure move; checked).** `src/` moved into `app`, `widgets`,
+   `features`, `entities` and `shared` with no logic change. Details, violations table and checks: the phase 6 section.
 
 ## Session processing (phase 5): behaviour and limits
 
@@ -347,7 +351,7 @@ request, 2 KB of text". The meeting had 8 transcript segments and a summary from
 Teams microphone entry produced the "Teams is using your microphone" prompt. "Set up recording" opened
 New recording with the title "Teams meeting" and did not start a recording. The shortcut field refused
 `Shift+A` with "Add Ctrl or Alt, or use an F-key.", and the saved shortcut was unchanged.
-6. **Frontend reorganisation.** Feature-Sliced Design as a separate, pure-move change.
+6. **Frontend reorganisation.** Done in phase 6 (pure move); see its section.
 7. **Hardware qualification.** Recording and transcription stay unqualified until this phase
    passes on real hardware. Nothing below has been run.
 
@@ -437,6 +441,72 @@ evidence.
 - `websockets` was missing from the first phase-3 build, so events never reached the page. It is now
   pinned and collected. The exe was not run end-to-end in a window; its WebSocket path is checked
   only by the venv server run.
+
+## Frontend layout (phase 6): behaviour and limits
+
+Phase 6 moves the React and TypeScript UI in `src/` into Feature-Sliced Design layers. It is a pure
+move: no logic, component, export name or CSS changed, and Git records every file as a rename. Only
+import specifiers, the new slice `index.ts` barrels, `index.html`, the Vitest `setupFiles` path in
+`vite.config.ts`, and the `api.ts` path in `py/tests/test_commands.py` changed.
+
+```
+src/
+  app/          main.tsx, App.tsx, styles.css, App.*.test.tsx (whole-app tests)
+  widgets/      meeting-sidebar, meeting-workspace, recording-controls, library-question,
+                setup-panel, settings-panel, first-run-setup
+  features/     rewrite-selection, action-items, meeting-tags, speaker-names, transcript-versions,
+                summary-templates, recipes, provider-settings, transcription-settings,
+                model-library, note-writer
+  entities/     meeting (group-meetings, meeting-labels), processing
+  shared/       api (api.ts, whole), lib (markdown, timestamps, models, tabs, use-task,
+                shortcut-label), test (app-harness, api-mock, setup)
+```
+
+Decisions:
+
+- No `pages/` layer. `App.tsx` is the only screen, and a page wrapper would be new code.
+- No `recording` or `settings` entity. No domain code for them exists outside the widgets, and
+  their types stay in `shared/api`.
+- No `@` alias. Relative imports need no change to `tsconfig.json`, `vite.config.ts`, the Vitest
+  config or `py/vite.py.config.ts`.
+- Each widget, feature and entity has an `index.ts` that exports only names other slices import.
+  Other slices import through it. A slice's own files and tests import each other directly.
+- `shared/api/api.ts` stays one file. Its types were not split.
+- `shared/test` imports `App` for the harness, which is an upward import. It is listed below.
+
+The Python build still works without a config change. `py/vite.py.config.ts` builds the root
+`index.html`, which now points at `/src/app/main.tsx`. Its two `@tauri-apps/api` aliases match import
+specifiers, not paths, so the moves do not affect them. If a path alias is added later, add it to
+`tsconfig.json`, `vite.config.ts` and `py/vite.py.config.ts`.
+
+Cross-layer imports that remain. A pure move cannot remove them without logic edits, so they are
+listed here, not refactored. "Upward" means a lower layer imports a higher one. "Same layer" means
+one slice imports a sibling slice in the same layer.
+
+| Importer | Imports from | Kind | Why | Suggested follow-up |
+| --- | --- | --- | --- | --- |
+| `features/rewrite-selection/RewriteSelection.tsx` | `widgets/settings-panel` (`OpenSettingsButton`, `OpenSettings`, `SettingsSection`) | Upward | The "open settings" button and its navigation types live in `SettingsPanel`. | Move `OpenSettingsButton` and the `OpenSettings`/`SettingsSection` types to `shared/ui` or `entities/settings`. |
+| `widgets/meeting-workspace/MeetingWorkspace.tsx` | `widgets/settings-panel` (`OpenSettingsButton`, `AiBlock`, `OpenSettings`, `SettingsSection`) | Same layer | Same as above. | Same as above. |
+| `widgets/library-question/LibraryQuestion.tsx` | `widgets/settings-panel` (`OpenSettingsButton`, `AiBlock`, `OpenSettings`) | Same layer | Same as above. | Same as above. |
+| `features/recipes/Recipes.tsx` | `features/summary-templates` (`SavedTextEditor`) | Same layer | The recipe editor reuses the saved-text editor. | Move `SavedTextEditor` to `shared/ui`. |
+| `features/transcription-settings/TranscriptionSettings.tsx` | `features/provider-settings` (`Assignment`) | Same layer | The speech API picker reuses the per-task `Assignment` control. | Move `Assignment` to `shared/ui` or `entities/settings`. |
+| `shared/test/app-harness.tsx` (test) | `app/App` | Upward, test only | The harness renders the whole App. | Keep as a test-only exception, or move the harness into `app/`. |
+| `shared/lib/models.test.ts` (test) | `entities/meeting` (`displayPath`, dynamic import) | Upward, test only | One test case checks `displayPath`. | Move that case into `entities/meeting`. |
+| `features/meeting-tags/MeetingTags.test.tsx` (test) | `widgets/meeting-sidebar` (`MeetingSidebar`) | Upward, test only | The tag test renders the sidebar. | Move the sidebar part into `widgets/meeting-sidebar`. |
+| `widgets/library-question/LibraryQuestion.test.tsx` (test) | `widgets/settings-panel` (`AiBlock` type) | Same layer, test only | A type-only import. | Resolved with the `AiBlock` move above. |
+
+No ESLint layer rule was added. A `no-restricted-imports` rule would fail on the rows above unless
+each file were exempted, which is extra configuration. Add the rule after those rows are fixed.
+
+Checks run for this phase:
+
+- `corepack pnpm typecheck`, `lint`, `format:check`: pass.
+- `corepack pnpm test`: 29 test files and 269 tests, the same count as before the move.
+- `corepack pnpm build`: passes. The JavaScript bundle is 360,244 bytes before and 360,243 after.
+- `corepack pnpm exec vite build --config py/vite.py.config.ts`: passes. The bundle is 360,235 bytes
+  before and 360,234 after. `py/web` contains no `__TAURI` string.
+- Python: `py/.venv` pytest passes after the `test_commands.py` path update. `py/build.ps1` rebuilt
+  `py/dist/OpenMeet-py.exe`, and `--smoke --data-dir <temp>` exits 0.
 
 ## Notes for Python-build users
 

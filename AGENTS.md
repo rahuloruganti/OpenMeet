@@ -18,9 +18,9 @@ Read `docs/v1-release-plan.md`, `docs/phase-1-implementation-plan.md`, and `docs
 
 | Path | Responsibility |
 | --- | --- |
-| `src/App.tsx` | Meeting UI, notes, recording controls, settings |
-| `src/lib/api.ts` | Typed Tauri commands and event payloads |
-| `src/lib/note-writer.ts` | Serialized, debounced note saves |
+| `src/app/App.tsx` | Meeting UI, notes, recording controls, settings |
+| `src/shared/api/api.ts` | Typed Tauri commands and event payloads |
+| `src/features/note-writer/note-writer.ts` | Serialized, debounced note saves |
 | `src-tauri/src/lib.rs` | Tauri commands, events, tray, shortcuts, lifecycle |
 | `src-tauri/src/domain.rs` | Shared backend types and errors |
 | `src-tauri/src/storage.rs` | SQLite, recording lifecycle, capture integration |
