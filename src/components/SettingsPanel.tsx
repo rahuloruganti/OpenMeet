@@ -42,6 +42,16 @@ export const settingsSections = [
 ] as const;
 export type SettingsSection = (typeof settingsSections)[number][0];
 
+/** Shortcut drafts that differ from the saved settings. */
+export const shortcutsDirty = (
+  settings: Settings | null,
+  shortcut: string,
+  stopShortcut: string,
+) =>
+  !!settings &&
+  (shortcut !== settings.pause_shortcut ||
+    stopShortcut !== (settings.stop_shortcut ?? ""));
+
 type Props = {
   panelRef: Ref<HTMLElement>;
   settings: Settings | null;
@@ -193,12 +203,8 @@ export function SettingsPanel(props: Props) {
   useEffect(() => {
     if (section === "models") setModelsOpened(true);
   }, [section]);
-  const shortcutsDirty =
-    !!settings &&
-    (props.shortcut !== settings.pause_shortcut ||
-      props.stopShortcut !== (settings.stop_shortcut ?? ""));
   const unsaved: Partial<Record<SettingsSection, boolean>> = {
-    recording: shortcutsDirty,
+    recording: shortcutsDirty(settings, props.shortcut, props.stopShortcut),
     transcription: sttDirty(settings, props.sttDraft),
   };
   const panel = (id: SettingsSection) => ({
@@ -430,7 +436,7 @@ export function SettingsPanel(props: Props) {
                 There is no shortcut to start recording: starting always goes
                 through New recording.
               </p>
-              {shortcutsDirty && (
+              {shortcutsDirty(settings, props.shortcut, props.stopShortcut) && (
                 <button
                   disabled={disabled || !props.shortcut.trim()}
                   onClick={props.onSaveShortcut}

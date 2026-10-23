@@ -460,7 +460,7 @@ pre {
   z-index: 20;
   padding: 12px 28px 0;
   font-size: 0.8125rem;
-  max-height: 28dvh;
+  max-height: 40dvh;
   overflow-y: auto;
 }
 .feedback-stack:empty {
@@ -524,6 +524,12 @@ pre {
   padding: 4px 8px;
   background: transparent;
   border-color: currentColor;
+}
+/* Beats the transparent banner-button rule above; hover is covered by .primary:hover. */
+.feedback-stack .primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .content-area {
@@ -630,6 +636,16 @@ pre {
 .save-status {
   margin-left: auto;
   font-size: 0.6875rem;
+}
+/* Global .error adds a red box; reset it so the status reads as text. */
+.save-status.error {
+  padding: 0;
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--danger);
+  font-weight: 600;
 }
 .content-tabs {
   display: flex;
@@ -1487,6 +1503,10 @@ textarea.notes-editor {
 }
 .setup-list .muted {
   overflow-wrap: anywhere;
+}
+.setup-list button {
+  flex: none;
+  white-space: nowrap;
 }
 .setup-connect {
   display: grid;

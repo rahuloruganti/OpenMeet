@@ -7,6 +7,7 @@ import {
   type AudioHealth,
   type ExportResult,
   type MeetingDetail,
+  type RecordingState,
 } from "./lib/api";
 import {
   sample,
@@ -332,6 +333,78 @@ describe("recording, capture and devices", () => {
         .disabled,
     ).toBe(false);
     expect(screen.queryByText(/stopped responding/)).toBeNull();
+  });
+
+  it("dismisses the audio gap notice until its counts change", async () => {
+    let publish: (health: AudioHealth) => void = () => {};
+    vi.mocked(api.onAudioHealth).mockImplementation(async (callback) => {
+      publish = callback;
+      return () => {};
+    });
+    vi.mocked(api.getRecordingState).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "desktop",
+      error: null,
+      recording_offset_ms: null,
+    });
+    await ready();
+    const gaps = (count: number): AudioHealth => ({
+      error: null,
+      tracks: [
+        {
+          kind: "mic",
+          frames: 100,
+          dropped_frames: 0,
+          gaps: count,
+          peak: 0.2,
+          callback_age_ms: 5,
+        },
+      ],
+    });
+    act(() => publish(gaps(3)));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Dismiss audio gap notice" }),
+    );
+    expect(screen.queryByText(/Audio gaps detected/)).toBeNull();
+    act(() => publish(gaps(3)));
+    expect(screen.queryByText(/Audio gaps detected/)).toBeNull();
+    act(() => publish(gaps(4)));
+    expect(
+      (await screen.findByText(/Audio gaps detected/)).textContent,
+    ).toContain("Microphone: 4");
+  });
+
+  it("dismisses a capture error for its recording only", async () => {
+    await ready();
+    const publishState = vi.mocked(api.onRecordingState).mock.calls[0][0];
+    const stopped = (
+      revision: number,
+      meetingId: string,
+      error: string,
+    ): RecordingState => ({
+      revision,
+      status: "stopped",
+      meeting_id: meetingId,
+      source: "desktop",
+      error,
+      recording_offset_ms: null,
+    });
+    act(() => publishState(stopped(1, "sample", "Device lost")));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Dismiss capture error" }),
+    );
+    expect(screen.queryByText("Capture: Device lost")).toBeNull();
+    // A changed message is shown again.
+    act(() => publishState(stopped(2, "sample", "Device lost twice")));
+    expect(screen.getByText("Capture: Device lost twice")).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Dismiss capture error" }),
+    );
+    // The same text from a different recording is shown again.
+    act(() => publishState(stopped(3, "other", "Device lost twice")));
+    expect(screen.getByText("Capture: Device lost twice")).toBeTruthy();
   });
 
   it("clears obsolete audio health after stop and before a new meeting", async () => {

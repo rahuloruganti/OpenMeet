@@ -102,7 +102,9 @@ it("uses an installed Whisper file in place and hides non-speech files", async (
   });
   expect(list.textContent).toContain("matches pinned base");
   expect(list.textContent).not.toContain("llm.gguf");
-  await userEvent.click(within(list).getByRole("button", { name: "Use" }));
+  await userEvent.click(
+    within(list).getByRole("button", { name: "Use ggml-base.bin" }),
+  );
   await waitFor(() =>
     expect(api.saveSttSettings).toHaveBeenCalledWith(
       "auto",
@@ -169,6 +171,17 @@ it("recommends Parakeet for English or auto, and Whisper small for other languag
   });
   expect(english.textContent).toContain("Parakeet TDT 0.6B v3");
   expect(english.textContent).toContain("Whisper small");
+  // Each download button is named for its own model, not a generic "Download and use".
+  expect(
+    within(english).getByRole("button", {
+      name: "Download and use Parakeet TDT 0.6B v3 (English + European languages)",
+    }),
+  ).toBeTruthy();
+  expect(
+    within(english).getByRole("button", {
+      name: "Download and use Whisper small",
+    }),
+  ).toBeTruthy();
   document.body.innerHTML = "";
   show({ stt_language: "ja" });
   await userEvent.click(screen.getByRole("button", { name: "Next" }));

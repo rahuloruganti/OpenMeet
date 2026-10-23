@@ -283,6 +283,41 @@ describe("speech engine and automatic processing", () => {
     ).toBeNull();
   });
 
+  it.each(["completed", "cancelled"] as const)(
+    "dismisses a %s processing panel until its state changes",
+    async (stage) => {
+      vi.mocked(api.getSessionProcessing).mockResolvedValue(
+        sessionSnapshot(5, stage),
+      );
+      await ready();
+      await screen.findByRole("region", { name: "Session processing" });
+      await userEvent.click(
+        screen.getByRole("button", { name: "Dismiss processing status" }),
+      );
+      expect(
+        screen.queryByRole("region", { name: "Session processing" }),
+      ).toBeNull();
+      // A newer revision of the same meeting shows the panel again.
+      const next = sessionSnapshot(6, stage);
+      vi.mocked(api.getSessionProcessing).mockResolvedValue(next);
+      act(() =>
+        vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](next),
+      );
+      await screen.findByRole("region", { name: "Session processing" });
+    },
+  );
+
+  it("offers no dismiss for a failed run, which still needs attention", async () => {
+    vi.mocked(api.getSessionProcessing).mockResolvedValue(
+      sessionSnapshot(5, "failed"),
+    );
+    await ready();
+    await screen.findByRole("region", { name: "Session processing" });
+    expect(
+      screen.queryByRole("button", { name: "Dismiss processing status" }),
+    ).toBeNull();
+  });
+
   it.each([
     [1, "request"],
     [3, "requests"],

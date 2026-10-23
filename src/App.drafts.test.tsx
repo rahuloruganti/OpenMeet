@@ -1,5 +1,11 @@
 import { mockApiModule } from "./test/api-mock";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./lib/api";
@@ -223,6 +229,32 @@ describe("note drafts and shutdown", () => {
     expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
   });
 
+  it("explains a failed save in the quit dialog and keeps Keep working focused", async () => {
+    await ready();
+    vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
+    fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
+      target: { value: "Keep these edits" },
+    });
+    await screen.findByText(/Notes not saved: Disk full/);
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    const dialog = await screen.findByRole("dialog", {
+      name: "Save and quit?",
+    });
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      "Your notes could not be saved: Disk full. OpenMeet will not quit until they are saved. Copy your text, or keep working and retry.",
+    );
+    // Enter on the dialog must not retry a failing save by default.
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Keep working" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save and quit" }),
+    );
+    await screen.findByText(/That action needs your notes saved first/);
+    expect(api.close).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
+  });
+
   it("does not switch meetings when the current notes cannot be saved", async () => {
     vi.mocked(api.listMeetings).mockResolvedValue([
       sample.meeting,
@@ -239,6 +271,38 @@ describe("note drafts and shutdown", () => {
     await screen.findByText(/Notes not saved: Write failed/);
     expect(api.getMeeting).not.toHaveBeenCalledWith("second");
     expect(screen.getByDisplayValue("Unflushed")).toBeTruthy();
+    // The refused switch says why, and the failure text appears once (in the banner).
+    await screen.findByText(/That action needs your notes saved first/);
+    expect(screen.getAllByText(/Write failed/)).toHaveLength(1);
+    expect(screen.getByText("Not saved").classList.contains("error")).toBe(
+      true,
+    );
+    expect(
+      screen.getByText(
+        "Not saved yet. Your text is still here; use Save notes now to retry.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps Save notes now retries in the banner instead of a second message", async () => {
+    await ready();
+    vi.mocked(api.saveNotes).mockRejectedValue(new Error("Write failed"));
+    fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
+      target: { value: "Retry me" },
+    });
+    await screen.findByText(/Notes not saved: Write failed/);
+    const saves = vi.mocked(api.saveNotes).mock.calls.length;
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save notes now" }),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(api.saveNotes).mock.calls.length).toBeGreaterThan(saves),
+    );
+    await act(async () => {});
+    expect(
+      screen.queryByText(/That action needs your notes saved first/),
+    ).toBeNull();
+    expect(screen.getByText(/Notes not saved: Write failed/)).toBeTruthy();
   });
 
   it("flushes notes before graceful shutdown", async () => {

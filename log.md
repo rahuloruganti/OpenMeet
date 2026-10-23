@@ -752,3 +752,9 @@ Outcome: Automatic processing now lives on Settings → Recording (select rename
 User request: "fix next", taking the remaining review items: the notes box locking during unrelated tasks, deleting an empty note needing its title typed, and the first export opening an unexplained folder picker.
 
 Outcome: the notes box is read-only instead of disabled while a task runs, so it keeps focus and cursor; an empty note deletes after one confirmation with no typed title (every other delete still needs it); the first export shows a notice explaining the folder choice before the picker opens; the audio-gap notice says "Microphone" and "System audio". Typecheck, lint, format check, tests (181) and build pass locally; no recordings, downloads or Rust checks were run.
+
+## Fix clear UI breakages from the browser review
+
+User request: fix the first-run Use button wrap, the detection prompt's invisible button, save-failure feedback, the clipped and undismissable banner stack, and Escape closing Settings with unsaved drafts.
+
+Outcome: setup buttons no longer split their labels and have distinct accessible names; the detection prompt's primary button is solid and the card is a polite status region; a failed notes save shows a red "Not saved" status, a red footer, a clearer banner, an explanation when switching meetings is blocked, and a reason in the Save and quit dialog (quitting stays blocked, "Keep working" is focused); the banner stack cap is 40% of the window height and capture errors, audio-gap notices and finished processing panels can be dismissed; Escape in a Settings field no longer closes Settings, and closing Settings with unsaved shortcut or transcription drafts asks first. Checked in a mocked browser build (fictional data, no real devices). Typecheck, lint, format check, tests (192) and build pass locally; no recordings, downloads or Rust checks were run.

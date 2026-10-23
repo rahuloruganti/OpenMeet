@@ -224,7 +224,7 @@ describe("settings and meeting detection", () => {
       vi.mocked(api.getSettings).mockResolvedValue(detecting);
       await ready();
       deliver([zoom]);
-      const card = await screen.findByRole("group", {
+      const card = await screen.findByRole("status", {
         name: "Meeting detected",
       });
       expect(card.textContent).toContain("Zoom is using your microphone");
@@ -238,17 +238,17 @@ describe("settings and meeting detection", () => {
       expect(screen.getByDisplayValue("Zoom meeting")).toBeTruthy();
       expect(api.startCapture).not.toHaveBeenCalled();
       expect(
-        screen.queryByRole("group", { name: "Meeting detected" }),
+        screen.queryByRole("status", { name: "Meeting detected" }),
       ).toBeNull();
       // Still the same session: no second prompt. A new session prompts again.
       deliver([zoom]);
       expect(
-        screen.queryByRole("group", { name: "Meeting detected" }),
+        screen.queryByRole("status", { name: "Meeting detected" }),
       ).toBeNull();
       deliver([]);
       deliver([zoom]);
       expect(
-        await screen.findByRole("group", { name: "Meeting detected" }),
+        await screen.findByRole("status", { name: "Meeting detected" }),
       ).toBeTruthy();
     });
 
@@ -271,7 +271,7 @@ describe("settings and meeting detection", () => {
       deliver([]);
       deliver([zoom]);
       expect(
-        screen.queryByRole("group", { name: "Meeting detected" }),
+        screen.queryByRole("status", { name: "Meeting detected" }),
       ).toBeNull();
     });
 
@@ -279,7 +279,7 @@ describe("settings and meeting detection", () => {
       await ready();
       deliver([zoom]);
       expect(
-        screen.queryByRole("group", { name: "Meeting detected" }),
+        screen.queryByRole("status", { name: "Meeting detected" }),
       ).toBeNull();
       vi.mocked(api.saveDetection).mockResolvedValue(detecting);
       await userEvent.click(screen.getByRole("button", { name: "Settings" }));
@@ -290,7 +290,7 @@ describe("settings and meeting detection", () => {
         }),
       );
       expect(api.saveDetection).toHaveBeenCalledWith(true);
-      await screen.findByRole("group", { name: "Meeting detected" });
+      await screen.findByRole("status", { name: "Meeting detected" });
       act(() =>
         vi.mocked(api.onRecordingState).mock.calls[0][0]({
           revision: 5,
@@ -302,8 +302,69 @@ describe("settings and meeting detection", () => {
         }),
       );
       expect(
-        screen.queryByRole("group", { name: "Meeting detected" }),
+        screen.queryByRole("status", { name: "Meeting detected" }),
       ).toBeNull();
+    });
+  });
+
+  describe("closing settings", () => {
+    const openRecording = async () => {
+      await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+      await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    };
+    const stopShortcut = () =>
+      screen.getByLabelText("Stop recording shortcut (optional)");
+
+    it("keeps Settings open when Escape is pressed inside a field", async () => {
+      await ready();
+      await openRecording();
+      await userEvent.click(stopShortcut());
+      await userEvent.keyboard("{Escape}");
+      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    });
+
+    it("asks before discarding an unsaved shortcut, and keeps Settings open if declined", async () => {
+      await ready();
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      await openRecording();
+      await userEvent.type(stopShortcut(), "Alt+Shift+S");
+      // Focus a button in the panel so Escape is not swallowed by the field.
+      // The tab name gains "(unsaved changes)" once the draft is dirty.
+      await userEvent.click(screen.getByRole("tab", { name: /^Recording/ }));
+      await userEvent.keyboard("{Escape}");
+      expect(confirm).toHaveBeenCalledWith("Discard unsaved settings?");
+      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Close panel" }),
+      );
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+      confirm.mockRestore();
+    });
+
+    it("closes and resets the drafts when the discard is confirmed", async () => {
+      await ready();
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+      await openRecording();
+      await userEvent.type(stopShortcut(), "Alt+Shift+S");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Close panel" }),
+      );
+      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+      expect(confirm).toHaveBeenCalledOnce();
+      await openRecording();
+      expect((stopShortcut() as HTMLInputElement).value).toBe("");
+      confirm.mockRestore();
+    });
+
+    it("closes from the panel body on a clean Escape without asking", async () => {
+      await ready();
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      await openRecording();
+      await userEvent.keyboard("{Escape}");
+      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+      expect(confirm).not.toHaveBeenCalled();
+      confirm.mockRestore();
     });
   });
 });

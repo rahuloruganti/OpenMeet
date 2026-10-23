@@ -20,7 +20,7 @@ Detection only asks `GET /v1/models` of `127.0.0.1` ports 11434, 8888, 1234, 800
 3. Write Markdown in **My notes**.
 4. Wait for **Saved** before closing. Use **Save notes now** to retry a failed save.
 
-Notes autosave after 400 ms without another edit. Saves run in order, and the backend rejects stale revisions. Switching meetings, exporting, and graceful close flush pending changes. A failed save keeps the draft on screen and prevents a safe close. Forced termination can lose unsaved text.
+Notes autosave after 400 ms without another edit. Saves run in order, and the backend rejects stale revisions. Switching meetings, exporting, and graceful close flush pending changes. A failed save keeps the draft on screen, shows **Not saved** in red and a notes banner, and blocks switching meetings and quitting until a retry succeeds; the quit dialog says so. Copy your text if the save keeps failing. Forced termination can lose unsaved text.
 
 Use the sidebar search to find meeting titles. Queries of at least two characters also search notes, transcript segments, and summaries. Selecting a content match opens the corresponding tab. Settings and setup preserve the mounted note draft.
 

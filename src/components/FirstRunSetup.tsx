@@ -415,6 +415,10 @@ export function FirstRunSetup(props: Props) {
                         </span>
                         <button
                           disabled={busy || inUse}
+                          // Named only while it reads "Use"; "In use" keeps its visible text.
+                          aria-label={
+                            inUse ? undefined : `Use ${fileName(item.path)}`
+                          }
                           onClick={() => void chooseLocal(item.path, true)}
                         >
                           {inUse ? "In use" : "Use"}
@@ -446,6 +450,11 @@ export function FirstRunSetup(props: Props) {
                         </span>
                         <button
                           disabled={busy || props.installing}
+                          aria-label={
+                            settings.stt_model === id && stt?.installed
+                              ? undefined
+                              : `Download and use ${speechModelLabel(id)}`
+                          }
                           onClick={() => void chooseLocal(id, true)}
                         >
                           {settings.stt_model === id && stt?.installed

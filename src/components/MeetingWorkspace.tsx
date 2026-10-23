@@ -559,7 +559,10 @@ export function MeetingWorkspace(props: Props) {
         <time dateTime={meeting.started_at}>
           {new Date(meeting.started_at).toLocaleString()}
         </time>
-        <span className="save-status" role="status">
+        <span
+          className={`save-status${props.notesStatus === "error" ? " error" : ""}`}
+          role="status"
+        >
           {props.notesStatus === "error"
             ? "Not saved"
             : props.notesStatus === "saving"
@@ -679,9 +682,16 @@ export function MeetingWorkspace(props: Props) {
                 {jumpHint}
               </span>
             )}
-            <span className="muted">
-              Autosaved on this device · Markdown supported
-            </span>
+            {props.notesStatus === "error" ? (
+              <span className="save-status error">
+                Not saved yet. Your text is still here; use Save notes now to
+                retry.
+              </span>
+            ) : (
+              <span className="muted">
+                Autosaved on this device · Markdown supported
+              </span>
+            )}
           </div>
         </section>
         <section

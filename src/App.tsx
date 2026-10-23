@@ -42,9 +42,11 @@ import { formatBytes } from "./lib/meeting-labels";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import {
   SettingsPanel,
+  shortcutsDirty,
   type SettingsSection,
   type SttDraft,
 } from "./components/SettingsPanel";
+import { sttDirty } from "./components/TranscriptionSettings";
 
 type Writer = ReturnType<typeof createNoteWriter>;
 
@@ -145,6 +147,13 @@ export function App() {
   const [output, setOutput] = useState("");
   const [health, setHealth] = useState<AudioHealth | null>(null);
   const [closeRequested, setCloseRequested] = useState(false);
+  // Dismissed banners, keyed by meeting and message so a new recording or a changed message shows again.
+  const [dismissedCapture, setDismissedCapture] = useState("");
+  const [dismissedGaps, setDismissedGaps] = useState("");
+  // Revision of each meeting's processing state that was dismissed; a new revision shows again.
+  const [dismissedProcessing, setDismissedProcessing] = useState<
+    Record<string, number>
+  >({});
   const speechReady =
     settings?.stt_mode === "cloud"
       ? (keyStatus.cloud_stt === "present" ||
@@ -322,8 +331,12 @@ export function App() {
       try {
         await task();
       } catch (failure) {
-        // Note-save failures are already shown by the notes banner.
-        if (keepMessages || failure !== noteFailure.current) report(failure);
+        // The notes banner already shows a note-save failure; say why this action stopped.
+        if (!keepMessages && failure === noteFailure.current)
+          setError(
+            "That action needs your notes saved first. Fix the problem above or copy your text, then try again.",
+          );
+        else report(failure);
       } finally {
         lock.current = false;
         mark(false);
@@ -642,17 +655,41 @@ export function App() {
     }
   }, [panel]);
 
+  // Unsaved shortcut or transcription drafts; closing Settings discards them after asking.
+  const settingsDirty =
+    shortcutsDirty(settings, shortcut, stopShortcut) ||
+    sttDirty(settings, sttDraft);
+  const closeSettings = useCallback(() => {
+    if (settingsDirty && !window.confirm("Discard unsaved settings?")) return;
+    // The drafts live here, not in the panel, so discarding resets them to the saved values.
+    if (settings) {
+      setShortcut(settings.pause_shortcut);
+      setStopShortcut(settings.stop_shortcut ?? "");
+      setSttDraft(settings);
+    }
+    setPanel(null);
+  }, [settings, settingsDirty]);
+
   useEffect(() => {
     if (!panel || closeRequested) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setPanel(null);
-      }
+      if (event.key !== "Escape") return;
+      // Escape inside a Settings field belongs to that field and must not close the page.
+      const target = event.target;
+      if (
+        panel === "settings" &&
+        target instanceof HTMLElement &&
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) &&
+        panelRef.current?.contains(target)
+      )
+        return;
+      event.preventDefault();
+      if (panel === "settings") closeSettings();
+      else setPanel(null);
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
-  }, [panel, closeRequested]);
+  }, [panel, closeRequested, closeSettings]);
   const disabled = !ready || busy || controlBusy;
   const hasSummaryInput =
     notes.trim().length > 0 || (selected?.segments.length ?? 0) > 0;
@@ -663,6 +700,22 @@ export function App() {
       : !settings?.llm?.model
         ? "Choose and save a summary model in Settings first."
         : null;
+  // The banner adds its own period, so drop the one the error message may already end with.
+  const notesErrorReason = notesError.replace(/\.$/, "");
+  const captureKey = `${recording.meeting_id}:${recording.error}`;
+  const gapped = active
+    ? (health?.tracks.filter((track) => track.gaps > 0) ?? [])
+    : [];
+  const gapCounts = gapped
+    .map(
+      (track) => `${gapTrackLabels[track.kind] ?? track.kind}: ${track.gaps}`,
+    )
+    .join(", ");
+  const gapNotice =
+    gapped.length > 0
+      ? `Audio gaps detected (${gapCounts}). Recording continues; exact positions are kept in the timing index.`
+      : "";
+  const gapKey = `${recording.meeting_id}:${gapNotice}`;
   const enhanceBlocked = !selected
     ? "Select a meeting first."
     : (llmBlocked ??
@@ -771,7 +824,7 @@ export function App() {
           {detectedApp && (
             <div
               className="detection-card"
-              role="group"
+              role="status"
               aria-label="Meeting detected"
             >
               <span>
@@ -819,21 +872,29 @@ export function App() {
               browser preview cannot access the desktop database.
             </p>
           )}
+          {/* Above the action errors, which point at it ("Fix the problem above"). */}
+          {notesError && (
+            <p className="error" role="alert">
+              Notes not saved: {notesErrorReason}. You can't switch meetings or
+              quit until this is fixed. Copy your text or use Save notes now to
+              retry.
+            </p>
+          )}
           {error && (
             <div className="error" role="alert">
               {error} <button onClick={() => setError("")}>Dismiss</button>
             </div>
           )}
-          {notesError && (
-            <p className="error" role="alert">
-              Notes not saved: {notesError}. Keep or copy your edits before
-              quitting.
-            </p>
-          )}
-          {recording.error && (
-            <p className="error" role="alert">
-              Capture: {recording.error}
-            </p>
+          {recording.error && captureKey !== dismissedCapture && (
+            <div className="error" role="alert">
+              <span>Capture: {recording.error}</span>{" "}
+              <button
+                aria-label="Dismiss capture error"
+                onClick={() => setDismissedCapture(captureKey)}
+              >
+                Dismiss
+              </button>
+            </div>
           )}
           {recording.processing_notice &&
             recording.meeting_id === selected?.meeting.id && (
@@ -855,19 +916,16 @@ export function App() {
           {desktop && !ready && !error && (
             <p role="status">Opening local database…</p>
           )}
-          {active && health?.tracks.some((track) => track.gaps > 0) && (
-            <p className="notice" role="status">
-              Audio gaps detected (
-              {health.tracks
-                .filter((track) => track.gaps > 0)
-                .map(
-                  (track) =>
-                    `${gapTrackLabels[track.kind] ?? track.kind}: ${track.gaps}`,
-                )
-                .join(", ")}
-              ). Recording continues; exact positions are kept in the timing
-              index.
-            </p>
+          {gapNotice && gapKey !== dismissedGaps && (
+            <div className="notice" role="status">
+              <span>{gapNotice}</span>
+              <button
+                aria-label="Dismiss audio gap notice"
+                onClick={() => setDismissedGaps(gapKey)}
+              >
+                Dismiss
+              </button>
+            </div>
           )}
           {active && health?.error && (
             <p className="error" role="alert">
@@ -876,7 +934,9 @@ export function App() {
           )}
           {panel === null &&
             processing &&
-            processing.meeting_id === selected?.meeting.id && (
+            processing.meeting_id === selected?.meeting.id &&
+            dismissedProcessing[processing.meeting_id] !==
+              processing.revision && (
               <section
                 className="processing-panel"
                 aria-label="Session processing"
@@ -992,6 +1052,21 @@ export function App() {
                         </p>
                       ))}
                   </section>
+                )}
+                {["completed", "cancelled"].includes(
+                  processing.workflow?.stage ?? processing.state,
+                ) && (
+                  <button
+                    aria-label="Dismiss processing status"
+                    onClick={() =>
+                      setDismissedProcessing((dismissed) => ({
+                        ...dismissed,
+                        [processing.meeting_id]: processing.revision,
+                      }))
+                    }
+                  >
+                    Dismiss
+                  </button>
                 )}
               </section>
             )}
@@ -1251,7 +1326,8 @@ export function App() {
           }}
           onSaveNow={() =>
             void run(async () => {
-              await writer.current?.flush();
+              // A failed retry already shows in the notes banner and status; no second message.
+              await writer.current?.flush().catch(() => {});
             })
           }
           onExport={() =>
@@ -1422,7 +1498,7 @@ export function App() {
                 setPanel(null);
               })
             }
-            onClose={() => setPanel(null)}
+            onClose={closeSettings}
             onChooseFolder={() =>
               void run(async () => {
                 setSettings(await api.chooseVaultFolder());
@@ -1521,8 +1597,15 @@ export function App() {
                 save it, or quit to discard it.
               </p>
             )}
+            {notesStatus === "error" && (
+              <p role="alert">
+                Your notes could not be saved: {notesErrorReason}. OpenMeet will
+                not quit until they are saved. Copy your text, or keep working
+                and retry.
+              </p>
+            )}
             <button
-              autoFocus={!unsavedEdits}
+              autoFocus={!unsavedEdits && notesStatus !== "error"}
               disabled={busy || controlBusy}
               onClick={() =>
                 void run(async () => {
@@ -1536,7 +1619,7 @@ export function App() {
                 : "Save and quit"}
             </button>
             <button
-              autoFocus={unsavedEdits}
+              autoFocus={unsavedEdits || notesStatus === "error"}
               disabled={busy || controlBusy}
               onClick={() => setCloseRequested(false)}
             >
