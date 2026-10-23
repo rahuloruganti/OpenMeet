@@ -30,6 +30,9 @@ class Context:
     recorder: Optional["Recorder"] = None
     # One provider request at a time, like the Rust processing owner.
     ai_busy: threading.Lock = field(default_factory=threading.Lock)
+    # One transcription at a time. stt_cancel is set only while a transcription job runs.
+    stt_busy: threading.Lock = field(default_factory=threading.Lock)
+    stt_cancel: Optional[threading.Event] = None
 
 
 @contextmanager

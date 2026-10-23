@@ -4,6 +4,7 @@
     python -m openmeet_py.app --smoke         start, check /health and one command, print OK, exit
     python -m openmeet_py.app --data-dir DIR  use DIR instead of %APPDATA%\\OpenMeetPy (tests)
     python -m openmeet_py.app --check-audio-import  import the audio library, print its version, no device
+    python -m openmeet_py.app --check-stt-import    import the speech library, print its version, no model
 """
 
 from __future__ import annotations
@@ -133,6 +134,23 @@ def check_audio_import() -> int:
     return 0
 
 
+def check_stt_import() -> int:
+    # Import only. No Model is constructed, so no model file is opened and nothing can be downloaded.
+    try:
+        import pywhispercpp
+
+        version = getattr(pywhispercpp, "__version__", None)
+        if version is None:
+            from importlib.metadata import version as package_version
+
+            version = package_version("pywhispercpp")
+    except Exception as error:  # report the failure type and message only
+        print(f"FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+    print(f"OK: pywhispercpp {version} imported; no speech model was loaded.")
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="openmeet-py", description="OpenMeet Python desktop build")
     parser.add_argument("--smoke", action="store_true", help="check the server and exit; no window")
@@ -144,9 +162,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_true",
         help="import the audio library and print its version; opens no device",
     )
+    parser.add_argument(
+        "--check-stt-import",
+        action="store_true",
+        help="import the speech library and print its version; loads no model",
+    )
     args = parser.parse_args(argv)
     if args.check_audio_import:
         return check_audio_import()
+    if args.check_stt_import:
+        return check_stt_import()
     data_dir = args.data_dir or default_data_dir()
     if args.smoke:
         return smoke(data_dir)

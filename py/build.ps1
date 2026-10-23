@@ -39,6 +39,12 @@ try {
         --collect-all webview `
         --collect-all pyaudiowpatch `
         --collect-all websockets `
+        --collect-all pywhispercpp `
+        --collect-binaries pywhispercpp `
+        --hidden-import pywhispercpp.model `
+        --hidden-import pywhispercpp.constants `
+        --hidden-import pywhispercpp.utils `
+        --hidden-import _pywhispercpp `
         --hidden-import _portaudiowpatch `
         --collect-submodules win32ctypes `
         (Join-Path $py "launcher.py")

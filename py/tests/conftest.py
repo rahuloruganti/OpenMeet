@@ -97,6 +97,17 @@ def memory_keyring() -> Iterator[MemoryKeyring]:
 
 
 @pytest.fixture(autouse=True)
+def block_real_whisper(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Outside the opt-in real-model test, `import pywhispercpp` fails: no native model can load or download."""
+    if request.node.get_closest_marker("real_model"):
+        yield
+        return
+    monkeypatch.setitem(sys.modules, "pywhispercpp", None)
+    monkeypatch.setitem(sys.modules, "pywhispercpp.model", None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def block_real_audio(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Outside hardware tests, `import pyaudiowpatch` fails, so no PortAudio code can open a device."""
     if request.node.get_closest_marker("hardware"):

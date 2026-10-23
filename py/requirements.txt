@@ -15,5 +15,10 @@ pywin32-ctypes==0.2.3
 # Audio capture (phase 3). Prebuilt wheel with PortAudio and WASAPI loopback; Apache-2.0.
 # Installed with --only-binary=:all: so no compiler is ever needed.
 PyAudioWPatch==0.2.12.9
+# Local speech-to-text (phase 4a): whisper.cpp through pywhispercpp (MIT), with numpy (BSD-3-Clause)
+# for audio arrays and the resampler. pywhispercpp pulls requests, tqdm and platformdirs; all ship
+# wheels for Windows x64 Python 3.13. Installed with --only-binary=:all:.
+pywhispercpp==1.5.1
+numpy==2.5.4
 # WebSocket transport for uvicorn: live recording_state, audio_health and meeting events. Pure-Python wheel.
 websockets==15.0.1

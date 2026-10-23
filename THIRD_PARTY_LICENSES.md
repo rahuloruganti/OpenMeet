@@ -77,6 +77,23 @@ The Python desktop build (`py/`) stores provider API keys through `keyring` in t
 
 The Python desktop build (`py/`) records microphone and WASAPI loopback audio through `PyAudioWPatch` 0.2.12.9, pinned in `py/requirements.txt` and installed from a prebuilt wheel only (`--only-binary=:all:`). Its license is Apache-2.0 (the `LICENSE.txt` in the wheel, copyright 2022 S0D3S). The wheel metadata says it is based on PyAudio v0.2.12, which its metadata describes as MIT licensed, and on PortAudio v19 at commit 8b6d16f26ad660e68a97743842ac29b939f3c0c1. The wheel bundles a PortAudio build (`_portaudiowpatch` extension). Neither the MIT text nor a PortAudio license text is in the wheel, so both must be collected from their upstream sources before any release. This entry is not a legal clearance.
 
+## Python build speech (phase 4a)
+
+The Python desktop build (`py/`) transcribes in-process through `pywhispercpp` 1.5.1, pinned with `numpy` 2.5.4 in `py/requirements.txt` and installed from wheels only. License labels below are the installed packages' metadata (`METADATA` in each `.dist-info`), not a legal review. `pywhispercpp` (MIT) bundles native whisper.cpp libraries (`_pywhispercpp` extension, `whisper` and `ggml` DLLs). Its metadata does not state the bundled whisper.cpp version, so it is not confirmed to match the Rust app's `b5454`. Bundled numpy metadata: `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`. The numpy wheel ships its own LICENSE files, which must be kept with any redistributed build. Transitive packages pulled in by `requests` are listed too.
+
+| Component | License (package metadata) | Source |
+| --- | --- | --- |
+| `pywhispercpp` 1.5.1 | MIT | [pywhispercpp](https://github.com/absadiki/pywhispercpp), [whisper.cpp](https://github.com/ggml-org/whisper.cpp) |
+| `numpy` 2.5.4 | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | [NumPy](https://github.com/numpy/numpy) |
+| `requests` 2.34.2 | Apache-2.0 | [Requests](https://github.com/psf/requests) |
+| `tqdm` 4.70.1 | MPL-2.0 AND MIT | [tqdm](https://github.com/tqdm/tqdm) |
+| `platformdirs` 4.13.5 | MIT | [platformdirs](https://github.com/tox-dev/platformdirs) |
+| `charset-normalizer` 3.5.2, `urllib3` 2.8.0 (via `requests`) | MIT | [charset-normalizer](https://github.com/jawah/charset_normalizer), [urllib3](https://github.com/urllib3/urllib3) |
+| `idna` 3.20 (via `requests`) | BSD-3-Clause | [idna](https://github.com/kjd/idna) |
+| `certifi` 2026.10.23 (via `requests`) | MPL-2.0 | [certifi](https://github.com/certifi/python-certifi) |
+
+Model files are downloaded only by an explicit Settings action and are checked against the pinned SHA-256 (see `py/openmeet_py/stt_catalog.py`, generated from `src-tauri/src/stt/stt_models.rs`). Their license entries are the existing ones above (Whisper ggml models and Silero VAD, MIT as recorded for the Rust app); this change did not re-verify them. The Silero VAD URL names the repository branch `main`, not a commit; the pinned SHA-256 is what guards its content. No model file is bundled in the executable.
+
 ## User-selected model-library downloads
 
 Phase 2 adds no bundled models or dependencies. Public Hugging Face downloads display repository license metadata and retain it in a local provenance manifest. Generic GGUF models carry their own repository terms; discovery or a download entry is not a completed license audit. The existing pinned Whisper catalog remains the only directly importable speech-model catalog.

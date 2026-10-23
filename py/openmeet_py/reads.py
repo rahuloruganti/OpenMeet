@@ -11,6 +11,7 @@ import os
 import sqlite3
 from typing import Any, Optional
 
+from . import transcript_edits
 from .errors import AppError
 
 MEETING_COLUMNS = (
@@ -314,6 +315,9 @@ def meeting_detail(db: sqlite3.Connection, meeting_id: str) -> dict[str, Any]:
     ).fetchone()
     segments, meta = segments_of(db, meeting_id)
     names = speaker_names(db, meeting_id)
+    provenance = db.execute(
+        "SELECT provider, model FROM meeting_transcriptions WHERE meeting_id = ?1", (meeting_id,)
+    ).fetchone() or (None, None)
     latest = latest_summary(db, meeting_id)
     current = transcript_hash(segments, names)
     if latest is None:
@@ -334,13 +338,12 @@ def meeting_detail(db: sqlite3.Connection, meeting_id: str) -> dict[str, Any]:
         "notes_revision": notes_revision,
         "segments": segments,
         **summary,
-        # ponytail: transcript provenance is written only by phase 4; tracks exist since phase 3.
-        "transcript_provider": None,
-        "transcript_model": None,
+        "transcript_provider": provenance[0],
+        "transcript_model": provenance[1],
         "action_items": action_items(db, meeting_id),
         "speaker_names": names,
         "segment_meta": meta,
-        "transcript_versions": [],
+        "transcript_versions": transcript_edits.transcript_versions(db, meeting_id),
         "question_threads": question_threads(db, meeting_id),
         "tracks": tracks_of(db, meeting_id),
     }

@@ -3,9 +3,11 @@
 Status: Phases 1 (notes, shell, exe) and 2 (AI connections, summaries, questions, tasks, library,
 rewrite) are built and checked on this PC. Phase 3 (microphone and system-audio recording, WAV and
 timing files, pause, recovery, audio deletion) is **built in code and checked with a fake backend
-only. It is UNQUALIFIED.** Nothing here has recorded real audio. Transcription and every feature
-that needs transcripts are unqualified until phase 4 and phase 7. Nothing in this build is a
-replacement for the Rust app yet.
+only. It is UNQUALIFIED.** Phase 4a (whisper.cpp transcription, cloud STT, transcript editing and
+history, model library) is **built in code and checked with a fake engine, stub servers and
+synthetic audio only. It is UNQUALIFIED: no real model has been loaded, no real speech has been
+transcribed, and transcription quality, speed and parity with the Rust app are unverified.** Phase 7
+still gates real use. Nothing in this build is a replacement for the Rust app yet.
 
 ## Why
 
@@ -55,13 +57,51 @@ integration, and processing" rule for this build only. The Rust app and `src-tau
       Lock order: recorder lock, then store lock.
     - `recording.py` holds the command handlers: devices, start, pause, resume, stop, state, delete,
       recovery, seeking, usage.
+  - **Phase 4a speech (built; unqualified):**
+    - `stt_catalog.py` is generated from `src-tauri/src/stt/stt_models.rs` (33 whisper.cpp model
+      entries pinned to Hugging Face commit `5359861c`), the sherpa-onnx sizes from `stt/sherpa.rs`,
+      and the Silero VAD entry from `stt.rs`. The VAD URL names branch `main`; its SHA-256 is pinned.
+    - `stt.py` holds status, settings validation (language, prompt of at most 500 characters with no
+      control characters, model id), the explicit install (downloads only the VAD file and the
+      selected model), and the speech command handlers. "Engine installed" means pywhispercpp imports;
+      this build has no engine download.
+    - `model_library.py` holds scan (Rust bounds: 4,096 entries, six levels, 200 models), import
+      (source hashed before copying, the copy hashed again), Hugging Face search and listing (parsed
+      defensively), and verified downloads. A download streams to a temporary file in the target
+      folder, checks size and SHA-256, fsyncs, and publishes with `os.link`, so it never overwrites.
+      HTTPS only to huggingface.co, *.huggingface.co or *.hf.co; no credentials; no environment
+      proxies; redirects followed by hand (at most five), every hop checked. `OPENMEET_PY_TEST_HOSTS`
+      replaces the host list (and allows plain HTTP) only when it is set, for stub-server tests.
+    - `cloud_stt.py` ports `cloud_stt.rs`: 16-bit WAV chunks of at most 16 MiB (plus header) and 300
+      seconds, split at pauses and generation changes, at most 200 requests, 4 MiB response cap, 120 s
+      timeout, one multipart POST per chunk to `{base}/audio/transcriptions` with model,
+      response_format, language (omitted when auto) and prompt. Each chunk is hashed before upload; a
+      refused or changed request is never sent; nothing is retried.
+    - `transcription/audio_read.py` reads the float32 WAV tracks (format tag 3, 32-bit, data size must
+      match the recorded frames; truncated and unfinalized files are refused), mixes to mono, and
+      resamples to 16 kHz with a numpy windowed-sinc (Kaiser) filter. Five-minute windows are read one
+      at a time.
+    - `transcription/engine.py` defines the `Engine` protocol, `WhisperCppEngine` (pywhispercpp,
+      imported only inside its methods, constructed only from an existing absolute file path, VAD when
+      the pinned file is present, `abort_callback` tied to the cancel event) and `FakeEngine` (selected
+      by `OPENMEET_PY_FAKE_STT=1`).
+    - `transcription/pipeline.py` ports the session-time mapping (`stt.rs` `session_ms`, same end-flag
+      rule), marker filtering, per-track windows, merge and sort. `transcription/jobs.py` runs one
+      transcription at a time on a worker thread; the request waits for it, so the UI's await resolves
+      when the transcript is saved or the job fails. The transcript is replaced in one database
+      transaction, and only if the settings are unchanged.
+    - `transcript_edits.py` ports `transcript_edits.rs`: the previous transcript (edits included) is
+      copied into `transcript_versions` before a replacement; `edit_segment` keeps the engine text in
+      `original_text`, refuses a changed base text, and clears the edit on revert. Summaries become
+      stale through the existing transcript hash.
   - `server.py` serves the API, events, files and the UI. Every API route needs a per-launch token
     that the server injects into `index.html`. Requests must come to `127.0.0.1` or `localhost`,
     which blocks DNS rebinding. Shutdown finalizes an active recording before the database closes.
   - `app.py` runs uvicorn in a thread on a free loopback port and opens a pywebview window titled
     "OpenMeet", 1100x780, minimum 720x580. `--smoke` checks `/health` and `list_meetings`, prints
     OK and exits. `--check-audio-import` imports PyAudioWPatch and prints its version. It never
-    creates a PyAudio object, so no device is opened. `--data-dir` overrides the data folder.
+    creates a PyAudio object, so no device is opened. `--check-stt-import` imports pywhispercpp and
+    prints its version; it loads no model. `--data-dir` overrides the data folder.
 - **Data.** `%APPDATA%\OpenMeetPy\meetings.db`, with audio in `%APPDATA%\OpenMeetPy\audio\<meeting
   id>\` (`mic.wav`, `mic.timing.jsonl`, `system.wav`, `system.timing.jsonl`). This build never reads
   or migrates the Rust profile's database. Keys are never in the database: a connection row holds
@@ -132,7 +172,7 @@ Deliberate differences from the Rust app:
 
 ## Command status
 
-Counts from `openmeet_py.commands` after phase 3: 55 implemented, 23 answer HTTP 501, 78 in total,
+Counts from `openmeet_py.commands` after phase 4a: 69 implemented, 9 answer HTTP 501, 78 in total,
 matching `src/lib/api.ts`. `py/tests/test_commands.py` fails if the UI invokes a command the registry
 lacks.
 
@@ -141,13 +181,15 @@ lacks.
 | Implemented | list_meetings, get_meeting, create_note, save_notes, rename_meeting, set_meeting_tags, delete_meeting, search_meetings, export_meeting, choose_vault_folder, close_application, get_settings, save_export_options, save_setup_done | 1 |
 | Implemented (phase 2) | save_api_connection, delete_api_connection, api_connection_key_status, save_provider_assignment, list_api_connection_models, provider_key_status, list_summaries, generate_summary, save_summary_edit, save_summary_instructions, save_summary_template, delete_summary_template, save_summary_default, save_processing_default, save_recipe, delete_recipe, save_speaker_names, ask_meeting, delete_question_thread, ask_library, list_library_answers, delete_library_answer, rewrite_text, save_action_item, delete_action_item, import_action_items | 2 |
 | Implemented (phase 3, unqualified: fake backend only) | get_recording_state, list_audio_devices, save_default_devices, start_recording, pause_recording, resume_recording, stop_recording, delete_audio, recover_audio, audio_position, audio_usage. Also `audio_health` and `recording_state` events, track rows in get_meeting, and owned-folder deletion in delete_meeting | 3 |
-| Implemented, empty or unchanged (honest, not faked) | get_startup_warning, detection_supported, stt_status (not supported), get_session_processing (null) | 1 |
-| 501: transcript editing and history (need transcripts) | edit_segment, get_transcript_version | 4 |
-| 501: local and cloud speech, local models, downloads, server detection | save_stt_mode, save_stt_settings, stt_install, transcribe_meeting, cancel_transcription, choose_model_folder, scan_local_models, import_local_model, search/list/download hf and cancel_model_download, detect_local_servers | 4 |
+| Implemented, empty or unchanged (honest, not faked) | get_startup_warning, detection_supported, get_session_processing (null) | 1 |
+| Implemented (phase 4a, unqualified: fake engine and stub servers only) | stt_status, save_stt_mode, save_stt_settings, stt_install, transcribe_meeting, cancel_transcription, edit_segment, get_transcript_version, choose_model_folder, scan_local_models, import_local_model, search_hf_models, list_hf_files, download_hf_model, cancel_model_download. Also `stt_progress` and `model_library_progress` events, and transcript provenance and versions in get_meeting. `save_speaker_names` was already implemented in phase 2 | 4 |
+| 501: sherpa-onnx folder downloads and local AI server detection (phase 4b) | download_hf_folder, detect_local_servers | 4b |
 | 501: shortcuts, detection, taskbar attention | save_settings, save_detection, set_detection_ignored, request_attention | 5 |
 | 501: session processing workflow | acknowledge_processing_notes, retry_session_processing, cancel_session_processing | 5 |
 
-Only the 23 commands in the 501 rows answer HTTP 501. Each one names its feature in the message.
+Only the 9 commands in the 501 rows answer HTTP 501. Each one names its feature in the message.
+The sherpa-onnx entries in the model list show as not installed, with a reason. They are a phase 4b
+feature, and `save_stt_settings` refuses to select one with a message saying so.
 
 ## Phases
 
@@ -161,8 +203,12 @@ Only the 23 commands in the 501 rows answer HTTP 501. Each one names its feature
    Files and indexes as above. Fake-backend tests cover writer, queue overflow, pause boundaries,
    WAV and index rules, failures and file handling. `py/tests/test_hardware_audio.py` is an opt-in
    real-device test that has **not been run**.
-4. **Local transcription and cloud STT.** Evaluate faster-whisper and sherpa-onnx wheels. Cloud
-   STT over the same HTTP client as phase 2. Also `edit_segment` and `get_transcript_version`.
+4. **Local transcription and cloud STT (4a built, unqualified).** whisper.cpp through pywhispercpp
+   1.5.1 (wheels only), the pinned model catalog and VAD, the model library, cloud STT, transcript
+   editing and versions. Checked with fake engines, stub servers, MockTransport and synthetic audio.
+   Not checked: a real model, real speech, quality, speed, or parity with the Rust app's whisper.cpp
+   `b5454` (the bundled version is not stated in the pywhispercpp metadata).
+   4b (not started): sherpa-onnx, sherpa folder downloads, local AI server detection.
 5. **Session workflow, meeting detection, tray, global shortcuts.** Detection only offers a prompt,
    as AGENTS.md requires.
 6. **Frontend reorganisation.** Feature-Sliced Design as a separate, pure-move change.
@@ -199,6 +245,16 @@ evidence.
 ## Known gaps and deliberate simplifications
 
 - The `/files` route serves only the audio and export folders and never the database.
+- Phase 4a: the Python engine is pywhispercpp in-process, not the Rust app's whisper-cli subprocess.
+  Cancel is checked between five-minute windows and inside the engine's abort callback; the Rust
+  process kill is not reproduced. Windows are cut at their edges, so a sentence that crosses a window
+  boundary can be split. Segments are not deduplicated across windows.
+- Phase 4a: the Markdown export still writes "No transcript generated." for every meeting. The
+  transcript rendering and the txt, srt and vtt files of `export.rs` are not ported yet.
+- Phase 4a: `stt_status` reports the speech files as installed, without creating any file, when
+  `OPENMEET_PY_FAKE_STT=1`. That mode is for tests and the browser check only.
+- Phase 4a: a corrupt file already at the destination blocks a re-download with "already exists", as
+  in the Rust app. Downloads never resume.
 - `choose_vault_folder` needs pywebview's folder dialog. It is untested on a real desktop session.
 - The Starlette test client shows a deprecation warning about httpx2. The tests still pass.
 - Timestamps are UTC with microseconds. The Rust app's RFC 3339 output differs in digit count only.
@@ -228,4 +284,6 @@ These notes are for this build only. `docs/user-guide.md` describes the Rust app
   the old selection. Refresh devices and choose again. The build never switches devices by itself.
 - Paused audio is not saved. Audio captured in the moment just before a pause may be lost.
 - Recordings live in `%APPDATA%\OpenMeetPy\audio\<meeting>\`. Deleting a meeting deletes those files.
-- Transcription is not available in this build until phase 4.
+- Transcription (phase 4a) is **unqualified**: no real model has been run, so results are not verified
+  for accuracy, speed, or parity with the Rust app. Downloads need an explicit Settings action and the
+  pinned checksums. The Silero VAD URL points at the repository's `main` branch.

@@ -616,11 +616,11 @@ def test_speaker_names_are_validated_and_shown_in_labels(client: TestClient) -> 
     assert body["code"] == "not_found"
 
 
-def test_remaining_transcript_commands_stay_unavailable(client: TestClient) -> None:
+def test_transcript_commands_refuse_unknown_segments_and_versions(client: TestClient) -> None:
     status, body = invoke_error(client, "edit_segment", meetingId="m", segmentId=1, baseText="a", text="b")
-    assert (status, body["code"]) == (501, "not_available")
+    assert (status, body["code"]) == (400, "segment_conflict")
     status, body = invoke_error(client, "get_transcript_version", meetingId="m", versionId=1)
-    assert (status, body["code"]) == (501, "not_available")
+    assert (status, body["code"]) == (400, "not_found")
 
 
 def test_export_carries_the_real_summary_and_tasks(client: TestClient, tmp_path: Path) -> None:

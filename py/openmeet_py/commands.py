@@ -1,6 +1,6 @@
 """Command handlers for the Python build, keyed by the snake_case names the React UI invokes.
 
-Names and argument shapes follow src/lib/api.ts and src-tauri/src/lib.rs. Phases 1 and 2 are
+Names and argument shapes follow src/lib/api.ts and src-tauri/src/lib.rs. Phases 1 to 4a are
 implemented here and in the feature modules. Every other command is listed in NOT_AVAILABLE and
 answers HTTP 501.
 """
@@ -16,7 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from . import connections, questions, reads, recording, summaries, tasks
+from . import connections, model_library, questions, reads, recording, stt, summaries, tasks, transcript_edits
+from .transcription import jobs
 from .context import (
     Context,
     bool_arg,
@@ -236,19 +237,6 @@ def provider_key_status(ctx: Context, role: str) -> str:
     return connections.provider_key_status(ctx, role)
 
 
-def stt_status(ctx: Context) -> dict[str, Any]:
-    return {
-        "engine": False,
-        "model": False,
-        "vad": False,
-        "installed": False,
-        "missing_bytes": 0,
-        "supported": False,
-        "models": [],
-        "languages": [],
-    }
-
-
 # ---- settings ------------------------------------------------------------------
 
 
@@ -344,7 +332,22 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "get_startup_warning": get_startup_warning,
     "detection_supported": detection_supported,
     "provider_key_status": provider_key_status,
-    "stt_status": stt_status,
+    # Phase 4a: local and cloud speech, model library, transcripts
+    "save_stt_mode": stt.save_stt_mode,
+    "save_stt_settings": stt.save_stt_settings,
+    "stt_install": stt.stt_install,
+    "transcribe_meeting": jobs.transcribe_meeting,
+    "cancel_transcription": jobs.cancel_transcription,
+    "edit_segment": transcript_edits.edit_segment_command,
+    "get_transcript_version": transcript_edits.get_transcript_version,
+    "choose_model_folder": model_library.choose_model_folder,
+    "scan_local_models": model_library.scan_local_models,
+    "import_local_model": model_library.import_local_model,
+    "search_hf_models": model_library.search_hf_models,
+    "list_hf_files": model_library.list_hf_files,
+    "download_hf_model": model_library.download_hf_model_command,
+    "cancel_model_download": model_library.cancel_model_download,
+    "stt_status": stt.stt_status,
     "get_settings": get_settings,
     "save_export_options": save_export_options,
     "save_setup_done": save_setup_done,
@@ -378,23 +381,8 @@ COMMANDS: dict[str, Callable[..., Any]] = {
 
 # Command -> feature name for the 501 message. Each is planned for a later phase (docs/python-port-plan.md).
 NOT_AVAILABLE: dict[str, str] = {
-    # Phase 4: transcript editing needs transcripts, which no phase before 4 can create
-    "edit_segment": "Transcript editing",
-    "get_transcript_version": "Transcript history",
-    # Phase 4: local and cloud speech
-    "save_stt_mode": "Speech settings",
-    "save_stt_settings": "Speech settings",
-    "stt_install": "Speech model installation",
-    "transcribe_meeting": "Transcription",
-    "cancel_transcription": "Transcription",
-    "choose_model_folder": "Local models",
-    "scan_local_models": "Local models",
-    "import_local_model": "Local models",
-    "search_hf_models": "Model downloads",
-    "list_hf_files": "Model downloads",
-    "download_hf_model": "Model downloads",
-    "download_hf_folder": "Model downloads",
-    "cancel_model_download": "Model downloads",
+    # Phase 4b: sherpa-onnx folders and the local servers that need its runtime
+    "download_hf_folder": "Sherpa-onnx folder downloads",
     "detect_local_servers": "Local AI server detection",
     # Phase 5: shortcuts, detection, attention
     "save_settings": "Keyboard shortcuts",

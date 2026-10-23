@@ -15,11 +15,11 @@ API_TS = REPO / "src" / "lib" / "api.ts"
 
 
 def test_unimplemented_command_returns_501_with_the_error_shape(client: TestClient) -> None:
-    status, body = invoke_error(client, "transcribe_meeting", id="x")
+    status, body = invoke_error(client, "download_hf_folder", folder={})
     assert status == 501
     assert body == {
         "code": "not_available",
-        "message": "Transcription is not available in the Python build yet.",
+        "message": "Sherpa-onnx folder downloads is not available in the Python build yet.",
     }
 
 
@@ -53,7 +53,10 @@ def test_startup_commands_return_harmless_idle_values(client: TestClient) -> Non
     assert [d["id"] for d in devices["outputs"]] == ["fake-output"]
     assert invoke(client, "provider_key_status", role="llm") == "missing"
     speech = invoke(client, "stt_status")
-    assert speech["installed"] is False and speech["models"] == []
+    # Nothing is downloaded at startup: the catalog is listed, nothing is installed.
+    assert speech["installed"] is False and speech["model"] is False and speech["vad"] is False
+    assert len(speech["models"]) == 36
+    assert not any(model["installed"] for model in speech["models"])
     assert invoke(client, "detection_supported") is False
     assert invoke(client, "get_session_processing", id="x") is None
     assert invoke(client, "list_summaries", id="x") == []

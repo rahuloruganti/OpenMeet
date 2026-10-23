@@ -106,7 +106,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"ok": True, "app": "openmeet-py", "phase": 3, "audio": backend.name}
+        return {"ok": True, "app": "openmeet-py", "phase": 4, "audio": backend.name}
 
     @app.post("/api/invoke/{cmd}")
     async def invoke(cmd: str, request: Request) -> JSONResponse:
