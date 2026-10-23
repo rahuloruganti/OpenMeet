@@ -53,3 +53,14 @@ export const formatShortDate = (iso: string, now = new Date()) => {
 
 /** A path without the Windows `\\?\` long-path prefix that Rust adds when it canonicalizes. */
 export const displayPath = (path: string) => path.replace(/^\\\\\?\\/, "");
+
+/** "9:30 AM", the start time without a date. */
+export const formatTime = (iso: string) =>
+  new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+
+/** Lowercase with accents removed, so "cafe" finds "Café" and "angstrom" finds "Ångström". */
+export const foldText = (text: string) =>
+  text.toLocaleLowerCase().normalize("NFD").replace(/\p{M}/gu, "");

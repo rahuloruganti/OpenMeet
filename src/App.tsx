@@ -725,7 +725,8 @@ export function App() {
   }, [panel, closeRequested, closeSettings]);
   const disabled = !ready || busy || controlBusy;
   const hasSummaryInput =
-    notes.trim().length > 0 || (selected?.segments.length ?? 0) > 0;
+    // A regex stops at the first non-space character instead of copying the whole note.
+    /\S/.test(notes) || (selected?.segments.length ?? 0) > 0;
   // Why the summary/question provider cannot be used; rewrites need nothing more.
   const llmBlocked: AiBlock | null = !settings?.llm
     ? {

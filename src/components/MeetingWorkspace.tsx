@@ -38,6 +38,9 @@ import {
   timestampAtCaret,
 } from "../lib/timestamps";
 
+// Transcript segments are rendered in pages; citations open the page that holds them.
+const SEGMENT_PAGE = 200;
+
 const trackLabels: Record<string, string> = {
   mic: "You (microphone)",
   system: "Others (system audio)",
@@ -79,6 +82,7 @@ function citationTarget(selected: MeetingDetail, matches: number[]) {
   const segment = selected.segments[first];
   const kind = segment.speaker === "You" ? "mic" : "system";
   return {
+    index: first,
     highlighted: matches.flatMap((index) => {
       const id = selected.segment_meta[index]?.id;
       return id === undefined ? [] : [id];
@@ -216,6 +220,25 @@ export function MeetingWorkspace(props: Props) {
   const editor = useRef<HTMLTextAreaElement>(null);
   const players = useRef<Record<string, HTMLAudioElement | null>>({});
   const meetingId = selected?.meeting.id;
+  // How many transcript segments are rendered, kept for the meeting they were shown for.
+  const [segmentWindow, setSegmentWindow] = useState<{
+    meetingId: string | undefined;
+    count: number;
+  }>({ meetingId: undefined, count: SEGMENT_PAGE });
+  const shownCount = (state: typeof segmentWindow) =>
+    state.meetingId === meetingId ? state.count : SEGMENT_PAGE;
+  const shownSegments = shownCount(segmentWindow);
+  // Switching meetings, even back and forth, starts each one on its first page.
+  useEffect(
+    () => setSegmentWindow({ meetingId, count: SEGMENT_PAGE }),
+    [meetingId],
+  );
+  // A citation beyond the rendered page first widens the page, then it is focused.
+  const revealSegment = (index: number) =>
+    setSegmentWindow((state) => ({
+      meetingId,
+      count: Math.max(shownCount(state), index + 1),
+    }));
   const [deleting, setDeleting] = useState<"meeting" | "audio" | null>(null);
   const [typed, setTyped] = useState("");
   const deleteTyped = useRef<HTMLInputElement>(null);
@@ -282,6 +305,7 @@ export function MeetingWorkspace(props: Props) {
         ? null
         : citationTarget(selected, segmentsAt(selected.segments, jump.ms));
     if (!target) return;
+    revealSegment(target.index);
     setHighlighted(target.highlighted);
     setPendingReference(target.pending);
     props.onTab("transcript");
@@ -409,7 +433,7 @@ export function MeetingWorkspace(props: Props) {
   // An empty note has nothing to lose, so deleting it needs no typed title.
   const emptyNote =
     meeting.source === "note" &&
-    props.notes.trim() === "" &&
+    !/\S/.test(props.notes) &&
     selected.segments.length === 0 &&
     !selected.summary &&
     versions.length === 0 &&
@@ -459,6 +483,7 @@ export function MeetingWorkspace(props: Props) {
         className="seek-button"
         aria-label={`Open transcript at ${token.slice(1, -1)}`}
         onClick={() => {
+          revealSegment(target.index);
           setHighlighted(target.highlighted);
           setPendingReference(target.pending);
           props.onTab("transcript");
@@ -751,7 +776,7 @@ export function MeetingWorkspace(props: Props) {
                 />
               </>
             )}
-            {props.notes.trim() !== "" && (
+            {/\S/.test(props.notes) && (
               <button onClick={() => props.onTab("summary")}>
                 Go to Summary
               </button>
@@ -1337,7 +1362,7 @@ export function MeetingWorkspace(props: Props) {
               establish the order of utterances across tracks.
             </p>
           )}
-          {selected.segments.map((segment, index) => {
+          {selected.segments.slice(0, shownSegments).map((segment, index) => {
             const kind = segment.speaker === "You" ? "mic" : "system";
             const speaker = speakerLabel(
               selected.speaker_names,
@@ -1465,6 +1490,30 @@ export function MeetingWorkspace(props: Props) {
               </p>
             );
           })}
+          {selected.segments.length > shownSegments && (
+            <div className="segment-more">
+              <button
+                onClick={() =>
+                  setSegmentWindow({
+                    meetingId,
+                    count: shownSegments + SEGMENT_PAGE,
+                  })
+                }
+              >
+                {`Show next ${Math.min(SEGMENT_PAGE, selected.segments.length - shownSegments)} segments (${selected.segments.length - shownSegments} remaining)`}
+              </button>
+              <button
+                onClick={() =>
+                  setSegmentWindow({
+                    meetingId,
+                    count: selected.segments.length,
+                  })
+                }
+              >
+                Show all
+              </button>
+            </div>
+          )}
         </section>
       </div>
     </article>

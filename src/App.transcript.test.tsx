@@ -865,3 +865,81 @@ describe("transcript and audio", () => {
     });
   });
 });
+
+describe("long transcripts", () => {
+  const long: MeetingDetail = {
+    ...sample,
+    summary: "## Decisions\n- Late point [06:39]",
+    summary_provider: "merge",
+    summary_model: "m1",
+    segments: Array.from({ length: 450 }, (_, index) => ({
+      speaker: index % 2 ? ("Others" as const) : ("You" as const),
+      timing: {
+        kind: "timed" as const,
+        start_ms: index * 1000,
+        end_ms: index * 1000 + 900,
+      },
+      text: `Segment ${index + 1}`,
+    })),
+    segment_meta: Array.from({ length: 450 }, (_, index) => ({
+      id: index + 1,
+      original_text: null,
+    })),
+  };
+  const rows = () => document.querySelectorAll(".transcript-segment");
+
+  it("renders 200 segments, then pages in more or all of the rest", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue(long);
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(rows()).toHaveLength(200);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Show next 200 segments (250 remaining)",
+      }),
+    );
+    expect(rows()).toHaveLength(400);
+    await userEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(rows()).toHaveLength(450);
+    expect(screen.queryByRole("button", { name: /Show next/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+  });
+
+  it("widens the rendered page to a citation beyond it, then focuses it", async () => {
+    vi.mocked(api.getMeeting).mockResolvedValue(long);
+    await ready();
+    expect(document.getElementById("segment-400")).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Open transcript at 06:39" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("tab", { name: "Transcript" })
+          .getAttribute("aria-selected"),
+      ).toBe("true"),
+    );
+    expect(rows()).toHaveLength(400);
+    const segment = document.getElementById("segment-400");
+    expect(segment?.textContent).toContain("Segment 400");
+    expect(segment?.className).toContain("highlighted-segment");
+    expect(document.activeElement).toBe(segment);
+  });
+
+  it("starts from the first page again when another meeting opens", async () => {
+    const other = { ...sample.meeting, id: "other", title: "Other sync" };
+    vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting, other]);
+    vi.mocked(api.getMeeting).mockImplementation(async (id) =>
+      id === "other" ? { ...sample, meeting: other } : long,
+    );
+    await ready();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show all" }));
+    expect(rows()).toHaveLength(450);
+    await userEvent.click(screen.getByRole("button", { name: /Other sync/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Sample sync/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+    expect(rows()).toHaveLength(200);
+  });
+});

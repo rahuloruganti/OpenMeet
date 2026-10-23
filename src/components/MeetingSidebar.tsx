@@ -2,8 +2,10 @@ import { useState } from "react";
 import type { Meeting, SearchHit } from "../lib/api";
 import { groupMeetings } from "../lib/group-meetings";
 import {
+  foldText,
   formatBytes,
   formatShortDate,
+  formatTime,
   sourceLabels,
   tagChoices,
 } from "../lib/meeting-labels";
@@ -37,7 +39,7 @@ type Props = {
 
 export function MeetingSidebar(props: Props) {
   const { meetings, search, selectedId, disabled } = props;
-  const needle = search.trim().toLocaleLowerCase();
+  const needle = foldText(search.trim());
   const [tag, setTag] = useState("");
   const tags = tagChoices(meetings);
   // A tag that no meeting has any more stops filtering instead of hiding everything.
@@ -50,8 +52,7 @@ export function MeetingSidebar(props: Props) {
       (name) => name.toLocaleLowerCase() === active.toLocaleLowerCase(),
     );
   const visible = meetings.filter(
-    (meeting) =>
-      tagged(meeting) && meeting.title.toLocaleLowerCase().includes(needle),
+    (meeting) => tagged(meeting) && foldText(meeting.title).includes(needle),
   );
   const titles = new Map(
     meetings.filter(tagged).map((meeting) => [meeting.id, meeting.title]),
@@ -144,16 +145,25 @@ export function MeetingSidebar(props: Props) {
                   >
                     <strong>{meeting.title}</strong>
                     <span className="meeting-item-meta">
-                      <span>
+                      <span className="meeting-item-text">
                         {sourceLabels[meeting.source]}
                         {meeting.status === "stopped"
                           ? ""
                           : ` · ${meeting.status}`}
-                        {meeting.tags.length > 0 &&
-                          ` · ${meeting.tags.join(", ")}`}
+                        {meeting.tags.length > 0 && (
+                          <span
+                            className="meeting-tags"
+                            title={meeting.tags.join(", ")}
+                          >
+                            {` · ${meeting.tags.slice(0, 3).join(", ")}${meeting.tags.length > 3 ? ` +${meeting.tags.length - 3}` : ""}`}
+                          </span>
+                        )}
                       </span>
                       <time dateTime={meeting.started_at}>
-                        {formatShortDate(meeting.started_at)}
+                        {/* Same-day meetings differ by start time; older ones by date. */}
+                        {group.label === "Earlier"
+                          ? formatShortDate(meeting.started_at)
+                          : formatTime(meeting.started_at)}
                       </time>
                     </span>
                   </button>

@@ -104,7 +104,7 @@ it("resolves a tag to its meetings and sends exactly that scope", async () => {
   ).toBe(true);
   await userEvent.click(screen.getByLabelText("Meetings with a tag"));
   await userEvent.selectOptions(screen.getByLabelText("Tag"), "client");
-  expect(screen.getByRole("status").textContent).toContain("2 meetings");
+  expect(screen.getByRole("status").textContent).toBe("2 of 20 selected.");
   await ask();
   expect(api.askLibrary).toHaveBeenCalledWith(["a", "c"], "What was decided?");
   expect(
@@ -246,4 +246,90 @@ it("shows a sent answer as saved and adds it to the saved list", async () => {
   expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe(
     "",
   );
+});
+
+function showMeetings(list: Meeting[]) {
+  render(
+    <LibraryQuestion
+      hidden={false}
+      panelRef={{ current: null }}
+      meetings={list}
+      recipes={[]}
+      connectionRevision="1"
+      llmBlocked={null}
+      onOpenSettings={vi.fn()}
+      disabled={false}
+      onClose={vi.fn()}
+      onOpen={vi.fn()}
+    />,
+  );
+}
+const box = (name: RegExp) =>
+  screen.getByRole("checkbox", { name }) as HTMLInputElement;
+const counter = () => screen.getByRole("status").textContent;
+
+it("filters meetings by title, ignoring case and accents", async () => {
+  showMeetings([
+    make("cafe", "Café planning", []),
+    make("ang", "Ångström notes", []),
+    make("b", "Budget", []),
+  ]);
+  const filter = screen.getByLabelText("Filter meetings");
+  await userEvent.type(filter, "cafe");
+  expect(box(/Café planning/)).toBeTruthy();
+  expect(screen.queryByRole("checkbox", { name: /Budget/ })).toBeNull();
+  await userEvent.clear(filter);
+  await userEvent.type(filter, "ANGSTROM");
+  expect(box(/Ångström notes/)).toBeTruthy();
+  await userEvent.type(filter, " zzz");
+  expect(screen.getByText("No meetings match this filter.")).toBeTruthy();
+});
+
+const many = Array.from({ length: 25 }, (_, index) =>
+  make(`m${index}`, `Weekly ${String(index).padStart(2, "0")}`, []),
+);
+
+it("selects the first 20 shown, disables the rest at the limit, and clears", async () => {
+  showMeetings(many);
+  expect(counter()).toBe("0 of 20 selected.");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Select first 20 shown" }),
+  );
+  expect(counter()).toBe("20 of 20 selected.");
+  expect(screen.getByText("Limit reached: 20 meetings.")).toBeTruthy();
+  expect(box(/Weekly 19/).checked).toBe(true);
+  expect(box(/Weekly 20/).checked).toBe(false);
+  expect(box(/Weekly 20/).disabled).toBe(true);
+  // Picked boxes stay enabled so they can be unpicked.
+  expect(box(/Weekly 00/).disabled).toBe(false);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Clear selection" }),
+  );
+  expect(counter()).toBe("0 of 20 selected.");
+  expect(screen.queryByText(/Limit reached/)).toBeNull();
+  expect(box(/Weekly 20/).disabled).toBe(false);
+});
+
+it("never drops picks beyond the first 20 and never exceeds 20", async () => {
+  showMeetings(many);
+  await userEvent.click(box(/Weekly 24/));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Select first 20 shown" }),
+  );
+  expect(counter()).toBe("20 of 20 selected.");
+  expect(box(/Weekly 24/).checked).toBe(true);
+  expect(box(/Weekly 00/).checked).toBe(true);
+});
+
+it("selects only the filtered meetings with the same button", async () => {
+  showMeetings(many);
+  await userEvent.type(screen.getByLabelText("Filter meetings"), "Weekly 1");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Select first 20 shown" }),
+  );
+  expect(counter()).toBe("10 of 20 selected.");
+  expect(screen.queryByText(/Limit reached/)).toBeNull();
+  await userEvent.clear(screen.getByLabelText("Filter meetings"));
+  expect(box(/Weekly 00/).checked).toBe(false);
+  expect(box(/Weekly 15/).checked).toBe(true);
 });

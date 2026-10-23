@@ -9,7 +9,7 @@ import {
   type Recipe,
 } from "../lib/api";
 import { renderMarkdown } from "../lib/markdown";
-import { formatDate, tagChoices } from "../lib/meeting-labels";
+import { foldText, formatDate, tagChoices } from "../lib/meeting-labels";
 import { parseTimestamp, segmentsAt } from "../lib/timestamps";
 import { RecipePicker } from "./Recipes";
 import {
@@ -43,12 +43,15 @@ type Answered = {
 
 const same = (a: string, b: string) =>
   a.toLocaleLowerCase() === b.toLocaleLowerCase();
+// The most meetings one question can cover.
+const LIMIT = 20;
 
 export function LibraryQuestion(props: Props) {
   const { meetings, disabled } = props;
   const [mode, setMode] = useState<"tag" | "pick">("pick");
   const [tag, setTag] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
+  const [filter, setFilter] = useState("");
   const [question, setQuestion] = useState("");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -67,7 +70,21 @@ export function LibraryQuestion(props: Props) {
       ? meetings.filter((meeting) => meeting.tags.some((t) => same(t, tag)))
       : meetings.filter((meeting) => picked.includes(meeting.id));
   const scopeKey = scope.map((meeting) => meeting.id).join(",");
-  const tooMany = scope.length > 20;
+  const tooMany = scope.length > LIMIT;
+  const needle = foldText(filter.trim());
+  const shown = meetings.filter((meeting) =>
+    foldText(meeting.title).includes(needle),
+  );
+  // Picks only grow up to the limit, so existing picks are never dropped.
+  const pickFirst = () =>
+    setPicked((ids) => {
+      const next = [...ids];
+      for (const meeting of shown.slice(0, LIMIT)) {
+        if (next.length >= LIMIT) break;
+        if (!next.includes(meeting.id)) next.push(meeting.id);
+      }
+      return next;
+    });
   // Any scope, question or provider change discards a request in flight.
   useEffect(() => {
     version.current += 1;
@@ -238,37 +255,71 @@ export function LibraryQuestion(props: Props) {
           </select>
         </label>
       ) : (
-        <ul className="library-meetings" aria-label="Meetings">
-          {meetings.map((meeting) => (
-            <li key={meeting.id}>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={picked.includes(meeting.id)}
-                  disabled={working}
-                  onChange={(event) =>
-                    setPicked((ids) =>
-                      event.target.checked
-                        ? [...ids, meeting.id]
-                        : ids.filter((id) => id !== meeting.id),
-                    )
-                  }
-                />
-                <span>
-                  {meeting.title}{" "}
-                  <span className="muted">
-                    {formatDate(meeting.started_at)}
+        <>
+          <label>
+            Filter meetings
+            <input
+              type="search"
+              value={filter}
+              disabled={working}
+              onChange={(event) => setFilter(event.target.value)}
+            />
+          </label>
+          <div className="panel-actions">
+            <button
+              disabled={working || shown.length === 0}
+              onClick={pickFirst}
+            >
+              Select first {LIMIT} shown
+            </button>
+            <button
+              disabled={working || picked.length === 0}
+              onClick={() => setPicked([])}
+            >
+              Clear selection
+            </button>
+          </div>
+          {shown.length === 0 && (
+            <p className="muted">No meetings match this filter.</p>
+          )}
+          <ul className="library-meetings" aria-label="Meetings">
+            {shown.map((meeting) => (
+              <li key={meeting.id}>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={picked.includes(meeting.id)}
+                    disabled={
+                      working ||
+                      (!picked.includes(meeting.id) && picked.length >= LIMIT)
+                    }
+                    onChange={(event) =>
+                      setPicked((ids) =>
+                        event.target.checked
+                          ? [...ids, meeting.id]
+                          : ids.filter((id) => id !== meeting.id),
+                      )
+                    }
+                  />
+                  <span>
+                    {meeting.title}{" "}
+                    <span className="muted">
+                      {formatDate(meeting.started_at)}
+                    </span>
                   </span>
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
       <p role="status">
-        {scope.length} meeting{scope.length === 1 ? "" : "s"} selected.
+        {scope.length} of {LIMIT} selected.
         {tooMany && " Choose at most 20."}
       </p>
+      {mode === "pick" && picked.length >= LIMIT && (
+        <p className="muted">Limit reached: {LIMIT} meetings.</p>
+      )}
       {props.llmBlocked && (
         <div className="panel-actions">
           <span className="muted">{props.llmBlocked.message}</span>
