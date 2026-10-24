@@ -1,0 +1,109 @@
+/* Recording status bar. Owned by the meeting slice. */
+
+.recording-bar.rec {
+  display: flex;
+  grid-row: 2;
+  grid-column: 1;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border-top: 1px solid var(--divider);
+  background: var(--chrome);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.rec-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.rec .status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.rec .status-dot.recording {
+  background: var(--danger);
+}
+.rec .status-dot.paused {
+  background: var(--warning);
+  border-radius: 1px;
+}
+.rec .status-dot.simulated {
+  background: transparent;
+  border: 1px solid var(--accent);
+}
+.rec .status-dot.stopped {
+  background: var(--muted);
+}
+.rec.is-live .rec-label {
+  color: var(--ink);
+}
+.rec-timer {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.rec-meters {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+.rec-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+}
+.rec-meter-label {
+  color: var(--muted);
+}
+.rec-meter-bar {
+  width: 42px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--active);
+}
+.rec-meter-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.rec-meter.warn .rec-meter-bar i {
+  background: var(--warning);
+}
+.rec-warn {
+  overflow: hidden;
+  color: var(--warning);
+  font-size: 10.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rec-acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.rec-acts button {
+  height: 23px;
+  min-height: 23px;
+  padding: 0 9px;
+  background: var(--paper);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.rec-acts .rec-stop {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-weight: 600;
+}

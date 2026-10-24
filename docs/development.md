@@ -69,6 +69,8 @@ just build
 
 The recipe runs `packaging/build.ps1`, which builds the UI into `backend/web`, bundles it and the SQL migrations, and runs PyInstaller in one-file windowed mode. The result is `packaging/dist/OpenMeet.exe`: one unsigned file, no installer, no signing, no updater. Close a running `OpenMeet.exe` before rebuilding.
 
+The app icon is `packaging/openmeet.ico` (16 to 256 px). Its source is `packaging/openmeet-icon.svg`, the open-ring mark on the dark tile; if you change the SVG, re-render the ICO at the same sizes. The sidebar mark is `src/shared/ui/brand-mark.tsx`.
+
 `just smoke` runs `OpenMeet.exe --smoke`, which starts the server, checks `/health` and one command, prints `OK` and exits. It proves the bundle starts; it does not prove capture or transcription.
 
 ## Protect data during development
@@ -82,7 +84,7 @@ Before a backup, wait for **Saved** and close the app normally. Copy the whole d
 1. Inspect affected callers, command bindings, tests, fixtures, settings and exports.
 2. Make the smallest complete change. Preserve note errors, source distinctions, recording-consent wording and the "Leaves this device" disclosures.
 3. Add a small behavior test for nontrivial logic. Use synthetic samples instead of devices and fake engines instead of real models.
-4. Add the next numbered migration for schema changes (append-only; currently `030`). Test an upgrade with populated notes and relationships.
+4. Add the next numbered migration for schema changes (append-only; next is `031`). Test an upgrade with populated notes and relationships.
 5. Run `just check`, plus `just smoke` for packaging changes.
 6. Update the affected guides, status, dependency inventory and work log.
 

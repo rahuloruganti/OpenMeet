@@ -1,0 +1,144 @@
+/* Inspector task list. Owned by the meeting slice. */
+
+.tasks ul {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.task {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: start;
+  padding: 4px 5px 5px;
+  border-radius: 5px;
+}
+.task:hover {
+  background: var(--hover);
+}
+.task input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  min-height: 14px;
+  margin: 4px 0 0;
+  accent-color: var(--accent);
+}
+.task-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.task-text,
+.task-owner,
+.task input[type="date"] {
+  width: 100%;
+  min-height: 24px;
+  height: 24px;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12.5px;
+}
+.task-text {
+  font-weight: 500;
+}
+.task-text:hover:not(:disabled),
+.task-owner:hover:not(:disabled) {
+  border-color: var(--divider);
+}
+.task-text:focus,
+.task-owner:focus,
+.task input[type="date"]:focus {
+  border-color: var(--control-border);
+  background: var(--paper);
+}
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.task-owner {
+  width: 96px;
+  min-height: 20px;
+  height: 20px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.task input[type="date"] {
+  width: 116px;
+  min-height: 20px;
+  height: 20px;
+  padding: 0 3px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.task input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+}
+.task-src {
+  padding: 0 4px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+}
+.task.is-done .task-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.task-del {
+  height: 20px;
+  min-height: 20px;
+  padding: 0 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+.task-del:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--danger);
+}
+.task-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.task-add input {
+  flex: 1 1 110px;
+  min-height: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border-style: dashed;
+  border-color: var(--divider);
+  background: transparent;
+  font-size: 12px;
+}
+.task-add button {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+.task-from-summary {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.insp-empty {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}

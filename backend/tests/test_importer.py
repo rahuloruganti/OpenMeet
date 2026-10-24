@@ -16,7 +16,7 @@ from openmeet_py.infra.store import Store
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "openmeet_py" / "migrations"
 MEETING = "11111111-1111-1111-1111-111111111111"
-LATEST = 29
+LATEST = 30
 THROUGH = 27
 
 
@@ -357,3 +357,28 @@ def test_cli_refusal_exits_two_with_a_message(
     captured = capsys.readouterr()
     assert "Import failed:" in captured.err
     assert "already has OpenMeet data" in captured.err
+
+
+def test_source_summary_counts_rows_still_in_the_wal_and_leaves_the_source_alone(tmp_path: Path) -> None:
+    source = tmp_path / "old"
+    source.mkdir()
+    db_path = source / "meetings.db"
+    writer = sqlite3.connect(db_path)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT)")
+        writer.executemany(
+            "INSERT INTO meetings (title) VALUES (?)", [("Fictional A",), ("Fictional B",), ("Fictional C",)]
+        )
+        writer.commit()
+        assert Path(str(db_path) + "-wal").stat().st_size > 0
+        before = {p.name: p.read_bytes() for p in source.iterdir() if p.is_file()}
+
+        summary = importer.read_source_summary(source)
+
+        assert summary is not None and summary.meetings == 3
+        after = {p.name: p.read_bytes() for p in source.iterdir() if p.is_file()}
+        assert after == before
+    finally:
+        writer.close()

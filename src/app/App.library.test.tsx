@@ -36,7 +36,11 @@ describe("meeting library", () => {
     });
     const search = screen.getByRole("searchbox", { name: "Search meetings" });
     await userEvent.type(search, "PLANNING");
-    expect(screen.queryByRole("button", { name: /Sample sync/ })).toBeNull();
+    expect(
+      within(
+        screen.getByRole("complementary", { name: "Meeting navigation" }),
+      ).queryByRole("button", { name: /Sample sync/ }),
+    ).toBeNull();
     expect(
       screen.getByRole("button", { name: /Planning review/ }),
     ).toBeTruthy();
@@ -52,7 +56,7 @@ describe("meeting library", () => {
     vi.mocked(api.isDesktop).mockReturnValue(false);
     render(<App />);
     expect(screen.getByRole("alert").textContent).toContain(
-      "browser preview cannot access",
+      "browser preview has no database",
     );
     expect(api.listMeetings).not.toHaveBeenCalled();
   });
@@ -95,7 +99,7 @@ describe("meeting library", () => {
     it("shows a first-note empty state without starting anything", async () => {
       vi.mocked(api.listMeetings).mockResolvedValue([]);
       render(<App />);
-      await screen.findByText("Start your first note");
+      await screen.findByText("Start a meeting");
       expect(api.startCapture).not.toHaveBeenCalled();
       expect(
         screen.queryByRole("button", { name: "Start simulation" }),
@@ -105,7 +109,9 @@ describe("meeting library", () => {
     it("lists what is not set up on the empty workspace, once settings have loaded", async () => {
       vi.mocked(api.listMeetings).mockResolvedValue([]);
       render(<App />);
-      await screen.findByText("Start your first note");
+      await screen.findByText("Start a meeting");
+      // The list is a detail, so it hides behind Setup until asked for.
+      await userEvent.click(screen.getByText("Setup"));
       const status = await screen.findByRole("list", { name: "Setup status" });
       const [speech, notes] = within(status).getAllByRole("listitem");
       expect(within(speech).getByText("Not set up")).toBeTruthy();
@@ -134,13 +140,13 @@ describe("meeting library", () => {
         },
       });
       render(<App />);
-      await screen.findByText("Start your first note");
+      await screen.findByText("Start a meeting");
       await waitFor(() =>
-        expect(screen.getByRole("button", { name: "New note" })).toHaveProperty(
-          "disabled",
-          false,
-        ),
+        expect(
+          screen.getByRole("button", { name: "Start a meeting" }),
+        ).toHaveProperty("disabled", false),
       );
+      expect(screen.queryByText("Setup", { selector: "summary" })).toBeNull();
       expect(screen.queryByRole("list", { name: "Setup status" })).toBeNull();
     });
 
@@ -154,31 +160,31 @@ describe("meeting library", () => {
       const hint = document.getElementById(
         button.getAttribute("aria-describedby") ?? "",
       );
-      expect(hint?.textContent).toContain("AI notes aren't set up yet");
+      expect(hint?.textContent).toContain("AI notes aren't set up");
       expect(screen.getByText("A fictional summary.")).toBeTruthy();
     });
 
-    it("links an unassigned AI notes setup to its Settings section and returns focus", async () => {
+    it("links an unassigned AI notes setup to its Settings section", async () => {
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
       await userEvent.click(
         screen.getByRole("button", { name: "Open Settings for AI notes" }),
       );
-      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+      // Settings is a page now, so the meetings page (and its trigger) is gone.
+      expect(
+        await screen.findByRole("heading", { level: 1, name: "Settings" }),
+      ).toBeTruthy();
       expect(
         screen
           .getByRole("tab", { name: "AI notes" })
           .getAttribute("aria-selected"),
       ).toBe("true");
-      await userEvent.click(
-        screen.getByRole("button", { name: "Close panel" }),
-      );
-      expect(document.activeElement).toBe(
-        screen.getByRole("button", { name: "Open Settings for AI notes" }),
-      );
+      await userEvent.keyboard("{Escape}");
+      expect(await screen.findByRole("main")).toBeTruthy();
+      expect(document.activeElement).toBe(screen.getByRole("main"));
     });
 
-    it("sends a remote AI notes connection without a key to Connections", async () => {
+    it("sends a remote AI notes connection without a key to AI notes settings", async () => {
       vi.mocked(api.getSettings).mockResolvedValue({
         ...initialSettings,
         llm: {
@@ -191,15 +197,15 @@ describe("meeting library", () => {
       await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
       expect(
         within(screen.getByRole("tabpanel", { name: "Summary" })).getByText(
-          "The AI notes connection needs an API key. Add it under Settings → Connections.",
+          "Add the AI notes API key in Settings → AI notes.",
         ),
       ).toBeTruthy();
       await userEvent.click(
-        screen.getByRole("button", { name: "Open Settings for Connections" }),
+        screen.getByRole("button", { name: "Open Settings for AI notes" }),
       );
       expect(
         screen
-          .getByRole("tab", { name: "Connections" })
+          .getByRole("tab", { name: "AI notes" })
           .getAttribute("aria-selected"),
       ).toBe("true");
     });
@@ -223,39 +229,33 @@ describe("meeting library", () => {
         ).disabled,
       ).toBe(false);
       expect(
-        screen.queryByText(/needs an API key|aren't set up yet|Choose a model/),
+        screen.queryByText(/API key in Settings|aren't set up|Choose a model/),
       ).toBeNull();
     });
 
-    it("disables Ask across meetings with the reason while AI notes is not set up", async () => {
+    it("disables Ask on its page with one sentence while AI notes is not set up", async () => {
       await ready();
       await userEvent.click(
         screen.getByRole("button", { name: "Ask across meetings" }),
       );
-      await userEvent.click(screen.getByLabelText(/Sample sync/));
-      await userEvent.type(screen.getByLabelText("Question"), "What moved?");
-      const library = screen.getByRole("dialog", {
-        name: "Ask across meetings",
-      });
-      expect(
-        (
-          within(library).getByRole("button", {
-            name: "Ask",
-          }) as HTMLButtonElement
-        ).disabled,
-      ).toBe(true);
-      expect(
-        within(library).getByText(/AI notes aren't set up yet/),
-      ).toBeTruthy();
-      await userEvent.click(
-        within(library).getByRole("button", {
-          name: "Open Settings for AI notes",
-        }),
+      await userEvent.type(
+        await screen.findByLabelText("Question"),
+        "What moved?",
       );
       expect(
-        screen
-          .getByRole("tab", { name: "AI notes" })
-          .getAttribute("aria-selected"),
+        (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+      expect(
+        screen.getByText("Connect an AI service to ask questions."),
+      ).toBeTruthy();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Open Settings for AI notes" }),
+      );
+      expect(
+        (await screen.findByRole("tab", { name: "AI notes" })).getAttribute(
+          "aria-selected",
+        ),
       ).toBe("true");
     });
 
@@ -263,7 +263,7 @@ describe("meeting library", () => {
       vi.mocked(api.renameMeeting).mockResolvedValue("Planning review");
       await ready();
       await userEvent.click(
-        screen.getByRole("heading", { name: "Sample sync" }),
+        screen.getByRole("button", { name: "Sample sync" }),
       );
       const input = screen.getByRole("textbox", { name: "Meeting title" });
       await userEvent.clear(input);
@@ -271,7 +271,7 @@ describe("meeting library", () => {
       expect(screen.getByRole("heading", { name: "Sample sync" })).toBeTruthy();
       // Escape ends the edit and leaves focus on the title, not on the page body.
       expect(document.activeElement).toBe(
-        screen.getByRole("heading", { name: "Sample sync" }),
+        screen.getByRole("button", { name: "Sample sync" }),
       );
       expect(api.renameMeeting).not.toHaveBeenCalled();
       await userEvent.click(screen.getByRole("button", { name: "Rename" }));
@@ -288,7 +288,9 @@ describe("meeting library", () => {
         name: "Planning review",
       });
       expect(renamed).toBeTruthy();
-      expect(document.activeElement).toBe(renamed);
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Planning review" }),
+      );
       expect(screen.getByDisplayValue("Original notes")).toBeTruthy();
     });
 
@@ -373,13 +375,16 @@ describe("meeting library", () => {
         screen.queryByRole("button", { name: "Start simulation" }),
       ).toBeNull();
       expect(api.startCapture).not.toHaveBeenCalled();
+      const sidebar = screen.getByRole("complementary", {
+        name: "Meeting navigation",
+      });
       expect(
-        screen.getByText("Note", { selector: ".source-badge" }),
+        within(
+          within(sidebar).getByRole("button", { name: /Untitled note/ }),
+        ).getByText("Note"),
       ).toBeTruthy();
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
-      expect(
-        screen.getByText("No transcript. Notes have no recorded audio."),
-      ).toBeTruthy();
+      expect(screen.getByText("Notes have no recorded audio.")).toBeTruthy();
       expect(screen.queryByRole("button", { name: /Transcribe/ })).toBeNull();
       expect(
         screen.queryByRole("button", { name: "Delete audio…" }),
@@ -417,9 +422,7 @@ describe("meeting library", () => {
         name: "Delete meeting",
       }) as HTMLButtonElement;
       expect(confirm.disabled).toBe(true);
-      expect(
-        screen.getByText(/Exported Markdown snapshots are not touched/),
-      ).toBeTruthy();
+      expect(screen.getByText(/Deletes its notes/)).toBeTruthy();
       const input = screen.getByRole("textbox", {
         name: "Type the meeting title to confirm",
       });

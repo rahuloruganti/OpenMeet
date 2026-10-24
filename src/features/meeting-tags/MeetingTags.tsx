@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, errorMessage } from "../../shared/api/api";
+import "./meeting-tags.css";
 
 type Props = {
   meetingId: string;
@@ -8,7 +9,7 @@ type Props = {
   onTags: (tags: string[]) => void;
 };
 
-/** Comma-separated tags; the backend trims, dedupes and validates, and the typed text survives a failure. */
+/** Tags shown as chips, edited as one comma-separated field; a failed save keeps the text. */
 export function MeetingTagsForm({ meetingId, tags, disabled, onTags }: Props) {
   const stored = tags.join(", ");
   const [text, setText] = useState(stored);
@@ -16,7 +17,7 @@ export function MeetingTagsForm({ meetingId, tags, disabled, onTags }: Props) {
   const [error, setError] = useState("");
   return (
     <form
-      className="meeting-tags"
+      className="tags"
       aria-label="Meeting tags"
       onSubmit={(event) => {
         event.preventDefault();
@@ -38,16 +39,29 @@ export function MeetingTagsForm({ meetingId, tags, disabled, onTags }: Props) {
           .finally(() => setBusy(false));
       }}
     >
-      <input
-        aria-label="Tags"
-        value={text}
-        placeholder="Tags, separated by commas"
-        disabled={disabled || busy}
-        onChange={(event) => setText(event.target.value)}
-      />
-      <button type="submit" disabled={disabled || busy || text === stored}>
-        Save tags
-      </button>
+      {tags.length > 0 && (
+        <span className="tagchips">
+          {tags.map((name) => (
+            <span className="tag" key={name}>
+              {name}
+            </span>
+          ))}
+        </span>
+      )}
+      <span className="tags-edit">
+        <input
+          aria-label="Tags"
+          value={text}
+          placeholder="Add tags"
+          disabled={disabled || busy}
+          onChange={(event) => setText(event.target.value)}
+        />
+        {text !== stored && (
+          <button type="submit" disabled={disabled || busy}>
+            Save tags
+          </button>
+        )}
+      </span>
       {error && (
         <p role="alert" className="error">
           {error}

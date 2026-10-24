@@ -138,10 +138,7 @@ it("refuses to replace when the notes changed around the selection", async () =>
   await userEvent.click(
     screen.getByRole("button", { name: "Rewrite with AI…" }),
   );
-  await userEvent.type(
-    screen.getByLabelText("How should it change?"),
-    "Capitalize",
-  );
+  await userEvent.type(screen.getByLabelText("Instruction"), "Capitalize");
   await userEvent.click(screen.getByRole("button", { name: "Rewrite" }));
   await screen.findByLabelText("Rewritten text");
   await userEvent.type(notes(), "{Home}X");
@@ -149,9 +146,7 @@ it("refuses to replace when the notes changed around the selection", async () =>
     screen.getByRole("button", { name: "Replace selection" }),
   );
   expect(onApply).not.toHaveBeenCalled();
-  expect(screen.getByRole("alert").textContent).toContain(
-    "nothing was replaced",
-  );
+  expect(screen.getByRole("alert").textContent).toContain("Copy it instead");
   expect(notes().value).toBe("XAlpha beta gamma");
 });
 

@@ -13,15 +13,12 @@ import {
   type Settings,
   type SttDownloadProgress,
   type SttStatus,
+  type Theme,
 } from "../../../shared/api/api";
 import type { ProcessingChoice } from "../../../entities/processing";
-import {
-  sttDirty,
-  type SttDraft,
-} from "../../../features/transcription-settings";
+import type { SttDraft } from "../../../features/transcription-settings";
 import {
   SettingsPanel,
-  shortcutsDirty,
   type SettingsSection,
 } from "../../../widgets/settings-panel";
 import type { OpenSettings } from "../../../shared/ui/settings-link";
@@ -52,7 +49,6 @@ export type SettingsPageEnv = {
   setOutput: (id: string) => void;
   audioBytes: number | null;
   detectionSupported: boolean;
-  keyStatus: Record<ProviderRole, KeyStatus>;
   updateKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
   stt: SttStatus | null;
   sttProgress: SttDownloadProgress | null;
@@ -64,15 +60,18 @@ export type SettingsPageEnv = {
 };
 
 /**
- * Settings screen: the shortcut and transcription drafts it edits, and the handlers
- * that save them. Drafts live here (not in the panel) so closing resets them.
+ * Settings screen state: the open section and the handlers that save each change.
+ * Every control saves as it changes, so nothing is drafted here any more.
+ *
+ * The theme is written in one place only: App's effect sets `data-theme` from
+ * `settings.theme`. This hook saves the choice and publishes the settings it gets back, so a
+ * failed save leaves the old selection on screen and the shell's error line explains why.
  */
 export function useSettingsPage(env: SettingsPageEnv) {
   const {
     settings,
     setSettings,
     run,
-    report,
     setNotice,
     updateStt,
     openPanel,
@@ -86,7 +85,6 @@ export function useSettingsPage(env: SettingsPageEnv) {
     setOutput,
     audioBytes,
     detectionSupported,
-    keyStatus,
     updateKeyStatus,
     stt,
     sttProgress,
@@ -96,14 +94,7 @@ export function useSettingsPage(env: SettingsPageEnv) {
     autoProcessing,
     chooseAutoProcessing,
   } = env;
-  const [section, setSection] = useState<SettingsSection>("transcription");
-  const [shortcut, setShortcut] = useState("");
-  const [stopShortcut, setStopShortcut] = useState("");
-  const [sttDraft, setSttDraft] = useState<SttDraft>({
-    stt_language: "auto",
-    stt_prompt: "",
-    stt_model: "small",
-  });
+  const [section, setSection] = useState<SettingsSection>("general");
 
   const openSettings: OpenSettings = (next, trigger) => {
     setSection(next);
@@ -116,31 +107,38 @@ export function useSettingsPage(env: SettingsPageEnv) {
     showPanel();
   };
 
-  /** Saved values replace the drafts after startup reads them. */
+  /** Kept for the shell's startup call; App's effect is the only thing that applies the theme. */
   const loadPreferences = useCallback((preferences: Settings) => {
-    setShortcut(preferences.pause_shortcut);
-    setStopShortcut(preferences.stop_shortcut ?? "");
-    setSttDraft(preferences);
+    void preferences;
   }, []);
 
-  // Unsaved shortcut or transcription drafts; closing Settings discards them after asking.
-  const dirty =
-    shortcutsDirty(settings, shortcut, stopShortcut) ||
-    sttDirty(settings, sttDraft);
-  const closeSettings = useCallback(() => {
-    if (dirty && !window.confirm("Discard unsaved settings?")) return;
-    // The drafts live here, not in the panel, so discarding resets them to the saved values.
-    if (settings) {
-      setShortcut(settings.pause_shortcut);
-      setStopShortcut(settings.stop_shortcut ?? "");
-      setSttDraft(settings);
-    }
-    closePanel();
-  }, [settings, dirty, closePanel]);
+  const saveTheme = (theme: Theme) =>
+    void run(async () => {
+      const saved = await api.saveUiPrefs(
+        theme,
+        settings?.inspector_open ?? true,
+      );
+      setSettings(saved);
+    });
+
+  const saveStt = (draft: SttDraft) =>
+    void run(async () => {
+      const modelChanged = draft.stt_model !== settings?.stt_model;
+      const saved = await api.saveSttSettings(
+        draft.stt_language,
+        draft.stt_prompt,
+        draft.stt_model,
+      );
+      setSettings(saved);
+      // A new model changes what the engine can do; the language does not.
+      if (modelChanged) updateStt(await api.sttStatus());
+    });
 
   const pageProps: SettingsPageProps = {
     panelRef,
-    initialSection: section,
+    // The hook owns the visible section, so a tab click and a shell request cannot disagree.
+    section,
+    onSection: setSection,
     devices,
     microphone,
     output,
@@ -162,12 +160,11 @@ export function useSettingsPage(env: SettingsPageEnv) {
     onRefreshDevices: refreshDevices,
     onSummaryDefault: (template) =>
       void run(async () => setSettings(await api.saveSummaryDefault(template))),
+    onTheme: saveTheme,
     processing: autoProcessing,
     onProcessing: chooseAutoProcessing,
     settings,
     disabled: env.disabled,
-    shortcut,
-    keyStatus,
     onKeyStatus: updateKeyStatus,
     onSettings: setSettings,
     onImported: async () => updateStt(await api.sttStatus()),
@@ -176,45 +173,24 @@ export function useSettingsPage(env: SettingsPageEnv) {
     stt,
     sttProgress,
     installing,
-    onCancelStt: () => void api.cancelModelDownload().catch(report),
+    onCancelStt: () => void api.cancelModelDownload().catch(env.report),
     onInstallStt: installStt,
-    onShortcut: setShortcut,
+    onSaveStt: saveStt,
+    onSaveShortcuts: (pause, stop) =>
+      void run(async () => {
+        const saved = await api.saveSettings(pause, stop.trim() || null);
+        setSettings(saved);
+        setNotice("Shortcuts saved.");
+      }),
     onRunSetup: () =>
       void run(async () => {
         setSettings(await api.saveSetupDone(false));
         closePanel();
       }),
-    onClose: closeSettings,
+    onClose: closePanel,
     onChooseFolder: () =>
       void run(async () => {
         setSettings(await api.chooseVaultFolder());
-      }),
-    onSaveShortcut: () =>
-      void run(async () => {
-        const updated = await api.saveSettings(
-          shortcut,
-          stopShortcut.trim() || null,
-        );
-        setSettings(updated);
-        setShortcut(updated.pause_shortcut);
-        setStopShortcut(updated.stop_shortcut ?? "");
-        setNotice("Shortcuts saved.");
-      }),
-    stopShortcut,
-    onStopShortcut: setStopShortcut,
-    sttDraft,
-    onStt: (change) => setSttDraft((draft) => ({ ...draft, ...change })),
-    onSaveStt: () =>
-      void run(async () => {
-        const updated = await api.saveSttSettings(
-          sttDraft.stt_language,
-          sttDraft.stt_prompt,
-          sttDraft.stt_model,
-        );
-        setSettings(updated);
-        setSttDraft(updated);
-        updateStt(await api.sttStatus());
-        setNotice("Transcription settings saved.");
       }),
     onExportOptions: (options) =>
       void run(async () => {
@@ -225,7 +201,7 @@ export function useSettingsPage(env: SettingsPageEnv) {
   return {
     openSettings,
     showSection,
-    closeSettings,
+    closeSettings: closePanel,
     loadPreferences,
     pageProps,
   };

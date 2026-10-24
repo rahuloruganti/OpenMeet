@@ -120,31 +120,46 @@ class Store:
     def __init__(self, data_dir: Path):
         data_dir.mkdir(parents=True, exist_ok=True)
         self.data_dir = data_dir
-        self.db = sqlite3.connect(
-            str(data_dir / DB_FILE),
+        self.lock = threading.RLock()
+        self.db = self._open()
+
+    def _open(self) -> sqlite3.Connection:
+        """Opens, migrates and clears state a previous process cannot still own."""
+        db = sqlite3.connect(
+            str(self.data_dir / DB_FILE),
             isolation_level=None,  # autocommit; explicit transactions only
             check_same_thread=False,
             timeout=5,
         )
-        self.lock = threading.RLock()
-        self.db.execute("PRAGMA foreign_keys = ON")
-        self.db.execute("PRAGMA journal_mode = WAL")
-        migrate(self.db)
+        db.execute("PRAGMA foreign_keys = ON")
+        db.execute("PRAGMA journal_mode = WAL")
+        migrate(db)
         # A restarted process cannot still own a recording from the previous process.
-        self.db.execute(
+        db.execute(
             "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')"
         )
-        self.db.execute(
+        db.execute(
             "UPDATE processing_runs SET stage='interrupted', error='Processing was interrupted. "
             "Retry when ready.' WHERE stage IN ('live','finalizing_audio','transcribing',"
             "'awaiting_notes','summarizing')"
         )
-        self.db.execute(
+        db.execute(
             "UPDATE processing_sessions SET state='interrupted', revision=revision+1 "
             "WHERE state='prepared' AND meeting_id IN "
             "(SELECT meeting_id FROM processing_runs WHERE stage='interrupted')"
         )
+        return db
 
     def close(self) -> None:
         with self.lock:
             self.db.close()
+
+    def reopen(self) -> None:
+        """Re-opens the database file after it was replaced on disk (the import swaps it).
+
+        The caller holds the lock, so no command can use the closed connection in between; a WAL
+        checkpoint on close is what releases the file handle Windows needs for the swap.
+        """
+        with self.lock:
+            self.db = self._open()
+

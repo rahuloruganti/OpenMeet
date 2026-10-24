@@ -1,0 +1,52 @@
+/* Tag chips in the inspector. Owned by the meeting slice. */
+
+.tags {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.tags .tagchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tags .tag {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 6px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--active);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.tags-edit {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+.tags-edit input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 6px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 12px;
+}
+.tags-edit input:hover:not(:disabled) {
+  border-color: var(--divider);
+}
+.tags-edit input:focus {
+  border-color: var(--control-border);
+  background: var(--paper);
+}
+.tags-edit button {
+  height: 24px;
+  min-height: 24px;
+  padding: 0 7px;
+  font-size: 11px;
+}

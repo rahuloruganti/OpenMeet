@@ -1,10 +1,11 @@
-import type { Ref } from "react";
+import { useEffect, useRef, type KeyboardEvent, type Ref } from "react";
 import type { AudioDevices } from "../../shared/api/api";
 import {
   builtinTemplates,
   modeLabels,
   type ProcessingChoice,
 } from "../../entities/processing";
+import "./setup-panel.css";
 
 type Props = {
   panelRef: Ref<HTMLElement>;
@@ -27,140 +28,195 @@ type Props = {
   sttMode: "local" | "cloud";
 };
 
+const focusable =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** New recording: a dialog over the meeting page. Esc and Cancel close it. */
 export function SetupPanel(props: Props) {
   const { devices, microphone, output, disabled, active } = props;
   const { mode, summary } = props.processing;
+  const dialog = useRef<HTMLElement | null>(null);
   const microphoneAvailable =
     devices?.microphones.some((device) => device.id === microphone) ?? false;
   const outputAvailable =
     devices?.outputs.some((device) => device.id === output) ?? false;
+  const attach = (node: HTMLElement | null) => {
+    dialog.current = node;
+    if (typeof props.panelRef === "function") props.panelRef(node);
+    else if (props.panelRef)
+      (props.panelRef as { current: HTMLElement | null }).current = node;
+  };
+  // Focus starts inside the dialog, so Escape and Tab reach it before the page.
+  useEffect(() => {
+    const node = dialog.current;
+    if (!node || node.contains(document.activeElement)) return;
+    node.querySelector<HTMLElement>("input, select, button")?.focus();
+  }, []);
+  // Tab stays inside the dialog; Escape closes it before the page sees the key.
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      props.onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const items = Array.from(
+      dialog.current?.querySelectorAll<HTMLElement>(focusable) ?? [],
+    );
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  const startDisabled =
+    disabled ||
+    active ||
+    !props.title.trim() ||
+    !devices?.capture_supported ||
+    !microphoneAvailable ||
+    !outputAvailable;
 
   return (
-    <section
-      className="workspace-panel setup"
-      ref={props.panelRef}
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="setup-title"
+    <div
+      className="setup-veil"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) props.onClose();
+      }}
     >
-      <div className="panel-heading">
-        <h2 id="setup-title">New recording</h2>
-        <button aria-label="Close panel" onClick={props.onClose}>
-          Close
-        </button>
-      </div>
-      <p className="panel-description">
-        Microphone and system audio are saved on this device. Recording is still
-        being tested on more computers. Try a short test meeting first.
-      </p>
-      {devices && !devices.capture_supported && (
-        <p role="alert">
-          Recording needs Windows, or Apple Silicon on macOS 14.2 or newer.
-        </p>
-      )}
-      {!microphoneAvailable && (
-        <p role="alert">
-          Selected microphone is unavailable. Connect or allow it and press
-          Refresh devices, or choose an available microphone; no device is
-          substituted.
-        </p>
-      )}
-      {!outputAvailable && (
-        <p role="alert">
-          Selected system audio is unavailable. Choose an available system audio
-          device; no device is substituted.
-        </p>
-      )}
-      <label>
-        Meeting title
-        <input
-          value={props.title}
-          maxLength={160}
-          disabled={disabled || active}
-          onChange={(event) => props.onTitle(event.target.value)}
-        />
-      </label>
-      <div className="field-row">
-        {[
-          {
-            label: "Microphone",
-            empty: "No microphone selected",
-            saved: "Saved microphone (unavailable)",
-            value: microphone,
-            available: microphoneAvailable,
-            options: devices?.microphones,
-            onChange: props.onMicrophone,
-          },
-          {
-            label: "System audio",
-            empty: "No system audio selected",
-            saved: "Saved system audio (unavailable)",
-            value: output,
-            available: outputAvailable,
-            options: devices?.outputs,
-            onChange: props.onOutput,
-          },
-        ].map((field) => (
-          <label key={field.label}>
-            {field.label}
-            <select
-              value={field.value}
-              disabled={disabled || active || !devices?.capture_supported}
-              onChange={(event) => field.onChange(event.target.value)}
-            >
-              {!field.value && <option value="">{field.empty}</option>}
-              {field.value && !field.available && (
-                <option value={field.value} disabled>
-                  {field.saved}
-                </option>
-              )}
-              {field.options?.map((device) => (
-                <option key={device.id} value={device.id}>
-                  {device.name}
-                </option>
-              ))}
-            </select>
+      <section
+        className="setup-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="setup-title"
+        ref={attach}
+        onKeyDown={onKeyDown}
+      >
+        <header className="setup-head">
+          <h2 id="setup-title">New recording</h2>
+          <span className="setup-gap" />
+          <button aria-label="Close" onClick={props.onClose}>
+            ✕
+          </button>
+        </header>
+        <div className="setup-body">
+          <label className="setup-field">
+            <span className="setup-label">Title</span>
+            <input
+              value={props.title}
+              maxLength={160}
+              disabled={disabled || active}
+              onChange={(event) => props.onTitle(event.target.value)}
+            />
           </label>
-        ))}
-      </div>
-      <button disabled={disabled || active} onClick={props.onRefreshDevices}>
-        Refresh devices
-      </button>
-      <p>
-        Automatic processing: <strong>{modeLabels[mode]}</strong>
-        {summary
-          ? `, ${builtinTemplates.find(({ id }) => id === summary)?.label} summary`
-          : ""}
-        .{" "}
-        <button type="button" onClick={props.onOpenSettings}>
-          Change in Settings
-        </button>
-      </p>
-      {mode !== "recording" && !props.speechReady && (
-        <p role="alert" className="error">
-          {props.sttMode === "cloud"
-            ? "No cloud speech connection and model are ready."
-            : "The local speech engine is not downloaded."}{" "}
-          Transcription for this recording will fail until you set it up in
-          Settings. The recording itself is still kept.
-        </p>
-      )}
-      <div className="panel-actions">
-        <button
-          className="primary"
-          disabled={
-            disabled ||
-            active ||
-            !props.title.trim() ||
-            !devices?.capture_supported ||
-            !microphoneAvailable ||
-            !outputAvailable
-          }
-          onClick={props.onStartCapture}
-        >
-          Start recording
-        </button>
-      </div>
-    </section>
+          <div className="setup-pair">
+            {[
+              {
+                label: "Microphone",
+                empty: "No microphone selected",
+                saved: "Saved microphone (unavailable)",
+                value: microphone,
+                available: microphoneAvailable,
+                options: devices?.microphones,
+                onChange: props.onMicrophone,
+              },
+              {
+                label: "System audio",
+                empty: "No system audio selected",
+                saved: "Saved system audio (unavailable)",
+                value: output,
+                available: outputAvailable,
+                options: devices?.outputs,
+                onChange: props.onOutput,
+              },
+            ].map((field) => (
+              <label className="setup-field" key={field.label}>
+                <span className="setup-label">{field.label}</span>
+                <select
+                  value={field.value}
+                  disabled={disabled || active || !devices?.capture_supported}
+                  onChange={(event) => field.onChange(event.target.value)}
+                >
+                  {!field.value && <option value="">{field.empty}</option>}
+                  {field.value && !field.available && (
+                    <option value={field.value} disabled>
+                      {field.saved}
+                    </option>
+                  )}
+                  {field.options?.map((device) => (
+                    <option key={device.id} value={device.id}>
+                      {device.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          <p className="setup-hint">Audio stays on this device.</p>
+          {devices && !devices.capture_supported && (
+            <p role="alert" className="setup-alert">
+              Recording needs Windows.
+            </p>
+          )}
+          {!microphoneAvailable && (
+            <p role="alert" className="setup-alert">
+              That microphone is unavailable. Pick another one.
+            </p>
+          )}
+          {!outputAvailable && (
+            <p role="alert" className="setup-alert">
+              That system audio device is unavailable. Pick another one.
+            </p>
+          )}
+          <details className="setup-more">
+            <summary>More options</summary>
+            <div className="setup-more-body">
+              <div className="setup-row">
+                <button
+                  type="button"
+                  disabled={disabled || active}
+                  onClick={props.onRefreshDevices}
+                >
+                  Refresh devices
+                </button>
+                <span className="setup-hint">
+                  {modeLabels[mode]}
+                  {summary
+                    ? ` · ${builtinTemplates.find(({ id }) => id === summary)?.label} summary`
+                    : ""}
+                </span>
+                <button type="button" onClick={props.onOpenSettings}>
+                  Open Settings
+                </button>
+              </div>
+              {mode !== "recording" && !props.speechReady && (
+                <p role="alert" className="setup-alert">
+                  {props.sttMode === "cloud"
+                    ? "No cloud speech connection is ready."
+                    : "The speech engine is not downloaded."}{" "}
+                  Recording is kept; transcription fails until it is set up.
+                </p>
+              )}
+            </div>
+          </details>
+        </div>
+        <footer className="setup-foot">
+          <button onClick={props.onClose}>Cancel</button>
+          <button
+            className="primary"
+            disabled={startDisabled}
+            onClick={props.onStartCapture}
+          >
+            Start recording
+          </button>
+        </footer>
+      </section>
+    </div>
   );
 }

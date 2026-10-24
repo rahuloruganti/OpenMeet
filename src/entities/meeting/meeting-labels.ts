@@ -1,10 +1,26 @@
 import type { Meeting } from "../../shared/api/api";
 
 export const sourceLabels: Record<Meeting["source"], string> = {
-  fixture: "Fictional sample",
+  fixture: "Sample",
   simulation: "Simulation",
-  desktop: "Desktop capture",
+  desktop: "Recording",
   note: "Note",
+};
+
+/** One-word source for dense places: a list row, the inspector. */
+export const sourceWords: Record<Meeting["source"], string> = {
+  fixture: "Sample",
+  simulation: "Simulation",
+  desktop: "Recording",
+  note: "Note",
+};
+
+/** A meeting's state as one capitalised word; "stopped" says nothing, so lists leave it out. */
+export const statusWords: Record<Meeting["status"], string> = {
+  recording: "Recording",
+  paused: "Paused",
+  interrupted: "Interrupted",
+  stopped: "Stopped",
 };
 
 /** Each tag once, ignoring case, sorted; tags match case-insensitively. */

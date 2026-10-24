@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from openmeet_py.api import reads, recording
+from openmeet_py.api import import_commands, reads, recording
 from openmeet_py.api.context import (
     Context,
     bool_arg,
@@ -265,6 +265,33 @@ def save_setup_done(ctx: Context, done: bool) -> dict[str, Any]:
         return read_settings(db)
 
 
+THEMES = ("system", "dark", "light")
+
+
+def save_ui_prefs(ctx: Context, theme: str, inspector_open: bool) -> dict[str, Any]:
+    """The window's own preferences: the colour theme and the meeting inspector's open state."""
+    theme = _text(theme, "theme")
+    if theme not in THEMES:
+        raise AppError("invalid_args", "Choose System, Dark or Light.")
+    inspector_open = _bool(inspector_open, "inspector_open")
+    with ctx.store.lock:
+        db = ctx.store.db
+        db.execute(
+            "UPDATE settings SET theme = ?1, inspector_open = ?2 WHERE id = 1",
+            (theme, int(inspector_open)),
+        )
+        return read_settings(db)
+
+
+def data_folder(ctx: Context) -> dict[str, Any]:
+    """This build's own data folder, shown read-only in Export & storage.
+
+    It comes from the open Store, so a test or a preview that runs on another folder reports
+    that folder and never the shipped default.
+    """
+    return {"path": str(ctx.store.data_dir)}
+
+
 def choose_vault_folder(ctx: Context) -> dict[str, Any]:
     if ctx.pick_folder is None:
         raise not_available("Choosing a folder")
@@ -348,8 +375,13 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "get_settings": get_settings,
     "save_export_options": save_export_options,
     "save_setup_done": save_setup_done,
+    "save_ui_prefs": save_ui_prefs,
+    "data_folder": data_folder,
     "choose_vault_folder": choose_vault_folder,
     "close_application": close_application,
+    # The one-time import from the previous OpenMeet data folder, run while the app is open
+    "import_status": import_commands.import_status,
+    "import_previous": import_commands.import_previous,
     # Phase 2: providers, summaries, questions, tasks, library, rewrite, templates, recipes
     "save_api_connection": connections.save_api_connection,
     "delete_api_connection": connections.delete_api_connection,

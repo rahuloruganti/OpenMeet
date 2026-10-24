@@ -98,7 +98,11 @@ describe("transcript and audio", () => {
       );
       await userEvent.click(screen.getByText("Audio track details"));
       expect(details?.open).toBe(true);
-      expect(screen.getByText(/No transcript/)).toBeTruthy();
+      // A fixture has no playable audio, so the tab says so instead of offering a player.
+      expect(
+        screen.getByText("Samples and simulations have no audio."),
+      ).toBeTruthy();
+      expect(screen.queryByLabelText("You (microphone)")).toBeNull();
     });
 
     it("edits, reverts, and guards transcript segments and shows earlier transcripts", async () => {
@@ -138,9 +142,7 @@ describe("transcript and audio", () => {
       expect(screen.getByDisplayValue("Persimmon budget")).toBeTruthy();
       act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
       expect(
-        await screen.findByRole("button", {
-          name: "Discard unsaved edits and quit",
-        }),
+        await screen.findByRole("button", { name: "Discard and quit" }),
       ).toBeTruthy();
       await userEvent.click(
         screen.getByRole("button", { name: "Keep working" }),
@@ -161,12 +163,24 @@ describe("transcript and audio", () => {
         "Agreed",
         "Agred",
       );
-      await userEvent.selectOptions(
-        screen.getByRole("combobox", { name: "Earlier transcripts" }),
-        "3",
+      // Earlier transcripts moved behind the meeting menu: ⋯ > History, and stay read-only.
+      await userEvent.click(screen.getByLabelText("More meeting actions"));
+      await userEvent.click(screen.getByRole("button", { name: "History" }));
+      const history = await screen.findByRole("dialog", {
+        name: "Transcript history",
+      });
+      await userEvent.click(
+        within(history).getByRole("button", { name: "Earlier transcript 1" }),
       );
       expect(api.getTranscriptVersion).toHaveBeenCalledWith("sample", 3);
-      expect(await screen.findByText(/Kept earlier words/)).toBeTruthy();
+      const kept = await within(history).findByLabelText(
+        "Earlier transcript (read-only)",
+      );
+      expect(within(kept).getByText(/Kept earlier words/)).toBeTruthy();
+      // Nothing in History can replace the current transcript.
+      expect(
+        within(history).queryByRole("button", { name: /restore|replace/i }),
+      ).toBeNull();
     });
   });
 
@@ -329,6 +343,11 @@ describe("transcript and audio", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Ask across meetings" }),
       );
+      // The Ask page scopes with a picker: choose the meetings this question covers.
+      await userEvent.selectOptions(
+        await screen.findByRole("combobox", { name: "Scope" }),
+        "pick",
+      );
       await userEvent.click(screen.getByLabelText(/Recorded sync/));
       await userEvent.type(screen.getByLabelText("Question"), "What moved?");
       await userEvent.click(screen.getByRole("button", { name: "Ask" }));
@@ -353,10 +372,29 @@ describe("transcript and audio", () => {
       const segment = document.getElementById("segment-31");
       expect(segment?.className).toContain("highlighted-segment");
       expect(document.activeElement).toBe(segment);
+      // The answer is saved, so the Ask page still offers it after leaving and returning.
+      vi.mocked(api.listLibraryAnswers).mockResolvedValue([
+        {
+          id: 1,
+          question: "What moved?",
+          answer: "Moved [M1 0:08] and [M2 0:08].",
+          provider: "https://provider.example/v1",
+          model: "test-chat",
+          meeting_ids: ["rec"],
+        },
+      ]);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Ask across meetings" }),
+        ).toHaveProperty("disabled", false),
+      );
       await userEvent.click(
         screen.getByRole("button", { name: "Ask across meetings" }),
       );
-      expect(screen.getByLabelText("Library answer")).toBeTruthy();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /What moved\?/ }),
+      );
+      expect(await screen.findByLabelText("Answer")).toBeTruthy();
     });
 
     it("seeks the speaker's track to the backend-mapped file time", async () => {
@@ -430,7 +468,7 @@ describe("transcript and audio", () => {
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
       fireEvent.error(screen.getByLabelText("You (microphone)"));
       expect(screen.getByRole("alert").textContent).toBe(
-        "An audio file could not be opened. It may have been moved or is incomplete.",
+        "An audio file could not be opened. It may have been moved.",
       );
     });
 
@@ -456,7 +494,7 @@ describe("transcript and audio", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Jump to audio" }),
       );
-      expect(screen.getByText(/Put the cursor on a line/)).toBeTruthy();
+      expect(screen.getByText(/Put the cursor on a \[mm:ss\]/)).toBeTruthy();
       editor.setSelectionRange(editor.value.length, editor.value.length);
       await userEvent.click(
         screen.getByRole("button", { name: "Jump to audio" }),
@@ -614,9 +652,7 @@ describe("transcript and audio", () => {
       vi.mocked(api.transcribeMeeting).mockReturnValue(new Promise(() => {}));
       await ready();
       const card = await screen.findByRole("group", { name: "Next steps" });
-      expect(
-        within(card).getByText("This recording has no transcript yet."),
-      ).toBeTruthy();
+      expect(within(card).getByText("No transcript yet.")).toBeTruthy();
       await userEvent.click(
         within(card).getByRole("button", { name: "Transcribe audio" }),
       );
@@ -630,7 +666,7 @@ describe("transcript and audio", () => {
           .getAttribute("aria-selected"),
       ).toBe("true");
       expect(
-        screen.getByRole("button", { name: "Transcribing locally…" }),
+        screen.getByRole("button", { name: "Transcribing" }),
       ).toHaveProperty("disabled", true);
     });
 
@@ -777,11 +813,12 @@ describe("transcript and audio", () => {
         name: "Confirm re-transcription",
       });
       expect(card.textContent).toContain(
-        "The current transcript, including your edits, is kept under Earlier transcripts.",
+        "The current transcript, edits included, is kept in History.",
       );
       expect(card.textContent).toContain(
         "This runs on your computer and can take about as long as the recording.",
       );
+      expect(card.textContent).not.toContain("uploaded");
       expect(within(card).getByRole("button", { name: "Cancel" })).toBe(
         document.activeElement,
       );
@@ -796,7 +833,9 @@ describe("transcript and audio", () => {
       expect(api.transcribeMeeting).not.toHaveBeenCalled();
       await userEvent.click(trigger);
       await userEvent.click(
-        screen.getByRole("button", { name: "Re-transcribe" }),
+        within(
+          screen.getByRole("group", { name: "Confirm re-transcription" }),
+        ).getByRole("button", { name: "Re-transcribe audio" }),
       );
       await waitFor(() =>
         expect(api.transcribeMeeting).toHaveBeenCalledWith("sample"),
@@ -824,8 +863,9 @@ describe("transcript and audio", () => {
         name: "Confirm re-transcription",
       });
       expect(card.textContent).toContain(
-        "With an online speech connection the audio is uploaded again and may be billed again.",
+        "Audio is uploaded again and may be billed again.",
       );
+      expect(card.textContent).not.toContain("runs on your computer");
       fireEvent.keyDown(card, { key: "Escape" });
       expect(
         screen.queryByRole("group", { name: "Confirm re-transcription" }),
@@ -894,9 +934,7 @@ describe("long transcripts", () => {
     await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
     expect(rows()).toHaveLength(200);
     await userEvent.click(
-      screen.getByRole("button", {
-        name: "Show next 200 segments (250 remaining)",
-      }),
+      screen.getByRole("button", { name: "Show next 200" }),
     );
     expect(rows()).toHaveLength(400);
     await userEvent.click(screen.getByRole("button", { name: "Show all" }));

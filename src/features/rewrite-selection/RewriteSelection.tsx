@@ -82,7 +82,7 @@ export function RewriteSelection(props: {
           aria-label="Rewrite selection"
         >
           <p>
-            <strong>Rewrite {selection.text.length} selected characters</strong>
+            <strong>Rewrite {selection.text.length} characters</strong>
           </p>
           <p className="muted">
             Sends the selected text to your AI notes connection.
@@ -121,7 +121,7 @@ export function RewriteSelection(props: {
                 ))}
               </div>
               <label>
-                How should it change?
+                Instruction
                 <input
                   value={request}
                   maxLength={1000}
@@ -143,13 +143,17 @@ export function RewriteSelection(props: {
               </div>
             </form>
           )}
-          {working && <p role="status">Working…</p>}
+          {working && <p role="status">Rewriting…</p>}
           {result !== null && (
             <>
-              <div className="rewrite-result" aria-label="Rewritten text">
+              <div
+                className="rewrite-result"
+                role="group"
+                aria-label="Rewritten text"
+              >
                 {result}
               </div>
-              <p className="muted">AI-generated. Check it before using it.</p>
+              <p className="muted">AI-generated. Check it.</p>
               <div className="panel-actions">
                 <button
                   className="primary"
@@ -159,7 +163,7 @@ export function RewriteSelection(props: {
                     // The selection must still hold the text that was rewritten.
                     if (props.notes.slice(start, end) !== text)
                       return setError(
-                        "Your notes changed around the selection, so nothing was replaced. Copy the rewrite instead.",
+                        "Notes changed since the rewrite. Copy it instead.",
                       );
                     props.onApply(
                       props.notes.slice(0, start) +

@@ -2,11 +2,6 @@
 export {
   OpenSettingsButton,
   SettingsPanel,
-  shortcutsDirty,
+  settingsSections,
 } from "./SettingsPanel";
-export type {
-  AiBlock,
-  OpenSettings,
-  SettingsSection,
-  SttDraft,
-} from "./SettingsPanel";
+export type { AiBlock, OpenSettings, SettingsSection } from "./SettingsPanel";

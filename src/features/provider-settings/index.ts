@@ -1,5 +1,5 @@
 // Public API of features/provider-settings. Other slices import only from this file.
-export { Connections } from "./ProviderSettings";
+export { ConnectionEditor, baseUrlError } from "./ProviderSettings";
 export {
   destination,
   publishSettings,

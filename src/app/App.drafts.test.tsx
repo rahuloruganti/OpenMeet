@@ -18,15 +18,19 @@ vi.mock("../shared/api/api", async (original) =>
 beforeEach(installDefaultMocks);
 
 describe("note drafts and shutdown", () => {
-  it("does not steal quit-confirmation focus when a settings panel is open", async () => {
+  it("shows the quit prompt over the meetings page even when Settings was open", async () => {
     await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(
+      within(
+        screen.getByRole("complementary", { name: "Meeting navigation" }),
+      ).getByRole("button", { name: "Settings" }),
+    );
+    await screen.findByRole("heading", { level: 1, name: "Settings" });
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
     const quit = await screen.findByRole("button", { name: "Save and quit" });
     expect(document.activeElement).toBe(quit);
     await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
-    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
-    expect(document.activeElement).toBe(screen.getByRole("main"));
+    expect(screen.getByRole("main")).toBeTruthy();
   });
 
   it("guards opening the active meeting when another meeting has an unsaved draft", async () => {
@@ -74,18 +78,10 @@ describe("note drafts and shutdown", () => {
     ).toBeTruthy();
   });
 
-  it("keeps stop and failed drafts reachable while settings are open", async () => {
+  it("keeps the note draft and a running capture while Settings replaces the page", async () => {
     vi.mocked(api.getRecordingState).mockResolvedValue({
       revision: 1,
       status: "recording",
-      meeting_id: "sample",
-      source: "desktop",
-      error: null,
-      recording_offset_ms: null,
-    });
-    vi.mocked(api.stop).mockResolvedValue({
-      revision: 2,
-      status: "stopped",
       meeting_id: "sample",
       source: "desktop",
       error: null,
@@ -96,30 +92,22 @@ describe("note drafts and shutdown", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
       target: { value: "Keep my draft through settings" },
     });
-    const trigger = screen.getByRole("button", { name: "Settings" });
-    await userEvent.click(trigger);
+    await userEvent.click(
+      within(
+        screen.getByRole("complementary", { name: "Meeting navigation" }),
+      ).getByRole("button", { name: "Settings" }),
+    );
+    // Settings is a page of its own: the meeting document is gone, the capture is not stopped.
     expect(
-      screen
-        .getByRole("dialog", { name: "Settings" })
-        .getAttribute("aria-modal"),
-    ).toBe("false");
-    expect(
-      screen.getByRole("tab", { name: "Transcription", selected: true }),
+      await screen.findByRole("heading", { level: 1, name: "Settings" }),
     ).toBeTruthy();
-    expect(screen.getByLabelText("API key")).toHaveProperty("value", "");
-    expect(api.listApiConnectionModels).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await screen.findByText(/Notes not saved: Disk full/);
-    expect(api.stop).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("textbox", { name: /My notes/ })).toBeNull();
+    expect(api.stop).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
     expect(
       screen.getByDisplayValue("Keep my draft through settings"),
     ).toBeTruthy();
-    await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
-    expect(document.activeElement).toBe(trigger);
-    expect(screen.getByRole("textbox", { name: /My notes/ }).textContent).toBe(
-      "Keep my draft through settings",
-    );
+    await screen.findByText(/Notes not saved: Disk full/);
   });
 
   it("stops before saving notes and retains a failed draft", async () => {
@@ -150,7 +138,11 @@ describe("note drafts and shutdown", () => {
     expect(vi.mocked(api.stop).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(api.saveNotes).mock.invocationCallOrder[0],
     );
-    expect(screen.getByText("Recording: stopped")).toBeTruthy();
+    // The bar says the capture is over (distinct from Recording and Paused).
+    await waitFor(() =>
+      expect(document.querySelector(".status-dot.stopped")).toBeTruthy(),
+    );
+    expect(screen.getByText("Ready")).toBeTruthy();
     expect(screen.getByDisplayValue("Keep this unsaved draft")).toBeTruthy();
     vi.mocked(api.saveNotes).mockResolvedValue(1);
     await userEvent.click(
@@ -194,22 +186,30 @@ describe("note drafts and shutdown", () => {
     );
     await waitFor(() => expect(api.saveNotes).toHaveBeenCalledOnce());
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
-    await screen.findByText("Recording: stopped");
+    await waitFor(() =>
+      expect(document.querySelector(".status-dot.stopped")).toBeTruthy(),
+    );
     expect(api.stop).toHaveBeenCalledOnce();
     expect(screen.getByDisplayValue("Pending save")).toBeTruthy();
     await act(async () => finishSave(1));
   });
 
-  it("keeps the draft mounted while settings replace the document", async () => {
+  it("keeps the note draft while Settings replaces the page", async () => {
     await ready();
-    const editor = screen.getByRole("textbox", { name: /My notes/ });
-    fireEvent.change(editor, { target: { value: "Draft to preserve" } });
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(editor.closest("article")?.hidden).toBe(true);
+    fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
+      target: { value: "Draft to preserve" },
+    });
+    await userEvent.click(
+      within(
+        screen.getByRole("complementary", { name: "Meeting navigation" }),
+      ).getByRole("button", { name: "Settings" }),
+    );
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "My notes" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
-    expect(screen.getByDisplayValue("Draft to preserve")).toBe(editor);
-    expect(editor.closest("article")?.hidden).toBe(false);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByDisplayValue("Draft to preserve")).toBeTruthy();
   });
 
   it("does not close or discard notes when saving fails", async () => {
@@ -222,10 +222,17 @@ describe("note drafts and shutdown", () => {
       target: { value: "Keep these edits" },
     });
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    const quit = await screen.findByRole("dialog", { name: "Save and quit?" });
     await userEvent.click(
-      await screen.findByRole("button", { name: "Save and quit" }),
+      within(quit).getByRole("button", { name: "Save and quit" }),
     );
-    await screen.findByText(/Notes not saved: Disk full/);
+    // The banner and the quit dialog both explain the failed save.
+    await waitFor(() =>
+      expect(screen.getAllByText(/Notes not saved: Disk full/)).toHaveLength(2),
+    );
+    expect(within(quit).getByRole("alert").textContent).toContain(
+      "Quitting waits for them",
+    );
     expect(api.close).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
   });
@@ -242,7 +249,7 @@ describe("note drafts and shutdown", () => {
       name: "Save and quit?",
     });
     expect(within(dialog).getByRole("alert").textContent).toBe(
-      "Your notes could not be saved: Disk full. OpenMeet will not quit until they are saved. Copy your text, or keep working and retry.",
+      "Notes not saved: Disk full. Quitting waits for them. Copy your text or retry.",
     );
     // Enter on the dialog must not retry a failing save by default.
     expect(document.activeElement).toBe(
@@ -251,7 +258,7 @@ describe("note drafts and shutdown", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Save and quit" }),
     );
-    await screen.findByText(/That action needs your notes saved first/);
+    await screen.findByText(/Save your notes first: fix the error above/);
     expect(api.close).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
   });
@@ -273,16 +280,20 @@ describe("note drafts and shutdown", () => {
     expect(api.getMeeting).not.toHaveBeenCalledWith("second");
     expect(screen.getByDisplayValue("Unflushed")).toBeTruthy();
     // The refused switch says why, and the failure text appears once (in the banner).
-    await screen.findByText(/That action needs your notes saved first/);
+    await screen.findByText(/Save your notes first: fix the error above/);
     expect(screen.getAllByText(/Write failed/)).toHaveLength(1);
-    expect(screen.getByText("Not saved").classList.contains("error")).toBe(
-      true,
-    );
+    const saved = document.querySelector(".mw-saved");
+    expect(saved?.textContent).toBe("Not saved");
+    // A failed save reads as an error, not the calm green "Saved" state.
+    expect(saved?.classList.contains("error")).toBe(true);
+    // The banner keeps the text and points at the retry.
     expect(
-      screen.getByText(
-        "Not saved yet. Your text is still here; use Save notes now to retry.",
-      ),
-    ).toBeTruthy();
+      screen
+        .getAllByRole("alert")
+        .some((alert) =>
+          alert.textContent?.includes("Copy your text or retry."),
+        ),
+    ).toBe(true);
   });
 
   it("keeps Save notes now retries in the banner instead of a second message", async () => {

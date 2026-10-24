@@ -1,0 +1,67 @@
+/* Transcript history sheet. Owned by the meeting slice. */
+
+.ver-list {
+  display: grid;
+}
+.ver {
+  display: grid;
+  gap: 3px;
+  padding: 9px 6px 10px;
+  border-bottom: 1px solid var(--divider);
+}
+.ver:last-child {
+  border-bottom: 0;
+}
+.ver-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.ver-name {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.ver .tag {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 5px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--active);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+.ver-go {
+  height: 22px;
+  min-height: 22px;
+  margin-left: auto;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.ver-go:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--ink);
+}
+.ver-sub {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.ver-body {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--divider);
+  font-size: 12px;
+}
+.ver-body p {
+  margin: 0;
+}

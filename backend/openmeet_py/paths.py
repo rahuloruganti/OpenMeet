@@ -28,3 +28,16 @@ def default_data_dir() -> Path:
     # This build's own folder, so it can never open or migrate another app's database.
     base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
     return Path(base) / "OpenMeetPy"
+
+
+def old_data_dir() -> Path:
+    """The previous app's data folder, read-only. Every caller goes through this one helper.
+
+    OPENMEET_OLD_DATA_DIR points it somewhere else: tests resolve it to a temp folder, so the real
+    %APPDATA%\\dev.openmeet.preview is never read, written or migrated by a test.
+    """
+    override = os.environ.get("OPENMEET_OLD_DATA_DIR")
+    if override:
+        return Path(override)
+    base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+    return Path(base) / "dev.openmeet.preview"

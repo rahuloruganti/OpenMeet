@@ -51,7 +51,12 @@ just dev
 
 ## Use the app
 
-On first launch, **Set up OpenMeet** walks through transcription (a speech model on this computer, a local speech server, or an online API), AI notes (a local server such as Ollama, LM Studio or Unsloth Studio, or an online API), and default devices. It finds models and local servers already installed. Skip it or run it again from **Settings → Privacy & about**.
+On first launch, **Set up OpenMeet** walks through importing an earlier data folder when one is found, transcription (a speech model on this computer, a local speech server, or an online API), AI notes (a local server such as Ollama, LM Studio or Unsloth Studio, or an online API), and default devices. It finds models and local servers already installed. Skip it or run it again from **Settings → Privacy & about**.
+
+- **Meetings** is the home page, with the library in the sidebar. **Settings** and **Ask** open as full pages; **← Meetings** or **Escape** goes back.
+- **Ctrl+K** opens a command palette for actions and meeting titles. Other shortcuts: **Ctrl+N** new recording, **Ctrl+Shift+N** new note, **Ctrl+Shift+A** Ask, **Ctrl+,** Settings, **Ctrl+E** export, **F2** rename, **Ctrl+I** inspector.
+- The meeting inspector holds details, tasks and device names; tasks live only there.
+- **Settings → General → Theme** switches **System**, **Dark** or **Light**; settings save as you change them.
 
 ### Write a note
 
@@ -73,15 +78,15 @@ Exported files appear in the chosen folder's `Meetings` directory. Export create
 
 On-this-computer transcription (Whisper or the sherpa-onnx models) keeps audio and transcription on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
 
-For cloud transcription, add a connection under **Settings → Connections**, then choose **API connection** under **Settings → Transcription** and assign that connection and a model ID. Transcribing uploads the audio to that connection. Text-only results have no fabricated timestamps or playback links. Provider retention and charges apply, and cancellation cannot recall audio already uploaded.
+For cloud transcription, choose **API connection** under **Settings → Transcription** and add the connection in **Cloud speech**, with a model ID. Transcribing uploads the audio to that connection. Text-only results have no fabricated timestamps or playback links. Provider retention and charges apply, and cancellation cannot recall audio already uploaded.
 
 ### Set up optional AI summaries
 
 Notes, recording, and local transcription work without a cloud key. Summaries and **Ask this meeting** use your provider's OpenAI-compatible chat API.
 
-1. Open **Settings → Connections**. Remote and local servers share one list; each is marked **This device** or **Leaves this device**.
+1. Open **Settings → AI notes** and use the **Connection** group. Local and remote servers share one list; a remote one is tagged **Leaves this device**.
 2. Name the connection, enter its base URL including the API path, and paste its key into the masked field. Save the connection. Local loopback HTTP supports optional keys.
-3. Under **Settings → AI notes**, select the saved connection and a discovered or custom model ID for summaries, then save. Use **Refresh models** in Connections to fetch model IDs when needed.
+3. Select the saved connection and a discovered or custom model ID for summaries, then save. Use **Refresh models** to fetch model IDs when needed.
 
 Keys pass briefly through the password field into the backend and are stored in Windows Credential Manager. They are never read back into Settings, the database, logs or exports. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; refreshing models sends credentials only.
 
@@ -91,7 +96,7 @@ Compatible endpoints must implement the operation you select; a model list does 
 
 ## Import data from the earlier app
 
-The retired build kept its data in a different folder. To carry it over once:
+The retired build kept its data in a different folder. First-run setup offers **Import** when it finds that folder and this library is empty. To carry it over later, run once from a command prompt:
 
 ```powershell
 .\OpenMeet.exe --import-from "%APPDATA%\dev.openmeet.preview"

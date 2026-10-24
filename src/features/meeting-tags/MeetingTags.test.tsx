@@ -64,7 +64,7 @@ it("filters meetings and full-text hits by tag", async () => {
       onSearch={vi.fn()}
       onNewRecording={vi.fn()}
       onSettings={vi.fn()}
-      onLibrary={vi.fn()}
+      onAsk={vi.fn()}
       onOpenMeeting={vi.fn()}
       onNewNote={vi.fn()}
       hits={hits}
@@ -73,10 +73,7 @@ it("filters meetings and full-text hits by tag", async () => {
     />,
   );
   expect(screen.getByText(/Notes · budget b/)).toBeTruthy();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Filter by tag"),
-    "Client",
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Client" }));
   expect(screen.getByText(/Notes · budget a/)).toBeTruthy();
   expect(screen.queryByText(/Notes · budget b/)).toBeNull();
   expect(screen.queryByText("Meeting b")).toBeNull();

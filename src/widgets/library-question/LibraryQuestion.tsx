@@ -19,9 +19,10 @@ import {
 } from "../../shared/ui/settings-link";
 
 type Props = {
-  panelRef: Ref<HTMLElement>;
-  /** The panel stays mounted while hidden, so an answer survives following a link. */
-  hidden: boolean;
+  /** Kept for the meeting page's panel-era call site; the Ask page owns the frame. */
+  panelRef?: Ref<HTMLElement>;
+  hidden?: boolean;
+  onClose?: () => void;
   meetings: Meeting[];
   recipes: Recipe[];
   /** Changes when the summary/question provider settings change. */
@@ -30,9 +31,10 @@ type Props = {
   llmBlocked: AiBlock | null;
   onOpenSettings: OpenSettings;
   disabled: boolean;
-  onClose: () => void;
   /** Opens a meeting; `ms` is a cited transcript time to jump to, or null. */
   onOpen: (meetingId: string, ms: number | null) => void;
+  /** The AI notes connection, when one is assigned: its name and whether text leaves this device. */
+  connection?: { name: string; remote: boolean } | null;
 };
 
 /** The shown saved answer with the stored meetings its citations are checked against. */
@@ -41,14 +43,17 @@ type Answered = {
   details: Map<string, MeetingDetail>;
 };
 
+type Scope = "all" | "pick" | "tag";
+
 const same = (a: string, b: string) =>
   a.toLocaleLowerCase() === b.toLocaleLowerCase();
 // The most meetings one question can cover.
 const LIMIT = 20;
 
+/** Ask across meetings: question box, scope row, recipes, saved answers and one answer. */
 export function LibraryQuestion(props: Props) {
   const { meetings, disabled } = props;
-  const [mode, setMode] = useState<"tag" | "pick">("pick");
+  const [scopeMode, setScopeMode] = useState<Scope>("all");
   const [tag, setTag] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
@@ -60,15 +65,18 @@ export function LibraryQuestion(props: Props) {
   const [answered, setAnswered] = useState<Answered | null>(null);
   const [answers, setAnswers] = useState<LibraryAnswer[]>([]);
   const [deletingAnswer, setDeletingAnswer] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
   const version = useRef(0);
   const title = (id: string) =>
     meetings.find((meeting) => meeting.id === id)?.title ?? id;
 
   const tags = tagChoices(meetings);
   const scope =
-    mode === "tag"
-      ? meetings.filter((meeting) => meeting.tags.some((t) => same(t, tag)))
-      : meetings.filter((meeting) => picked.includes(meeting.id));
+    scopeMode === "all"
+      ? meetings
+      : scopeMode === "tag"
+        ? meetings.filter((meeting) => meeting.tags.some((t) => same(t, tag)))
+        : meetings.filter((meeting) => picked.includes(meeting.id));
   const scopeKey = scope.map((meeting) => meeting.id).join(",");
   const tooMany = scope.length > LIMIT;
   const needle = foldText(filter.trim());
@@ -127,6 +135,7 @@ export function LibraryQuestion(props: Props) {
       ),
     );
     setDeletingAnswer(false);
+    setCopyStatus("");
     setAnswered({ answer, details });
   };
 
@@ -155,6 +164,15 @@ export function LibraryQuestion(props: Props) {
     }
   };
 
+  const copyAnswer = async (answer: LibraryAnswer) => {
+    try {
+      await navigator.clipboard.writeText(answer.answer);
+      setCopyStatus("Copied.");
+    } catch {
+      setCopyStatus("Could not copy.");
+    }
+  };
+
   const reference = (token: string) => {
     const match = /^\[M([1-9]\d*)(?: ([^\]]+))?\]$/.exec(token);
     const id = match
@@ -174,7 +192,8 @@ export function LibraryQuestion(props: Props) {
       );
     return (
       <button
-        className="seek-button"
+        type="button"
+        className="cite"
         aria-label={
           time === undefined
             ? `Open ${title(id)}`
@@ -182,7 +201,7 @@ export function LibraryQuestion(props: Props) {
         }
         onClick={() => props.onOpen(id, ms)}
       >
-        {token}
+        {match?.[1]}
       </button>
     );
   };
@@ -196,67 +215,115 @@ export function LibraryQuestion(props: Props) {
     question.trim().length > 0;
 
   return (
-    <section
-      className="workspace-panel"
-      hidden={props.hidden}
-      ref={props.panelRef}
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="library-title"
-    >
-      <div className="panel-heading">
-        <h2 id="library-title">Ask across meetings</h2>
-        <button aria-label="Close panel" onClick={props.onClose}>
-          Close
-        </button>
-      </div>
-      <p className="panel-description">
-        Choose the meetings to ask about. The question and those meetings'
-        titles, notes and transcripts go to your AI notes connection; long
-        content is cut down to keyword-matched excerpts first.
-      </p>
-      <fieldset>
-        <legend>Scope</legend>
-        <label className="check">
-          <input
-            type="radio"
-            name="library-scope"
-            checked={mode === "pick"}
-            disabled={working}
-            onChange={() => setMode("pick")}
-          />
-          <span>Choose meetings</span>
+    <section className="ask" ref={props.panelRef} hidden={props.hidden}>
+      <form
+        className="askbox"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canAsk) void ask();
+        }}
+      >
+        <label className="sr-only" htmlFor="library-question">
+          Question
         </label>
-        <label className="check">
-          <input
-            type="radio"
-            name="library-scope"
-            checked={mode === "tag"}
-            disabled={working || tags.length === 0}
-            onChange={() => setMode("tag")}
-          />
-          <span>Meetings with a tag</span>
-        </label>
-      </fieldset>
-      {mode === "tag" ? (
-        <label>
-          Tag
+        <textarea
+          id="library-question"
+          rows={2}
+          maxLength={1000}
+          disabled={working || !!props.llmBlocked}
+          value={question}
+          placeholder="Ask about your meetings…"
+          onChange={(event) => setQuestion(event.target.value)}
+        />
+        <div className="ask-foot">
           <select
-            value={tag}
+            aria-label="Scope"
+            value={scopeMode}
             disabled={working}
-            onChange={(event) => setTag(event.target.value)}
+            onChange={(event) => setScopeMode(event.target.value as Scope)}
           >
-            <option value="">Choose a tag</option>
-            {tags.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
+            <option value="all">All meetings</option>
+            <option value="pick">Pick meetings…</option>
+            <option value="tag">Meetings with a tag</option>
           </select>
-        </label>
-      ) : (
-        <>
-          <label>
+          {scopeMode === "tag" && (
+            <select
+              className="tag-select"
+              aria-label="Tag"
+              value={tag}
+              disabled={working || tags.length === 0}
+              onChange={(event) => setTag(event.target.value)}
+            >
+              <option value="">Any tag</option>
+              {tags.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="grow" />
+          <button type="submit" className="primary" disabled={!canAsk}>
+            Ask
+          </button>
+        </div>
+      </form>
+
+      <div className="ask-meta">
+        {props.connection?.name ? (
+          <span className="who">
+            {props.connection.name}
+            {props.connection.remote && (
+              <span className="leaves">Leaves this device</span>
+            )}
+            <span
+              className="info"
+              role="img"
+              aria-label="What is sent"
+              title="Question, meeting titles, notes and keyword-matched transcript excerpts are sent to this service. The answer is saved on this device."
+            >
+              i
+            </span>
+          </span>
+        ) : (
+          <span className="who">No AI notes connection</span>
+        )}
+        <span className="spacer" />
+        <span className="count">
+          <span className="n">
+            {scope.length} meeting{scope.length === 1 ? "" : "s"}
+          </span>
+          <span
+            className="info"
+            role="img"
+            aria-label="Meeting limit"
+            title="One question can cover up to 20 meetings."
+          >
+            i
+          </span>
+        </span>
+      </div>
+
+      {props.llmBlocked && (
+        <div className="blocked">
+          <span>Connect an AI service to ask questions.</span>
+          <span className="spacer" />
+          <OpenSettingsButton
+            section={props.llmBlocked.section}
+            onOpenSettings={props.onOpenSettings}
+          />
+        </div>
+      )}
+
+      <RecipePicker
+        recipes={props.recipes}
+        disabled={working || !!props.llmBlocked}
+        onPick={setQuestion}
+      />
+
+      {scopeMode === "pick" && (
+        <div className="ask-pick">
+          <label className="field">
             Filter meetings
             <input
               type="search"
@@ -265,14 +332,18 @@ export function LibraryQuestion(props: Props) {
               onChange={(event) => setFilter(event.target.value)}
             />
           </label>
-          <div className="panel-actions">
+          <div className="ask-actions">
             <button
+              type="button"
+              className="sm"
               disabled={working || shown.length === 0}
               onClick={pickFirst}
             >
               Select first {LIMIT} shown
             </button>
             <button
+              type="button"
+              className="sm"
               disabled={working || picked.length === 0}
               onClick={() => setPicked([])}
             >
@@ -282,7 +353,7 @@ export function LibraryQuestion(props: Props) {
           {shown.length === 0 && (
             <p className="muted">No meetings match this filter.</p>
           )}
-          <ul className="library-meetings" aria-label="Meetings">
+          <ul className="pick-list" aria-label="Meetings">
             {shown.map((meeting) => (
               <li key={meeting.id}>
                 <label className="check">
@@ -311,85 +382,44 @@ export function LibraryQuestion(props: Props) {
               </li>
             ))}
           </ul>
-        </>
-      )}
-      <p role="status">
-        {scope.length} of {LIMIT} selected.
-        {tooMany && " Choose at most 20."}
-      </p>
-      {mode === "pick" && picked.length >= LIMIT && (
-        <p className="muted">Limit reached: {LIMIT} meetings.</p>
-      )}
-      {props.llmBlocked && (
-        <div className="panel-actions">
-          <span className="muted">{props.llmBlocked.message}</span>
-          <OpenSettingsButton
-            section={props.llmBlocked.section}
-            onOpenSettings={props.onOpenSettings}
-          />
         </div>
       )}
-      <form
-        className="ask-meeting"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (canAsk) void ask();
-        }}
-      >
-        <label htmlFor="library-question">Question</label>
-        <RecipePicker
-          recipes={props.recipes}
-          disabled={working}
-          onPick={setQuestion}
-        />
-        <textarea
-          id="library-question"
-          rows={2}
-          maxLength={1000}
-          disabled={working}
-          value={question}
-          placeholder="Which meetings discussed the launch date?"
-          onChange={(event) => setQuestion(event.target.value)}
-        />
-        <div className="panel-actions">
-          <button type="submit" className="primary" disabled={!canAsk}>
-            Ask
-          </button>
-        </div>
-      </form>
+
+      {tooMany && (
+        <p className="muted">
+          One question covers {LIMIT} meetings: pick them or use a tag.
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
       {notice && <p role="status">{notice}</p>}
-      {working && <p role="status">Working…</p>}
+      {working && <p role="status">Asking…</p>}
+
       {answers.length > 0 && (
-        <div className="panel-actions">
-          <select
-            aria-label="Saved answers"
-            value={answered?.answer.id ?? ""}
-            onChange={(event) => {
-              const chosen = answers.find(
-                (answer) => answer.id === Number(event.target.value),
-              );
-              if (chosen) void show(chosen);
-            }}
-          >
-            {!answered && <option value="">Saved answers</option>}
+        <div className="ask-recent">
+          <span className="label">Recent questions</span>
+          <ul>
             {answers.map((answer) => (
-              <option key={answer.id} value={answer.id}>
-                {answer.question.slice(0, 60)}
-              </option>
+              <li key={answer.id}>
+                <button
+                  type="button"
+                  className="qrow"
+                  aria-current={
+                    answered?.answer.id === answer.id ? "true" : undefined
+                  }
+                  onClick={() => void show(answer)}
+                >
+                  <span className="q">{answer.question}</span>
+                  <span className="src">
+                    {answer.meeting_ids.length} source
+                    {answer.meeting_ids.length === 1 ? "" : "s"}
+                  </span>
+                </button>
+              </li>
             ))}
-          </select>
-          {answered && (
-            <button
-              className="danger"
-              disabled={disabled || working}
-              onClick={() => setDeletingAnswer(true)}
-            >
-              Delete answer
-            </button>
-          )}
+          </ul>
         </div>
       )}
+
       {deletingAnswer && answered && (
         <div
           className="dialog-card"
@@ -397,11 +427,11 @@ export function LibraryQuestion(props: Props) {
           aria-label="Confirm deleting saved answer"
         >
           <p>
-            <strong>Delete this saved answer?</strong> The question and answer
-            are removed from this device. The meetings are kept.
+            <strong>Delete this saved answer?</strong> The meetings are kept.
           </p>
-          <div className="panel-actions">
+          <div className="ask-actions">
             <button
+              type="button"
               className="danger danger-filled"
               onClick={() => {
                 const id = answered.answer.id;
@@ -417,27 +447,70 @@ export function LibraryQuestion(props: Props) {
             >
               Delete answer permanently
             </button>
-            <button onClick={() => setDeletingAnswer(false)}>Keep</button>
+            <button type="button" onClick={() => setDeletingAnswer(false)}>
+              Keep
+            </button>
           </div>
         </div>
       )}
+
       {answered && (
-        <div className="ask-answer" aria-label="Library answer">
-          <p>
-            <strong>Q: {answered.answer.question}</strong>
-          </p>
-          {renderMarkdown(answered.answer.answer, reference)}
-          <p className="muted">
-            AI-generated from {answered.answer.meeting_ids.length} meeting
-            {answered.answer.meeting_ids.length === 1 ? "" : "s"}:{" "}
-            {answered.answer.meeting_ids
-              .map((id, index) => `M${index + 1} ${title(id)}`)
-              .join("; ")}
-            . Saved on this device. A link shows that a transcript line exists
-            at that time, not that it supports the claim; check it before
-            relying on it.
-          </p>
-        </div>
+        <section className="ask-answer" aria-label="Answer">
+          <div className="asked">
+            <h2>{answered.answer.question}</h2>
+            <span className="sub">
+              {answered.answer.meeting_ids.length} meeting
+              {answered.answer.meeting_ids.length === 1 ? "" : "s"} ·{" "}
+              {answered.answer.provider} {answered.answer.model}
+            </span>
+          </div>
+          <div className="answer">
+            {renderMarkdown(answered.answer.answer, reference)}
+          </div>
+          <div className="sources">
+            <span className="label">Sources</span>
+            {answered.answer.meeting_ids.map((id, index) => (
+              <button
+                type="button"
+                className="src-row"
+                key={`${id}-${index}`}
+                onClick={() => props.onOpen(id, null)}
+              >
+                <span className="n">{index + 1}</span>
+                <span>
+                  <span className="head">
+                    <span className="name">{title(id)}</span>
+                  </span>
+                  <span className="snip">
+                    {answered.details.get(id)
+                      ? formatDate(answered.details.get(id)!.meeting.started_at)
+                      : "Unavailable"}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="ask-actions">
+            <button
+              type="button"
+              className="sm"
+              onClick={() => void copyAnswer(answered.answer)}
+            >
+              Copy
+            </button>
+            <button
+              type="button"
+              className="sm"
+              disabled={disabled || working}
+              onClick={() => setDeletingAnswer(true)}
+            >
+              Delete answer
+            </button>
+            {copyStatus && <span role="status">{copyStatus}</span>}
+            <span className="spacer" />
+            <span className="saved">Saved on this device</span>
+          </div>
+        </section>
       )}
     </section>
   );

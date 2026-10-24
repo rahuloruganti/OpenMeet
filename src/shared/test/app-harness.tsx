@@ -134,6 +134,8 @@ export const initialSettings: Settings = {
   detection_enabled: false,
   detection_ignored: [],
   setup_done: true,
+  theme: "system",
+  inspector_open: true,
 };
 
 export const notInstalled = {
@@ -166,15 +168,27 @@ export const installed = {
 export async function chooseProcessing(mode: string, summary?: string) {
   await userEvent.click(screen.getByRole("button", { name: "Settings" }));
   await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
-  await userEvent.selectOptions(
-    screen.getByLabelText("When a recording stops"),
-    mode,
-  );
+  // Automatic processing is a switch now; its mode and summary appear once it is on.
+  const automation = screen.getByRole("switch", {
+    name: "Automatic processing",
+  });
+  if (
+    mode !== "recording" &&
+    automation.getAttribute("aria-checked") === "false"
+  )
+    await userEvent.click(automation);
+  if (mode !== "recording")
+    await userEvent.selectOptions(
+      screen.getByLabelText("When a recording stops"),
+      mode,
+    );
   if (summary)
     await userEvent.selectOptions(
       screen.getByLabelText("Automatic summary"),
       summary,
     );
+  // Leaves focus out of a field, so Escape can close Settings.
+  await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
 }
 
 export function installDefaultMocks() {
@@ -192,6 +206,22 @@ export function installDefaultMocks() {
       processing_summary: summary,
     }),
   );
+  // Default: no earlier data folder, so first-run setup opens on Transcription.
+  vi.mocked(api.importStatus).mockResolvedValue({
+    available: false,
+    path: null,
+    meetings: 0,
+    audio_files: 0,
+    bytes: 0,
+    blocked_reason: "No earlier data folder was found.",
+  });
+  vi.mocked(api.saveUiPrefs).mockImplementation(
+    async (theme, inspectorOpen) => ({
+      ...initialSettings,
+      theme,
+      inspector_open: inspectorOpen,
+    }),
+  );
   vi.mocked(api.getMeeting).mockResolvedValue(sample);
   vi.mocked(api.getRecordingState).mockResolvedValue({
     revision: 0,
@@ -204,6 +234,9 @@ export function installDefaultMocks() {
   vi.mocked(api.onModelLibraryProgress).mockResolvedValue(() => {});
   vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("present");
   vi.mocked(api.getSettings).mockResolvedValue(initialSettings);
+  vi.mocked(api.dataFolder).mockResolvedValue({
+    path: "C:/Users/Test/AppData/Roaming/OpenMeetPy",
+  });
   vi.mocked(api.chooseVaultFolder).mockResolvedValue({
     ...initialSettings,
     vault_folder: "C:/notes",

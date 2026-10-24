@@ -39,16 +39,20 @@ Requests and the socket accept only loopback clients carrying the launch token. 
 
 The frontend is Feature-Sliced Design: `app` > `pages` > `widgets` > `features` > `entities` > `shared`. Imports may only point down that list, each slice exposes a public `index.ts`, and ESLint's `no-restricted-imports` rule enforces the boundary. The allow-list lives in `eslint.config.js`.
 
+`src/app/App.tsx` switches between the meetings page, the full-page Settings and Ask screens, and the full-screen first-run setup. The global shortcuts and the Ctrl+K command palette live in that shell, and full pages return to Meetings with **← Meetings** or **Escape**.
+
 | Path | Responsibility |
 | --- | --- |
 | `src/app/` | App shell, providers, layout, page routing, global styles. |
 | `src/pages/meeting/` | Meeting workspace: library selection, notes, transcript, summaries, playback, export, deletion. |
-| `src/pages/settings/` | Settings navigation and sections: devices, automatic processing, shortcuts, AI notes, model library, export and storage, privacy and about. |
-| `src/pages/setup/` | First-run setup: speech engine, optional AI connection, default devices. |
+| `src/pages/settings/` | Settings page: section list and one section at a time (General, Recording, Transcription, AI notes, Export & storage, Privacy & about). |
+| `src/pages/setup/` | First-run setup: optional import, speech engine, optional AI connection, default devices. |
+| `src/pages/ask/` | Ask across meetings as a full page, without the meetings sidebar. |
 | `src/widgets/meeting-sidebar/` | Meeting library, source labels, title and content search. |
-| `src/widgets/meeting-workspace/` | Notes, transcript, playback, summaries, questions, action items. |
+| `src/widgets/meeting-workspace/` | Notes, transcript, playback, summaries, questions, action items, the meeting inspector (Details, Tasks, Devices), New recording dialog. |
+| `src/widgets/command-palette/` | Ctrl+K actions and meeting search. |
 | `src/widgets/recording-controls/` | Backend capture state, pause/resume/stop, level meters. |
-| `src/widgets/settings-panel/`, `widgets/setup-panel/`, `widgets/first-run-setup/` | Settings shell, pre-recording setup, first-run flow. |
+| `src/widgets/settings-panel/`, `widgets/setup-panel/`, `widgets/first-run-setup/` | Settings sections, pre-recording setup, first-run flow. |
 | `src/widgets/library-question/` | Ask across meetings with validated source links. |
 | `src/features/note-writer/` | Debounced, serialized note saves. |
 | `src/features/transcription-settings/`, `provider-settings/`, `model-library/` | Speech engine choice and downloads, saved connections and assignments, model discovery. |
@@ -64,13 +68,13 @@ The backend is `backend/openmeet_py/`: `app.py`, `paths.py`, six subpackages and
 | --- | --- |
 | `app.py` | Desktop entry point, server thread, window, `--smoke`, `--import-from`. |
 | `paths.py` | Data folder (`%APPDATA%\OpenMeetPy`), bundled UI directory, migration directory. |
-| `api/` | FastAPI app and routes, token check, WebSocket hub, and the command registry in `commands.py`. |
+| `api/` | FastAPI app and routes, token check, WebSocket hub, the command registry in `commands.py`, and the in-app import commands in `import_commands.py`. |
 | `domain/` | Meetings, notes, transcripts, summaries, questions, tasks, tags, settings and processing-run state; provider HTTP (`providers.py`), chat calls (`llm.py`) and export (`exporter.py`). |
 | `audio/` | WASAPI microphone and loopback capture, bounded queues, WAV writers and repair, timing indexes, recorder lifecycle. |
 | `speech/` | whisper.cpp (`pywhispercpp`) and sherpa-onnx engines, cloud STT, the model catalogue and verified downloads (`model_library.py`), and safe archive extraction (`safe_archive.py`). |
 | `platform/` | Windows integration: global shortcuts, Credential Manager keys, meeting detection, process metadata. |
 | `infra/` | SQLite access, migrations and the read-only importer. |
-| `migrations/` | Append-only numbered SQL, currently through `029`, next number `030`. |
+| `migrations/` | Append-only numbered SQL, currently through `030`, next number `031`. |
 
 `backend/tests/` mirrors these areas and uses fakes; `packaging/build.ps1` produces the executable.
 
@@ -121,7 +125,7 @@ Saving settings makes no network request. Explicit model refresh sends credentia
 | `tracks` | Paths, audio format, frame counts, dropped frames, finalization. |
 | `segments` | Track label, nullable paired times, text, source, final-pass flag. |
 | `summaries`, `summary_templates` | Versioned summaries with provider/model/template provenance; custom templates. |
-| `settings` | Devices, shortcuts, speech and summary settings, export defaults, setup completion. |
+| `settings` | Devices, shortcuts, speech and summary settings, export defaults, setup completion, theme and inspector state. |
 | `transcript_versions` | Read-only earlier transcripts and edits with engine provenance. |
 | `speaker_names`, `meeting_tags`, `action_items` | Per-meeting display names, tags, and editable tasks. |
 | `saved_connections`, `provider_assignments`, `provider_connections` | Non-secret endpoint references and independent task assignments. |
@@ -131,7 +135,7 @@ Saving settings makes no network request. Explicit model refresh sends credentia
 | `search` | FTS5 copies of titles, notes, transcript text and summaries. |
 | `detection_ignored_apps`, `capture_events` | Meeting-detection ignore list; historical capture event table. |
 
-Migrations are append-only numbered SQL files applied in order under `PRAGMA user_version`. Never edit or renumber a shipped file; the next number is `030`. Upgrades must be tested against populated databases with notes, transcripts, search rows and foreign keys. A migration that rebuilds a table checks foreign keys before committing. Existing user databases are upgraded in place and never reset. `docs/privacy.md` lists what is stored and what stays unencrypted.
+Migrations are append-only numbered SQL files applied in order under `PRAGMA user_version`. Never edit or renumber a shipped file; the next number is `031`. Upgrades must be tested against populated databases with notes, transcripts, search rows and foreign keys. A migration that rebuilds a table checks foreign keys before committing. Existing user databases are upgraded in place and never reset. `docs/privacy.md` lists what is stored and what stays unencrypted.
 
 ## Data folder and packaging
 

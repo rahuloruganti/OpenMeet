@@ -1,5 +1,5 @@
 import { mockApiModule } from "../shared/test/api-mock";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type MeetingDetail, type Settings } from "../shared/api/api";
@@ -16,6 +16,13 @@ vi.mock("../shared/api/api", async (original) =>
 );
 
 beforeEach(installDefaultMocks);
+
+/** The AI notes section: Connections merged into the place they are used. */
+async function openAiNotes() {
+  await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+  await userEvent.click(screen.getByRole("tab", { name: "AI notes" }));
+  return within(screen.getByRole("tabpanel", { name: "AI notes" }));
+}
 
 describe("saved connections and provider workflows", () => {
   it("ignores startup key status that arrives after saving a reusable connection", async () => {
@@ -48,21 +55,22 @@ describe("saved connections and provider workflows", () => {
       saved_connections: [{ ...saved, revision: 2 }],
     });
     await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
+    const pane = await openAiNotes();
     await userEvent.selectOptions(
-      screen.getAllByLabelText("Saved connection")[0],
+      pane.getByLabelText("Saved connection"),
       "remote",
     );
-    const key = screen.getAllByLabelText("API key")[0];
+    const key = pane.getByLabelText("API key");
     await userEvent.type(key, "synthetic-key");
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save connection" }),
-    );
-    await waitFor(() => expect(api.providerKeyStatus).toHaveBeenCalledTimes(4));
+    await userEvent.click(pane.getByRole("button", { name: "Save" }));
+    // Startup reads each role twice; one save re-reads both once.
+    await waitFor(() => expect(api.providerKeyStatus).toHaveBeenCalledTimes(6));
+    // A key is never read back into the field.
     expect(key).toHaveProperty("value", "");
     await act(async () => deliver("missing"));
-    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Back to Meetings" }),
+    );
     await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
     expect(
       screen.getByRole("button", { name: "Create summary" }),
@@ -71,17 +79,23 @@ describe("saved connections and provider workflows", () => {
 
   it("keeps a connection draft across sections but clears its key", async () => {
     await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
-    await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
-    await userEvent.type(screen.getByLabelText("API key"), "draft-key");
+    const pane = await openAiNotes();
+    const editor = within(
+      pane.getByRole("region", { name: "AI notes connection" }),
+    );
+    await userEvent.click(
+      editor.getByText("More options", { selector: "summary" }),
+    );
+    await userEvent.type(editor.getByLabelText("Connection name"), "Draft");
+    await userEvent.type(editor.getByLabelText("API key"), "draft-key");
     await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
-    expect(screen.getByLabelText("Connection name")).toHaveProperty(
+    await userEvent.click(screen.getByRole("tab", { name: "AI notes" }));
+    const back = within(screen.getByRole("tabpanel", { name: "AI notes" }));
+    expect(back.getByLabelText("Connection name")).toHaveProperty(
       "value",
       "Draft",
     );
-    expect(screen.getByLabelText("API key")).toHaveProperty("value", "");
+    expect(back.getByLabelText("API key")).toHaveProperty("value", "");
     expect(api.saveApiConnection).not.toHaveBeenCalled();
     expect(api.saveSttMode).not.toHaveBeenCalled();
     expect(api.listApiConnectionModels).not.toHaveBeenCalled();
@@ -89,39 +103,54 @@ describe("saved connections and provider workflows", () => {
 
   it("checks the API base URL before saving and says why each button is unavailable", async () => {
     await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
+    const pane = await openAiNotes();
+    const editor = within(
+      pane.getByRole("region", { name: "AI notes connection" }),
+    );
+    await userEvent.click(
+      editor.getByText("More options", { selector: "summary" }),
+    );
     expect(screen.getByText("Enter a name and a URL.")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Refresh models" }),
     ).toHaveProperty("disabled", true);
     expect(screen.getByText("Save the connection first.")).toBeTruthy();
-    expect(screen.getByText("No saved key to remove.")).toBeTruthy();
+    const remove = screen.getByRole("button", { name: "Remove key" });
+    expect(remove).toHaveProperty("disabled", true);
+    expect(remove.getAttribute("title")).toBe("No saved key to remove.");
     const url = screen.getByLabelText("Base URL");
     await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
     await userEvent.type(url, "provider.example/v1");
     expect(screen.getByRole("alert").textContent).toBe(
-      "Enter a full URL such as https://api.example.com/v1.",
+      "Use a full URL like https://api.example.com/v1.",
     );
-    expect(
-      screen.getByRole("button", { name: "Save connection" }),
-    ).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Save" })).toHaveProperty(
+      "disabled",
+      true,
+    );
     await userEvent.clear(url);
     await userEvent.type(url, "http://provider.example/v1");
     expect(screen.getByRole("alert").textContent).toBe(
-      "Remote servers must use https. Plain http is only allowed for this computer (localhost or 127.0.0.1).",
+      "Use https, or http on localhost, without credentials or a query.",
     );
     await userEvent.clear(url);
     await userEvent.type(url, "https://user@provider.example/v1?key=1");
     expect(screen.getByRole("alert").textContent).toBe(
-      "Enter an HTTPS base URL, or HTTP on localhost, without credentials, query parameters or a fragment.",
+      "Use https, or http on localhost, without credentials or a query.",
     );
     await userEvent.clear(url);
     await userEvent.type(url, "http://127.0.0.1:1234/v1");
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Save connection" }),
-    ).toHaveProperty("disabled", false);
+    // A connection still needs a model before it can be saved.
+    expect(screen.getByRole("button", { name: "Save" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    await userEvent.type(screen.getByLabelText("Model"), "test-chat");
+    expect(screen.getByRole("button", { name: "Save" })).toHaveProperty(
+      "disabled",
+      false,
+    );
     expect(screen.queryByText("Enter a name and a URL.")).toBeNull();
   });
 
@@ -138,22 +167,27 @@ describe("saved connections and provider workflows", () => {
     });
     vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("missing");
     await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
+    const pane = await openAiNotes();
+    const editor = within(
+      pane.getByRole("region", { name: "AI notes connection" }),
+    );
     await userEvent.selectOptions(
-      screen.getAllByLabelText("Saved connection")[0],
+      pane.getByLabelText("Saved connection"),
       "remote",
     );
     expect(await screen.findByText("Add an API key first.")).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Refresh models" }),
     ).toHaveProperty("disabled", true);
-    expect(screen.getByText("No saved key to remove.")).toBeTruthy();
-    expect(
-      screen.getByText(
-        /A remote connection needs a saved key before its models/,
-      ),
-    ).toBeTruthy();
+    const remove = screen.getByRole("button", { name: "Remove key" });
+    expect(remove).toHaveProperty("disabled", true);
+    expect(remove.getAttribute("title")).toBe("No saved key to remove.");
+    // A remote connection still says so up front, and the key is never shown.
+    expect(pane.getByText("Leaves this device")).toBeTruthy();
+    expect(pane.getByText("No key")).toBeTruthy();
+    await userEvent.click(
+      editor.getByText("More options", { selector: "summary" }),
+    );
     await userEvent.type(screen.getByLabelText("Connection name"), " edited");
     expect(screen.getByText("Save the connection first.")).toBeTruthy();
     expect(screen.queryByText("Enter a name and a URL.")).toBeNull();
@@ -248,9 +282,10 @@ describe("saved connections and provider workflows", () => {
         screen.queryByRole("button", { name: /Play You from/ }),
       ).toBeNull();
       expect(screen.queryByText("[00:00]")).toBeNull();
+      // The engine that produced the text is still named, so it can be checked.
       expect(
         screen.getByText(
-          /Generated with https:\/\/speech.example\/v1 \/ speech-model/,
+          /Transcribed with https:\/\/speech.example\/v1 \/ speech-model/,
         ),
       ).toBeTruthy();
       expect(api.audioPosition).not.toHaveBeenCalled();
@@ -261,7 +296,7 @@ describe("saved connections and provider workflows", () => {
       expect(
         screen.queryByRole("button", { name: "Load fictional sample" }),
       ).toBeNull();
-      expect(screen.getAllByText("Fictional sample").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Sample").length).toBeGreaterThan(0);
       await userEvent.click(
         screen.getByRole("button", { name: "New recording" }),
       );

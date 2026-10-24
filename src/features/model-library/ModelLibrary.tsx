@@ -11,6 +11,7 @@ import {
   type SherpaLayout,
 } from "../../shared/api/api";
 import { formatBytes } from "../../entities/meeting";
+import { Tip } from "../../shared/ui/info-tip";
 
 type Props = {
   disabled: boolean;
@@ -82,7 +83,7 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
   const scanCommon = async () => {
     applyScan(await api.scanLocalModels(null));
   };
-  // Mounting the library (first Models tab selection in a Settings session) scans the common model folders once. The scan is local and read-only.
+  // Mounting the library scans the common model folders once. The scan is local and read-only.
   useEffect(() => {
     void scanCommon().catch((failure: unknown) => {
       if (live.current) setError(errorMessage(failure));
@@ -119,29 +120,24 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
     await onImported();
     if (live.current)
       setNotice(
-        `Whisper model ${id} verified and imported. Select it in Available speech models, then save transcription settings.`,
+        `Whisper model ${id} verified and imported; choose it under Models.`,
       );
   };
   return (
     <div className="model-library">
-      <p className="muted">
-        A model file is not a running server. Built-in speech processing uses
-        Whisper ggml files and sherpa-onnx folders. GGUF files need an external
-        OpenAI-compatible server and are not downloaded here.
-      </p>
-      <p className="muted">
-        Each scan checks at most 4,096 entries and six subfolder levels, and
-        lists up to 200 model files. Linked folders are skipped. Choose a
-        smaller folder if the scan reaches a limit.
-      </p>
-      <div className="panel-actions">
+      <div className="om-form-actions">
         <button
+          type="button"
+          className="om-ghost om-sm"
           disabled={disabled || busy}
+          title="Each scan checks at most 4,096 entries and six subfolder levels, and lists up to 200 model files. Linked folders are skipped."
           onClick={() => void run(scanCommon)}
         >
-          Scan common folders
+          Scan folders
         </button>
         <button
+          type="button"
+          className="om-ghost om-sm"
           disabled={disabled || busy}
           onClick={() =>
             void run(async () => {
@@ -151,7 +147,7 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
             })
           }
         >
-          Choose model folder
+          Choose folder
         </button>
       </div>
       {scan && (
@@ -179,7 +175,7 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
             return (
               <>
                 {speech.length === 0 ? (
-                  <p>No speech models found.</p>
+                  <p className="om-muted">No speech models found.</p>
                 ) : (
                   <>
                     <label>
@@ -200,6 +196,9 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
                     </label>
                     {chosen?.model_id ? (
                       <button
+                        type="button"
+                        className="om-sm"
+                        aria-label={`Verify and import ${chosen.model_id}`}
                         disabled={disabled || busy}
                         onClick={() =>
                           void run(async () => {
@@ -210,21 +209,22 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
                           })
                         }
                       >
-                        Verify and import {chosen.model_id}
+                        Import
                       </button>
                     ) : (
                       chosen &&
                       onUse && (
                         <button
+                          type="button"
+                          className="om-sm"
+                          aria-label="Use this file in place"
                           disabled={disabled || busy}
                           onClick={() => {
                             onUse(chosen.path);
-                            setNotice(
-                              `${chosen.path} selected. Save transcription settings to use it.`,
-                            );
+                            setNotice(`${chosen.path} selected.`);
                           }}
                         >
-                          Use this file in place
+                          Use file
                         </button>
                       )
                     )}
@@ -234,15 +234,15 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
                   <ul aria-label="Other discovered model files">
                     {other.map((model) => (
                       <li key={model.path}>
-                        <p>
+                        <span>
                           {model.path} · {model.format} ·{" "}
                           {formatBytes(model.size)}
-                        </p>
-                        <p className="muted">
+                        </span>
+                        <span className="om-muted">
                           {model.format === "gguf"
-                            ? "Use with an external server. Inference compatibility unverified."
+                            ? "Use with an external server; compatibility unverified."
                             : "Not a supported Whisper model."}
-                        </p>
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -252,15 +252,6 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
           })()}
         </>
       )}
-      <h4>Public Hugging Face speech models</h4>
-      <p className="muted">
-        Search contacts huggingface.co with your query and lists only
-        automatic-speech-recognition repositories. Downloads are public files
-        with pinned size and SHA-256 verification. Whisper ggml files and
-        complete sherpa-onnx folders can be downloaded; other results are shown
-        but not downloadable. No private or gated models. Search shows up to 20
-        results. Check the displayed license before downloading.
-      </p>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -271,28 +262,35 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
           });
         }}
       >
-        <label>
-          Hugging Face search
-          <input
-            value={query}
-            maxLength={100}
-            disabled={disabled || busy}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-        <button disabled={disabled || busy || !query.trim()}>
-          Search public models
-        </button>
+        <input
+          type="search"
+          aria-label="Hugging Face search"
+          placeholder="Search Hugging Face"
+          value={query}
+          maxLength={100}
+          disabled={disabled || busy}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <button disabled={disabled || busy || !query.trim()}>Search</button>
+        <Tip
+          label="Search"
+          text="Search contacts huggingface.co and lists only automatic-speech-recognition repositories, up to 20 results. Nothing is downloaded until you choose it; each download is checked against its pinned SHA-256."
+        />
       </form>
       <ul>
         {results.map((model) => (
           <li key={model.id}>
-            {model.id} · {KIND_LABEL[model.kind]} · License:{" "}
-            {model.license ?? "Not supplied"}{" "}
+            <span>
+              {model.id} · {KIND_LABEL[model.kind]} · License:{" "}
+              {model.license ?? "Not supplied"}
+            </span>
             {model.kind === "other" ? (
-              <span className="muted">Not downloadable.</span>
+              <span className="om-muted">Not downloadable.</span>
             ) : (
               <button
+                type="button"
+                className="om-ghost om-sm"
+                aria-label={`Show files for ${model.id}`}
                 disabled={disabled || busy}
                 onClick={() =>
                   void run(async () => {
@@ -302,14 +300,14 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
                   })
                 }
               >
-                Show files for {model.id}
+                Files
               </button>
             )}
           </li>
         ))}
       </ul>
       {listing && listing.files.length + listing.folders.length === 0 && (
-        <p className="muted">
+        <p className="om-muted">
           No complete Whisper ggml files or sherpa-onnx folders in this
           repository.
         </p>
@@ -317,17 +315,20 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
       <ul>
         {listing?.files.map((file) => (
           <li key={`${file.repo_id}/${file.filename}`}>
-            <p>
+            <span>
               {file.repo_id}/{file.filename} · {formatBytes(file.size)} ·
               License: {file.license ?? "Not supplied"}
-            </p>
-            <p className="muted">
+            </span>
+            <span className="om-muted">
               Revision {file.revision}.{" "}
               {file.model_id
                 ? `Matches pinned ${file.model_id}; download verifies the file.`
-                : "Whisper ggml file; download verifies its SHA-256 and keeps it in place for use."}
-            </p>
+                : "Download verifies its SHA-256 and keeps it for use."}
+            </span>
             <button
+              type="button"
+              className="om-sm"
+              aria-label={`Download ${file.filename}`}
               disabled={disabled || busy}
               onClick={() =>
                 transfer(async () => {
@@ -337,30 +338,33 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
                     await scanCommon();
                     if (live.current)
                       setNotice(
-                        `Verified file saved to ${result.path}. It is listed under Found speech models; choose it there.`,
+                        `Verified file saved to ${result.path}; choose it under Found speech models.`,
                       );
                   }
                 })
               }
             >
-              Download {file.filename}
+              Download
             </button>
           </li>
         ))}
         {listing?.folders.map((folder) => (
           <li key={`${folder.repo_id}/${folder.folder}`}>
-            <p>
+            <span>
               {folder.repo_id}
               {folder.folder ? `/${folder.folder}` : " (repository root)"} ·
               sherpa-onnx {LAYOUT_LABEL[folder.layout]} ·{" "}
               {formatBytes(folderBytes(folder))} · License:{" "}
               {folder.license ?? "Not supplied"}
-            </p>
-            <p className="muted">
+            </span>
+            <span className="om-muted">
               Revision {folder.revision}. {folder.files.length} files, each
-              checked against its SHA-256. All files are saved or none are.
-            </p>
+              checked against its SHA-256; all are saved or none are.
+            </span>
             <button
+              type="button"
+              className="om-sm"
+              aria-label={`Download folder ${folder.folder || folder.repo_id}`}
               disabled={disabled || busy}
               onClick={() =>
                 transfer(async () => {
@@ -370,51 +374,55 @@ export function ModelLibrary({ disabled, onImported, onFound, onUse }: Props) {
                   await onImported();
                   if (live.current)
                     setNotice(
-                      `Verified sherpa-onnx folder (${result.files} files) saved to ${result.path}. Use this model, then save transcription settings.`,
+                      `Verified sherpa-onnx folder (${result.files} files) saved to ${result.path}.`,
                     );
                 })
               }
             >
-              Download folder {folder.folder || folder.repo_id}
+              Download
             </button>
           </li>
         ))}
       </ul>
       {downloading && (
         <>
-          <p role="status">
+          <p className="om-muted">
             Downloading
             {progress
               ? ` ${formatBytes(progress.downloaded)} / ${formatBytes(progress.total)}`
               : " model"}
           </p>
           <button
+            type="button"
+            className="om-ghost om-sm"
+            aria-label="Cancel model download"
             onClick={() =>
               void api
                 .cancelModelDownload()
                 .catch((failure) => setError(errorMessage(failure)))
             }
           >
-            Cancel model download
+            Cancel download
           </button>
         </>
       )}
-      {notice && <p role="status">{notice}</p>}
+      {notice && <p className="om-muted">{notice}</p>}
       {downloadedId && onUse && (
         <button
+          type="button"
+          className="om-sm"
+          aria-label="Use this model"
           disabled={disabled || busy}
           onClick={() => {
             onUse(downloadedId);
-            setNotice(
-              "Downloaded model selected. Save transcription settings to use it.",
-            );
+            setNotice("Downloaded model selected.");
           }}
         >
-          Use this model
+          Use
         </button>
       )}
       {error && (
-        <p role="alert" className="error">
+        <p role="alert" className="om-error">
           {error}
         </p>
       )}

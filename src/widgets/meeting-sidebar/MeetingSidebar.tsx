@@ -6,9 +6,12 @@ import {
   formatBytes,
   formatShortDate,
   formatTime,
-  sourceLabels,
+  sourceWords,
+  statusWords,
   tagChoices,
 } from "../../entities/meeting";
+import { BrandMark } from "../../shared/ui/brand-mark";
+import "./meeting-sidebar.css";
 
 const hitLabels: Record<SearchHit["kind"], string> = {
   title: "Title",
@@ -27,7 +30,8 @@ type Props = {
   onSearch: (value: string) => void;
   onNewRecording: (trigger: HTMLButtonElement) => void;
   onSettings: (trigger: HTMLButtonElement) => void;
-  onLibrary: (trigger: HTMLButtonElement) => void;
+  /** Opens the Ask view: a page when the shell provides one, else the library panel. */
+  onAsk: (trigger: HTMLButtonElement) => void;
   onOpenMeeting: (id: string) => void;
   onNewNote: () => void;
   /** Full-text matches in notes, transcripts and summaries for the current search. */
@@ -61,81 +65,83 @@ export function MeetingSidebar(props: Props) {
   const matches = props.hits.filter(
     (hit) => hit.kind !== "title" && titles.has(hit.meeting_id),
   );
+  const storage =
+    props.audioBytes !== null && props.audioBytes > 0
+      ? `On this device · ${formatBytes(props.audioBytes)} audio`
+      : "On this device";
 
   return (
     <aside
       id="meeting-sidebar"
-      className="sidebar"
+      className="sidebar sb"
       aria-label="Meeting navigation"
       hidden={!props.open}
     >
-      <div className="sidebar-top">
+      <div className="sb-top">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <svg
-              viewBox="0 0 24 24"
-              width="22"
-              height="22"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            >
-              <path d="M5 10v4M10 5v14M15 8v8M20 10v4" />
-            </svg>
-          </span>
-          <span className="brand-name">OpenMeet</span>
+          <BrandMark size={22} />
+          <span className="brand-name">openmeet</span>
         </div>
         <button
-          className="primary sidebar-new"
+          className="primary sb-new"
           disabled={disabled || props.recordingActive}
           onClick={(event) => props.onNewRecording(event.currentTarget)}
         >
           <span aria-hidden="true">＋</span> New recording
         </button>
         <button
-          className="sidebar-new secondary-new"
+          className="sb-new sb-new-alt"
           disabled={disabled}
           onClick={props.onNewNote}
         >
           <span aria-hidden="true">＋</span> New note
         </button>
-        <label className="search-label">
-          <span className="sr-only">Search meetings</span>
-          <input
-            type="search"
-            value={search}
-            onChange={(event) => props.onSearch(event.target.value)}
-            placeholder="Search notes & meetings…"
-          />
-        </label>
+        <div className="sb-search">
+          <label>
+            <span className="sr-only">Search meetings</span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => props.onSearch(event.target.value)}
+              placeholder="Search meetings…"
+            />
+          </label>
+          <kbd>Ctrl K</kbd>
+        </div>
         {tags.length > 0 && (
-          <select
-            aria-label="Filter by tag"
-            value={active}
-            onChange={(event) => setTag(event.target.value)}
-          >
-            <option value="">All tags</option>
+          <div className="sb-chips" role="group" aria-label="Filter by tag">
+            <button
+              className="sb-chip"
+              aria-pressed={active === ""}
+              onClick={() => setTag("")}
+            >
+              All
+            </button>
             {tags.map((name) => (
-              <option key={name} value={name}>
+              <button
+                key={name}
+                className="sb-chip"
+                aria-pressed={
+                  name.toLocaleLowerCase() === active.toLocaleLowerCase()
+                }
+                onClick={() => setTag(name)}
+              >
                 {name}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
         )}
       </div>
-      <h2 className="sidebar-section-title">Recent meetings</h2>
-      <div className="meeting-scroll">
-        {meetings.length === 0 && (
-          <p className="muted">Your meetings and notes will appear here.</p>
-        )}
+      <div className="sb-list">
+        {meetings.length === 0 && <p className="sb-none">No meetings yet</p>}
         {groupMeetings(visible).map((group) => (
           <section key={group.label} aria-label={group.label}>
-            <h3 className="meeting-group-title">{group.label}</h3>
+            <h3 className="sb-group">{group.label}</h3>
             <ul className="meeting-list">
               {group.meetings.map((meeting) => (
                 <li key={meeting.id}>
                   <button
+                    className="sb-row"
                     disabled={disabled}
                     title={meeting.title}
                     aria-current={
@@ -143,29 +149,27 @@ export function MeetingSidebar(props: Props) {
                     }
                     onClick={() => props.onOpenMeeting(meeting.id)}
                   >
-                    <strong>{meeting.title}</strong>
-                    <span className="meeting-item-meta">
-                      <span className="meeting-item-text">
-                        {sourceLabels[meeting.source]}
-                        {meeting.status === "stopped"
-                          ? ""
-                          : ` · ${meeting.status}`}
-                        {meeting.tags.length > 0 && (
-                          <span
-                            className="meeting-tags"
-                            title={meeting.tags.join(", ")}
-                          >
-                            {` · ${meeting.tags.slice(0, 3).join(", ")}${meeting.tags.length > 3 ? ` +${meeting.tags.length - 3}` : ""}`}
-                          </span>
-                        )}
-                      </span>
-                      <time dateTime={meeting.started_at}>
-                        {/* Same-day meetings differ by start time; older ones by date. */}
-                        {group.label === "Earlier"
-                          ? formatShortDate(meeting.started_at)
-                          : formatTime(meeting.started_at)}
-                      </time>
-                    </span>
+                    <i>{meeting.title}</i>
+                    <time dateTime={meeting.started_at}>
+                      {/* Same-day meetings differ by start time; older ones by date. */}
+                      {group.label === "Earlier"
+                        ? formatShortDate(meeting.started_at)
+                        : formatTime(meeting.started_at)}
+                    </time>
+                    <em>
+                      {sourceWords[meeting.source]}
+                      {meeting.status === "stopped"
+                        ? ""
+                        : ` · ${statusWords[meeting.status]}`}
+                      {meeting.tags.length > 0 && (
+                        <span
+                          className="meeting-tags"
+                          title={meeting.tags.join(", ")}
+                        >
+                          {` · ${meeting.tags.slice(0, 3).join(", ")}${meeting.tags.length > 3 ? ` +${meeting.tags.length - 3}` : ""}`}
+                        </span>
+                      )}
+                    </em>
                   </button>
                 </li>
               ))}
@@ -174,13 +178,12 @@ export function MeetingSidebar(props: Props) {
         ))}
         {matches.length > 0 && (
           <section aria-label="Matches in notes and transcripts">
-            <h3 className="meeting-group-title">
-              Matches in notes/transcripts
-            </h3>
+            <h3 className="sb-group">Matches</h3>
             <ul className="meeting-list">
               {matches.map((hit) => (
                 <li key={`${hit.meeting_id}-${hit.kind}`}>
                   <button
+                    className="sb-row sb-hit"
                     disabled={disabled}
                     onClick={() => props.onOpenHit(hit)}
                   >
@@ -197,24 +200,52 @@ export function MeetingSidebar(props: Props) {
         {meetings.length > 0 &&
           visible.length === 0 &&
           matches.length === 0 && (
-            <p className="muted">No matching meetings.</p>
+            <p className="sb-none">No matching meetings.</p>
           )}
       </div>
-      <div className="sidebar-bottom">
+      <div className="sb-foot">
+        {/* Visible "Ask"; the full name stays the accessible one. */}
         <button
+          className="sb-navrow"
+          aria-label="Ask across meetings"
           disabled={disabled || meetings.length === 0}
-          onClick={(event) => props.onLibrary(event.currentTarget)}
+          onClick={(event) => props.onAsk(event.currentTarget)}
         >
-          Ask across meetings
+          <svg
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <path d="M21 12a8 8 0 1 1-3.2-6.4" />
+            <path d="M21 4v5h-5" />
+          </svg>
+          Ask
         </button>
-        <button onClick={(event) => props.onSettings(event.currentTarget)}>
+        <button
+          className="sb-navrow"
+          onClick={(event) => props.onSettings(event.currentTarget)}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M4 12h2M18 12h2M12 4v2M12 18v2" />
+          </svg>
           Settings
         </button>
-        <p className="local-storage-note">
-          Notes stored on this device
-          {props.audioBytes !== null &&
-            ` · Audio uses ${formatBytes(props.audioBytes)}`}
-        </p>
+        <p className="sb-storage">{storage}</p>
       </div>
     </aside>
   );

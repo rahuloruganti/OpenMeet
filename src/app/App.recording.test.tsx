@@ -1,5 +1,11 @@
 import { mockApiModule } from "../shared/test/api-mock";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -42,8 +48,8 @@ describe("recording, capture and devices", () => {
     });
     await ready();
     await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
-    expect(screen.getByText(/system track is empty/)).toBeTruthy();
-    expect(screen.queryByText(/microphone track is empty/)).toBeNull();
+    expect(screen.getByText(/System track is empty/)).toBeTruthy();
+    expect(screen.queryByText(/Microphone track is empty/)).toBeNull();
   });
 
   it.each(["devices", "keychain", "speech"])(
@@ -97,7 +103,7 @@ describe("recording, capture and devices", () => {
         }) as HTMLSelectElement
       ).value,
     ).toBe("missing-mic");
-    expect(screen.getByText(/Selected microphone is unavailable/)).toBeTruthy();
+    expect(screen.getByText(/That microphone is unavailable/)).toBeTruthy();
     await userEvent.selectOptions(
       screen.getByRole("combobox", { name: "Microphone" }),
       "mic",
@@ -115,16 +121,18 @@ describe("recording, capture and devices", () => {
   it("opens recording setup without capture and with no consent checkbox", async () => {
     await ready();
     const trigger = screen.getByRole("button", { name: "New recording" });
+    const bar = screen.getByRole("region", { name: "Recording controls" });
+    // Nothing is being recorded, and the bar says so rather than claiming a recording.
+    expect(within(bar).getByRole("status").textContent).toBe("Ready");
+    expect(within(bar).queryByText("Recording")).toBeNull();
     expect(screen.queryByRole("textbox", { name: "Meeting title" })).toBeNull();
-    expect(screen.getByText("Not recording")).toBeTruthy();
     await userEvent.click(trigger);
-    expect(
-      screen
-        .getByRole("dialog", { name: "New recording" })
-        .getAttribute("aria-modal"),
-    ).toBe("false");
+    const dialog = screen.getByRole("dialog", { name: "New recording" });
+    expect(dialog.getAttribute("aria-modal")).toBe("true");
+    // Focus starts inside the dialog, on its first control.
+    expect(dialog.contains(document.activeElement)).toBe(true);
     expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "Close panel" }),
+      screen.getByRole("button", { name: "Close" }),
     );
     expect(api.startCapture).not.toHaveBeenCalled();
     expect(
@@ -212,7 +220,8 @@ describe("recording, capture and devices", () => {
       screen.getByRole("button", { name: "Start recording" }),
     );
     await screen.findByText(/Selected microphone is unavailable/);
-    expect(screen.getByText("Not recording")).toBeTruthy();
+    const bar = screen.getByRole("region", { name: "Recording controls" });
+    expect(within(bar).getByRole("status").textContent).toBe("Ready");
   });
 
   it("keeps pause and stop available while an unrelated operation is waiting", async () => {
@@ -249,7 +258,8 @@ describe("recording, capture and devices", () => {
         .disabled,
     ).toBe(false);
     await userEvent.click(screen.getByRole("button", { name: "Pause" }));
-    await screen.findByText("Recording: paused");
+    const bar = screen.getByRole("region", { name: "Recording controls" });
+    expect(await within(bar).findByText("Paused")).toBeTruthy();
     await screen.findByText("Capture: Device stopped responding");
     await act(async () =>
       finishExport({
@@ -281,7 +291,7 @@ describe("recording, capture and devices", () => {
         recording_offset_ms: null,
       });
     });
-    expect(screen.getByText("Simulation: paused")).toBeTruthy();
+    expect(screen.getByText("Simulation · Paused")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Resume" })).toBeTruthy();
   });
 
@@ -551,17 +561,17 @@ describe("recording, capture and devices", () => {
       await ready();
       const clock = vi.spyOn(Date, "now").mockReturnValue(1_000);
       act(() => publish(health(0)));
-      expect(screen.getByText("Mic: quiet")).toBeTruthy();
-      expect(screen.getByText("System: signal")).toBeTruthy();
+      expect(screen.getByLabelText("Mic: quiet")).toBeTruthy();
+      expect(screen.getByLabelText("System: signal")).toBeTruthy();
       expect(screen.queryByRole("alert")).toBeNull();
       clock.mockReturnValue(12_500);
       act(() => publish(health(0)));
-      expect(screen.getByText("Mic: no signal for 11 s")).toBeTruthy();
+      expect(screen.getByLabelText("Mic: no signal for 11 s")).toBeTruthy();
       expect(screen.getByRole("alert").textContent).toContain(
-        "no signal for at least 10 seconds",
+        "No microphone signal",
       );
       act(() => publish(health(0.2)));
-      expect(screen.getByText("Mic: signal")).toBeTruthy();
+      expect(screen.getByLabelText("Mic: signal")).toBeTruthy();
       expect(screen.queryByRole("alert")).toBeNull();
       clock.mockRestore();
     });
@@ -618,7 +628,7 @@ describe("recording, capture and devices", () => {
         screen.getByRole("button", { name: "Recover audio" }),
       );
       expect(api.recoverAudio).toHaveBeenCalledWith("sample");
-      await screen.findByText(/original files were left unchanged/);
+      await screen.findByText(/originals are unchanged/);
       expect(
         screen.queryByRole("button", { name: "Recover audio" }),
       ).toBeNull();
@@ -679,7 +689,7 @@ describe("recording, capture and devices", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Refresh devices" }),
     );
-    await screen.findByText(/Devices refreshed/);
+    await screen.findByText(/Refreshed:/);
     expect(
       (
         screen.getByRole("combobox", {
@@ -687,6 +697,6 @@ describe("recording, capture and devices", () => {
         }) as HTMLSelectElement
       ).value,
     ).toBe("missing-mic");
-    expect(screen.getByText(/Selected microphone is unavailable/)).toBeTruthy();
+    expect(screen.getByText(/That microphone is unavailable/)).toBeTruthy();
   });
 });

@@ -16,8 +16,8 @@ Read `docs/architecture.md` and `docs/development.md` before substantial work. V
 | Path | Responsibility |
 | --- | --- |
 | `src/app/` | App shell: providers, layout, page routing, global styles. |
-| `src/pages/meeting/`, `pages/settings/`, `pages/setup/` | One page per route: meeting workspace, settings, first-run setup. |
-| `src/widgets/` | Composite UI blocks (`meeting-sidebar`, `meeting-workspace`, `settings-panel`, `setup-panel`, `recording-controls`, `library-question`, `first-run-setup`). |
+| `src/pages/meeting/`, `pages/settings/`, `pages/setup/`, `pages/ask/` | One page per route: meetings home, settings, first-run setup, Ask across meetings. |
+| `src/widgets/` | Composite UI blocks (`meeting-sidebar`, `meeting-workspace`, `settings-panel`, `setup-panel`, `recording-controls`, `library-question`, `first-run-setup`, `command-palette`). |
 | `src/features/` | User actions with their own state (`note-writer`, `transcription-settings`, `provider-settings`, `recipes`, `rewrite-selection`, `action-items`, `meeting-tags`, `model-library`, `speaker-names`, `summary-templates`, `transcript-versions`). |
 | `src/entities/` | Domain models and their read/update logic (`meeting`, `processing`). |
 | `src/shared/` | Framework-free code: `api/` (command bindings, `transport.ts`), `lib/` (Markdown, timestamps), `ui/` (small shared components), `test/`. |
@@ -31,7 +31,7 @@ Read `docs/architecture.md` and `docs/development.md` before substantial work. V
 | `backend/openmeet_py/paths.py` | Data folder (`%APPDATA%\OpenMeetPy`) and bundled UI paths. |
 | `backend/openmeet_py/migrations/` | Append-only numbered SQL migrations. |
 | `backend/tests/` | pytest suite; fakes instead of devices and engines. |
-| `packaging/build.ps1` | Builds the UI into `backend/web` and produces `packaging/dist/OpenMeet.exe`. |
+| `packaging/build.ps1` | Builds the UI into `backend/web` and produces `packaging/dist/OpenMeet.exe`, with the icon `packaging/openmeet.ico` (source `openmeet-icon.svg`). |
 | `.preview/` | Untracked browser harness on port 1430 with fictional data. |
 | `docs/` | Current documentation; `docs/archive/` holds retired records and is not a source of truth. |
 
@@ -66,7 +66,7 @@ just smoke     # OpenMeet.exe --smoke
 4. The backend is authoritative for recording state. Commands return authoritative state; events only notify. Preserve revision ordering and handle partially applied failures.
 5. Keep SQLite, inference, HTTP and file writes off the event loop and out of audio callbacks. Callbacks enqueue samples; no blocking locks, allocations in a tight loop, or unbounded queues.
 6. Never silently change the selected device or sample format, fall back to one-track capture, or substitute fake output for failed capture. Fail visibly and preserve recoverable data.
-7. SQLite migrations are append-only: add the next number (currently `030`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
+7. SQLite migrations are append-only: add the next number (currently `031`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
 8. Fake backends exist for tests only: `OPENMEET_PY_FAKE_AUDIO=1` and `OPENMEET_PY_FAKE_STT=1`. Never ship a path that enables them implicitly, and never present their output as real capture or a real transcript.
 9. Add a small regression test for nontrivial behavior. Routine audio tests use synthetic samples; real-device tests are separate and opt-in.
 10. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization, calendar or speculative integrations before their planned phase. Opt-in meeting detection may only offer a prompt that opens recording setup; it must never start capture, check consent or pick devices by itself.

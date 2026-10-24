@@ -204,6 +204,29 @@ export type Settings = {
   detection_ignored: MicApp[];
   /** First-run setup was finished or skipped. */
   setup_done: boolean;
+  /** Colour theme; "system" follows Windows. */
+  theme: Theme;
+  /** Whether the meeting page's right inspector is open. */
+  inspector_open: boolean;
+};
+export type Theme = "system" | "dark" | "light";
+/** What the one-time import from the previous OpenMeet data folder would bring over. */
+export type ImportStatus = {
+  /** True only when the old folder exists and this data folder has no meetings or audio yet. */
+  available: boolean;
+  path: string | null;
+  meetings: number;
+  audio_files: number;
+  bytes: number;
+  /** Why import is not offered (no old folder, or this folder is already in use); null when available. */
+  blocked_reason: string | null;
+};
+export type ImportResult = {
+  meetings: number;
+  transcript_lines: number;
+  audio_files: number;
+  /** Short notes from the import report (skipped items, kept backup). */
+  notes: string[];
 };
 /** An app using the microphone: a Windows privacy-store key or a macOS bundle identifier. */
 export type MicApp = { id: string; name: string };
@@ -614,6 +637,14 @@ export const api = {
   detectLocalServers: () => invoke<LocalServer[]>("detect_local_servers"),
   saveSetupDone: (done: boolean) =>
     invoke<Settings>("save_setup_done", { done }),
+  saveUiPrefs: (theme: Theme, inspectorOpen: boolean) =>
+    invoke<Settings>("save_ui_prefs", { theme, inspectorOpen }),
+  /** This build's own data folder, shown read-only in Export & storage. */
+  dataFolder: () => invoke<{ path: string }>("data_folder"),
+  /** Read-only look at the previous OpenMeet data folder; never writes there. */
+  importStatus: () => invoke<ImportStatus>("import_status"),
+  /** Imports the previous OpenMeet data into this (still empty) data folder. */
+  importPrevious: () => invoke<ImportResult>("import_previous"),
   saveProcessingDefault: (mode: string, summary: string | null) =>
     invoke<Settings>("save_processing_default", { mode, summary }),
   saveSummaryDefault: (template: string) =>

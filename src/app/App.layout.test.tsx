@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,7 +36,7 @@ describe("layout and keyboard navigation", () => {
     expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 
-  it("leaves focus alone while first-run setup opens, then returns it to the workspace", async () => {
+  it("shows first-run setup as its own screen, then gives focus back to the workspace", async () => {
     vi.mocked(api.getSettings).mockResolvedValue({
       ...initialSettings,
       setup_done: false,
@@ -52,7 +53,11 @@ describe("layout and keyboard navigation", () => {
     });
     render(<App />);
     const skip = await screen.findByRole("button", { name: "Skip setup" });
-    expect(document.activeElement).not.toBe(screen.getByRole("main"));
+    // No sidebar, no workspace, no recording bar while the wizard is open.
+    expect(
+      screen.queryByRole("complementary", { name: "Meeting navigation" }),
+    ).toBeNull();
+    expect(screen.queryByRole("main")).toBeNull();
     await userEvent.click(skip);
     await waitFor(() => expect(api.saveSetupDone).toHaveBeenCalledWith(true));
     await waitFor(() =>
@@ -60,25 +65,30 @@ describe("layout and keyboard navigation", () => {
     );
   });
 
-  it.each([
-    ["New recording", "Settings"],
-    ["Settings", "New recording"],
-  ])(
-    "returns focus to %s → %s's actual trigger when switching panels",
-    async (first, second) => {
-      await ready();
-      await userEvent.click(screen.getByRole("button", { name: first }));
-      const trigger = screen.getByRole("button", { name: second });
-      await userEvent.click(trigger);
-      expect(document.activeElement).toBe(
-        screen.getByRole("button", { name: "Close panel" }),
-      );
-      await userEvent.keyboard("{Escape}");
-      expect(document.activeElement).toBe(trigger);
-      expect(screen.queryByRole("dialog")).toBeNull();
-      expect(api.startCapture).not.toHaveBeenCalled();
-    },
-  );
+  it("returns focus to the workspace after Settings, and to the trigger after the recording panel", async () => {
+    await ready();
+    await userEvent.click(
+      within(
+        screen.getByRole("complementary", { name: "Meeting navigation" }),
+      ).getByRole("button", { name: "Settings" }),
+    );
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    expect(await screen.findByRole("main")).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("main"));
+
+    const trigger = screen.getByRole("button", { name: "New recording" });
+    await userEvent.click(trigger);
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Close" }),
+    );
+    await userEvent.keyboard("{Escape}");
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.startCapture).not.toHaveBeenCalled();
+  });
 
   it("starts narrow windows with navigation collapsed and notes visible", async () => {
     vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: false }));
@@ -131,12 +141,12 @@ describe("layout and keyboard navigation", () => {
     expect(summaryTab.getAttribute("aria-selected")).toBe("true");
     expect(
       screen.getByRole("tabpanel", { name: "Summary" }).textContent,
-    ).toContain("Sample summary (hand-written)");
+    ).toContain("Sample summary");
     await userEvent.keyboard("{End}");
     expect(document.activeElement).toBe(transcriptTab);
     expect(
       screen.getByRole("tabpanel", { name: "Transcript" }).textContent,
-    ).toContain("no recorded audio");
+    ).toContain("Samples and simulations have no audio");
     await userEvent.keyboard("{Home}");
     expect(document.activeElement).toBe(notesTab);
     expect(screen.getByRole("textbox", { name: /My notes/ }).textContent).toBe(
@@ -147,18 +157,22 @@ describe("layout and keyboard navigation", () => {
 });
 
 describe("collapsed sidebar and narrow windows", () => {
-  it("keeps New recording, New note and Settings in the toolbar while the sidebar is collapsed", async () => {
+  it("drops the duplicated action row from the toolbar while the sidebar is collapsed", async () => {
     await ready();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Toggle meetings" }),
-    );
+    const toggle = screen.getByRole("button", { name: "Toggle meetings" });
+    await userEvent.click(toggle);
+    expect(screen.queryByRole("button", { name: "New recording" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New note" })).toBeNull();
+    // The toggle brings the sidebar, and its actions, back.
+    await userEvent.click(toggle);
     expect(screen.getByRole("button", { name: "New recording" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "New note" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeTruthy();
   });
 
-  it("disables New recording in the collapsed toolbar while a recording is active", async () => {
+  it("disables New recording in the sidebar while a recording is active", async () => {
     vi.mocked(api.getRecordingState).mockResolvedValue({
       revision: 1,
       status: "recording",
@@ -168,12 +182,12 @@ describe("collapsed sidebar and narrow windows", () => {
       recording_offset_ms: null,
     });
     await ready();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Toggle meetings" }),
-    );
+    const sidebar = screen.getByRole("complementary", {
+      name: "Meeting navigation",
+    });
     expect(
       (
-        screen.getByRole("button", {
+        within(sidebar).getByRole("button", {
           name: "New recording",
         }) as HTMLButtonElement
       ).disabled,
@@ -220,7 +234,11 @@ describe("collapsed sidebar and narrow windows", () => {
     await ready();
     const toggle = screen.getByRole("button", { name: "Toggle meetings" });
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    await userEvent.click(screen.getByRole("button", { name: /Sample sync/ }));
+    await userEvent.click(
+      within(
+        screen.getByRole("complementary", { name: "Meeting navigation" }),
+      ).getByRole("button", { name: /Sample sync/ }),
+    );
     await waitFor(() =>
       expect(toggle.getAttribute("aria-expanded")).toBe("false"),
     );

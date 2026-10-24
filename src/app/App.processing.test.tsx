@@ -1,5 +1,11 @@
 import { mockApiModule } from "../shared/test/api-mock";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,7 +19,6 @@ import {
   sessionPlan,
   sessionSnapshot,
   initialSettings,
-  notInstalled,
   installed,
   chooseProcessing,
   ready,
@@ -27,33 +32,44 @@ vi.mock("../shared/api/api", async (original) =>
 beforeEach(installDefaultMocks);
 
 describe("speech engine and automatic processing", () => {
-  it("ignores startup engine status after transcription settings refresh it", async () => {
-    let deliver: (status: typeof notInstalled) => void = () => {};
+  it("refreshes the engine status after transcription settings change the model", async () => {
+    const partial = {
+      ...installed,
+      installed: false,
+      models: [
+        { id: "base", size: 147_951_465, installed: true },
+        { id: "small", size: 487_601_967, installed: false },
+      ],
+    };
+    const both = {
+      ...installed,
+      models: [
+        { id: "base", size: 147_951_465, installed: true },
+        { id: "small", size: 487_601_967, installed: true },
+      ],
+    };
     vi.mocked(api.sttStatus)
-      .mockReturnValueOnce(
-        new Promise((resolve) => {
-          deliver = resolve;
-        }),
-      )
-      .mockResolvedValue(installed);
-    vi.mocked(api.saveSttSettings).mockResolvedValue(initialSettings);
+      .mockResolvedValueOnce(partial)
+      .mockResolvedValue(both);
+    vi.mocked(api.saveSttSettings).mockImplementation(
+      async (language, prompt, model) => ({
+        ...initialSettings,
+        stt_language: language,
+        stt_prompt: prompt,
+        stt_model: model,
+      }),
+    );
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    expect(
-      screen.queryByRole("button", { name: "Save transcription settings" }),
-    ).toBeNull();
-    await userEvent.type(screen.getByLabelText(/Vocabulary hint/), "Okta");
-    expect(
-      screen.getByRole("tab", { name: /Transcription.*unsaved changes/ }),
-    ).toBeTruthy();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcription" }));
+    expect(await screen.findByText("Not installed")).toBeTruthy();
+    // Choosing a model saves it and re-reads what the engine can now do.
     await userEvent.click(
-      screen.getByRole("button", { name: "Save transcription settings" }),
+      screen.getByRole("button", { name: "Use Whisper base" }),
     );
-    await screen.findByRole("button", { name: "Speech engine installed" });
-    await act(async () => deliver(notInstalled));
-    expect(
-      screen.getByRole("button", { name: "Speech engine installed" }),
-    ).toBeTruthy();
+    expect(await screen.findByText("Installed and verified")).toBeTruthy();
+    expect(api.saveSttSettings).toHaveBeenCalledWith("auto", "", "base");
+    expect(screen.queryByText("Not installed")).toBeNull();
   });
 
   it("downloads the speech engine only on request and reports verified status", async () => {
@@ -71,9 +87,10 @@ describe("speech engine and automatic processing", () => {
     await ready();
     expect(api.sttInstall).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Transcription" }));
     expect(screen.getByText("Not installed")).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("button", { name: /Download speech engine and models/ }),
+      screen.getByRole("button", { name: "Download models" }),
     );
     act(() =>
       progress({
@@ -82,18 +99,13 @@ describe("speech engine and automatic processing", () => {
         total: 465 * 1024 * 1024,
       }),
     );
-    expect(
-      await screen.findByText(/Downloading model: 100\.0 MB \/ 465\.0 MB/),
-    ).toBeTruthy();
+    expect(await screen.findByText(/100\.0 MB \/ 465\.0 MB/)).toBeTruthy();
     await act(async () => finish(installed));
     await screen.findByText("Installed and verified");
+    // Nothing is left to download, so the request is not offered again.
     expect(
-      (
-        screen.getByRole("button", {
-          name: "Speech engine installed",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
+      screen.queryByRole("button", { name: "Download models" }),
+    ).toBeNull();
   });
 
   it("transcribes a finished recording locally and shows the result", async () => {
@@ -220,18 +232,27 @@ describe("speech engine and automatic processing", () => {
 
   it("warns before recording when the chosen speech engine is not ready", async () => {
     await ready();
-    await userEvent.click(
-      screen.getByRole("button", { name: "New recording" }),
-    );
-    expect(screen.queryByText(/speech engine is not downloaded/)).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Close panel" }));
-    await chooseProcessing("final");
-    await userEvent.click(
-      screen.getByRole("button", { name: "New recording" }),
-    );
+    const openRecording = async () => {
+      await userEvent.click(
+        screen.getByRole("button", { name: "New recording" }),
+      );
+      const dialog = screen.getByRole("dialog", { name: "New recording" });
+      // The warning is a detail, so it sits behind More options.
+      await userEvent.click(within(dialog).getByText("More options"));
+      return dialog;
+    };
+    let dialog = await openRecording();
     expect(
-      (await screen.findByText(/speech engine is not downloaded/)).textContent,
-    ).toContain("The recording itself is still kept.");
+      within(dialog).queryByText(/speech engine is not downloaded/),
+    ).toBeNull();
+    await userEvent.keyboard("{Escape}");
+    await chooseProcessing("final");
+    await userEvent.keyboard("{Escape}");
+    dialog = await openRecording();
+    expect(
+      (await within(dialog).findByText(/speech engine is not downloaded/))
+        .textContent,
+    ).toContain("Recording is kept");
   });
 
   it.each([
@@ -332,8 +353,16 @@ describe("speech engine and automatic processing", () => {
       snapshot.workflow.text_bytes_used = 4096;
       vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
       await ready();
-      await screen.findByRole("region", { name: "Session processing" });
-      expect(screen.getByText("Stage: Finishing audio")).toBeTruthy();
+      const status = await screen.findByRole("region", {
+        name: "Session processing",
+      });
+      expect(within(status).getByRole("status").textContent).toBe(
+        "Finishing audio",
+      );
+      // Sizes and counts are detail: they sit behind the ⓘ beside the status.
+      await userEvent.click(
+        screen.getByRole("button", { name: "More about session processing" }),
+      );
       expect(
         screen.getByText(
           `Used ${requests} ${noun}, 2.1 MB of audio and 4 KB of text.`,
@@ -351,6 +380,7 @@ describe("speech engine and automatic processing", () => {
     vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
     await ready();
     await screen.findByRole("region", { name: "Session processing" });
+    expect(screen.queryByLabelText(/^Used /)).toBeNull();
     expect(screen.queryByText(/^Used /)).toBeNull();
   });
 
@@ -427,20 +457,29 @@ describe("speech engine and automatic processing", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
     );
-    expect(screen.getByText(/Recording only/)).toBeTruthy();
+    let dialog = screen.getByRole("dialog", { name: "New recording" });
+    await userEvent.click(within(dialog).getByText("More options"));
+    expect(within(dialog).getByText(/Recording only/)).toBeTruthy();
+    // The mode is changed in Settings, which opens on Recording.
     await userEvent.click(
-      screen.getByRole("button", { name: "Change in Settings" }),
+      within(dialog).getByRole("button", { name: "Open Settings" }),
     );
     expect(
       screen
         .getByRole("tab", { name: "Recording" })
         .getAttribute("aria-selected"),
     ).toBe("true");
+    await userEvent.keyboard("{Escape}");
     await chooseProcessing("both", "general-v1");
+    await userEvent.keyboard("{Escape}");
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
     );
-    expect(screen.getByText(/Live and final transcription/)).toBeTruthy();
+    dialog = screen.getByRole("dialog", { name: "New recording" });
+    await userEvent.click(within(dialog).getByText("More options"));
+    expect(
+      within(dialog).getByText(/Live and final transcription/),
+    ).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: "Review processing" }),
     ).toBeNull();
@@ -476,7 +515,10 @@ describe("speech engine and automatic processing", () => {
     act(() =>
       vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](awaiting),
     );
-    await screen.findByText(/Notes acknowledgement failed: disk full/);
+    const status = await screen.findByRole("region", {
+      name: "Session processing",
+    });
+    await within(status).findByText(/disk full/);
     expect(api.acknowledgeProcessingNotes).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue("Unsaved private draft")).toBeTruthy();
     vi.mocked(api.saveNotes).mockResolvedValue(7);
@@ -524,7 +566,7 @@ describe("speech engine and automatic processing", () => {
     ).toContain("[02:03] You: Live word 204");
     expect(
       screen.getByText("Live word 203").parentElement?.textContent,
-    ).toContain("[Untimed]");
+    ).toContain("Untimed");
     const stale = sessionSnapshot(3, "failed");
     vi.mocked(api.getSessionProcessing).mockResolvedValue(stale);
     act(() =>
@@ -664,21 +706,18 @@ describe("speech engine and automatic processing", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Re-transcribe audio" }),
       );
+      const confirm = screen.getByRole("group", {
+        name: "Confirm re-transcription",
+      });
       await userEvent.click(
-        screen.getByRole("button", { name: "Re-transcribe" }),
+        within(confirm).getByRole("button", { name: "Re-transcribe audio" }),
       );
       expect(
-        screen
-          .getByRole("button", { name: "Cancel transcription" })
-          .getAttribute("disabled"),
+        screen.getByRole("button", { name: "Cancel" }).getAttribute("disabled"),
       ).toBe("");
       act(() => progress({ stage: "transcribing", track: "mic", percent: 40 }));
-      expect(
-        await screen.findByText(/Transcribing You \(microphone\): 40%/),
-      ).toBeTruthy();
-      await userEvent.click(
-        screen.getByRole("button", { name: "Cancel transcription" }),
-      );
+      expect(await screen.findByText(/You \(microphone\): 40%/)).toBeTruthy();
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
       expect(api.cancelTranscription).toHaveBeenCalledTimes(1);
       const calls = vi.mocked(api.getMeeting).mock.calls.length;
       await act(async () =>
@@ -704,11 +743,12 @@ describe("speech engine and automatic processing", () => {
     vi.mocked(api.cancelModelDownload).mockResolvedValue();
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Transcription" }));
     await userEvent.click(
-      screen.getByRole("button", { name: /Download speech engine and models/ }),
+      screen.getByRole("button", { name: "Download models" }),
     );
     await userEvent.click(
-      await screen.findByRole("button", { name: "Cancel speech download" }),
+      await screen.findByRole("button", { name: "Cancel" }),
     );
     expect(api.cancelModelDownload).toHaveBeenCalledOnce();
   });

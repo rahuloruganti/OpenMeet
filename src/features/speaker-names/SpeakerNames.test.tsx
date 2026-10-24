@@ -25,13 +25,14 @@ it("saves names, discloses what Others covers, and keeps input on failure", asyn
       onNames={onNames}
     />,
   );
-  expect(screen.getByText(/may include several people/)).toBeTruthy();
+  expect(screen.getByText(/covers everyone on system audio/)).toBeTruthy();
+  // What the names are used for sits behind the ⓘ, still reachable by keyboard.
+  expect(
+    screen.getByRole("button", { name: "More about speaker names" }),
+  ).toBeTruthy();
   const save = screen.getByRole("button", { name: "Save speaker names" });
   expect((save as HTMLButtonElement).disabled).toBe(true);
-  await userEvent.type(
-    screen.getByLabelText("Name for You (microphone)"),
-    "Rahul",
-  );
+  await userEvent.type(screen.getByLabelText("Your name"), "Rahul");
   await userEvent.click(save);
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.getByDisplayValue("Rahul")).toBeTruthy();

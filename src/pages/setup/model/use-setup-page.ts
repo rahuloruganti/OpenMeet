@@ -27,6 +27,8 @@ export type SetupPageEnv = {
   run: (task: () => Promise<void>) => void;
   /** Opens Settings on a section, keeping the panel that currently has focus. */
   showSettings: (section: SettingsSection) => void;
+  /** Opens the New recording dialog from the finished wizard. */
+  openNewRecording: () => void;
   closePanel: () => void;
   panelRef: RefObject<HTMLElement | null>;
   openMeeting: (id: string) => Promise<void>;
@@ -61,6 +63,7 @@ export function useSetupPage(env: SetupPageEnv) {
     setSettings,
     run,
     showSettings,
+    openNewRecording,
     closePanel,
     openMeeting,
     refreshList,
@@ -117,8 +120,8 @@ export function useSetupPage(env: SetupPageEnv) {
     onStartCapture: startCapture,
   };
 
+  // The wizard is a full screen of its own; the shell renders the 48px frame.
   const firstRunProps: FirstRunPageProps = {
-    panelRef: env.panelRef,
     settings: settings!,
     devices,
     stt,
@@ -135,6 +138,9 @@ export function useSetupPage(env: SetupPageEnv) {
       setMicrophone(mic);
       setOutput(out);
     },
+    // Setup is already saved when these run; the shell just shows the next screen.
+    onStartMeeting: openNewRecording,
+    onOpenSettings: () => showSettings("general"),
   };
 
   return { pageProps, firstRunProps };

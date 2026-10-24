@@ -6,22 +6,20 @@ import {
   type KeyChange,
   type KeyStatus,
   type ProviderModel,
+  type ProviderRole,
   type Settings,
 } from "../../shared/api/api";
-import {
-  destination,
-  publishSettings,
-  type Publish,
-} from "../../shared/ui/provider-connection";
+import { modelsFor } from "../../shared/lib/models";
+import { destination, type Publish } from "../../shared/ui/provider-connection";
+import { Saved, useSaved } from "../../shared/ui/settings-link";
 
-const urlFormat = "Enter a full URL such as https://api.example.com/v1.";
+// One sentence each, and each says the action that fixes it (TEXT RULES).
+const urlFormat = "Use a full URL like https://api.example.com/v1.";
 const urlRules =
-  "Enter an HTTPS base URL, or HTTP on localhost, without credentials, query parameters or a fragment.";
-const plainHttp =
-  "Remote servers must use https. Plain http is only allowed for this computer (localhost or 127.0.0.1).";
+  "Use https, or http on localhost, without credentials or a query.";
 
 /** The first reason an API base URL cannot be saved, mirroring validate_base_url in providers.rs. */
-function baseUrlError(value: string): string | null {
+export function baseUrlError(value: string): string | null {
   const text = value.trim();
   if (text === "") return null;
   let url: URL;
@@ -38,32 +36,40 @@ function baseUrlError(value: string): string | null {
     url.password !== ""
   )
     return urlRules;
-  return url.protocol === "http:" && !isLocalBase(text) ? plainHttp : null;
+  return url.protocol === "http:" && !isLocalBase(text) ? urlRules : null;
 }
 
+/** "No connection" in the saved-connection picker: the task runs without one. */
+const NONE = "-";
+
 type Props = Publish & {
+  role: ProviderRole;
   settings: Settings;
-  active: boolean;
   disabled: boolean;
-  /** Model IDs fetched for a saved connection, for the task assignments. */
-  onModels: (connectionId: string, models: ProviderModel[]) => void;
+  /** False while the section is hidden: the typed key must not stay in the page. */
+  active: boolean;
+  /** AI notes only: the local server / API service choice. */
+  kindSwitch?: boolean;
 };
 
-/** Saved OpenAI-compatible connections, local and remote in one list. */
-export function Connections(props: Props) {
-  const [selected, setSelected] = useState("");
+/** One OpenAI-compatible connection and the task that uses it: keys need an explicit Save. */
+export function ConnectionEditor(props: Props) {
+  const assignment = props.settings.provider_assignments[props.role];
+  const [selected, setSelected] = useState(assignment?.connection_id ?? "");
   const connection =
     props.settings.saved_connections.find((item) => item.id === selected) ??
     null;
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState(assignment?.model ?? "");
   const [status, setStatus] = useState<KeyStatus>("unavailable");
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  // Results render below the task assignments; bring them into view so a long
-  // settings page never hides the outcome of the button just pressed.
+  const [keyEntered, setKeyEntered] = useState(false);
+  const { shown, mark } = useSaved();
+  // Results render below the card; bring them into view so a long page never hides them.
   const outcome = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (notice || error)
@@ -73,15 +79,27 @@ export function Connections(props: Props) {
   const lock = useRef(false);
   const current = useRef(connection);
   current.current = connection;
-  const dirty =
+  const connectionDirty =
     name !== (connection?.name ?? "") ||
     baseUrl !== (connection?.base_url ?? "");
+  const assigned = assignment?.connection_id ?? "";
+  const selectedConnection = selected === NONE ? null : selected;
+  const roleDirty =
+    selectedConnection !== assigned ||
+    (selected !== NONE && model.trim() !== (assignment?.model ?? ""));
   const disabled = props.disabled || busy;
   const urlError = baseUrlError(baseUrl);
-  const missingFields = !name.trim() || !baseUrl.trim();
+  const missingFields = selected === "" && (!name.trim() || !baseUrl.trim());
+  const neededModel = selected !== NONE && model.trim() === "";
+  const canSave =
+    !disabled &&
+    !missingFields &&
+    urlError === null &&
+    !neededModel &&
+    (connectionDirty || roleDirty || keyEntered);
   // One reason per disabled button, shown only for the cause that applies.
   const refreshReason =
-    !connection || dirty
+    !connection || connectionDirty
       ? "Save the connection first."
       : !isLocalBase(connection.base_url) && status === "missing"
         ? "Add an API key first."
@@ -89,14 +107,20 @@ export function Connections(props: Props) {
   const removeReason =
     !connection || status === "missing"
       ? "No saved key to remove."
-      : dirty
+      : connectionDirty
         ? "Save the connection first."
         : null;
+  // A kind picked before anything is typed: an empty base URL says nothing on its own.
+  const [kindPick, setKindPick] = useState<"local" | "api" | null>(null);
+  const kind =
+    kindPick ??
+    (baseUrl.trim() === "" || isLocalBase(baseUrl) ? "local" : "api");
   useEffect(() => {
     if (password.current) password.current.value = "";
     setName(connection?.name ?? "");
     setBaseUrl(connection?.base_url ?? "");
     setModels([]);
+    setKeyEntered(false);
     setStatus(connection ? "unavailable" : "missing");
     let live = true;
     if (connection)
@@ -117,6 +141,10 @@ export function Connections(props: Props) {
     connection?.name,
     connection?.base_url,
   ]);
+  // The saved model follows the assignment, so a save elsewhere is not overwritten.
+  useEffect(() => {
+    setModel(assignment?.model ?? "");
+  }, [assignment?.model]);
   useEffect(() => {
     const field = password.current;
     if (!props.active && field) field.value = "";
@@ -124,6 +152,15 @@ export function Connections(props: Props) {
       if (field) field.value = "";
     };
   }, [props.active]);
+  const publish = (settings: Settings) => {
+    props.onSaved(settings);
+    for (const role of ["llm", "cloud_stt"] satisfies ProviderRole[]) {
+      void api.providerKeyStatus(role).then(
+        (value) => props.onKeyStatus(role, value),
+        () => props.onKeyStatus(role, "unavailable"),
+      );
+    }
+  };
   const run = async (task: () => Promise<void>) => {
     if (lock.current) return;
     lock.current = true;
@@ -135,7 +172,7 @@ export function Connections(props: Props) {
     } catch (failure) {
       setError(errorMessage(failure));
       try {
-        await publish(await api.getSettings());
+        publish(await api.getSettings());
       } catch {
         /* Keep the visible error when refresh also fails. */
       }
@@ -144,175 +181,266 @@ export function Connections(props: Props) {
       setBusy(false);
     }
   };
-  const publish = (settings: Settings) => publishSettings(settings, props);
-  const save = async (keyChange: KeyChange) => {
-    const updated = await api.saveApiConnection({
-      id: connection?.id ?? null,
-      name: name.trim(),
-      baseUrl: baseUrl.trim(),
-      keyChange,
-      expectedRevision: connection?.revision ?? null,
+  const saveKeyChange = (keyChange: KeyChange) =>
+    run(async () => {
+      if (!connection) return;
+      publish(
+        await api.saveApiConnection({
+          id: connection.id,
+          name: name.trim(),
+          baseUrl: baseUrl.trim(),
+          keyChange,
+          expectedRevision: connection.revision,
+        }),
+      );
+      mark();
+      setNotice("Key updated on this device.");
     });
-    await publish(updated);
-    const saved = updated.saved_connections.find((item) =>
-      connection
-        ? item.id === connection.id
-        : item.name === name.trim() && item.base_url === baseUrl.trim(),
-    );
-    if (saved) {
-      setSelected(saved.id);
-      try {
-        setStatus(await api.apiConnectionKeyStatus(saved.id));
-      } catch {
-        setStatus("unavailable");
-      }
-    }
-    setNotice("Connection saved on this device. No meeting content was sent.");
+  const choose = (id: string) => {
+    if (
+      (connectionDirty || keyEntered) &&
+      !window.confirm("Discard unsaved connection edits?")
+    )
+      return;
+    if (password.current) password.current.value = "";
+    setSelected(id);
+    setError("");
+    setNotice("");
   };
+  const pickKind = (next: "local" | "api") => {
+    if (
+      (connectionDirty || keyEntered) &&
+      !window.confirm("Discard unsaved connection edits?")
+    )
+      return;
+    const existing = props.settings.saved_connections.find(
+      (item) => isLocalBase(item.base_url) === (next === "local"),
+    );
+    if (existing) {
+      if (password.current) password.current.value = "";
+      setSelected(existing.id);
+      setKindPick(null);
+      setError("");
+      setNotice("");
+      return;
+    }
+    if (password.current) password.current.value = "";
+    setSelected("");
+    setName("");
+    setBaseUrl("");
+    setKindPick(next);
+    setModels([]);
+    setKeyEntered(false);
+    setError("");
+    setNotice("");
+  };
+  const save = () =>
+    run(async () => {
+      const key = password.current?.value ?? "";
+      if (password.current) password.current.value = "";
+      let settings = props.settings;
+      let connectionId: string | null = selected === NONE ? null : selected;
+      if (
+        connectionId !== null &&
+        (connectionDirty || connectionId === "" || key !== "")
+      ) {
+        settings = await api.saveApiConnection({
+          id: connection?.id ?? null,
+          name: name.trim(),
+          baseUrl: baseUrl.trim(),
+          keyChange: key ? { kind: "replace", key } : { kind: "keep" },
+          expectedRevision: connection?.revision ?? null,
+        });
+        const saved = settings.saved_connections.find((item) =>
+          connectionId
+            ? item.id === connectionId
+            : item.name === name.trim() && item.base_url === baseUrl.trim(),
+        );
+        connectionId = saved?.id ?? null;
+        if (saved) {
+          setSelected(saved.id);
+          setStatus(
+            await api
+              .apiConnectionKeyStatus(saved.id)
+              .catch(() => "unavailable" as const),
+          );
+        }
+        publish(settings);
+      }
+      const target = settings.provider_assignments[props.role];
+      if (connectionId === null) {
+        if (target)
+          settings = await api.saveProviderAssignment(
+            props.role,
+            { kind: "unassigned" },
+            target.revision,
+          );
+      } else if (
+        connectionId !== target?.connection_id ||
+        model.trim() !== (target?.model ?? "")
+      ) {
+        settings = await api.saveProviderAssignment(
+          props.role,
+          {
+            kind: "assigned",
+            connection_id: connectionId,
+            model: model.trim(),
+          },
+          target?.revision ?? null,
+        );
+      }
+      publish(settings);
+      setKeyEntered(false);
+      mark();
+      setNotice("Saved on this device. No meeting content was sent.");
+    });
+  const label = props.role === "llm" ? "AI notes" : "Transcription";
   return (
-    <section
-      className="settings-section provider-settings"
-      aria-label="Connections"
-    >
-      <h3>Connections</h3>
-      <p className="muted">
-        Reusable OpenAI-compatible connections. Refresh models sends your saved
-        key to that connection to list its models. It sends no meeting content.
-        Model IDs do not establish task compatibility.
-      </p>
-      <fieldset disabled={disabled}>
-        <legend>Connection</legend>
-        <label>
-          Saved connection
-          <select
-            value={selected}
-            onChange={(event) => {
-              if (
-                (dirty || password.current?.value) &&
-                !window.confirm("Discard unsaved connection edits?")
-              )
-                return;
-              if (password.current) password.current.value = "";
-              setSelected(event.target.value);
-              setError("");
-              setNotice("");
-            }}
-          >
-            <option value="">New connection</option>
-            {props.settings.saved_connections.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.name} · {destination(item.base_url)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Connection name
-          <input
-            value={name}
-            maxLength={100}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label>
-          Base URL
-          <input
-            type="url"
-            value={baseUrl}
-            placeholder="https://provider.example/v1 or http://127.0.0.1:1234/v1"
-            onChange={(event) => setBaseUrl(event.target.value)}
-          />
-        </label>
-        {urlError && (
-          <p role="alert" className="error">
-            {urlError}
-          </p>
+    <section className="provider-settings" aria-label={`${label} connection`}>
+      <div className="om-card om-rows">
+        {props.kindSwitch && (
+          <div className="om-row">
+            <div className="om-what">
+              <strong>Where it runs</strong>
+            </div>
+            <div className="om-side">
+              <div className="om-seg" role="group" aria-label="AI connection">
+                {(
+                  [
+                    {
+                      id: "local",
+                      title: "Local server",
+                      note: "Detected on this PC",
+                    },
+                    { id: "api", title: "API service" },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={kind === option.id}
+                    disabled={disabled || selected === NONE}
+                    onClick={() => pickKind(option.id)}
+                  >
+                    <span className="om-seg-t">{option.title}</span>
+                    {option.id === "api" ? (
+                      <span className="om-leaves">Leaves this device</span>
+                    ) : (
+                      <span className="om-seg-s">{option.note}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
-        <label>
-          API key
-          <input
-            ref={password}
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </label>
-        <p className="muted">
-          Keys briefly enter this window, then the OS keychain. Leave empty to
-          keep the saved key at the same URL. Changing a saved connection to a
-          remote URL needs its own key. A remote connection needs a saved key
-          before its models can be refreshed or used. Local HTTP servers must
-          use loopback.
-        </p>
-        <p role="status">
-          {status === "present"
-            ? "API key saved in the OS keychain"
-            : status === "missing"
-              ? isLocalBase(baseUrl)
-                ? "Local server. API key optional."
-                : "No API key saved"
-              : "API key status unavailable"}
-        </p>
-        <div className="panel-actions">
-          <button
-            disabled={disabled || missingFields || urlError !== null}
-            onClick={() => {
-              if (lock.current) return;
-              const key = password.current?.value ?? "";
-              if (password.current) password.current.value = "";
-              void run(() =>
-                save(key ? { kind: "replace", key } : { kind: "keep" }),
-              );
-            }}
-          >
-            Save connection
-          </button>
-          {missingFields && (
-            <span className="muted">Enter a name and a URL.</span>
-          )}
-          <button
-            className="danger"
-            disabled={disabled || !connection || dirty || status !== "present"}
-            onClick={() => {
-              if (password.current) password.current.value = "";
-              void run(() => save({ kind: "remove" }));
-            }}
-          >
-            Remove key
-          </button>
-          {removeReason && <span className="muted">{removeReason}</span>}
-          <button
-            className="danger"
-            disabled={
-              disabled ||
-              !connection ||
-              Object.values(props.settings.provider_assignments).some(
-                (item) => item?.connection_id === connection.id,
-              )
-            }
-            onClick={() =>
-              void run(async () => {
-                if (!connection) return;
-                await publish(
-                  await api.deleteApiConnection(
-                    connection.id,
-                    connection.revision,
-                  ),
-                );
-                setSelected("");
-              })
-            }
-          >
-            Delete connection
-          </button>
+        <div className="om-row">
+          <div className="om-what">
+            <strong>Connection</strong>
+          </div>
+          <div className="om-side">
+            <select
+              aria-label="Saved connection"
+              value={selected}
+              disabled={disabled}
+              onChange={(event) => choose(event.target.value)}
+            >
+              <option value="">New connection</option>
+              {props.settings.saved_connections.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} · {destination(item.base_url)}
+                </option>
+              ))}
+              <option value={NONE}>No connection</option>
+            </select>
+          </div>
         </div>
+        <div className="om-row">
+          <div className="om-what">
+            <strong>Base URL</strong>
+          </div>
+          <div className="om-side">
+            <input
+              aria-label="Base URL"
+              className="om-mono"
+              type="url"
+              value={baseUrl}
+              disabled={disabled || selected === NONE}
+              placeholder={
+                kind === "local"
+                  ? "http://127.0.0.1:1234/v1"
+                  : "https://api.example.com/v1"
+              }
+              onChange={(event) => setBaseUrl(event.target.value)}
+            />
+          </div>
+        </div>
+        <div className="om-row">
+          <div className="om-what">
+            <strong>API key</strong>
+          </div>
+          <div className="om-side">
+            <input
+              aria-label="API key"
+              className="om-mono"
+              ref={password}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={disabled || selected === NONE}
+              onChange={() => setKeyEntered(true)}
+            />
+            {status === "present" ? (
+              <span className="om-saved">Key saved</span>
+            ) : (
+              <span className="om-muted">
+                {isLocalBase(baseUrl) ? "Key optional" : "No key"}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="om-row">
+          <div className="om-what">
+            <strong>Model</strong>
+          </div>
+          <div className="om-side">
+            <input
+              aria-label="Model"
+              className="om-mono"
+              value={model}
+              list="om-provider-models"
+              maxLength={200}
+              disabled={disabled || selected === NONE}
+              onChange={(event) => setModel(event.target.value)}
+            />
+            <datalist id="om-provider-models">
+              {modelsFor(models, props.role).map((item) => (
+                <option key={item.id} value={item.id} />
+              ))}
+            </datalist>
+          </div>
+        </div>
+      </div>
+      <div className="om-card-foot">
         <button
+          type="button"
+          className="om-sm"
+          disabled={!canSave}
+          onClick={() => void save()}
+        >
+          Save
+        </button>
+        <span className="om-spacer" />
+        <button
+          type="button"
+          className="om-ghost om-sm"
           disabled={
             disabled ||
             !connection ||
-            dirty ||
+            connectionDirty ||
             (!isLocalBase(connection.base_url) && status !== "present")
           }
+          title={refreshReason ?? undefined}
           onClick={() =>
             void run(async () => {
               if (!connection) return;
@@ -326,7 +454,6 @@ export function Connections(props: Props) {
               )
                 return;
               setModels(choices);
-              props.onModels(connection.id, choices);
               setNotice(
                 "Model IDs fetched. Compatibility with each task is unverified.",
               );
@@ -335,23 +462,88 @@ export function Connections(props: Props) {
         >
           Refresh models
         </button>
-        {refreshReason && <span className="muted">{refreshReason}</span>}
-        {models.length > 0 && (
-          <ul aria-label="Discovered model IDs">
-            {models.map((item) => (
-              <li key={item.id}>{item.id}</li>
-            ))}
-          </ul>
-        )}
-      </fieldset>
-      <p className="muted">
-        Unassign both tasks before deleting a connection. Saving a connection
-        updates every task that uses it.
-      </p>
+        {refreshReason && <span className="om-muted">{refreshReason}</span>}
+        <Saved show={shown} />
+      </div>
+      <details className="om-more">
+        <summary>More options</summary>
+        <div className="om-more-body">
+          <div className="om-frow">
+            <span>Connection name</span>
+            <input
+              aria-label="Connection name"
+              value={name}
+              maxLength={100}
+              disabled={disabled || selected === NONE}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+          {urlError && (
+            <p role="alert" className="om-error">
+              {urlError}
+            </p>
+          )}
+          {missingFields && <p className="om-muted">Enter a name and a URL.</p>}
+          <div className="om-frow">
+            <span>Saved key</span>
+            <button
+              type="button"
+              className="om-ghost om-sm om-danger"
+              disabled={
+                disabled ||
+                !connection ||
+                connectionDirty ||
+                status !== "present"
+              }
+              title={removeReason ?? undefined}
+              onClick={() => void saveKeyChange({ kind: "remove" })}
+            >
+              Remove key
+            </button>
+          </div>
+          <div className="om-frow">
+            <span>Connection</span>
+            <button
+              type="button"
+              className="om-ghost om-sm om-danger"
+              disabled={
+                disabled ||
+                !connection ||
+                Object.values(props.settings.provider_assignments).some(
+                  (item) => item?.connection_id === connection.id,
+                )
+              }
+              onClick={() =>
+                void run(async () => {
+                  if (!connection) return;
+                  publish(
+                    await api.deleteApiConnection(
+                      connection.id,
+                      connection.revision,
+                    ),
+                  );
+                  setSelected("");
+                })
+              }
+            >
+              Delete connection
+            </button>
+          </div>
+        </div>
+      </details>
+      {models.length > 0 && (
+        <ul className="om-ids" aria-label="Discovered model IDs">
+          {models.map((item) => (
+            <li key={item.id}>
+              <span className="om-mono">{item.id}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       <div ref={outcome}>
-        {notice && <p role="status">{notice}</p>}
+        {notice && <p className="om-muted">{notice}</p>}
         {error && (
-          <p role="alert" className="error">
+          <p role="alert" className="om-error">
             {error}
           </p>
         )}

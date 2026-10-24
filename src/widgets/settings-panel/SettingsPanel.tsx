@@ -1,16 +1,17 @@
 import { useEffect, useState, type KeyboardEvent, type Ref } from "react";
 import { version } from "../../../package.json";
+import { api } from "../../shared/api/api";
 import type {
   AudioDevice,
   AudioDevices,
   ExportOptions,
   KeyStatus,
   MicApp,
-  ProviderModel,
   ProviderRole,
   Settings,
   SttDownloadProgress,
   SttStatus,
+  Theme,
 } from "../../shared/api/api";
 import { displayPath, formatBytes } from "../../entities/meeting";
 import {
@@ -21,76 +22,86 @@ import {
 import { shortcutLabel } from "../../shared/lib/shortcut-label";
 import { tabTarget } from "../../shared/lib/tabs";
 import { ModelLibrary } from "../../features/model-library";
-import { Connections } from "../../features/provider-settings";
-import { RecipeSettings } from "../../features/recipes";
+import { ConnectionEditor } from "../../features/provider-settings";
 import { SummaryTemplates } from "../../features/summary-templates";
-import {
-  TranscriptionSettings,
-  sttDirty,
-  type SttDraft,
-} from "../../features/transcription-settings";
-import { Assignment } from "../../shared/ui/assignment";
+import { TranscriptionSettings } from "../../features/transcription-settings";
 import {
   OpenSettingsButton,
+  resolveSettingsSection,
+  Saved,
   settingsSections,
+  useSaved,
   type AiBlock,
   type OpenSettings,
   type SettingsSection,
+  type SettingsSectionId,
 } from "../../shared/ui/settings-link";
+import "./ui/settings-page.css";
+import {
+  CardFoot,
+  Group,
+  More,
+  Row,
+  Rows,
+  Segmented,
+  Switch,
+  Tip,
+} from "./ui/rows";
 
-export type { SttDraft };
-export { OpenSettingsButton };
+export { OpenSettingsButton, settingsSections };
 export type { AiBlock, OpenSettings, SettingsSection };
 
-/** Shortcut drafts that differ from the saved settings. */
-export const shortcutsDirty = (
-  settings: Settings | null,
-  shortcut: string,
-  stopShortcut: string,
-) =>
-  !!settings &&
-  (shortcut !== settings.pause_shortcut ||
-    stopShortcut !== (settings.stop_shortcut ?? ""));
-
 type Props = {
-  panelRef: Ref<HTMLElement>;
   settings: Settings | null;
   disabled: boolean;
-  shortcut: string;
+  /** Focus hand-back target for the shell; a full page does not need one. */
+  panelRef?: Ref<HTMLElement>;
+  /**
+   * The visible section. Pass it with `onSection` to control the panel (the settings page does);
+   * without it the panel keeps the section itself.
+   */
+  section?: SettingsSection;
+  /** Called with the visible id when the section list is used. */
+  onSection?: (section: SettingsSectionId) => void;
+  /** Section to open before `section` is controlled; old ids are aliases. */
+  initialSection?: SettingsSection;
+  /** Shown in the header and Privacy & about; defaults to the app version. */
+  version?: string;
+  /** Saves the colour theme through api.saveUiPrefs. */
+  onTheme?: (theme: Theme) => void;
+  devices: AudioDevices | null;
+  microphone: string;
+  output: string;
+  onDefaultDevices: (microphone: string, output: string) => void;
+  onRefreshDevices: () => void;
+  /** Saves both global shortcuts; an empty stop shortcut clears it. */
+  onSaveShortcuts: (pause: string, stop: string) => void;
+  processing: ProcessingChoice;
+  onProcessing: (choice: ProcessingChoice) => void;
+  detectionSupported: boolean;
+  onDetection: (enabled: boolean) => void;
+  onDetectionIgnored: (app: MicApp, ignored: boolean) => void;
   stt: SttStatus | null;
   sttProgress: SttDownloadProgress | null;
   installing: boolean;
   onInstallStt: () => void;
   onCancelStt: () => void;
-  keyStatus: Record<ProviderRole, KeyStatus>;
-  onSettings: (settings: Settings) => void;
-  onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
   onSttMode: (mode: Settings["stt_mode"]) => void;
-  onShortcut: (value: string) => void;
-  onClose: () => void;
-  onChooseFolder: () => void;
-  onSaveShortcut: () => void;
-  onExportOptions: (options: ExportOptions) => void;
-  stopShortcut: string;
-  onStopShortcut: (value: string) => void;
-  sttDraft: SttDraft;
-  onStt: (change: Partial<SttDraft>) => void;
-  onSaveStt: () => void;
+  /** Saves a transcription change (language, vocabulary hint or model) immediately. */
+  onSaveStt: (change: {
+    stt_language: string;
+    stt_prompt: string;
+    stt_model: string;
+  }) => void;
   onImported: () => Promise<void>;
-  processing: ProcessingChoice;
-  onProcessing: (choice: ProcessingChoice) => void;
+  onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
+  onSettings: (settings: Settings) => void;
   onSummaryDefault: (template: string) => void;
-  devices: AudioDevices | null;
-  microphone: string;
-  output: string;
-  onDefaultDevices: (microphone: string, output: string) => void;
+  onChooseFolder: () => void;
+  onExportOptions: (options: ExportOptions) => void;
   audioBytes: number | null;
-  detectionSupported: boolean;
-  onDetection: (enabled: boolean) => void;
-  onDetectionIgnored: (app: MicApp, ignored: boolean) => void;
-  onRefreshDevices: () => void;
   onRunSetup: () => void;
-  initialSection?: SettingsSection;
+  onClose: () => void;
 };
 
 const modifierKeys = ["Control", "Shift", "Alt", "Meta"];
@@ -115,12 +126,13 @@ function accelerator(event: KeyboardEvent): string | null {
     .join("+");
 }
 
-function ShortcutField(props: {
+/** The saved chord as key caps, plus a button that captures the next one. */
+function ShortcutCapture(props: {
   label: string;
   value: string;
-  placeholder: string;
   disabled: boolean;
-  onChange: (value: string) => void;
+  optional?: boolean;
+  onCapture: (chord: string) => void;
 }) {
   const [capturing, setCapturing] = useState(false);
   // Set when a key press was refused for lacking a modifier, so the refusal is not silent.
@@ -129,20 +141,20 @@ function ShortcutField(props: {
     setCapturing(false);
     setRefused(false);
   };
+  const keys = props.value ? shortcutLabel(props.value).split("+") : [];
   return (
-    <div className="shortcut-field">
-      <label>
-        {props.label}
-        <input
-          value={props.value}
-          disabled={props.disabled}
-          placeholder={props.placeholder}
-          onChange={(event) => props.onChange(event.target.value)}
-        />
-      </label>
+    <>
+      <span className="om-kbd-row" aria-label={`${props.label} shortcut`}>
+        {keys.length > 0 ? (
+          keys.map((key) => <kbd key={key}>{key}</kbd>)
+        ) : (
+          <span className="om-muted">None</span>
+        )}
+      </span>
       <button
         type="button"
-        aria-label={`Press keys for ${props.label.toLowerCase()}`}
+        className="om-sm"
+        aria-label={`Change ${props.label.toLowerCase()} shortcut`}
         disabled={props.disabled}
         onClick={() => setCapturing(true)}
         onBlur={stopCapturing}
@@ -154,24 +166,32 @@ function ShortcutField(props: {
           if (event.key === "Escape") return stopCapturing();
           const chord = accelerator(event);
           if (chord) {
-            props.onChange(chord);
+            props.onCapture(chord);
             stopCapturing();
           } else if (!modifierKeys.includes(event.key)) {
             setRefused(true);
           }
         }}
       >
-        {capturing ? "Press a key combination…" : "Press keys…"}
+        {capturing ? "Press keys…" : "Change"}
       </button>
+      {props.optional && props.value !== "" && (
+        <button
+          type="button"
+          className="om-ghost om-sm"
+          aria-label={`Clear ${props.label.toLowerCase()} shortcut`}
+          disabled={props.disabled}
+          onClick={() => props.onCapture("")}
+        >
+          Clear
+        </button>
+      )}
       {refused && (
-        <span className="muted" role="status">
+        <span role="status" className="om-muted">
           Add Ctrl or Alt, or use an F-key.
         </span>
       )}
-      {props.value.trim() !== "" && (
-        <p className="muted">Shown as: {shortcutLabel(props.value)}</p>
-      )}
-    </div>
+    </>
   );
 }
 
@@ -185,155 +205,217 @@ function DeviceSelect(props: {
   const missing =
     props.value !== "" && !props.devices.some((d) => d.id === props.value);
   return (
-    <label>
-      {props.label}
-      <select
-        value={props.value}
-        disabled={props.disabled || props.devices.length === 0}
-        onChange={(event) => props.onChange(event.target.value)}
-      >
-        {props.value === "" && <option value="">Choose a device</option>}
-        {missing && <option value={props.value}>Not connected</option>}
-        {props.devices.map((device) => (
-          <option key={device.id} value={device.id}>
-            {device.name}
-          </option>
-        ))}
-      </select>
-    </label>
+    <select
+      aria-label={props.label}
+      value={props.value}
+      disabled={props.disabled || props.devices.length === 0}
+      onChange={(event) => props.onChange(event.target.value)}
+    >
+      {props.value === "" && <option value="">Choose a device</option>}
+      {missing && <option value={props.value}>Not connected</option>}
+      {props.devices.map((device) => (
+        <option key={device.id} value={device.id}>
+          {device.name}
+        </option>
+      ))}
+    </select>
   );
 }
 
-export function SettingsPanel(props: Props) {
-  const { settings, disabled } = props;
-  const [section, setSection] = useState<SettingsSection>(
-    props.initialSection ?? "transcription",
-  );
-  // Catalog models a scan found on disk but that are not imported yet.
-  const [found, setFound] = useState<string[]>([]);
-  const [modelsOpened, setModelsOpened] = useState(false);
-  const [models, setModels] = useState<{
-    connectionId: string;
-    models: ProviderModel[];
-  } | null>(null);
-  // Mounted the first time Models is selected: it scans on mount, and a failure must be visible.
-  // Sticky on purpose: unmounting ModelLibrary cancels an in-flight download.
-  useEffect(() => {
-    if (section === "models") setModelsOpened(true);
-  }, [section]);
-  // Compares the text only; the backend also refuses the same chord spelled in another order.
-  const sameShortcuts =
-    props.stopShortcut.trim() !== "" &&
-    props.stopShortcut.trim().toLowerCase() ===
-      props.shortcut.trim().toLowerCase();
-  const unsaved: Partial<Record<SettingsSection, boolean>> = {
-    recording: shortcutsDirty(settings, props.shortcut, props.stopShortcut),
-    transcription: sttDirty(settings, props.sttDraft),
-  };
-  const panel = (id: SettingsSection) => ({
-    id: `settings-${id}`,
-    role: "tabpanel",
-    "aria-labelledby": `settings-tab-${id}`,
-    hidden: section !== id,
-    className: "settings-page",
-  });
-  const publish = { onSaved: props.onSettings, onKeyStatus: props.onKeyStatus };
-  const devices = (microphone: string, output: string) => {
-    if (microphone && output) props.onDefaultDevices(microphone, output);
-  };
+/** A miniature window drawn with the live tokens, so the theme choice is visible. */
+function ThemePreview() {
   return (
-    <section
-      className="workspace-panel settings"
-      ref={props.panelRef}
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="settings-title"
-    >
-      <div className="panel-heading">
-        <h2 id="settings-title">Settings</h2>
-        <button aria-label="Close panel" onClick={props.onClose}>
-          Close
-        </button>
+    <div className="om-card om-pv" aria-hidden="true">
+      <div className="om-pv-side">
+        <span className="om-pv-mark" />
+        <span className="om-pv-bar om-w80" />
+        <span className="om-pv-bar om-w60" />
+        <span className="om-pv-bar om-w70" />
       </div>
-      <div className="settings-layout">
-        <div
-          role="tablist"
-          aria-label="Settings sections"
-          aria-orientation="vertical"
-          className="settings-nav"
-        >
-          {settingsSections.map(([id, label], index) => (
-            <button
-              key={id}
-              id={`settings-tab-${id}`}
-              role="tab"
-              aria-selected={section === id}
-              aria-controls={`settings-${id}`}
-              tabIndex={section === id ? 0 : -1}
-              onClick={() => setSection(id)}
-              onKeyDown={(event) => {
-                if (event.ctrlKey || event.altKey || event.metaKey) return;
-                const next = tabTarget(
-                  event.key,
-                  index,
-                  settingsSections.length,
-                  true,
-                );
-                if (next === null) return;
-                event.preventDefault();
-                const target = settingsSections[next][0];
-                setSection(target);
-                document.getElementById(`settings-tab-${target}`)?.focus();
-              }}
-            >
-              {label}
-              {unsaved[id] && (
-                <span className="unsaved-mark" title="Unsaved changes">
-                  <span aria-hidden="true"> •</span>
-                  <span className="sr-only"> (unsaved changes)</span>
-                </span>
-              )}
-            </button>
-          ))}
+      <div className="om-pv-main">
+        <div className="om-pv-top">
+          <span className="om-pv-bar om-w40" />
+          <span className="om-pv-pill" />
         </div>
-        <div className="settings-pages">
-          <div {...panel("recording")}>
-            <section className="settings-section" aria-label="Default devices">
-              <h3>Default devices</h3>
-              <p className="muted">
-                New recording starts with these. A device that is not connected
-                is never replaced automatically.
-              </p>
-              <DeviceSelect
-                label="Default microphone"
-                value={settings?.microphone_id ?? ""}
-                devices={props.devices?.microphones ?? []}
-                disabled={disabled}
-                onChange={(id) =>
-                  devices(id, settings?.output_id ?? props.output)
-                }
-              />
-              <DeviceSelect
-                label="Default system audio"
-                value={settings?.output_id ?? ""}
-                devices={props.devices?.outputs ?? []}
-                disabled={disabled}
-                onChange={(id) =>
-                  devices(settings?.microphone_id ?? props.microphone, id)
-                }
-              />
-              <button disabled={disabled} onClick={props.onRefreshDevices}>
-                Refresh devices
-              </button>
-            </section>
-            <section
-              className="settings-section"
-              aria-label="Automatic processing settings"
-            >
-              <h3>Automatic processing</h3>
-              <label>
-                When a recording stops
+        <div className="om-pv-body">
+          <span className="om-pv-bar om-w90" />
+          <span className="om-pv-bar om-w75" />
+          <span className="om-pv-bar om-w60" />
+          <span className="om-pv-cta" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GeneralSection(props: Props) {
+  const { shown, mark } = useSaved();
+  const theme = props.settings?.theme ?? "system";
+  return (
+    <div className="om-pane">
+      <h2>General</h2>
+      <Group
+        label="Appearance"
+        tip="System follows the Windows light or dark setting. OpenMeet switches with it."
+      >
+        <Rows>
+          <Row label="Theme">
+            <Segmented
+              label="Theme"
+              value={theme}
+              disabled={props.disabled || !props.settings}
+              options={[
+                { id: "system", title: "System" },
+                { id: "dark", title: "Dark" },
+                { id: "light", title: "Light" },
+              ]}
+              onChange={(next) => {
+                props.onTheme?.(next);
+                mark();
+              }}
+            />
+            <Saved show={shown} />
+          </Row>
+        </Rows>
+      </Group>
+      <Group label="Preview">
+        <ThemePreview />
+      </Group>
+    </div>
+  );
+}
+
+function RecordingSection(props: Props) {
+  const { settings, disabled } = props;
+  const capture = useSaved();
+  const automation = useSaved();
+  const pause = settings?.pause_shortcut ?? "";
+  const stop = settings?.stop_shortcut ?? "";
+  const sameShortcuts =
+    stop.trim() !== "" &&
+    stop.trim().toLowerCase() === pause.trim().toLowerCase();
+  const automatic = props.processing.mode !== "recording";
+  // Set when a captured chord was refused as the pause shortcut, so the refusal is not silent.
+  const [clash, setClash] = useState(false);
+  const saveShortcuts = (nextPause: string, nextStop: string) => {
+    // The same chord twice is refused here, before it reaches the backend.
+    const same =
+      nextStop.trim() !== "" &&
+      nextStop.trim().toLowerCase() === nextPause.trim().toLowerCase();
+    setClash(same);
+    if (same) return;
+    props.onSaveShortcuts(nextPause, nextStop);
+  };
+  const devices = (microphone: string, output: string) => {
+    if (!microphone || !output) return;
+    props.onDefaultDevices(microphone, output);
+    capture.mark();
+  };
+  const ignored = settings?.detection_ignored ?? [];
+  return (
+    <div className="om-pane">
+      <h2>Recording</h2>
+
+      <Group
+        label="Capture"
+        tip="A device that is not connected is never replaced automatically."
+        saved={capture.shown}
+      >
+        <Rows>
+          <Row label="Microphone">
+            <DeviceSelect
+              label="Default microphone"
+              value={settings?.microphone_id ?? ""}
+              devices={props.devices?.microphones ?? []}
+              disabled={disabled}
+              onChange={(id) =>
+                devices(id, settings?.output_id ?? props.output)
+              }
+            />
+          </Row>
+          <Row label="System audio">
+            <DeviceSelect
+              label="Default system audio"
+              value={settings?.output_id ?? ""}
+              devices={props.devices?.outputs ?? []}
+              disabled={disabled}
+              onChange={(id) =>
+                devices(settings?.microphone_id ?? props.microphone, id)
+              }
+            />
+          </Row>
+        </Rows>
+        <CardFoot>
+          <button
+            type="button"
+            className="om-ghost om-sm"
+            disabled={disabled}
+            onClick={props.onRefreshDevices}
+          >
+            Refresh devices
+          </button>
+        </CardFoot>
+      </Group>
+
+      <Group
+        label="Shortcuts"
+        tip="A shortcut needs Ctrl or Alt, or an F-key on its own. Nothing starts a recording: that always goes through New recording."
+      >
+        <Rows>
+          <Row label="Pause / resume">
+            <ShortcutCapture
+              label="Pause / resume"
+              value={pause}
+              disabled={disabled}
+              onCapture={(chord) => saveShortcuts(chord, stop)}
+            />
+          </Row>
+          <Row label="Stop recording">
+            <ShortcutCapture
+              label="Stop recording"
+              value={stop}
+              disabled={disabled}
+              optional
+              onCapture={(chord) => saveShortcuts(pause, chord)}
+            />
+          </Row>
+        </Rows>
+        {sameShortcuts || clash ? (
+          <p role="alert" className="om-error">
+            Pause and stop can&apos;t use the same shortcut.
+          </p>
+        ) : null}
+      </Group>
+
+      <Group
+        label="Automation"
+        tip="Automatic processing runs after every recording. Meeting detection may only open New recording; it never starts capture."
+        saved={automation.shown}
+      >
+        <Rows>
+          <Row label="Automatic processing">
+            <Switch
+              label="Automatic processing"
+              checked={automatic}
+              disabled={disabled}
+              onChange={(on) => {
+                props.onProcessing({
+                  mode: on ? "final" : "recording",
+                  summary: on
+                    ? (props.processing.summary ?? "general-v1")
+                    : null,
+                });
+                automation.mark();
+              }}
+            />
+          </Row>
+          {automatic && (
+            <div className="om-preview">
+              <span className="om-group-label">When on</span>
+              <div className="om-frow">
+                <span>After stop</span>
                 <select
+                  aria-label="When a recording stops"
                   value={props.processing.mode}
                   disabled={disabled}
                   onChange={(event) =>
@@ -342,7 +424,7 @@ export function SettingsPanel(props: Props) {
                       summary:
                         event.target.value === "final" ||
                         event.target.value === "both"
-                          ? props.processing.summary
+                          ? (props.processing.summary ?? "general-v1")
                           : null,
                     })
                   }
@@ -353,12 +435,13 @@ export function SettingsPanel(props: Props) {
                     </option>
                   ))}
                 </select>
-              </label>
+              </div>
               {(props.processing.mode === "final" ||
                 props.processing.mode === "both") && (
-                <label>
-                  Automatic summary
+                <div className="om-frow">
+                  <span>Summary</span>
                   <select
+                    aria-label="Automatic summary"
                     value={props.processing.summary ?? ""}
                     disabled={disabled}
                     onChange={(event) =>
@@ -378,372 +461,473 @@ export function SettingsPanel(props: Props) {
                       </option>
                     ))}
                   </select>
-                </label>
+                </div>
               )}
-              <p className="muted">
-                Runs after every recording. Audio and text go to the engines and
-                connections set in Transcription and AI notes. If they are not
-                ready, the recording is still kept and processing is skipped
-                with a notice.
-              </p>
-            </section>
-            <section
-              className="settings-section"
-              aria-label="Meeting detection"
-            >
-              <h3>Meeting detection</h3>
-              {props.detectionSupported ? (
-                <>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={settings?.detection_enabled ?? false}
-                      disabled={disabled || !settings}
-                      onChange={(event) =>
-                        props.onDetection(event.target.checked)
-                      }
-                    />
-                    <span>
-                      Offer to record when another app uses the microphone
-                    </span>
-                  </label>
-                  <p className="muted">
-                    Every few seconds OpenMeet asks the system which apps are
-                    using the microphone. It reads app names only, never audio,
-                    and nothing leaves this device. A prompt never starts
-                    recording: it opens New recording for you to start.
-                  </p>
-                  {settings && settings.detection_ignored.length > 0 && (
-                    <ul
-                      className="ignored-apps"
-                      aria-label="Apps never prompted about"
-                    >
-                      {settings.detection_ignored.map((app) => (
-                        <li key={app.id}>
-                          <span title={app.id}>{app.name}</span>
-                          <button
-                            disabled={disabled}
-                            onClick={() => props.onDetectionIgnored(app, false)}
-                          >
-                            Prompt again
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              ) : (
-                <p className="muted">Not available on this platform yet.</p>
-              )}
-            </section>
-            <section
-              className="settings-section"
-              aria-label="Keyboard shortcuts"
-            >
-              <h3>Keyboard shortcuts</h3>
-              <ShortcutField
-                label="Pause / resume shortcut"
-                value={props.shortcut}
-                placeholder="Ctrl+Shift+F9"
-                disabled={disabled}
-                onChange={props.onShortcut}
-              />
-              <ShortcutField
-                label="Stop recording shortcut (optional)"
-                value={props.stopShortcut}
-                placeholder="Leave empty for none"
-                disabled={disabled}
-                onChange={props.onStopShortcut}
-              />
-              <p className="muted">
-                There is no shortcut to start recording: starting always goes
-                through New recording.
-              </p>
-              {sameShortcuts && (
-                <p role="alert" className="error">
-                  Pause and stop can&apos;t use the same shortcut.
-                </p>
-              )}
-              {shortcutsDirty(settings, props.shortcut, props.stopShortcut) && (
+            </div>
+          )}
+          <Row
+            label="Meeting detection"
+            detail={
+              props.detectionSupported
+                ? "Offer to record when an app uses the microphone"
+                : "Not available on this platform yet"
+            }
+          >
+            <Switch
+              label="Meeting detection"
+              checked={settings?.detection_enabled ?? false}
+              disabled={disabled || !settings || !props.detectionSupported}
+              onChange={(on) => {
+                props.onDetection(on);
+                automation.mark();
+              }}
+            />
+          </Row>
+        </Rows>
+        {settings?.detection_enabled && ignored.length > 0 && (
+          <More summary="Never prompt for">
+            <div className="om-frow">
+              <span>Never prompt for</span>
+              <span className="om-tag">
+                {ignored.length} {ignored.length === 1 ? "app" : "apps"}
+              </span>
+            </div>
+            {ignored.map((app) => (
+              <div className="om-appline" key={app.id}>
+                <span title={app.id}>{app.name}</span>
                 <button
-                  disabled={disabled || !props.shortcut.trim() || sameShortcuts}
-                  onClick={props.onSaveShortcut}
+                  type="button"
+                  className="om-ghost om-sm"
+                  disabled={disabled}
+                  onClick={() => props.onDetectionIgnored(app, false)}
                 >
-                  Save shortcuts
+                  Prompt again
                 </button>
-              )}
-            </section>
-          </div>
-          <div {...panel("transcription")}>
-            <TranscriptionSettings
-              settings={settings}
+              </div>
+            ))}
+          </More>
+        )}
+      </Group>
+    </div>
+  );
+}
+
+function ExportSection(props: Props) {
+  const { settings, disabled } = props;
+  const { shown, mark } = useSaved();
+  // The real data folder, read once: the page never guesses it.
+  const [dataFolder, setDataFolder] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void api.dataFolder().then(
+      (value) => {
+        if (live) setDataFolder(value.path);
+      },
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  const copyDataFolder = () => {
+    if (!dataFolder) return;
+    void navigator.clipboard.writeText(dataFolder).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  const choices = settings?.export;
+  const formats = choices?.transcript_formats ?? [];
+  const save = (options: ExportOptions) => {
+    props.onExportOptions(options);
+    mark();
+  };
+  const toggleFormat = (format: "txt" | "srt" | "vtt") => {
+    if (!choices) return;
+    save({
+      ...choices,
+      transcript_formats: formats.includes(format)
+        ? formats.filter((chosen) => chosen !== format)
+        : [...formats, format],
+    });
+  };
+  return (
+    <div className="om-pane">
+      <h2>Export &amp; storage</h2>
+
+      <Group label="Folders">
+        <Rows>
+          <Row
+            label="Export folder"
+            detail={
+              <span className="om-path">
+                {settings?.vault_folder
+                  ? displayPath(settings.vault_folder)
+                  : "Not selected"}
+              </span>
+            }
+          >
+            <button
+              type="button"
+              className="om-sm"
               disabled={disabled}
-              stt={props.stt}
-              sttProgress={props.sttProgress}
-              installing={props.installing}
-              found={found}
-              models={models}
-              sttDraft={props.sttDraft}
-              onStt={props.onStt}
-              onSaveStt={props.onSaveStt}
-              onSttMode={props.onSttMode}
-              onInstallStt={props.onInstallStt}
-              onCancelStt={props.onCancelStt}
-              onSettings={props.onSettings}
-              onKeyStatus={props.onKeyStatus}
-            />
-          </div>
-          <div {...panel("ai")}>
-            <section className="settings-section" aria-label="AI notes">
-              <h3>AI notes</h3>
-              {settings && (
-                <Assignment
-                  role="llm"
-                  settings={settings}
-                  disabled={disabled}
-                  models={models}
-                  {...publish}
-                />
-              )}
-              <label>
-                Default summary template
-                <select
-                  value={settings?.summary_default ?? "general-v1"}
-                  disabled={disabled || !settings}
-                  onChange={(event) =>
-                    props.onSummaryDefault(event.target.value)
-                  }
-                >
-                  {builtinTemplates.map(({ id, label }) => (
-                    <option key={id} value={id}>
-                      {label}
-                    </option>
-                  ))}
-                  {settings?.summary_templates.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </section>
-            <SummaryTemplates
-              settings={settings}
-              disabled={disabled}
-              onSettings={props.onSettings}
-            />
-            <RecipeSettings
-              settings={settings}
-              disabled={disabled}
-              onSettings={props.onSettings}
-            />
-          </div>
-          <div {...panel("connections")}>
-            {settings && (
-              <Connections
-                settings={settings}
-                active={section === "connections"}
-                disabled={disabled}
-                onModels={(connectionId, list) =>
-                  setModels({ connectionId, models: list })
-                }
-                {...publish}
-              />
-            )}
-          </div>
-          <div {...panel("models")}>
-            <section
-              className="settings-section"
-              aria-label="Local model library"
+              onClick={props.onChooseFolder}
             >
-              <h3>Local model library</h3>
-              <p className="muted">
-                Find speech models already on this computer, import them, or
-                search Hugging Face. Nothing is downloaded until you choose it.
-              </p>
-              {modelsOpened && (
-                <ModelLibrary
-                  disabled={disabled}
-                  onImported={props.onImported}
-                  onFound={setFound}
-                  onUse={(path) => props.onStt({ stt_model: path })}
-                />
-              )}
-            </section>
-          </div>
-          <div {...panel("export")}>
-            <section
-              className="settings-section"
-              aria-label="Storage and export settings"
+              Change
+            </button>
+          </Row>
+          <Row
+            label="Data folder"
+            detail={
+              <span className="om-path">
+                {dataFolder ? displayPath(dataFolder) : "Unknown"}
+              </span>
+            }
+          >
+            <button
+              type="button"
+              className="om-ghost om-sm"
+              aria-label="Copy data folder path"
+              disabled={disabled || !dataFolder}
+              onClick={copyDataFolder}
             >
-              <h3>Storage & export</h3>
-              <label>
-                Export folder
-                <output>
-                  {settings?.vault_folder
-                    ? displayPath(settings.vault_folder)
-                    : "Not selected"}
-                </output>
-              </label>
-              <button disabled={disabled} onClick={props.onChooseFolder}>
-                Choose export folder
-              </button>
-              <p className="muted">
-                Audio recordings use{" "}
-                {props.audioBytes === null
-                  ? "an unknown amount of space"
-                  : formatBytes(props.audioBytes)}{" "}
-                on this device.
-              </p>
-              <p className="notice">
-                <strong>OpenMeet doesn&apos;t encrypt files yet.</strong> Anyone
-                who can open these files can read them.
-              </p>
-            </section>
-            {settings && (
-              <fieldset
-                className="export-options settings-section"
-                disabled={disabled}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </Row>
+        </Rows>
+      </Group>
+
+      <Group label="Markdown export" saved={shown}>
+        <Rows>
+          <Row label="Include transcript">
+            <Switch
+              label="Include transcript"
+              checked={choices?.transcript ?? false}
+              disabled={disabled || !choices}
+              onChange={(on) => choices && save({ ...choices, transcript: on })}
+            />
+          </Row>
+          <Row label="Include summary">
+            <Switch
+              label="Include summary"
+              checked={choices?.summary ?? false}
+              disabled={disabled || !choices}
+              onChange={(on) => choices && save({ ...choices, summary: on })}
+            />
+          </Row>
+          <Row label="File name">
+            <select
+              aria-label="File name"
+              value={choices?.filename ?? "title"}
+              disabled={disabled || !choices}
+              onChange={(event) =>
+                choices &&
+                save({
+                  ...choices,
+                  filename:
+                    event.target.value === "date_title"
+                      ? "date_title"
+                      : "title",
+                })
+              }
+            >
+              <option value="title">Meeting title</option>
+              <option value="date_title">Date, then title</option>
+            </select>
+          </Row>
+        </Rows>
+      </Group>
+
+      <Group
+        label="Transcript files"
+        tip="Written beside the Markdown file with the same name. SRT and VTT need timed segments."
+      >
+        <div className="om-card">
+          <div className="om-chips" role="group" aria-label="Transcript files">
+            {(["txt", "srt", "vtt"] as const).map((format) => (
+              <button
+                key={format}
+                type="button"
+                className="om-chip"
+                aria-pressed={formats.includes(format)}
+                aria-label={format.toUpperCase()}
+                disabled={disabled || !choices}
+                onClick={() => toggleFormat(format)}
               >
-                <legend>Markdown export</legend>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={settings.export.summary}
-                    onChange={(event) =>
-                      props.onExportOptions({
-                        ...settings.export,
-                        summary: event.target.checked,
-                      })
-                    }
-                  />
-                  Include summary
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={settings.export.transcript}
-                    onChange={(event) =>
-                      props.onExportOptions({
-                        ...settings.export,
-                        transcript: event.target.checked,
-                      })
-                    }
-                  />
-                  Include transcript
-                </label>
-                <label>
-                  File name
-                  <select
-                    value={settings.export.filename}
-                    onChange={(event) =>
-                      props.onExportOptions({
-                        ...settings.export,
-                        filename:
-                          event.target.value === "date_title"
-                            ? "date_title"
-                            : "title",
-                      })
-                    }
-                  >
-                    <option value="title">Meeting title</option>
-                    <option value="date_title">Date, then meeting title</option>
-                  </select>
-                </label>
-                <fieldset disabled={disabled}>
-                  <legend>Transcript files</legend>
-                  {(["txt", "srt", "vtt"] as const).map((format) => (
-                    <label key={format}>
-                      <input
-                        type="checkbox"
-                        checked={settings.export.transcript_formats.includes(
-                          format,
-                        )}
-                        onChange={(event) =>
-                          props.onExportOptions({
-                            ...settings.export,
-                            transcript_formats: event.target.checked
-                              ? [...settings.export.transcript_formats, format]
-                              : settings.export.transcript_formats.filter(
-                                  (chosen) => chosen !== format,
-                                ),
-                          })
-                        }
-                      />
-                      {format === "txt"
-                        ? "Plain text (.txt)"
-                        : format === "srt"
-                          ? "Subtitles (.srt)"
-                          : "WebVTT (.vtt)"}
-                    </label>
-                  ))}
-                  <p className="muted">
-                    Written next to the Markdown snapshot with the same name.
-                    SRT and VTT need engine timestamps, so a meeting with
-                    untimed segments cannot be exported while either is
-                    selected.
-                  </p>
-                </fieldset>
-                <p className="muted">
-                  Applies to new exports. Earlier snapshots are never renamed or
-                  overwritten.
-                </p>
-              </fieldset>
-            )}
-          </div>
-          <div {...panel("about")}>
-            <section className="settings-section" aria-label="Privacy">
-              <h3>What leaves this device</h3>
-              <ul className="privacy-list">
-                <li>
-                  <strong>Recording and local transcription:</strong> nothing
-                  leaves this device.
-                </li>
-                <li>
-                  <strong>API transcription:</strong> recorded audio, sent to
-                  your speech connection when you transcribe.
-                </li>
-                <li>
-                  <strong>Summaries, questions and rewrites:</strong> notes,
-                  transcript text or the selected text, sent to your AI notes
-                  connection when you use them.
-                </li>
-                <li>
-                  <strong>Meeting detection (off by default):</strong> reads
-                  which apps use the microphone, on this device only.
-                </li>
-                <li>
-                  <strong>Model downloads and searches:</strong> requests to
-                  github.com and huggingface.co. Searches send the words you
-                  type; no meeting content.
-                </li>
-                <li>
-                  <strong>Refreshing models:</strong> your saved key is sent to
-                  that connection to list its models; no meeting content.
-                </li>
-                <li>
-                  <strong>Exports:</strong> files in your export folder, which
-                  may itself be synced by other software.
-                </li>
-              </ul>
-              <p className="muted">
-                Connections marked "This device" use a local server; its own
-                configuration decides whether it forwards requests. API keys are
-                kept in the OS keychain.
-              </p>
-            </section>
-            <section className="settings-section" aria-label="About">
-              <h3>About OpenMeet</h3>
-              <p>Version {version}</p>
-              <button disabled={props.disabled} onClick={props.onRunSetup}>
-                Run setup again
+                {format.toUpperCase()}
               </button>
-              <p className="muted">
-                Recording is still being tested on more computers. Third-party
-                licenses are included with OpenMeet&apos;s source code at
-                github.com/rahuloruganti/OpenMeet.
-              </p>
-            </section>
+            ))}
+          </div>
+        </div>
+      </Group>
+
+      <div className="om-foot-note">
+        <span className="om-mono">
+          {props.audioBytes === null
+            ? "Unknown"
+            : formatBytes(props.audioBytes)}
+        </span>
+        <span>of audio</span>
+        <span>·</span>
+        <span>files are not encrypted</span>
+        <Tip
+          label="Encryption"
+          text="OpenMeet doesn't encrypt files yet. Anyone who can open the export folder can read them. Earlier snapshots are never renamed or overwritten."
+        />
+      </div>
+    </div>
+  );
+}
+
+function AboutSection(props: Props) {
+  return (
+    <div className="om-pane">
+      <h2>Privacy &amp; about</h2>
+
+      <Group
+        label="What leaves this device"
+        tip="Model searches send the words you type to huggingface.co; downloads come from huggingface.co and github.com. No meeting content."
+      >
+        <div className="om-card om-table-card">
+          <table className="om-leaves-table">
+            <tbody>
+              <tr>
+                <th scope="row">Recording audio</th>
+                <td>Never, unless you use cloud speech</td>
+              </tr>
+              <tr>
+                <th scope="row">Transcript text</th>
+                <td>Only to your AI connection, when you use it</td>
+              </tr>
+              <tr>
+                <th scope="row">API keys</th>
+                <td>Windows Credential Manager</td>
+              </tr>
+              <tr>
+                <th scope="row">Model searches</th>
+                <td>huggingface.co; no meeting content</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Group>
+
+      <Group label="About">
+        <Rows>
+          <Row label="Version">
+            <span className="om-mono om-muted">{props.version ?? version}</span>
+          </Row>
+          <Row label="First-run setup">
+            <button
+              type="button"
+              className="om-ghost om-sm"
+              disabled={props.disabled}
+              onClick={props.onRunSetup}
+            >
+              Run setup again
+            </button>
+          </Row>
+          <Row label="Licenses">
+            <span className="om-mono om-muted">THIRD_PARTY_LICENSES.md</span>
+          </Row>
+        </Rows>
+      </Group>
+    </div>
+  );
+}
+
+/** The speech connection card, shown only while the engine is Cloud. */
+function CloudConnection(props: Props & { active: boolean }) {
+  if (!props.settings) return null;
+  return (
+    <ConnectionEditor
+      role="cloud_stt"
+      settings={props.settings}
+      active={props.active}
+      disabled={props.disabled}
+      onSaved={props.onSettings}
+      onKeyStatus={props.onKeyStatus}
+    />
+  );
+}
+
+function TranscriptionSection(props: Props & { active: boolean }) {
+  const settings = props.settings;
+  return (
+    <TranscriptionSettings
+      settings={settings}
+      disabled={props.disabled}
+      stt={props.stt}
+      sttProgress={props.sttProgress}
+      installing={props.installing}
+      onMode={props.onSttMode}
+      onInstall={props.onInstallStt}
+      onCancel={props.onCancelStt}
+      onSave={props.onSaveStt}
+      library={
+        <ModelLibrary
+          disabled={props.disabled}
+          onImported={props.onImported}
+          onUse={(id) =>
+            settings &&
+            props.onSaveStt({
+              stt_language: settings.stt_language,
+              stt_prompt: settings.stt_prompt,
+              stt_model: id,
+            })
+          }
+        />
+      }
+      cloudForm={settings ? <CloudConnection {...props} /> : null}
+    />
+  );
+}
+
+function AiSection(props: Props & { active: boolean }) {
+  return (
+    <div className="om-pane">
+      <h2>AI notes</h2>
+      <Group label="Connection">
+        {props.settings ? (
+          <ConnectionEditor
+            role="llm"
+            settings={props.settings}
+            active={props.active}
+            disabled={props.disabled}
+            kindSwitch
+            onSaved={props.onSettings}
+            onKeyStatus={props.onKeyStatus}
+          />
+        ) : (
+          <p className="om-empty">Settings are still loading.</p>
+        )}
+      </Group>
+      <Group label="Templates">
+        <SummaryTemplates
+          settings={props.settings}
+          disabled={props.disabled}
+          onSettings={props.onSettings}
+          onDefaultTemplate={props.onSummaryDefault}
+        />
+      </Group>
+      <Group label="Tasks">
+        <Rows>
+          <Row label="Where they live" detail="In each meeting's inspector">
+            <Tip
+              label="Tasks"
+              text="Nothing is extracted automatically. Open a meeting's Tasks section to import action items from its summary, or add one by hand."
+            />
+          </Row>
+        </Rows>
+      </Group>
+    </div>
+  );
+}
+
+export function SettingsPanel(props: Props) {
+  // Uncontrolled fallback: without `section` the panel owns the visible section.
+  const [own, setOwn] = useState<SettingsSectionId>(() =>
+    resolveSettingsSection(props.initialSection ?? "general"),
+  );
+  const controlled = props.section !== undefined;
+  const section = controlled
+    ? resolveSettingsSection(props.section as SettingsSection)
+    : own;
+  const pick = (id: SettingsSectionId) => {
+    if (!controlled) setOwn(id);
+    props.onSection?.(id);
+  };
+  // Before the section is controlled, the shell may open the panel again on another one.
+  useEffect(() => {
+    if (!controlled && props.initialSection)
+      setOwn(resolveSettingsSection(props.initialSection));
+  }, [controlled, props.initialSection]);
+  const panel = (id: SettingsSectionId) => ({
+    id: `settings-${id}`,
+    role: "tabpanel" as const,
+    "aria-labelledby": `settings-tab-${id}`,
+    hidden: section !== id,
+  });
+  return (
+    <section
+      className="om-settings"
+      ref={props.panelRef}
+      aria-labelledby="settings-title"
+    >
+      <header className="om-head">
+        <button
+          type="button"
+          className="om-back"
+          aria-label="Back to Meetings"
+          onClick={props.onClose}
+        >
+          ← Meetings
+        </button>
+        <kbd>Esc</kbd>
+        <span className="om-rule" />
+        <h1 id="settings-title">Settings</h1>
+        <span className="om-spacer" />
+        <span className="om-version om-mono">{props.version ?? version}</span>
+      </header>
+      <div className="om-body">
+        <div
+          role="tablist"
+          aria-label="Settings sections"
+          aria-orientation="vertical"
+          className="om-sections"
+        >
+          {settingsSections.map(([id, label], index) => (
+            <button
+              key={id}
+              id={`settings-tab-${id}`}
+              role="tab"
+              aria-selected={section === id}
+              aria-controls={`settings-${id}`}
+              tabIndex={section === id ? 0 : -1}
+              onClick={() => pick(id)}
+              onKeyDown={(event) => {
+                if (event.ctrlKey || event.altKey || event.metaKey) return;
+                const next = tabTarget(
+                  event.key,
+                  index,
+                  settingsSections.length,
+                  true,
+                );
+                if (next === null) return;
+                event.preventDefault();
+                const target = settingsSections[next][0];
+                pick(target);
+                document.getElementById(`settings-tab-${target}`)?.focus();
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="om-main">
+          <div className="om-wrap">
+            <div {...panel("general")}>
+              <GeneralSection {...props} />
+            </div>
+            <div {...panel("recording")}>
+              <RecordingSection {...props} />
+            </div>
+            <div {...panel("transcription")}>
+              <TranscriptionSection
+                {...props}
+                active={section === "transcription"}
+              />
+            </div>
+            <div {...panel("ai")}>
+              <AiSection {...props} active={section === "ai"} />
+            </div>
+            <div {...panel("export")}>
+              <ExportSection {...props} />
+            </div>
+            <div {...panel("about")}>
+              <AboutSection {...props} />
+            </div>
           </div>
         </div>
       </div>

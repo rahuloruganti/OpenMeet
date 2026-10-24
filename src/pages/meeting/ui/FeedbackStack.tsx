@@ -2,7 +2,6 @@ import type {
   MicApp,
   SessionProcessingSnapshot,
 } from "../../../shared/api/api";
-import { ProcessingPanel } from "./ProcessingPanel";
 
 export type FeedbackProps = {
   desktop: boolean;
@@ -19,6 +18,7 @@ export type FeedbackProps = {
   notice: string;
   gapNotice: string;
   healthError: string | null;
+  /** Rendered as one line by the workspace, not here. */
   processing: SessionProcessingSnapshot | null;
   ackError: { meetingId: string; message: string } | null;
   onSetupDetected: (trigger: HTMLButtonElement) => void;
@@ -34,7 +34,7 @@ export type FeedbackProps = {
   onDismissProcessing: () => void;
 };
 
-/** Banners and notices above the workspace: detection, errors, gaps, and processing. */
+/** Banners above the document: detection, errors, notices and audio gaps. */
 export function FeedbackStack(props: FeedbackProps) {
   return (
     <div className="feedback-stack">
@@ -65,16 +65,15 @@ export function FeedbackStack(props: FeedbackProps) {
       )}
       {!props.desktop && (
         <p role="alert">
-          Start OpenMeet with <code>just dev</code> or the OpenMeet.exe build.
-          The browser preview cannot access the desktop database.
+          The browser preview has no database. Start OpenMeet with{" "}
+          <code>just dev</code> or the OpenMeet.exe build.
         </p>
       )}
       {/* Above the action errors, which point at it ("Fix the problem above"). */}
       {props.notesError && (
         <p className="error" role="alert">
           Notes not saved: {props.notesErrorReason}. You can't switch meetings
-          or quit until this is fixed. Copy your text or use Save notes now to
-          retry.
+          until this is fixed. Copy your text or retry.
         </p>
       )}
       {props.error && (
@@ -127,18 +126,6 @@ export function FeedbackStack(props: FeedbackProps) {
         <p className="error" role="alert">
           Audio: {props.healthError}
         </p>
-      )}
-      {props.processing && (
-        <ProcessingPanel
-          processing={props.processing}
-          busy={props.busy}
-          active={props.active}
-          ackError={props.ackError}
-          onAcknowledgeNotes={props.onAcknowledgeNotes}
-          onCancel={props.onCancelProcessing}
-          onRetry={props.onRetryProcessing}
-          onDismiss={props.onDismissProcessing}
-        />
       )}
     </div>
   );

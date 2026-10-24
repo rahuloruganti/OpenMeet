@@ -14,6 +14,7 @@ import os
 import shutil
 import sqlite3
 import stat
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -75,8 +76,10 @@ def _latest_version() -> int:
     return max(_migration_files())
 
 
-def _connect(path: Path, readonly: bool = False) -> sqlite3.Connection:
-    uri = f"file:{path.as_posix()}?mode={'ro' if readonly else 'rw'}"
+def _connect(path: Path, readonly: bool = False, immutable: bool = False) -> sqlite3.Connection:
+    mode = "ro" if readonly else "rw"
+    query = f"?mode={mode}" + ("&immutable=1" if immutable else "")
+    uri = f"file:{path.as_posix()}{query}"
     return sqlite3.connect(uri, uri=True, timeout=5)
 
 
@@ -91,6 +94,72 @@ def _count(db: sqlite3.Connection, table: str) -> int:
     if not _table_exists(db, table):
         return 0
     return int(db.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+
+
+@dataclass
+class SourceSummary:
+    """What the old folder holds. Counts only: no title, note or transcript text is read out."""
+
+    meetings: int = 0
+    audio_files: int = 0
+    audio_bytes: int = 0
+
+
+def _audio_totals(folder: Path) -> tuple[int, int]:
+    """Files and bytes in an audio tree. Read-only: no file, folder or link is created or followed."""
+    if not folder.is_dir():
+        return 0, 0
+    files = 0
+    total = 0
+    pending = [folder]
+    while pending:
+        current = pending.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError:
+            continue
+        for entry in entries:
+            if _is_link(entry):
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                pending.append(Path(entry.path))
+                continue
+            if entry.is_file(follow_symlinks=False):
+                files += 1
+                try:
+                    total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    pass
+    return files, total
+
+
+def read_source_summary(source: Path) -> Optional[SourceSummary]:
+    """Read-only counts for an old data folder, or None when its database cannot be read.
+
+    The database and its `-wal`/`-shm` siblings are copied to a temporary folder and counted
+    there, so rows still sitting in a leftover WAL are counted the same way the import brings
+    them over, and nothing beside the source is created or changed (even a read-only open of the
+    source would write read-marks into its `-shm`).
+    """
+    source = Path(source)
+    if not (source / DB_FILE).is_file():
+        return None
+    with tempfile.TemporaryDirectory(prefix="openmeet-import-peek-") as scratch:
+        try:
+            _copy_database(source, Path(scratch))
+            db = _connect(Path(scratch) / DB_FILE)
+        except (OSError, sqlite3.Error):
+            return None
+        try:
+            if not _table_exists(db, "meetings"):
+                return None
+            summary = SourceSummary(meetings=_count(db, "meetings"))
+        except sqlite3.Error:
+            return None
+        finally:
+            db.close()
+    summary.audio_files, summary.audio_bytes = _audio_totals(source / AUDIO_DIR)
+    return summary
 
 
 def _destination_has_data(dest_data_dir: Path) -> bool:
@@ -509,5 +578,7 @@ __all__ = [
     "ImportRefused",
     "ImportReport",
     "REPORT_FILE",
+    "SourceSummary",
     "import_old_data",
+    "read_source_summary",
 ]

@@ -1,5 +1,4 @@
-import { api, type Recipe, type Settings } from "../../shared/api/api";
-import { SavedTextEditor } from "../../shared/ui/saved-text-editor";
+import type { Recipe } from "../../shared/api/api";
 
 /** Built-in recipes live in code; saved ones come from Settings. */
 export const builtinRecipes: Recipe[] = [
@@ -55,44 +54,5 @@ export function RecipePicker(props: {
         </button>
       ))}
     </div>
-  );
-}
-
-/** Saved recipes in Settings. Built-in recipes stay fixed. */
-export function RecipeSettings({
-  settings,
-  disabled,
-  onSettings,
-}: {
-  settings: Settings | null;
-  disabled: boolean;
-  onSettings: (settings: Settings) => void;
-}) {
-  return (
-    <section className="settings-section" aria-label="Recipes">
-      <h3>Recipes</h3>
-      <p className="muted">
-        Saved questions you can reuse when asking a meeting or several meetings.
-        Choosing one only fills the question box; nothing is sent until you ask.
-        Built in: {builtinRecipes.map((recipe) => recipe.name).join(", ")}.
-      </p>
-      <SavedTextEditor
-        noun="recipe"
-        pickerLabel="Saved recipe"
-        bodyLabel="Question"
-        bodyMax={1000}
-        placeholder="What risks were raised, and who owns each one?"
-        deleted="Recipe deleted."
-        items={(settings?.recipes ?? []).map((recipe) => ({
-          id: recipe.id,
-          name: recipe.name,
-          body: recipe.prompt,
-        }))}
-        locked={disabled || settings === null}
-        onSave={api.saveRecipe}
-        onDelete={api.deleteRecipe}
-        onSettings={onSettings}
-      />
-    </section>
   );
 }

@@ -12,6 +12,7 @@ import { api } from "../shared/api/api";
 import {
   initialSettings,
   chooseProcessing,
+  notInstalled,
   ready,
   installDefaultMocks,
 } from "../shared/test/app-harness";
@@ -22,9 +23,19 @@ vi.mock("../shared/api/api", async (original) =>
 
 beforeEach(installDefaultMocks);
 
+/** Shortcut saves that answer with the values they were given. */
+function mockShortcutSaves() {
+  vi.mocked(api.saveSettings).mockImplementation(async (pause, stop) => ({
+    ...initialSettings,
+    pause_shortcut: pause,
+    stop_shortcut: stop,
+  }));
+}
+
 describe("settings and meeting detection", () => {
   it("supports arrow, Home and End keys across settings sections", async () => {
     await ready();
+    // The meeting page's Settings button opens Transcription.
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     const transcription = screen.getByRole("tab", { name: "Transcription" });
     expect(transcription.getAttribute("aria-selected")).toBe("true");
@@ -36,13 +47,19 @@ describe("settings and meeting detection", () => {
     fireEvent.keyDown(ai, { key: "End" });
     const about = screen.getByRole("tab", { name: "Privacy & about" });
     expect(document.activeElement).toBe(about);
-    expect(screen.getByText(/Version 0.9.0/)).toBeTruthy();
+    const aboutPane = within(
+      screen.getByRole("tabpanel", { name: "Privacy & about" }),
+    );
+    expect(aboutPane.getByText("Version")).toBeTruthy();
+    expect(aboutPane.getByText("0.9.0")).toBeTruthy();
+    // Privacy prose is replaced by the short table of what leaves the device.
+    expect(aboutPane.getByText("What leaves this device")).toBeTruthy();
     fireEvent.keyDown(about, { key: "Home" });
-    const recording = screen.getByRole("tab", { name: "Recording" });
-    expect(document.activeElement).toBe(recording);
+    const general = screen.getByRole("tab", { name: "General" });
+    expect(document.activeElement).toBe(general);
     expect(transcription.getAttribute("tabindex")).toBe("-1");
-    fireEvent.keyDown(recording, { key: "End", ctrlKey: true });
-    expect(recording.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(general, { key: "End", ctrlKey: true });
+    expect(general.getAttribute("aria-selected")).toBe("true");
   });
 
   describe("transcript and audio", () => {
@@ -57,47 +74,89 @@ describe("settings and meeting detection", () => {
     });
 
     it("saves transcription settings and an optional stop shortcut", async () => {
-      vi.mocked(api.saveSttSettings).mockResolvedValue({
-        ...initialSettings,
-        stt_language: "de",
-        stt_prompt: "Okta",
-        stt_model: "base",
+      vi.mocked(api.saveSttSettings).mockImplementation(
+        async (language, prompt, model) => ({
+          ...initialSettings,
+          stt_language: language,
+          stt_prompt: prompt,
+          stt_model: model,
+        }),
+      );
+      vi.mocked(api.sttStatus).mockResolvedValue({
+        ...notInstalled,
+        models: [
+          { id: "base", size: 147_951_465, installed: true },
+          { id: "small", size: 487_601_967, installed: true },
+        ],
       });
-      vi.mocked(api.saveSettings).mockResolvedValue({
-        ...initialSettings,
-        stop_shortcut: "Alt+Shift+S",
-      });
+      mockShortcutSaves();
       await ready();
       await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-      await userEvent.selectOptions(
-        screen.getByLabelText("Available speech models"),
-        "base",
-      );
+      // Each field saves as it changes; none of them is drafted behind a Save.
       await userEvent.selectOptions(
         screen.getByLabelText("Spoken language"),
         "de",
       );
-      await userEvent.type(screen.getByLabelText(/Vocabulary hint/), "Okta");
-      await userEvent.click(
-        screen.getByRole("button", { name: "Save transcription settings" }),
+      expect(api.saveSttSettings).toHaveBeenLastCalledWith("de", "", "small");
+      const pane = within(
+        screen.getByRole("tabpanel", { name: "Transcription" }),
       );
-      expect(api.saveSttSettings).toHaveBeenCalledWith("de", "Okta", "base");
+      await userEvent.click(
+        pane.getByText("More options", { selector: "summary" }),
+      );
+      await userEvent.type(
+        screen.getByRole("textbox", { name: "Vocabulary hint" }),
+        "Okta",
+      );
+      await userEvent.tab();
+      expect(api.saveSttSettings).toHaveBeenLastCalledWith(
+        "de",
+        "Okta",
+        "small",
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Use Whisper base" }),
+      );
+      expect(api.saveSttSettings).toHaveBeenLastCalledWith(
+        "de",
+        "Okta",
+        "base",
+      );
       await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
       expect(
         screen.queryByRole("button", { name: "Save shortcuts" }),
       ).toBeNull();
-      await userEvent.type(
-        screen.getByLabelText("Stop recording shortcut (optional)"),
-        "Alt+Shift+S",
-      );
-      await userEvent.click(
-        screen.getByRole("button", { name: "Save shortcuts" }),
-      );
+      const capture = screen.getByRole("button", {
+        name: "Change stop recording shortcut",
+      });
+      await userEvent.click(capture);
+      fireEvent.keyDown(capture, {
+        key: "S",
+        code: "KeyS",
+        altKey: true,
+        shiftKey: true,
+      });
       expect(api.saveSettings).toHaveBeenCalledWith(
         "CommandOrControl+Shift+Space",
         "Alt+Shift+S",
       );
-      expect(screen.getByText(/no shortcut to start recording/)).toBeTruthy();
+      await waitFor(() =>
+        expect(
+          screen.getByLabelText("Stop recording shortcut").textContent,
+        ).toBe("AltShiftS"),
+      );
+      // An empty stop shortcut is cleared, and nothing can start a recording.
+      await userEvent.click(
+        screen.getByRole("button", { name: "Clear stop recording shortcut" }),
+      );
+      expect(api.saveSettings).toHaveBeenLastCalledWith(
+        "CommandOrControl+Shift+Space",
+        null,
+      );
+      // The explanation now sits behind a real button, not a hover-only glyph.
+      expect(
+        screen.getByRole("button", { name: "More about Shortcuts" }),
+      ).toBeTruthy();
     });
   });
 
@@ -152,11 +211,17 @@ describe("settings and meeting detection", () => {
   });
 
   it("records a shortcut from a key press", async () => {
+    mockShortcutSaves();
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    const engines = within(
+      screen.getByRole("tabpanel", { name: "Transcription" }),
+    );
+    expect(engines.getByRole("group", { name: "Runs" })).toBeTruthy();
+    expect(screen.queryByText("Other engines (not supported yet)")).toBeNull();
     await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
     const capture = screen.getByRole("button", {
-      name: "Press keys for stop recording shortcut (optional)",
+      name: "Change stop recording shortcut",
     });
     await userEvent.click(capture);
     fireEvent.keyDown(capture, {
@@ -170,28 +235,38 @@ describe("settings and meeting detection", () => {
       ctrlKey: true,
       shiftKey: true,
     });
-    expect(
-      screen.getByLabelText("Stop recording shortcut (optional)"),
-    ).toHaveProperty("value", "CommandOrControl+Shift+S");
-    expect(screen.getByRole("button", { name: "Save shortcuts" })).toBeTruthy();
+    expect(api.saveSettings).toHaveBeenCalledWith(
+      "CommandOrControl+Shift+Space",
+      "CommandOrControl+Shift+S",
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Stop recording shortcut").textContent).toBe(
+        "CtrlShiftS",
+      ),
+    );
+    // Only the two supported engines are offered; no list that does nothing.
     expect(screen.queryByText("Other engines (not supported yet)")).toBeNull();
     // Tab still moves focus, and a key without a modifier is not taken.
     await userEvent.click(capture);
     expect(fireEvent.keyDown(capture, { key: "Tab", code: "Tab" })).toBe(true);
     fireEvent.keyDown(capture, { key: "s", code: "KeyS" });
-    expect(
-      screen.getByLabelText("Stop recording shortcut (optional)"),
-    ).toHaveProperty("value", "CommandOrControl+Shift+S");
+    expect(screen.getByLabelText("Stop recording shortcut").textContent).toBe(
+      "CtrlShiftS",
+    );
+    expect(api.saveSettings).toHaveBeenCalledTimes(1);
   });
 
   it("explains a key press refused for lacking a modifier until a chord is accepted", async () => {
+    mockShortcutSaves();
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
     const capture = screen.getByRole("button", {
-      name: "Press keys for stop recording shortcut (optional)",
+      name: "Change stop recording shortcut",
     });
     const hint = "Add Ctrl or Alt, or use an F-key.";
+    const shown = () =>
+      screen.getByLabelText("Stop recording shortcut").textContent;
     await userEvent.click(capture);
     // A lone modifier is part of a chord still being pressed, not a refusal.
     fireEvent.keyDown(capture, {
@@ -202,14 +277,10 @@ describe("settings and meeting detection", () => {
     expect(screen.queryByText(hint)).toBeNull();
     fireEvent.keyDown(capture, { key: "s", code: "KeyS" });
     expect(screen.getByText(hint)).toBeTruthy();
-    expect(
-      screen.getByLabelText("Stop recording shortcut (optional)"),
-    ).toHaveProperty("value", "");
+    expect(shown()).toBe("None");
     fireEvent.keyDown(capture, { key: "F9", code: "F9" });
     expect(screen.queryByText(hint)).toBeNull();
-    expect(
-      screen.getByLabelText("Stop recording shortcut (optional)"),
-    ).toHaveProperty("value", "F9");
+    await waitFor(() => expect(shown()).toBe("F9"));
     // An accepted chord ends capture, so the next refused press needs a new click.
     await userEvent.click(capture);
     fireEvent.keyDown(capture, { key: "s", code: "KeyS" });
@@ -219,23 +290,37 @@ describe("settings and meeting detection", () => {
   });
 
   it("refuses a stop shortcut that matches pause, ignoring case and spacing", async () => {
+    mockShortcutSaves();
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
-    const stop = screen.getByLabelText("Stop recording shortcut (optional)");
-    await userEvent.type(stop, " commandorcontrol+SHIFT+space ");
+    const capture = screen.getByRole("button", {
+      name: "Change stop recording shortcut",
+    });
+    await userEvent.click(capture);
+    // Ctrl+Shift+Space yields the pause chord, so the same chord is refused.
+    fireEvent.keyDown(capture, {
+      key: " ",
+      code: "Space",
+      ctrlKey: true,
+      shiftKey: true,
+    });
     expect(
-      await screen.findByText("Pause and stop can't use the same shortcut."),
+      screen.getByText("Pause and stop can't use the same shortcut."),
     ).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Save shortcuts" }),
-    ).toHaveProperty("disabled", true);
-    await userEvent.clear(stop);
-    await userEvent.type(stop, "Alt+Shift+S");
+    expect(api.saveSettings).not.toHaveBeenCalled();
+    await userEvent.click(capture);
+    fireEvent.keyDown(capture, {
+      key: "S",
+      code: "KeyS",
+      altKey: true,
+      shiftKey: true,
+    });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Save shortcuts" }),
-    ).toHaveProperty("disabled", false);
+    expect(api.saveSettings).toHaveBeenCalledWith(
+      "CommandOrControl+Shift+Space",
+      "Alt+Shift+S",
+    );
   });
 
   it("keeps the old processing default when saving it fails", async () => {
@@ -251,17 +336,18 @@ describe("settings and meeting detection", () => {
     expect(localStorage.getItem("openmeet.automaticProcessing")).not.toBeNull();
   });
 
-  it("scans for local models only once Models is selected, and shows a failed scan", async () => {
+  it("scans for local models only once the model library is opened, and shows a failed scan", async () => {
     vi.mocked(api.scanLocalModels).mockRejectedValue(
       new Error("Model folder unreadable"),
     );
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(api.scanLocalModels).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("tab", { name: "Models" }));
-    expect(
-      screen.getByRole("heading", { name: "Local model library" }),
-    ).toBeTruthy();
+    const pane = within(
+      screen.getByRole("tabpanel", { name: "Transcription" }),
+    );
+    await userEvent.click(pane.getByRole("button", { name: "Get models" }));
+    expect(screen.getByRole("button", { name: "Scan folders" })).toBeTruthy();
     expect(await screen.findByText("Model folder unreadable")).toBeTruthy();
     expect(api.scanLocalModels).toHaveBeenCalledWith(null);
   });
@@ -355,12 +441,16 @@ describe("settings and meeting detection", () => {
       vi.mocked(api.saveDetection).mockResolvedValue(detecting);
       await userEvent.click(screen.getByRole("button", { name: "Settings" }));
       await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
-      await userEvent.click(
-        screen.getByRole("checkbox", {
-          name: "Offer to record when another app uses the microphone",
-        }),
-      );
+      const detection = screen.getByRole("switch", {
+        name: "Meeting detection",
+      });
+      expect(detection.getAttribute("aria-checked")).toBe("false");
+      await userEvent.click(detection);
       expect(api.saveDetection).toHaveBeenCalledWith(true);
+      // Settings is its own full page, so the prompt shows on the meeting page.
+      await userEvent.click(
+        screen.getByRole("button", { name: "Back to Meetings" }),
+      );
       await screen.findByRole("status", { name: "Meeting detected" });
       act(() =>
         vi.mocked(api.onRecordingState).mock.calls[0][0]({
@@ -383,57 +473,64 @@ describe("settings and meeting detection", () => {
       await userEvent.click(screen.getByRole("button", { name: "Settings" }));
       await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
     };
-    const stopShortcut = () =>
-      screen.getByLabelText("Stop recording shortcut (optional)");
+    const stopShortcut = () => screen.getByLabelText("Stop recording shortcut");
+    const settingsPage = () =>
+      screen.queryByRole("heading", { name: "Settings", level: 1 });
 
     it("keeps Settings open when Escape is pressed inside a field", async () => {
       await ready();
       await openRecording();
-      await userEvent.click(stopShortcut());
+      await userEvent.click(screen.getByLabelText("Default microphone"));
       await userEvent.keyboard("{Escape}");
-      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+      expect(settingsPage()).toBeTruthy();
     });
 
-    it("asks before discarding an unsaved shortcut, and keeps Settings open if declined", async () => {
+    it("saves a shortcut at once, so closing never asks to discard it", async () => {
+      mockShortcutSaves();
+      const confirm = vi.spyOn(window, "confirm");
       await ready();
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
       await openRecording();
-      await userEvent.type(stopShortcut(), "Alt+Shift+S");
-      // Focus a button in the panel so Escape is not swallowed by the field.
-      // The tab name gains "(unsaved changes)" once the draft is dirty.
-      await userEvent.click(screen.getByRole("tab", { name: /^Recording/ }));
-      await userEvent.keyboard("{Escape}");
-      expect(confirm).toHaveBeenCalledWith("Discard unsaved settings?");
-      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
-      await userEvent.click(
-        screen.getByRole("button", { name: "Close panel" }),
+      const capture = screen.getByRole("button", {
+        name: "Change stop recording shortcut",
+      });
+      await userEvent.click(capture);
+      fireEvent.keyDown(capture, {
+        key: "S",
+        code: "KeyS",
+        altKey: true,
+        shiftKey: true,
+      });
+      expect(api.saveSettings).toHaveBeenCalledWith(
+        "CommandOrControl+Shift+Space",
+        "Alt+Shift+S",
       );
-      expect(confirm).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole("dialog", { name: "Settings" })).toBeTruthy();
+      await userEvent.keyboard("{Escape}");
+      // Nothing was drafted, so nothing is lost and nothing is asked.
+      expect(settingsPage()).toBeNull();
+      expect(confirm).not.toHaveBeenCalled();
+      await openRecording();
+      expect(stopShortcut().textContent).toBe("AltShiftS");
       confirm.mockRestore();
     });
 
-    it("closes and resets the drafts when the discard is confirmed", async () => {
+    it("closes from the header back button on a clean page without asking", async () => {
       await ready();
-      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+      const confirm = vi.spyOn(window, "confirm");
       await openRecording();
-      await userEvent.type(stopShortcut(), "Alt+Shift+S");
       await userEvent.click(
-        screen.getByRole("button", { name: "Close panel" }),
+        screen.getByRole("button", { name: "Back to Meetings" }),
       );
-      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
-      expect(confirm).toHaveBeenCalledOnce();
-      await openRecording();
-      expect((stopShortcut() as HTMLInputElement).value).toBe("");
+      expect(settingsPage()).toBeNull();
+      expect(confirm).not.toHaveBeenCalled();
       confirm.mockRestore();
     });
 
-    it("closes from the panel body on a clean Escape without asking", async () => {
+    it("closes from the page body on a clean Escape without asking", async () => {
       await ready();
       const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
       await openRecording();
-      await userEvent.keyboard("{Escape}");
-      expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(settingsPage()).toBeNull();
       expect(confirm).not.toHaveBeenCalled();
       confirm.mockRestore();
     });

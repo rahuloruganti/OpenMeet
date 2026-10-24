@@ -15,13 +15,15 @@ $launcher = Join-Path $backend "launcher.py"
 $dist = Join-Path $packaging "dist"
 $work = Join-Path $packaging "build"
 $exe = Join-Path $dist "OpenMeet.exe"
+# App icon (exe, taskbar and window). Rendered from openmeet-icon.svg at 16-256 px.
+$icon = Join-Path $packaging "openmeet.ico"
 
 function Assert-Exit {
     param([string]$Label)
     if ($LASTEXITCODE -ne 0) { throw "$Label failed (exit $LASTEXITCODE)." }
 }
 
-foreach ($required in @($launcher, $migrations, (Join-Path $repo "package.json"))) {
+foreach ($required in @($launcher, $migrations, $icon, (Join-Path $repo "package.json"))) {
     if (-not (Test-Path $required)) { throw "Missing $required." }
 }
 
@@ -45,6 +47,7 @@ try {
     New-Item -ItemType Directory -Force -Path $packaging | Out-Null
     uv run --project backend pyinstaller --noconfirm --clean --onefile --windowed `
         --name OpenMeet `
+        --icon $icon `
         --distpath $dist `
         --workpath $work `
         --specpath $packaging `

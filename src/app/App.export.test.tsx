@@ -152,7 +152,7 @@ describe("export", () => {
       screen.getByRole("tab", { name: "Export & storage" }),
     );
     await userEvent.click(
-      screen.getByRole("checkbox", { name: "Include transcript" }),
+      screen.getByRole("switch", { name: "Include transcript" }),
     );
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: false,
@@ -162,12 +162,10 @@ describe("export", () => {
     });
     await waitFor(() =>
       expect(
-        (
-          screen.getByRole("checkbox", {
-            name: "Include transcript",
-          }) as HTMLInputElement
-        ).checked,
-      ).toBe(false),
+        screen
+          .getByRole("switch", { name: "Include transcript" })
+          .getAttribute("aria-checked"),
+      ).toBe("false"),
     );
     await userEvent.selectOptions(
       screen.getByRole("combobox", { name: "File name" }),
@@ -191,32 +189,33 @@ describe("export", () => {
     await userEvent.click(
       screen.getByRole("tab", { name: "Export & storage" }),
     );
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: "Subtitles (.srt)" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "SRT" }));
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: true,
       summary: true,
       filename: "title",
       transcript_formats: ["srt"],
     });
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: "Plain text (.txt)" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "TXT" }));
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: true,
       summary: true,
       filename: "title",
       transcript_formats: ["srt", "txt"],
     });
-    await userEvent.click(
-      screen.getByRole("checkbox", { name: "Subtitles (.srt)" }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: "SRT" }));
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: true,
       summary: true,
       filename: "title",
       transcript_formats: ["txt"],
     });
+    // The chosen formats stay pressed, so the state is visible after saving.
+    expect(
+      screen.getByRole("button", { name: "TXT" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("button", { name: "SRT" }).getAttribute("aria-pressed"),
+    ).toBe("false");
   });
 });

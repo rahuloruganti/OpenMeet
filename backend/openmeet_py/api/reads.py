@@ -165,7 +165,8 @@ def read_settings(db: sqlite3.Connection) -> Settings:
         "SELECT vault_folder, pause_shortcut, microphone_id, output_id, stt_mode, "
         "export_transcript, export_summary, export_filename, stt_language, stt_prompt, "
         "stt_model, stop_shortcut, summary_instructions, export_transcript_formats, "
-        "processing_mode, processing_summary, summary_default, detection_enabled, setup_done "
+        "processing_mode, processing_summary, summary_default, detection_enabled, setup_done, "
+        "theme, inspector_open "
         "FROM settings WHERE id = 1"
     ).fetchone()
     return {
@@ -197,6 +198,8 @@ def read_settings(db: sqlite3.Connection) -> Settings:
         "detection_enabled": bool(row[17]),
         "detection_ignored": ignored,
         "setup_done": bool(row[18]),
+        "theme": row[19] if row[19] in ("dark", "light") else "system",
+        "inspector_open": bool(row[20]),
     }
 
 

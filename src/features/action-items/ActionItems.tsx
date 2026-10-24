@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { api, errorMessage, type ActionItem } from "../../shared/api/api";
 import { timestampTokens } from "../../shared/lib/timestamps";
+import "./action-items.css";
 
 type Props = {
   meetingId: string;
@@ -13,7 +14,7 @@ type Props = {
   reference?: (token: string) => ReactNode;
 };
 
-/** Editable tasks. Unknown owners and due dates stay empty instead of being guessed. */
+/** Editable tasks for the inspector. Unknown owners and due dates stay empty. */
 export function ActionItems({
   meetingId,
   items,
@@ -53,13 +54,13 @@ export function ActionItems({
   };
   const locked = disabled || busy;
   return (
-    <section className="action-items" aria-label="Tasks">
-      <h3>Tasks</h3>
-      {items.length === 0 && <p className="muted">No tasks yet.</p>}
+    <div className="tasks" role="group" aria-label="Tasks">
+      {items.length === 0 && <p className="insp-empty">No tasks yet</p>}
       <ul>
         {items.map((item) => (
           // Remount on stored changes; a failed save keeps the typed text in place.
           <li
+            className={item.done ? "task is-done" : "task"}
             key={`${item.id}:${item.text}:${item.owner ?? ""}:${item.due_date ?? ""}`}
           >
             <input
@@ -69,63 +70,69 @@ export function ActionItems({
               disabled={locked}
               onChange={(event) => save(item, { done: event.target.checked })}
             />
-            <input
-              aria-label={`Task: ${item.text}`}
-              defaultValue={item.text}
-              maxLength={500}
-              disabled={locked}
-              onBlur={(event) =>
-                event.target.value.trim() !== item.text &&
-                save(item, { text: event.target.value })
-              }
-            />
-            <input
-              aria-label={`Owner: ${item.text}`}
-              placeholder="Unassigned"
-              defaultValue={item.owner ?? ""}
-              maxLength={80}
-              disabled={locked}
-              onBlur={(event) =>
-                event.target.value.trim() !== (item.owner ?? "") &&
-                save(item, { owner: event.target.value || null })
-              }
-            />
-            <input
-              type="date"
-              aria-label={`Due date: ${item.text}`}
-              defaultValue={item.due_date ?? ""}
-              disabled={locked}
-              // Commit on blur: typing a year fires intermediate valid dates.
-              onBlur={(event) =>
-                event.target.value !== (item.due_date ?? "") &&
-                save(item, { due_date: event.target.value || null })
-              }
-            />
-            <span className="muted">
-              {item.source === "summary" ? "From summary" : "Added manually"}
-            </span>
-            {reference &&
-              item.text
-                .split(timestampTokens)
-                .filter((_, index) => index % 2 === 1)
-                .map((token, index) => (
-                  <span key={index}>Source {reference(token)}</span>
-                ))}
+            <div className="task-body">
+              <input
+                className="task-text"
+                aria-label={`Task: ${item.text}`}
+                defaultValue={item.text}
+                maxLength={500}
+                disabled={locked}
+                onBlur={(event) =>
+                  event.target.value.trim() !== item.text &&
+                  save(item, { text: event.target.value })
+                }
+              />
+              <div className="task-meta">
+                <input
+                  className="task-owner"
+                  aria-label={`Owner: ${item.text}`}
+                  placeholder="Unassigned"
+                  defaultValue={item.owner ?? ""}
+                  maxLength={80}
+                  disabled={locked}
+                  onBlur={(event) =>
+                    event.target.value.trim() !== (item.owner ?? "") &&
+                    save(item, { owner: event.target.value || null })
+                  }
+                />
+                <input
+                  type="date"
+                  aria-label={`Due date: ${item.text}`}
+                  defaultValue={item.due_date ?? ""}
+                  disabled={locked}
+                  // Commit on blur: typing a year fires intermediate valid dates.
+                  onBlur={(event) =>
+                    event.target.value !== (item.due_date ?? "") &&
+                    save(item, { due_date: event.target.value || null })
+                  }
+                />
+                <span className="task-src">
+                  {item.source === "summary" ? "Summary" : "Manual"}
+                </span>
+                {reference &&
+                  item.text
+                    .split(timestampTokens)
+                    .filter((_, index) => index % 2 === 1)
+                    .map((token, index) => (
+                      <span key={index}>{reference(token)}</span>
+                    ))}
+              </div>
+            </div>
             <button
+              className="task-del"
               aria-label={`Delete task: ${item.text}`}
-              className="danger"
               disabled={locked}
               onClick={() =>
                 void run(() => api.deleteActionItem(meetingId, item.id))
               }
             >
-              Delete
+              ✕
             </button>
           </li>
         ))}
       </ul>
       <form
-        className="panel-actions"
+        className="task-add"
         onSubmit={(event) => {
           event.preventDefault();
           void run(() =>
@@ -147,12 +154,13 @@ export function ActionItems({
         {summaryId !== null && (
           <button
             type="button"
+            className="task-from-summary"
             disabled={locked}
             onClick={() =>
               void run(() => api.importActionItems(meetingId, summaryId))
             }
           >
-            Add from summary
+            From summary
           </button>
         )}
       </form>
@@ -161,6 +169,6 @@ export function ActionItems({
           {error}
         </p>
       )}
-    </section>
+    </div>
   );
 }

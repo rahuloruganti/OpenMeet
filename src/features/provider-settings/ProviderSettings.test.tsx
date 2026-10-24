@@ -1,10 +1,8 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, type ProviderModel, type Settings } from "../../shared/api/api";
-import { Connections } from "./ProviderSettings";
-import { Assignment } from "../../shared/ui/assignment";
+import { ConnectionEditor } from "./ProviderSettings";
 vi.mock("../../shared/api/api", async (original) => ({
   ...(await original<typeof import("../../shared/api/api")>()),
   api: {
@@ -63,40 +61,17 @@ const settings: Settings = {
   detection_enabled: false,
   detection_ignored: [],
   setup_done: true,
+  theme: "system",
+  inspector_open: true,
 };
-const props = () => ({
-  settings,
+const props = (input: Settings = settings) => ({
+  role: "llm" as const,
+  settings: input,
   active: true,
   disabled: false,
   onSaved: vi.fn(),
   onKeyStatus: vi.fn(),
 });
-/** Connections plus both task assignments, sharing fetched model IDs as Settings does. */
-function Both(input: ReturnType<typeof props>) {
-  const [models, setModels] = useState<{
-    connectionId: string;
-    models: ProviderModel[];
-  } | null>(null);
-  const task = {
-    settings: input.settings,
-    disabled: input.disabled,
-    models,
-    onSaved: input.onSaved,
-    onKeyStatus: input.onKeyStatus,
-  };
-  return (
-    <>
-      <Connections
-        {...input}
-        onModels={(connectionId, list) =>
-          setModels({ connectionId, models: list })
-        }
-      />
-      <Assignment role="llm" {...task} />
-      <Assignment role="cloud_stt" {...task} />
-    </>
-  );
-}
 beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.getSettings).mockResolvedValue(settings);
@@ -104,45 +79,48 @@ beforeEach(() => {
   vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
   vi.mocked(api.saveProviderAssignment).mockResolvedValue(settings);
 });
-it("does not discover automatically and supports local discovery without a key", async () => {
-  vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("missing");
+
+it("lists saved connections by destination and discovers models only on request", async () => {
   vi.mocked(api.listApiConnectionModels).mockResolvedValue([
     { id: "local-model" },
   ]);
-  render(<Both {...props()} />);
+  render(<ConnectionEditor {...props()} />);
   expect(
-    screen.getAllByRole("option", { name: "Local · This device" })[0],
+    screen.getByRole("option", { name: "Local · This device" }),
   ).toBeTruthy();
   expect(
-    screen.getAllByRole("option", { name: "Remote · Leaves this device" })[0],
+    screen.getByRole("option", { name: "Remote · Leaves this device" }),
   ).toBeTruthy();
   expect(api.listApiConnectionModels).not.toHaveBeenCalled();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Saved connection"),
-    "local",
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Refresh models" }),
+    ).toHaveProperty("disabled", false),
   );
   await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
-  await screen.findByText("local-model");
-  expect(api.listApiConnectionModels).toHaveBeenCalledWith("local", 1);
+  await screen.findByText(
+    "Model IDs fetched. Compatibility with each task is unverified.",
+  );
+  expect(api.listApiConnectionModels).toHaveBeenCalledWith("remote", 1);
 });
-it("clears passwords immediately on failed save and reloads partial publications", async () => {
+
+it("clears the typed key at once on a failed save and reloads a partial save", async () => {
   const input = props();
   vi.mocked(api.saveApiConnection).mockRejectedValue(
     new Error("Previous credential cleanup failed."),
   );
-  render(<Both {...input} />);
-  await userEvent.selectOptions(
-    screen.getByLabelText("Saved connection"),
-    "remote",
-  );
+  render(<ConnectionEditor {...input} />);
   const key = screen.getByLabelText("API key");
   await userEvent.type(key, "synthetic-secret");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Save connection" }),
-  );
+  expect(
+    screen.getByRole("button", { name: "Save" }).getAttribute("disabled"),
+  ).toBe(null);
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(key).toHaveProperty("value", "");
-  await screen.findByRole("alert");
-  await waitFor(() => expect(input.onSaved).toHaveBeenCalledWith(settings));
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "Previous credential cleanup failed.",
+  );
+  expect(input.onSaved).toHaveBeenCalledWith(settings);
   expect(api.saveApiConnection).toHaveBeenCalledWith({
     id: "remote",
     name: "Remote",
@@ -151,68 +129,63 @@ it("clears passwords immediately on failed save and reloads partial publications
     expectedRevision: 1,
   });
 });
-it("preserves nonsecret drafts but clears keys when a tab hides and on unmount", async () => {
+
+it("keeps non-secret drafts but clears a typed key when the section hides or unmounts", async () => {
   const input = props();
-  const view = render(<Both {...input} />);
-  await userEvent.type(screen.getByLabelText("Connection name"), "Draft");
+  const view = render(<ConnectionEditor {...input} />);
+  await userEvent.type(screen.getByLabelText("Connection name"), " Draft");
   const key = screen.getByLabelText("API key");
   await userEvent.type(key, "secret");
-  view.rerender(<Both {...input} active={false} />);
+  view.rerender(<ConnectionEditor {...input} active={false} />);
   expect(key).toHaveProperty("value", "");
   expect(screen.getByLabelText("Connection name")).toHaveProperty(
     "value",
-    "Draft",
+    "Remote Draft",
   );
-  view.rerender(<Both {...input} active />);
+  view.rerender(<ConnectionEditor {...input} active />);
   await userEvent.type(key, "secret-again");
   view.unmount();
   expect(key).toHaveProperty("value", "");
 });
-it("saves each task independently even when they share a connection", async () => {
-  render(<Both {...props()} />);
-  await userEvent.clear(screen.getByLabelText("AI notes model ID"));
-  await userEvent.type(
-    screen.getByLabelText("AI notes model ID"),
-    "chat-custom",
+
+it("saves the connection and the task that uses it from one button", async () => {
+  const input = props();
+  render(<ConnectionEditor {...input} />);
+  await userEvent.clear(screen.getByLabelText("Model"));
+  await userEvent.type(screen.getByLabelText("Model"), "chat-custom");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(api.saveProviderAssignment).toHaveBeenCalledWith(
+      "llm",
+      { kind: "assigned", connection_id: "remote", model: "chat-custom" },
+      1,
+    ),
   );
-  await userEvent.selectOptions(
-    screen.getByLabelText("Speech to text connection"),
-    "remote",
-  );
-  await userEvent.type(
-    screen.getByLabelText("Speech to text model ID"),
-    "speech-custom",
-  );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Save speech to text assignment" }),
-  );
-  expect(api.saveProviderAssignment).toHaveBeenLastCalledWith(
-    "cloud_stt",
-    { kind: "assigned", connection_id: "remote", model: "speech-custom" },
-    null,
-  );
-  expect(screen.getByLabelText("AI notes model ID")).toHaveProperty(
-    "value",
-    "chat-custom",
-  );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Save AI notes assignment" }),
-  );
-  expect(api.saveProviderAssignment).toHaveBeenLastCalledWith(
-    "llm",
-    { kind: "assigned", connection_id: "remote", model: "chat-custom" },
-    1,
-  );
+  expect(api.saveApiConnection).not.toHaveBeenCalled();
 });
-it("retains manual assignments after failed discovery and blocks an unsaved destination", async () => {
+
+it("can unassign the task without deleting the connection", async () => {
+  render(<ConnectionEditor {...props()} />);
+  await userEvent.selectOptions(
+    screen.getByLabelText("Saved connection"),
+    "No connection",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(api.saveProviderAssignment).toHaveBeenCalledWith(
+      "llm",
+      { kind: "unassigned" },
+      1,
+    ),
+  );
+  expect(api.deleteApiConnection).not.toHaveBeenCalled();
+});
+
+it("keeps a manual model after a failed discovery and blocks a stale destination", async () => {
   vi.mocked(api.listApiConnectionModels).mockRejectedValue(
     new Error("Discovery unavailable"),
   );
-  render(<Both {...props()} />);
-  await userEvent.selectOptions(
-    screen.getByLabelText("Saved connection"),
-    "remote",
-  );
+  render(<ConnectionEditor {...props()} />);
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Refresh models" }),
@@ -220,10 +193,7 @@ it("retains manual assignments after failed discovery and blocks an unsaved dest
   );
   await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
   await screen.findByText("Discovery unavailable");
-  expect(screen.getByLabelText("AI notes model ID")).toHaveProperty(
-    "value",
-    "saved-model",
-  );
+  expect(screen.getByLabelText("Model")).toHaveProperty("value", "saved-model");
   await userEvent.type(screen.getByLabelText("Base URL"), "/other");
   expect(screen.getByRole("button", { name: "Refresh models" })).toHaveProperty(
     "disabled",
@@ -233,6 +203,7 @@ it("retains manual assignments after failed discovery and blocks an unsaved dest
     screen.getByRole("button", { name: "Delete connection" }),
   ).toHaveProperty("disabled", true);
 });
+
 it("discards discovery from an older connection revision", async () => {
   let finish: (value: ProviderModel[]) => void = () => {};
   vi.mocked(api.listApiConnectionModels).mockReturnValue(
@@ -241,11 +212,7 @@ it("discards discovery from an older connection revision", async () => {
     }),
   );
   const input = props();
-  const view = render(<Both {...input} />);
-  await userEvent.selectOptions(
-    screen.getByLabelText("Saved connection"),
-    "remote",
-  );
+  const view = render(<ConnectionEditor {...input} />);
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Refresh models" }),
@@ -253,7 +220,7 @@ it("discards discovery from an older connection revision", async () => {
   );
   await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
   view.rerender(
-    <Both
+    <ConnectionEditor
       {...input}
       settings={{
         ...settings,
@@ -265,24 +232,14 @@ it("discards discovery from an older connection revision", async () => {
   expect(screen.queryByText("old-model")).toBeNull();
 });
 
-it("clears transient keys and retains assignment drafts after revision-only updates", async () => {
+it("clears a typed key but keeps the model draft after a revision-only update", async () => {
   const input = props();
-  const view = render(<Both {...input} />);
-  await userEvent.selectOptions(
-    screen.getByLabelText("Saved connection"),
-    "remote",
-  );
-  await userEvent.type(
-    screen.getByLabelText("API key"),
-    "synthetic-unsaved-key",
-  );
-  await userEvent.clear(screen.getByLabelText("AI notes model ID"));
-  await userEvent.type(
-    screen.getByLabelText("AI notes model ID"),
-    "keep-this-draft",
-  );
+  const view = render(<ConnectionEditor {...input} />);
+  await userEvent.type(screen.getByLabelText("API key"), "synthetic-key");
+  await userEvent.clear(screen.getByLabelText("Model"));
+  await userEvent.type(screen.getByLabelText("Model"), "keep-this-draft");
   view.rerender(
-    <Both
+    <ConnectionEditor
       {...input}
       settings={{
         ...settings,
@@ -291,53 +248,37 @@ it("clears transient keys and retains assignment drafts after revision-only upda
           ...settings.provider_assignments,
           llm: { connection_id: "remote", model: "saved-model", revision: 2 },
         },
-        llm: {
-          base_url: connection.base_url,
-          model: "saved-model",
-          revision: 2,
-        },
       }}
     />,
   );
   expect(screen.getByLabelText("API key")).toHaveProperty("value", "");
-  expect(screen.getByLabelText("AI notes model ID")).toHaveProperty(
+  expect(screen.getByLabelText("Model")).toHaveProperty(
     "value",
     "keep-this-draft",
   );
 });
-it("brings the save result into view on a long settings page", async () => {
+
+it("brings the save result into view on a long page", async () => {
   const scroll = vi.fn();
   const original = Element.prototype.scrollIntoView;
   Element.prototype.scrollIntoView = scroll;
   try {
     vi.mocked(api.saveApiConnection).mockResolvedValue(settings);
-    render(<Both {...props()} />);
-    await userEvent.selectOptions(
-      screen.getByLabelText("Saved connection"),
-      "remote",
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save connection" }),
-    );
-    await screen.findByText(/Connection saved/);
+    render(<ConnectionEditor {...props()} />);
+    await userEvent.type(screen.getByLabelText("API key"), "synthetic-key");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/Saved on this device/);
     expect(scroll).toHaveBeenCalled();
   } finally {
     Element.prototype.scrollIntoView = original;
   }
 });
 
-it("hides an assignment's save button until it differs and offers fetched model IDs", async () => {
+it("offers fetched model IDs for the task it serves", async () => {
   vi.mocked(api.listApiConnectionModels).mockResolvedValue([
     { id: "fetched-model" },
   ]);
-  render(<Both {...props()} />);
-  expect(
-    screen.queryByRole("button", { name: "Save AI notes assignment" }),
-  ).toBeNull();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Saved connection"),
-    "remote",
-  );
+  render(<ConnectionEditor {...props()} />);
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: "Refresh models" }),
@@ -345,12 +286,44 @@ it("hides an assignment's save button until it differs and offers fetched model 
   );
   await userEvent.click(screen.getByRole("button", { name: "Refresh models" }));
   await screen.findByText("fetched-model");
-  const input = screen.getByLabelText("AI notes model ID") as HTMLInputElement;
+  const input = screen.getByLabelText("Model") as HTMLInputElement;
   expect(
     input.list?.querySelector('option[value="fetched-model"]'),
   ).toBeTruthy();
-  await userEvent.type(input, "-2");
+});
+
+it("starts a new connection on the chosen side of the local/api choice", async () => {
+  const input = props();
+  const view = render(<ConnectionEditor {...input} kindSwitch />);
+  expect(screen.getByRole("group", { name: "AI connection" })).toBeTruthy();
+  expect(api.listApiConnectionModels).not.toHaveBeenCalled();
+  // A local server already exists, so the choice selects it instead of a blank form.
+  await userEvent.click(screen.getByRole("button", { name: /Local server/ }));
+  expect(screen.getByLabelText("Saved connection")).toHaveProperty(
+    "value",
+    "local",
+  );
+  view.unmount();
+  render(
+    <ConnectionEditor
+      {...input}
+      kindSwitch
+      settings={{
+        ...settings,
+        saved_connections: [connection],
+        provider_assignments: { llm: null, cloud_stt: null },
+      }}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: /^Local server/ }));
+  expect(screen.getByLabelText("Base URL")).toHaveProperty("value", "");
+  expect(screen.getByLabelText("Base URL")).toHaveProperty(
+    "placeholder",
+    "http://127.0.0.1:1234/v1",
+  );
   expect(
-    screen.getByRole("button", { name: "Save AI notes assignment" }),
-  ).toBeTruthy();
+    screen
+      .getByRole("button", { name: /^Local server/ })
+      .getAttribute("aria-pressed"),
+  ).toBe("true");
 });

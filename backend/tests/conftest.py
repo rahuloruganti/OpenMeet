@@ -97,6 +97,13 @@ def memory_keyring() -> Iterator[MemoryKeyring]:
 
 
 @pytest.fixture(autouse=True)
+def block_real_old_data(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """No test may read the real %APPDATA%\\dev.openmeet.preview: the helper resolves to a temp path."""
+    base = tmp_path_factory.getbasetemp() / "no-previous-openmeet"
+    monkeypatch.setenv("OPENMEET_OLD_DATA_DIR", str(base))
+
+
+@pytest.fixture(autouse=True)
 def block_real_whisper(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Outside the opt-in real-model test, `import pywhispercpp` fails: no native model can load or download."""
     if request.node.get_closest_marker("real_model"):

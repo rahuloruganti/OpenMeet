@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type Ref } from "react";
 import {
   api,
   type AudioDevices,
+  type ImportStatus,
   type KeyStatus,
   type LocalModel,
   type LocalServer,
@@ -18,12 +19,28 @@ import {
   speechModelLabel,
 } from "../../shared/lib/models";
 import { useTask } from "../../shared/lib/use-task";
-import { destination, publishSettings } from "../../features/provider-settings";
+import { BrandMark } from "../../shared/ui/brand-mark";
+import {
+  baseUrlError,
+  destination,
+  publishSettings,
+} from "../../features/provider-settings";
 
-const steps = ["Welcome", "Transcription", "AI notes", "Devices"] as const;
+/** The wizard's steps, in order; Import appears only when there is something to bring over. */
+type Step = "import" | "transcription" | "ai" | "devices" | "done";
+
+const baseSteps: Step[] = ["transcription", "ai", "devices", "done"];
+
+const stepLabels: Record<Step, string> = {
+  import: "Import",
+  transcription: "Transcription",
+  ai: "AI notes",
+  devices: "Devices",
+  done: "Done",
+};
 
 type Props = {
-  panelRef: Ref<HTMLElement>;
+  panelRef?: Ref<HTMLElement>;
   settings: Settings;
   devices: AudioDevices | null;
   stt: SttStatus | null;
@@ -35,6 +52,10 @@ type Props = {
   onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
   /** The defaults chosen here become New recording's selection. */
   onDevices: (microphone: string, output: string) => void;
+  /** Called after setup is saved; the shell may then hand focus to the workspace. */
+  onSkipSetup?: () => void;
+  onStartMeeting: () => void;
+  onOpenSettings: () => void;
 };
 
 /** Connects a server or API, then picks a model for one task. Keys go straight to the OS
@@ -65,6 +86,8 @@ function ConnectAndPick(props: {
     });
   const shown = modelsFor(models, role, all);
   const assigned = settings.provider_assignments[role];
+  // The same rule Settings applies, so a URL rejected there is rejected here too.
+  const urlError = server ? null : baseUrlError(baseUrl);
 
   const connect = () =>
     run(async () => {
@@ -109,7 +132,7 @@ function ConnectAndPick(props: {
       );
       if (role === "cloud_stt") next = await api.saveSttMode("cloud");
       await publish(next);
-      setNotice(`Using ${model.trim()}. No meeting content was sent.`);
+      setNotice(`Using ${model.trim()}. Nothing was sent.`);
     });
 
   return (
@@ -134,6 +157,11 @@ function ConnectAndPick(props: {
               onChange={(event) => setBaseUrl(event.target.value)}
             />
           </label>
+          {urlError && (
+            <p role="alert" className="error">
+              {urlError}
+            </p>
+          )}
         </>
       )}
       {(!server || server.needs_key) && (
@@ -149,7 +177,12 @@ function ConnectAndPick(props: {
       )}
       {(!server || server.needs_key || models.length === 0) && (
         <button
-          disabled={busy || !baseUrl.trim() || (!server && !name.trim())}
+          disabled={
+            busy ||
+            !baseUrl.trim() ||
+            (!server && !name.trim()) ||
+            urlError !== null
+          }
           onClick={() => void connect()}
         >
           Connect and list models
@@ -206,7 +239,7 @@ function ConnectAndPick(props: {
           )}
         </p>
       )}
-      {busy && <p role="status">Working…</p>}
+      {busy && <p role="status">Connecting…</p>}
       {notice && <p role="status">{notice}</p>}
       {error && (
         <p role="alert" className="error">
@@ -219,11 +252,13 @@ function ConnectAndPick(props: {
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 
-/** First-run setup: where data lives, how to transcribe, AI notes, and default devices.
+/** First-run setup: import, transcription, AI notes, devices, done.
  * Every step can be skipped; Settings → Privacy & about runs it again. */
 export function FirstRunSetup(props: Props) {
   const { settings, stt } = props;
-  const [step, setStep] = useState(0);
+  // Nothing to import is the common case; the step only exists when the check says so.
+  const [incoming, setIncoming] = useState<ImportStatus | null>(null);
+  const [step, setStep] = useState<Step>("transcription");
   const [route, setRoute] = useState<"local" | "api">(
     settings.stt_mode === "cloud" ? "api" : "local",
   );
@@ -233,6 +268,9 @@ export function FirstRunSetup(props: Props) {
   const [auto, setAuto] = useState(false);
   const [microphone, setMicrophone] = useState(settings.microphone_id ?? "");
   const [output, setOutput] = useState(settings.output_id ?? "");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState("");
+  const [importError, setImportError] = useState("");
   const { busy, error, run } = useTask();
   const publish = (next: Settings) =>
     publishSettings(next, {
@@ -242,6 +280,14 @@ export function FirstRunSetup(props: Props) {
 
   useEffect(() => {
     let live = true;
+    api.importStatus().then(
+      (status) => {
+        if (!live) return;
+        setIncoming(status);
+        if (status.available) setStep("import");
+      },
+      () => undefined,
+    );
     api.scanLocalModels(null).then(
       (scan) =>
         live &&
@@ -279,6 +325,13 @@ export function FirstRunSetup(props: Props) {
     );
   }, [props.devices]);
 
+  const steps: Step[] = incoming?.available
+    ? ["import", ...baseSteps]
+    : baseSteps;
+  const index = steps.indexOf(step);
+
+  const go = (next: Step) => setStep(next);
+
   const chooseLocal = (model: string, download: boolean) =>
     run(async () => {
       await api.saveSttSettings(
@@ -290,8 +343,9 @@ export function FirstRunSetup(props: Props) {
       if (download) props.onInstallStt();
     });
 
-  const finish = (skip: boolean) =>
-    run(async () => {
+  const finish = async (skip: boolean) => {
+    let saved = false;
+    await run(async () => {
       if (!skip) {
         if (microphone && output) {
           await api.saveDefaultDevices(microphone, output);
@@ -303,379 +357,579 @@ export function FirstRunSetup(props: Props) {
         );
       }
       await publish(await api.saveSetupDone(true));
+      saved = true;
     });
+    return saved;
+  };
+  const leave = (next: () => void) =>
+    void finish(true).then((saved) => saved && next());
+
+  const importPrevious = () =>
+    void (async () => {
+      setImporting(true);
+      setImportError("");
+      setImportResult("");
+      try {
+        const result = await api.importPrevious();
+        setImportResult(
+          `Imported ${result.meetings} meetings and ${result.transcript_lines} transcript lines.`,
+        );
+      } catch (failure) {
+        setImportError(
+          failure instanceof Error ? failure.message : "The import failed.",
+        );
+      } finally {
+        setImporting(false);
+      }
+    })();
 
   const chat = (servers ?? []).filter((item) => item.kind !== "speech");
   const speechServers = (servers ?? []).filter((item) => item.kind !== "chat");
   const speechConnection = settings.provider_assignments.cloud_stt;
   const localReady = settings.stt_mode === "local" && !!stt?.installed;
+  const recommended = recommendedSpeechModels(settings.stt_language);
+  const primary = recommended[0];
+  const primarySize = stt?.models.find((item) => item.id === primary)?.size;
 
   return (
-    <section
-      className="workspace-panel setup first-run"
-      ref={props.panelRef}
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="first-run-title"
-    >
-      <div className="panel-heading">
-        <h2 id="first-run-title">Set up OpenMeet</h2>
-        <button disabled={busy} onClick={() => void finish(true)}>
-          Skip setup
-        </button>
+    <section className="first-run" ref={props.panelRef}>
+      <div className="first-run-top">
+        <span className="brand">
+          <BrandMark size={18} />
+          openmeet
+        </span>
+        <span className="grow" />
+        {step !== "done" && (
+          <button
+            type="button"
+            className="ghost"
+            disabled={busy}
+            onClick={() => leave(() => props.onSkipSetup?.())}
+          >
+            Skip setup
+          </button>
+        )}
       </div>
-      <ol className="setup-steps" aria-label="Setup steps">
-        {steps.map((label, index) => (
-          <li key={label} aria-current={index === step ? "step" : undefined}>
-            {label}
-          </li>
-        ))}
-      </ol>
+      <div className="wizard">
+        <ol className="wizard-steps" aria-label="Setup steps">
+          {steps.map((name, i) => (
+            <li
+              key={name}
+              aria-current={name === step ? "step" : undefined}
+              className={
+                name === step ? "current" : i < index ? "done" : undefined
+              }
+            >
+              <span>{i + 1}</span>
+              {stepLabels[name]}
+            </li>
+          ))}
+        </ol>
 
-      {step === 0 && (
-        <div>
-          <p>
-            OpenMeet records your microphone and the audio of your other apps,
-            transcribes it, and writes AI notes. Recordings, notes and
-            transcripts stay on this computer, unencrypted, unless you choose an
-            online connection below.
-          </p>
-          <p>
-            <strong>Recording consent is your responsibility.</strong> Tell
-            people when you record them and follow the laws where you and they
-            are.
-          </p>
-        </div>
-      )}
-
-      {step === 1 && (
-        <div>
-          <fieldset className="choice-cards">
-            <legend>How should meetings be transcribed?</legend>
-            <label className="choice-card">
-              <input
-                type="radio"
-                name="setup-route"
-                checked={route === "local"}
-                onChange={() => setRoute("local")}
-              />
-              <span>
-                <strong>On this computer</strong>
-                <span className="muted">
-                  Free and private. Uses a speech model on your CPU.
-                </span>
-              </span>
-            </label>
-            <label className="choice-card">
-              <input
-                type="radio"
-                name="setup-route"
-                checked={route === "api"}
-                onChange={() => setRoute("api")}
-              />
-              <span>
-                <strong>Online connection</strong>
-                <span className="muted">
-                  Audio is uploaded to the connection you choose.
-                </span>
-              </span>
-            </label>
-          </fieldset>
-          {route === "local" ? (
-            <>
-              <h3>Whisper models on this computer</h3>
-              {found === null ? (
-                <p role="status">Looking for installed models…</p>
-              ) : found.length === 0 ? (
-                <p className="muted">No Whisper models found.</p>
-              ) : (
-                <ul
-                  className="setup-list"
-                  aria-label="Installed Whisper models"
+        <div className="wizard-body">
+          {step === "import" && incoming && (
+            <section className="wizard-step" aria-labelledby="setup-import">
+              <h1 id="setup-import">Bring your meetings over</h1>
+              <p className="help">
+                Found meetings from the previous OpenMeet.
+                <span
+                  className="info"
+                  role="img"
+                  aria-label="More about importing"
+                  title="Read-only copy. Nothing is deleted. API keys are not copied."
                 >
-                  {found.map((item) => {
-                    // OpenMeet's own download of the selected pinned model is in use too.
-                    const inUse =
-                      settings.stt_model === item.path ||
-                      (item.model_id === settings.stt_model &&
-                        /dev\.openmeet\.preview[\\/]stt[\\/]models[\\/]/i.test(
-                          item.path,
-                        ));
-                    return (
-                      <li key={item.path}>
-                        <span>
-                          <strong>{fileName(item.path)}</strong>{" "}
-                          <span className="muted">
-                            {formatBytes(item.size)} ·{" "}
-                            {item.model_id
-                              ? `matches pinned ${item.model_id}`
-                              : "custom"}{" "}
-                            · {item.path}
-                          </span>
-                        </span>
-                        <button
-                          disabled={busy || inUse}
-                          // Named only while it reads "Use"; "In use" keeps its visible text.
-                          aria-label={
-                            inUse ? undefined : `Use ${fileName(item.path)}`
-                          }
-                          onClick={() => void chooseLocal(item.path, true)}
-                        >
-                          {inUse ? "In use" : "Use"}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-              <h3>Or download a model</h3>
-              <ul className="setup-list" aria-label="Recommended downloads">
-                {recommendedSpeechModels(settings.stt_language).map(
-                  (id, index) => {
-                    const note =
-                      index === 0
-                        ? "Recommended for this language"
-                        : "Any language, more accurate";
-                    const size = stt?.models.find(
-                      (item) => item.id === id,
-                    )?.size;
-                    return (
-                      <li key={id}>
-                        <span>
-                          <strong>{speechModelLabel(id)}</strong>{" "}
-                          <span className="muted">
-                            {note}
-                            {size ? ` · ${formatBytes(size)}` : ""}
-                          </span>
-                        </span>
-                        <button
-                          disabled={busy || props.installing}
-                          aria-label={
-                            settings.stt_model === id && stt?.installed
-                              ? undefined
-                              : `Download and use ${speechModelLabel(id)}`
-                          }
-                          onClick={() => void chooseLocal(id, true)}
-                        >
-                          {settings.stt_model === id && stt?.installed
-                            ? "In use"
-                            : "Download and use"}
-                        </button>
-                      </li>
-                    );
-                  },
-                )}
-              </ul>
-              {props.sttProgress && (
-                <p role="status">
-                  Downloading {props.sttProgress.stage}:{" "}
-                  {formatBytes(props.sttProgress.downloaded)} /{" "}
-                  {formatBytes(props.sttProgress.total)}
-                </p>
-              )}
-              {localReady && (
-                <p role="status">
-                  Ready: {speechModelLabel(settings.stt_model)} on this
-                  computer.
-                </p>
-              )}
-              {speechServers.length > 0 && (
-                <>
-                  <h3>Speech servers on this computer</h3>
-                  {speechServers.map((server) => (
-                    <details key={server.base_url}>
-                      <summary>
-                        {server.name} · {server.base_url}
-                      </summary>
-                      <ConnectAndPick
-                        role="cloud_stt"
-                        settings={settings}
-                        server={server}
-                        onSettings={props.onSettings}
-                        onKeyStatus={props.onKeyStatus}
-                      />
-                    </details>
-                  ))}
-                </>
-              )}
-            </>
-          ) : (
-            <ConnectAndPick
-              role="cloud_stt"
-              settings={settings}
-              server={null}
-              onSettings={props.onSettings}
-              onKeyStatus={props.onKeyStatus}
-            />
+                  i
+                </span>
+              </p>
+              <div className="card found">
+                <div className="counts">
+                  {incoming.meetings} meetings
+                  <span className="sep">·</span>
+                  {incoming.audio_files} recordings
+                  <span className="sep">·</span>
+                  {formatBytes(incoming.bytes)}
+                </div>
+                <div className="path">{incoming.path}</div>
+                <div className="found-actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={importing || importResult !== ""}
+                    onClick={importPrevious}
+                  >
+                    {importing ? "Importing…" : "Import"}
+                  </button>
+                </div>
+              </div>
+              {importResult && <p role="status">{importResult}</p>}
+              {importError && <p role="alert">{importError}</p>}
+            </section>
           )}
-        </div>
-      )}
 
-      {step === 2 && (
-        <div>
-          <p>
-            AI notes write summaries and answer questions about a meeting. They
-            need a chat model, on this computer or online. You can skip this.
-          </p>
-          {servers === null && (
-            <p role="status">Looking for AI servers on this computer…</p>
+          {step === "transcription" && (
+            <section
+              className="wizard-step"
+              aria-labelledby="setup-transcription"
+            >
+              <h1 id="setup-transcription">How should we transcribe?</h1>
+              <div className="choices">
+                <label className="choice">
+                  <input
+                    type="radio"
+                    className="radio"
+                    name="stt-route"
+                    checked={route === "local"}
+                    onChange={() => {
+                      setRoute("local");
+                    }}
+                  />
+                  <span>
+                    <span className="head">
+                      <strong>On this PC</strong>
+                      <span className="tag">Recommended</span>
+                    </span>
+                    <span className="sub">Private and free</span>
+                  </span>
+                </label>
+                <label className="choice">
+                  <input
+                    type="radio"
+                    className="radio"
+                    name="stt-route"
+                    checked={route === "api"}
+                    onChange={() => {
+                      setRoute("api");
+                    }}
+                  />
+                  <span>
+                    <span className="head">
+                      <strong>Cloud service</strong>
+                      <span className="leaves">Leaves this device</span>
+                    </span>
+                    <span className="sub">Your own API</span>
+                  </span>
+                </label>
+              </div>
+
+              {route === "local" && (
+                <div className="wizard-block">
+                  <div className="pick">
+                    <span className="pick-main">
+                      <span className="pick-name">
+                        {speechModelLabel(primary)}
+                      </span>
+                      {primarySize && (
+                        <span className="pick-meta">
+                          {formatBytes(primarySize)}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="sm"
+                      disabled={busy || props.installing}
+                      onClick={() => void chooseLocal(primary, true)}
+                    >
+                      {settings.stt_model === primary && stt?.installed
+                        ? "In use"
+                        : props.installing
+                          ? "Downloading…"
+                          : "Download"}
+                    </button>
+                  </div>
+                  {props.sttProgress && (
+                    <p className="pick-meta mono" role="status">
+                      Downloading {props.sttProgress.stage}:{" "}
+                      {formatBytes(props.sttProgress.downloaded)} /{" "}
+                      {formatBytes(props.sttProgress.total)}
+                    </p>
+                  )}
+                  {localReady && (
+                    <p className="saved" role="status">
+                      Ready: {speechModelLabel(settings.stt_model)}
+                    </p>
+                  )}
+                  {found !== null && found.length > 0 && (
+                    <details>
+                      <summary>Use a model I already have</summary>
+                      <ul
+                        className="wizard-list"
+                        aria-label="Installed Whisper models"
+                      >
+                        {found.map((item) => {
+                          // OpenMeet's own download of the selected pinned model is in use too.
+                          const inUse =
+                            settings.stt_model === item.path ||
+                            (item.model_id === settings.stt_model &&
+                              /dev\.openmeet\.preview[\\/]stt[\\/]models[\\/]/i.test(
+                                item.path,
+                              ));
+                          return (
+                            <li key={item.path}>
+                              <span className="pick-main">
+                                <span className="pick-name">
+                                  {fileName(item.path)}
+                                </span>
+                                <span className="pick-meta">
+                                  {formatBytes(item.size)} · {item.path}
+                                </span>
+                              </span>
+                              <button
+                                type="button"
+                                className="sm"
+                                disabled={busy || inUse}
+                                aria-label={
+                                  inUse
+                                    ? undefined
+                                    : `Use ${fileName(item.path)}`
+                                }
+                                onClick={() =>
+                                  void chooseLocal(item.path, true)
+                                }
+                              >
+                                {inUse ? "In use" : "Use"}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </details>
+                  )}
+                  <details>
+                    <summary>More models</summary>
+                    <ul
+                      className="wizard-list"
+                      aria-label="Recommended downloads"
+                    >
+                      {recommended.map((id) => {
+                        const size = stt?.models.find(
+                          (item) => item.id === id,
+                        )?.size;
+                        return (
+                          <li key={id}>
+                            <span className="pick-main">
+                              <span className="pick-name">
+                                {speechModelLabel(id)}
+                              </span>
+                              {size && (
+                                <span className="pick-meta">
+                                  {formatBytes(size)}
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              className="sm"
+                              disabled={busy || props.installing}
+                              aria-label={
+                                settings.stt_model === id && stt?.installed
+                                  ? undefined
+                                  : `Download and use ${speechModelLabel(id)}`
+                              }
+                              onClick={() => void chooseLocal(id, true)}
+                            >
+                              {settings.stt_model === id && stt?.installed
+                                ? "In use"
+                                : "Download"}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </details>
+                  {speechServers.length > 0 && (
+                    <details>
+                      <summary>Speech servers on this computer</summary>
+                      {speechServers.map((server) => (
+                        <div key={server.base_url} className="wizard-connect">
+                          <p className="pick-meta">
+                            {server.name} · {server.base_url}
+                          </p>
+                          <ConnectAndPick
+                            role="cloud_stt"
+                            settings={settings}
+                            server={server}
+                            onSettings={props.onSettings}
+                            onKeyStatus={props.onKeyStatus}
+                          />
+                        </div>
+                      ))}
+                    </details>
+                  )}
+                </div>
+              )}
+
+              {route === "api" && (
+                <div className="wizard-fields">
+                  <ConnectAndPick
+                    role="cloud_stt"
+                    settings={settings}
+                    server={null}
+                    onSettings={props.onSettings}
+                    onKeyStatus={props.onKeyStatus}
+                  />
+                </div>
+              )}
+            </section>
           )}
-          {servers !== null && chat.length === 0 && (
-            <p className="muted">
-              No local AI server found. Install Ollama (ollama.com) or LM Studio
-              (lmstudio.ai), start it, and run setup again from Settings.
+
+          {step === "ai" && (
+            <section className="wizard-step" aria-labelledby="setup-ai">
+              <h1 id="setup-ai">
+                AI notes <span className="opt">(optional)</span>
+              </h1>
+              <div className="choices">
+                {chat.map((server) => (
+                  <label className="choice" key={server.base_url}>
+                    <input
+                      type="radio"
+                      className="radio"
+                      name="setup-notes"
+                      aria-label={`${server.name} on this computer`}
+                      checked={notesChoice === server.base_url}
+                      onChange={() => {
+                        setNotesChoice(server.base_url);
+                      }}
+                    />
+                    <span>
+                      <span className="head">
+                        <strong>{server.name}</strong>
+                        <span className="tag">Detected</span>
+                      </span>
+                      <span className="sub">
+                        {server.needs_key
+                          ? "Needs its API key"
+                          : `${server.models.length} model${server.models.length === 1 ? "" : "s"}`}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+                {speechConnection && (
+                  <label className="choice">
+                    <input
+                      type="radio"
+                      className="radio"
+                      name="setup-notes"
+                      checked={notesChoice === "speech"}
+                      onChange={() => {
+                        setNotesChoice("speech");
+                      }}
+                    />
+                    <span>
+                      <span className="head">
+                        <strong>Transcription connection</strong>
+                      </span>
+                      <span className="sub">Same connection, a chat model</span>
+                    </span>
+                  </label>
+                )}
+                <label className="choice">
+                  <input
+                    type="radio"
+                    className="radio"
+                    name="setup-notes"
+                    checked={notesChoice === "api"}
+                    onChange={() => {
+                      setNotesChoice("api");
+                    }}
+                  />
+                  <span>
+                    <span className="head">
+                      <strong>API service</strong>
+                      <span className="leaves">Leaves this device</span>
+                    </span>
+                    <span className="sub">Your own API</span>
+                  </span>
+                </label>
+              </div>
+              {servers !== null && chat.length === 0 && (
+                <p className="help">
+                  No local AI server found. Start Ollama or LM Studio, then
+                  retry.
+                </p>
+              )}
+              {notesChoice && (
+                <div className="wizard-fields">
+                  <ConnectAndPick
+                    key={notesChoice}
+                    role="llm"
+                    settings={settings}
+                    server={
+                      chat.find((item) => item.base_url === notesChoice) ??
+                      (notesChoice === "speech"
+                        ? (() => {
+                            const saved = settings.saved_connections.find(
+                              (item) =>
+                                item.id === speechConnection?.connection_id,
+                            );
+                            return saved
+                              ? {
+                                  name: saved.name,
+                                  base_url: saved.base_url,
+                                  kind: "both" as const,
+                                  needs_key: false,
+                                  models: [],
+                                }
+                              : null;
+                          })()
+                        : null)
+                    }
+                    onSettings={props.onSettings}
+                    onKeyStatus={props.onKeyStatus}
+                  />
+                </div>
+              )}
+              <button
+                type="button"
+                className="skip-now"
+                onClick={() => go("devices")}
+              >
+                Skip for now
+              </button>
+            </section>
+          )}
+
+          {step === "devices" && (
+            <section className="wizard-step" aria-labelledby="setup-devices">
+              <h1 id="setup-devices">Pick your devices</h1>
+              <p className="help">You can change these later.</p>
+              <div className="wizard-fields">
+                <label className="field">
+                  Microphone
+                  <select
+                    value={microphone}
+                    onChange={(event) => setMicrophone(event.target.value)}
+                  >
+                    {!microphone && (
+                      <option value="">No microphone found</option>
+                    )}
+                    {props.devices?.microphones.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  System audio
+                  <select
+                    value={output}
+                    onChange={(event) => setOutput(event.target.value)}
+                  >
+                    {props.devices?.outputs.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="wizard-foot">
+                  <button
+                    type="button"
+                    className="ghost sm"
+                    disabled={busy}
+                    onClick={props.onRefreshDevices}
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={auto}
+                    onChange={(event) => setAuto(event.target.checked)}
+                  />
+                  <span>Transcribe every recording when it stops</span>
+                </label>
+              </div>
+            </section>
+          )}
+
+          {step === "done" && (
+            <section className="wizard-step" aria-labelledby="setup-done">
+              <div className="done">
+                <span className="done-check" aria-hidden="true">
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                    <path
+                      d="M4.5 10.5l3.6 3.6L15.5 6.5"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+                <h1 id="setup-done">You're set</h1>
+              </div>
+            </section>
+          )}
+
+          {error && (
+            <p role="alert" className="error">
+              {error}
             </p>
           )}
-          <fieldset className="choice-cards">
-            <legend>Where should AI notes run?</legend>
-            {chat.map((server) => (
-              <label className="choice-card" key={server.base_url}>
-                <input
-                  type="radio"
-                  name="setup-notes"
-                  checked={notesChoice === server.base_url}
-                  onChange={() => setNotesChoice(server.base_url)}
-                />
-                <span>
-                  <strong>{server.name} on this computer</strong>
-                  <span className="muted">
-                    {server.needs_key
-                      ? "Needs its API key."
-                      : `${server.models.length} model${server.models.length === 1 ? "" : "s"} found.`}
-                  </span>
-                </span>
-              </label>
-            ))}
-            {speechConnection && (
-              <label className="choice-card">
-                <input
-                  type="radio"
-                  name="setup-notes"
-                  checked={notesChoice === "speech"}
-                  onChange={() => setNotesChoice("speech")}
-                />
-                <span>
-                  <strong>The transcription connection</strong>
-                  <span className="muted">Same connection, a chat model.</span>
-                </span>
-              </label>
-            )}
-            <label className="choice-card">
-              <input
-                type="radio"
-                name="setup-notes"
-                checked={notesChoice === "api"}
-                onChange={() => setNotesChoice("api")}
-              />
-              <span>
-                <strong>Another online connection</strong>
-                <span className="muted">
-                  Notes and transcript text are sent to it.
-                </span>
-              </span>
-            </label>
-          </fieldset>
-          {notesChoice && (
-            <ConnectAndPick
-              key={notesChoice}
-              role="llm"
-              settings={settings}
-              server={
-                chat.find((item) => item.base_url === notesChoice) ??
-                (notesChoice === "speech"
-                  ? (() => {
-                      const saved = settings.saved_connections.find(
-                        (item) => item.id === speechConnection?.connection_id,
-                      );
-                      return saved
-                        ? {
-                            name: saved.name,
-                            base_url: saved.base_url,
-                            kind: "both" as const,
-                            needs_key: false,
-                            models: [],
-                          }
-                        : null;
-                    })()
-                  : null)
-              }
-              onSettings={props.onSettings}
-              onKeyStatus={props.onKeyStatus}
-            />
+        </div>
+
+        <div className="wizard-actions">
+          <button
+            type="button"
+            className="ghost"
+            disabled={busy || index <= 0}
+            hidden={index <= 0}
+            onClick={() => go(steps[index - 1])}
+          >
+            ← Back
+          </button>
+          <span className="grow" />
+          {step !== "done" ? (
+            <>
+              <button
+                type="button"
+                className="ghost"
+                disabled={busy}
+                onClick={() => go(steps[index + 1])}
+              >
+                Skip step
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={busy}
+                onClick={() => go(steps[index + 1])}
+              >
+                Continue
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="ghost"
+                disabled={busy}
+                onClick={() =>
+                  void finish(false).then(
+                    (saved) => saved && props.onOpenSettings(),
+                  )
+                }
+              >
+                Open settings
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={busy}
+                onClick={() =>
+                  void finish(false).then(
+                    (saved) => saved && props.onStartMeeting(),
+                  )
+                }
+              >
+                Start a meeting
+              </button>
+            </>
           )}
         </div>
-      )}
-
-      {step === 3 && (
-        <div>
-          <label>
-            Microphone
-            <select
-              value={microphone}
-              onChange={(event) => setMicrophone(event.target.value)}
-            >
-              {!microphone && <option value="">No microphone found</option>}
-              {props.devices?.microphones.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            System audio
-            <select
-              value={output}
-              onChange={(event) => setOutput(event.target.value)}
-            >
-              {props.devices?.outputs.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button disabled={busy} onClick={props.onRefreshDevices}>
-            Refresh devices
-          </button>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={auto}
-              onChange={(event) => setAuto(event.target.checked)}
-            />
-            <span>
-              Transcribe every recording when it stops
-              {settings.provider_assignments.llm ? ", then summarize it" : ""}
-            </span>
-          </label>
-        </div>
-      )}
-
-      {error && (
-        <p role="alert" className="error">
-          {error}
-        </p>
-      )}
-      <div className="panel-actions">
-        {step > 0 && (
-          <button disabled={busy} onClick={() => setStep(step - 1)}>
-            Back
-          </button>
-        )}
-        {step < steps.length - 1 ? (
-          <button className="primary" onClick={() => setStep(step + 1)}>
-            Next
-          </button>
-        ) : (
-          <button
-            className="primary"
-            disabled={busy}
-            onClick={() => void finish(false)}
-          >
-            Finish
-          </button>
-        )}
       </div>
     </section>
   );

@@ -261,12 +261,12 @@ one module, `src/shared/api/transport.ts`; there is no desktop-shell bridge and 
 
 ## Console redesign
 
-The UI is a dark "Console" restyle: dark by default with an amber accent, a light palette that follows
-the OS (`prefers-color-scheme`), tighter density, monospace small labels, a 300 px sidebar with flat
-two-line rows, and a `color-scheme` meta tag. Contrast was measured (control borders 3.8:1, text 6.1:1
-or better, accent button 10.3:1 dark and 6.4:1 light). Known rough edges, not blockers: default
-buttons are 30 px and compact ones 28 px, below the 32 px tap target used earlier; sidebar meeting
-titles are single-line ellipsis.
+The UI is a flat "Console" restyle: monospace small labels, an amber accent and a 300 px sidebar
+with flat two-line rows. **Settings → General → Theme** offers **System**, **Dark** and **Light**.
+**System** is the default and follows the OS; the choice is stored in the database
+(`settings.theme`), not webview storage, and applied through `data-theme` on the document root. The
+same settings row keeps the meeting inspector's open state (`settings.inspector_open`). Known rough
+edge, not a blocker: compact controls are 28 px, below the 32 px control height.
 
 ## Build, run and check
 
@@ -393,7 +393,7 @@ Confirmed by listing `backend/openmeet_py/` on 2026-10-23.
 | --- | --- |
 | `app.py` | Entry point: uvicorn thread, pywebview window, CLI flags (`--smoke`, `--check-*-import`, `--data-dir`) |
 | `paths.py` | Data folder (`%APPDATA%\OpenMeetPy`), audio and export paths |
-| `migrations/` | 29 numbered SQL migrations, taken from the earlier code base |
+| `migrations/` | 30 numbered SQL migrations, taken from the earlier code base |
 | `api/server.py` | FastAPI app: `/api/invoke/{cmd}`, `/ws`, `/files`, `index.html` with the per-launch token, host check, shutdown |
 | `api/commands.py` | Command registry and the meeting, note and settings handlers |
 | `api/recording.py` | Recording commands: devices, start, pause, resume, stop, state, delete, recover, seeking, usage |

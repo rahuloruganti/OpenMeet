@@ -4,7 +4,7 @@ Version 0.9.0 is a Python-only rebuild and is not released. This page says what 
 
 ## Current boundary
 
-The application is a FastAPI backend (`backend/openmeet_py`, split into `api`, `audio`, `domain`, `infra`, `platform` and `speech`) serving a React 19 UI from `backend/web` inside a pywebview window, packaged as one unsigned `OpenMeet.exe`. Storage is SQLite with 29 append-only migrations in `backend/openmeet_py/migrations`. Every command the UI calls is implemented; the placeholder 501 table is empty.
+The application is a FastAPI backend (`backend/openmeet_py`, split into `api`, `audio`, `domain`, `infra`, `platform` and `speech`) serving a React 19 UI from `backend/web` inside a pywebview window, packaged as one unsigned `OpenMeet.exe`. Storage is SQLite with 30 append-only migrations in `backend/openmeet_py/migrations`. Every command the UI calls is implemented; the placeholder 501 table is empty.
 
 The qualification gap is unchanged and is the important part: **audio capture, local and cloud transcription, global shortcuts, meeting detection and Windows credential storage have been exercised only with fakes, stubs, synthetic audio and stub HTTP servers.** None of them has been qualified on real hardware in this build. [Phase 7](phase-7-hardware-qualification.md) is the checklist for closing that, and it has not been run.
 
@@ -28,10 +28,14 @@ The qualification gap is unchanged and is the important part: **audio capture, l
 | Tasks: manual entry, import from summary, export | Yes | Backend tests | Low risk; unqualified in the window |
 | Markdown export with optional TXT/SRT/VTT, non-overwriting snapshots | Yes | Backend tests with temp folders | Unqualified against a real export folder |
 | First-run setup and local server detection | Yes | Stub HTTP on loopback | **Unqualified** against real local servers |
+| UI pages and navigation: meetings home, full-page Settings, full-page Ask, full-screen first-run setup, New recording dialog | Yes, `src/pages/` and `src/widgets/` | Frontend tests with mocked transport | Unqualified in the packaged window |
+| Command palette and keyboard shortcuts (`Ctrl+K`, `Ctrl+N`, `Ctrl+Shift+N`, `Ctrl+Shift+A`, `Ctrl+,`, `Ctrl+E`, `F2`, `Ctrl+I`) | Yes | Frontend tests dispatch the key events | Unqualified in the packaged window; no real keyboard or WebView2 run |
+| Settings sections with autosave, templates list, and meeting inspector (Details, Tasks, Devices) | Yes | Frontend tests with mocked transport | Unqualified in the packaged window |
+| UI preferences: theme and inspector state in SQLite (`030_ui_prefs.sql`) | Yes | Backend tests with a temp data folder; frontend tests | Unqualified in the packaged window |
 | Automatic processing default (live/final/summary) and retry | Yes | Fake capture + stub HTTP, stepped by tests | **Unqualified** end to end |
 | Global shortcuts (pause `Ctrl+Shift+F9`, stop `Ctrl+Shift+F10`) | Yes, `RegisterHotKey` | Fake Win32 message pump | **Unqualified**: registration on a real desktop, chord conflicts and behaviour while another app is focused are open |
 | Meeting detection (Windows microphone privacy store, 3 s poll, two-poll debounce) | Yes | Fake consent registry | **Unqualified** on a real call |
-| Import of an earlier build's data folder (`--import-from`) | Yes: `backend/openmeet_py/infra/importer.py`, invoked from `app.py` | Backend tests with synthetic data; one run from a copy of a real earlier folder into a scratch destination (16 meetings, 46 audio files, schema 28 to 29) | **Not run into the real `%APPDATA%\OpenMeetPy`**; the source is read-only, refusals, secret blanking and rollback are tested |
+| Import of an earlier build's data folder (`--import-from`, or **Import** in first-run setup) | Yes: `backend/openmeet_py/infra/importer.py`, invoked from `app.py` and from `api/import_commands.py` (`import_status`, `import_previous`) | Backend tests with synthetic data; one run from a copy of a real earlier folder into a scratch destination (16 meetings, 46 audio files, schema 28 to 29) | **Not run into the real `%APPDATA%\OpenMeetPy`**; the source is read-only, refusals, secret blanking and rollback are tested |
 | Local server boundary: loopback bind, per-run token, `Host` check, `/files` scoping | Yes | Backend tests, including token and `Host` refusal and the `/files` database refusal | Needs an independent end-to-end boundary review; not an audit |
 | One-file `OpenMeet.exe` build (`packaging/build.ps1`) | Yes | Build script only | Not installed or launched on a clean machine |
 

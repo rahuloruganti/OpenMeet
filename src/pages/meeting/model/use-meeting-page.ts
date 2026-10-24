@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ComponentProps,
   type RefObject,
 } from "react";
 import {
@@ -23,6 +24,7 @@ import {
   type SummaryVersion,
 } from "../../../shared/api/api";
 import { createNoteWriter } from "../../../features/note-writer";
+import { LibraryQuestion } from "../../../widgets/library-question";
 import type {
   ContentTab,
   SegmentDraft,
@@ -68,9 +70,9 @@ export type MeetingPageEnv = {
   panel: Panel;
   openPanel: (next: Exclude<Panel, null>, trigger: HTMLButtonElement) => void;
   closePanel: () => void;
-  openLibrary: (trigger: HTMLButtonElement) => void;
+  /** Ask across meetings: the full page (or the library panel in the preview). */
+  openAsk: (trigger: HTMLButtonElement) => void;
   openSettings: OpenSettings;
-  libraryOpened: boolean;
   panelRef: RefObject<HTMLElement | null>;
   workspaceRef: RefObject<HTMLElement | null>;
   focusWorkspace: () => void;
@@ -368,14 +370,13 @@ export function useMeetingPage(env: MeetingPageEnv) {
   const llmBlocked = !settings?.llm
     ? {
         message:
-          "AI notes aren't set up yet. Choose a connection and a model in Settings → AI notes. A server on this computer needs no key.",
+          "AI notes aren't set up. Choose a connection in Settings → AI notes.",
         section: "ai" as const,
       }
     : !isLocalBase(settings.llm.base_url) && keyStatus.llm !== "present"
       ? {
-          message:
-            "The AI notes connection needs an API key. Add it under Settings → Connections.",
-          section: "connections" as const,
+          message: "Add the AI notes API key in Settings → AI notes.",
+          section: "ai" as const,
         }
       : !settings.llm.model
         ? {
@@ -407,6 +408,19 @@ export function useMeetingPage(env: MeetingPageEnv) {
   const collapseIfNarrow = () => {
     if (window.matchMedia?.(narrowWindowQuery).matches) setSidebarOpen(false);
   };
+  // The inspector's open state lives in settings, so it survives a restart.
+  const inspectorOpen = settings?.inspector_open;
+  const toggleInspector = () => {
+    if (!settings) return;
+    void api
+      .saveUiPrefs(settings.theme ?? "system", !settings.inspector_open)
+      .then(setSettings, report);
+  };
+  // With meetings but nothing open, the most recent one opens; startup is App's own call.
+  useEffect(() => {
+    if (!ready || selected || meetings.length === 0) return;
+    void openMeeting(meetings[0].id).catch(report);
+  }, [ready, selected, meetings, openMeeting, report]);
   const newNote = () =>
     void run(async () => {
       await writer.current?.flush();
@@ -443,6 +457,25 @@ export function useMeetingPage(env: MeetingPageEnv) {
     if (processing) void acknowledgeNotes(processing, retry);
   };
 
+  /** Ask across meetings is a full page now; the shell renders it from these props. */
+  const ask: ComponentProps<typeof LibraryQuestion> = {
+    panelRef: panel === "library" ? env.panelRef : null,
+    meetings,
+    recipes: settings?.recipes ?? [],
+    connectionRevision: `${settings?.llm?.revision ?? 0}`,
+    llmBlocked,
+    onOpenSettings: openSettings,
+    disabled,
+    onClose: closePanel,
+    onOpen: (id, ms) =>
+      void run(async () => {
+        await openMeeting(id);
+        if (selectedIdRef.current !== id) return;
+        closePanel();
+        setPendingJump({ meetingId: id, ms });
+      }),
+  };
+
   const pageProps: MeetingPageProps = {
     sidebarOpen,
     panel,
@@ -461,7 +494,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
       onSearch: setSearch,
       onNewRecording: (trigger) => openPanel("setup", trigger),
       onSettings: (trigger) => openSettings("transcription", trigger),
-      onLibrary: env.openLibrary,
+      onAsk: env.openAsk,
       onOpenMeeting: (id) =>
         void run(async () => {
           await openMeeting(id);
@@ -562,32 +595,16 @@ export function useMeetingPage(env: MeetingPageEnv) {
         }));
       },
     },
-    library: env.libraryOpened
-      ? {
-          hidden: panel !== "library",
-          panelRef: panel === "library" ? env.panelRef : null,
-          meetings,
-          recipes: settings?.recipes ?? [],
-          connectionRevision: `${settings?.llm?.revision ?? 0}`,
-          llmBlocked,
-          onOpenSettings: openSettings,
-          disabled,
-          onClose: closePanel,
-          onOpen: (id, ms) =>
-            void run(async () => {
-              await openMeeting(id);
-              if (selectedIdRef.current !== id) return;
-              closePanel();
-              setPendingJump({ meetingId: id, ms });
-            }),
-        }
-      : null,
     workspace: {
       pendingJump,
       onJumpDone: () => setPendingJump(null),
-      hidden: panel !== null || env.firstRun,
+      hidden: panel === "settings" || panel === "library" || env.firstRun,
       selected,
       firstRun: ready && meetings.length === 0,
+      onStartRecording: (trigger) => openPanel("setup", trigger),
+      onNewNote: newNote,
+      inspectorOpen,
+      onToggleInspector: toggleInspector,
       job: env.job,
       processing:
         processing &&
@@ -596,7 +613,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
           : null,
       speechReady: env.speechReady,
       sttMode: settings?.stt_mode ?? "local",
-      connectionRevision: `${settings?.llm?.revision ?? 0}:${settings?.cloud_stt?.revision ?? 0}`,
       enhanceBlocked,
       llmBlocked,
       onOpenSettings: openSettings,
@@ -664,7 +680,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
           await api.generateSummary(id, template);
           await finishJob(id);
           setNotice(
-            "Summary generated and saved. Only notes and transcript text were sent to your selected connection.",
+            "Summary saved. Only notes and transcript text were sent to your connection.",
           );
         });
       },
@@ -672,7 +688,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
       customTemplates: settings?.summary_templates ?? [],
       defaultTemplate: settings?.summary_default ?? "general-v1",
       recipes: settings?.recipes ?? [],
-      summaryInstructions: settings?.summary_instructions ?? "",
       summaryDraft: selected ? summaryDrafts[selected.meeting.id] : undefined,
       onSummaryDraft: (draft) => {
         if (selected) setSummaryDraft(selected.meeting.id, draft);
@@ -789,7 +804,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
           if (!selected) return;
           if (!settings?.vault_folder) {
             setNotice(
-              "Choose a folder for exported Markdown files. OpenMeet remembers it; change it later in Settings → Export & storage.",
+              "Choose a folder for exported Markdown files. You can change it in Settings.",
             );
             const updated = await api.chooseVaultFolder();
             setSettings(updated);
@@ -821,10 +836,10 @@ export function useMeetingPage(env: MeetingPageEnv) {
           setNotes("");
           setNotesStatus("saved");
           setNotesError("");
-          const list = await refreshList();
-          if (list[0]) await openMeeting(list[0].id);
+          // The selection effect opens the most recent remaining meeting.
+          await refreshList();
           setNotice(
-            "Meeting deleted from this device. Exported Markdown snapshots were not touched.",
+            "Meeting deleted from this device. Exported Markdown was not touched.",
           );
         });
       },
@@ -860,7 +875,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
           await api.recoverAudio(id);
           await finishJob(id);
           setNotice(
-            "Recovered audio saved as new copies. The original files were left unchanged.",
+            "Recovered audio saved as new copies; the originals are unchanged.",
           );
         });
       },
@@ -921,6 +936,8 @@ export function useMeetingPage(env: MeetingPageEnv) {
     refreshMeeting,
     refreshSelected,
     selectedMeetingId,
+    /** Opens or closes the inspector; the shell wires Ctrl+I to this. */
+    toggleInspector,
     writeNotes: async () => {
       await writer.current?.flush();
     },
@@ -928,5 +945,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
     unsavedEdits,
     notesStatus,
     pageProps,
+    ask,
   };
 }

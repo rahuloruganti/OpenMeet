@@ -28,9 +28,7 @@ it("scans common folders once on open, makes no network request, and respects a 
   expect(api.searchHfModels).not.toHaveBeenCalled();
   expect(api.scanLocalModels).toHaveBeenCalledOnce();
   expect(api.scanLocalModels).toHaveBeenCalledWith(null);
-  await userEvent.click(
-    screen.getByRole("button", { name: "Choose model folder" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Choose folder" }));
   expect(api.scanLocalModels).toHaveBeenCalledOnce();
 });
 it("imports only catalog candidates, shows external-server models separately, and updates found models on custom folder scan", async () => {
@@ -54,9 +52,7 @@ it("imports only catalog candidates, shows external-server models separately, an
   expect(select.textContent).not.toMatch(/model\.gguf/);
   expect(screen.getByText(/C:\/model\.gguf · gguf · 1 KB/)).toBeTruthy();
   expect(
-    screen.getByText(
-      /Use with an external server\. Inference compatibility unverified\./,
-    ),
+    screen.getByText(/Use with an external server; compatibility unverified\./),
   ).toBeTruthy();
   await userEvent.click(
     await screen.findByRole("button", { name: "Verify and import small" }),
@@ -79,9 +75,7 @@ it("imports only catalog candidates, shows external-server models separately, an
     folders: [{ path: "C:/custom", status: "scanned" }],
     truncated: false,
   });
-  await userEvent.click(
-    screen.getByRole("button", { name: "Choose model folder" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Choose folder" }));
   expect(api.scanLocalModels).toHaveBeenLastCalledWith("C:/custom");
   expect(onFound).toHaveBeenLastCalledWith(["base"]);
 });
@@ -108,9 +102,7 @@ it("reports failed downloads and allows cancellation while a transfer is pending
   vi.mocked(api.cancelModelDownload).mockResolvedValue();
   render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
   await userEvent.type(screen.getByLabelText("Hugging Face search"), "whisper");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Search public models" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
   await userEvent.click(
     await screen.findByRole("button", { name: "Show files for public/model" }),
   );
@@ -151,9 +143,7 @@ it("cancels an active transfer when Settings unmounts", async () => {
   vi.mocked(api.cancelModelDownload).mockResolvedValue();
   const view = render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
   await userEvent.type(screen.getByLabelText("Hugging Face search"), "whisper");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Search public models" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
   await userEvent.click(
     await screen.findByRole("button", { name: "Show files for public/model" }),
   );
@@ -208,9 +198,7 @@ it("lists only downloadable speech results and saves a complete sherpa-onnx fold
   const onUse = vi.fn();
   render(<ModelLibrary disabled={false} onImported={vi.fn()} onUse={onUse} />);
   await userEvent.type(screen.getByLabelText("Hugging Face search"), "speech");
-  await userEvent.click(
-    screen.getByRole("button", { name: "Search public models" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
   expect(
     screen.getByText(/public\/other · Other \(not downloadable\)/),
   ).toBeTruthy();

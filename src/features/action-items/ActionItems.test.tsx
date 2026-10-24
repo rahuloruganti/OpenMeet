@@ -85,9 +85,7 @@ it("adds, edits, completes, imports and deletes tasks, keeping unknowns explicit
     null,
     true,
   );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Add from summary" }),
-  );
+  await userEvent.click(screen.getByRole("button", { name: "From summary" }));
   expect(api.importActionItems).toHaveBeenCalledWith("m1", 3);
   await userEvent.click(
     screen.getByRole("button", { name: "Delete task: Send the deck" }),
@@ -109,7 +107,7 @@ it("shows a failed save and keeps the typed text", async () => {
       onItems={vi.fn()}
     />,
   );
-  expect(screen.queryByRole("button", { name: "Add from summary" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "From summary" })).toBeNull();
   await userEvent.type(screen.getByLabelText("Owner: Send the deck"), "Alex");
   await userEvent.tab();
   expect((await screen.findByRole("alert")).textContent).toContain("owner");

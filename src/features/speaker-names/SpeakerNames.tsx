@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, errorMessage, type SpeakerNames } from "../../shared/api/api";
+import { Tip } from "../../shared/ui/info-tip";
 
 type Props = {
   meetingId: string;
@@ -35,7 +36,7 @@ export function SpeakerNamesForm({
       }}
     >
       <label>
-        Name for You (microphone)
+        Your name
         <input
           value={you}
           maxLength={80}
@@ -45,7 +46,7 @@ export function SpeakerNamesForm({
         />
       </label>
       <label>
-        Name for Others (system audio)
+        Others
         <input
           value={others}
           maxLength={80}
@@ -55,8 +56,11 @@ export function SpeakerNamesForm({
         />
       </label>
       <p className="muted">
-        Others is all system audio and may include several people. Names are
-        added to the transcript text sent for summaries and questions.
+        Others covers everyone on system audio.{" "}
+        <Tip
+          label="speaker names"
+          text="Names are added to the transcript text sent for summaries and questions."
+        />
       </p>
       <button type="submit" disabled={disabled || busy || !changed}>
         Save speaker names

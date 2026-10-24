@@ -25,9 +25,7 @@ it("retries closed-audio finalization without offering resume", () => {
     health: null,
   };
   const view = render(<RecordingControls {...props} />);
-  expect(screen.getByRole("status").textContent).toBe(
-    "Audio stopped; finalization pending",
-  );
+  expect(screen.getByRole("status").textContent).toBe("Finishing audio…");
   const resume = screen.getByRole<HTMLButtonElement>("button", {
     name: "Resume",
   });

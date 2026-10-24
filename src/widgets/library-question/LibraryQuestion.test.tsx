@@ -54,8 +54,6 @@ function show(
 ) {
   render(
     <LibraryQuestion
-      hidden={false}
-      panelRef={{ current: null }}
       meetings={meetings}
       recipes={[
         { id: "recipe-1", name: "Risks", prompt: "What risks came up?" },
@@ -64,7 +62,6 @@ function show(
       llmBlocked={llmBlocked}
       onOpenSettings={onOpenSettings}
       disabled={false}
-      onClose={vi.fn()}
       onOpen={onOpen}
     />,
   );
@@ -74,6 +71,11 @@ const ask = async (text = "What was decided?") => {
   await userEvent.type(screen.getByLabelText("Question"), text);
   await userEvent.click(screen.getByRole("button", { name: "Ask" }));
 };
+/** The scope count beside the question box. */
+const count = () =>
+  document.querySelector(".ask-meta .count .n")?.textContent?.trim();
+const box = (name: string | RegExp) =>
+  screen.getByRole("checkbox", { name }) as HTMLInputElement;
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -94,22 +96,53 @@ const saved = (
   meeting_ids: meetingIds,
 });
 
+it("asks across every meeting by default and shows the scope count", async () => {
+  vi.mocked(api.askLibrary).mockResolvedValue(saved(1, ["a"], "Ship it."));
+  show();
+  expect(count()).toBe("3 meetings");
+  expect(
+    (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  await ask();
+  expect(api.askLibrary).toHaveBeenCalledWith(
+    ["a", "b", "c"],
+    "What was decided?",
+  );
+  expect((await screen.findByLabelText("Answer")).textContent).toContain(
+    "Ship it",
+  );
+});
+
 it("resolves a tag to its meetings and sends exactly that scope", async () => {
   vi.mocked(api.askLibrary).mockResolvedValue(
     saved(1, ["a", "c"], "Ship it [M1 0:08]."),
   );
   show();
-  expect(
-    (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement).disabled,
-  ).toBe(true);
-  await userEvent.click(screen.getByLabelText("Meetings with a tag"));
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "tag");
   await userEvent.selectOptions(screen.getByLabelText("Tag"), "client");
-  expect(screen.getByRole("status").textContent).toBe("2 of 20 selected.");
+  expect(count()).toBe("2 meetings");
   await ask();
   expect(api.askLibrary).toHaveBeenCalledWith(["a", "c"], "What was decided?");
-  expect(
-    (await screen.findByLabelText("Library answer")).textContent,
-  ).toContain("Ship it");
+  expect((await screen.findByLabelText("Answer")).textContent).toContain(
+    "Ship it",
+  );
+});
+
+it("names the AI notes connection and marks a remote one as leaving the device", async () => {
+  render(
+    <LibraryQuestion
+      meetings={meetings}
+      recipes={[]}
+      connectionRevision="1"
+      llmBlocked={null}
+      onOpenSettings={vi.fn()}
+      disabled={false}
+      onOpen={vi.fn()}
+      connection={{ name: "Gemini 2.5 Flash · Google", remote: true }}
+    />,
+  );
+  expect(screen.getByText("Gemini 2.5 Flash · Google")).toBeTruthy();
+  expect(screen.getByText("Leaves this device")).toBeTruthy();
 });
 
 it("links only in-scope citations that match a stored segment and marks the rest unverified", async () => {
@@ -121,7 +154,8 @@ it("links only in-scope citations that match a stored segment and marks the rest
     ),
   );
   const onOpen = show();
-  await userEvent.click(screen.getByLabelText(/Alpha sync/));
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "pick");
+  await userEvent.click(box(/Alpha sync/));
   await ask();
   const link = await screen.findByRole("button", {
     name: "Open Alpha sync at 0:08",
@@ -137,6 +171,20 @@ it("links only in-scope citations that match a stored segment and marks the rest
   expect(onOpen).toHaveBeenLastCalledWith("a", null);
 });
 
+it("lists the meetings behind an answer as sources", async () => {
+  vi.mocked(api.askLibrary).mockResolvedValue(saved(1, ["a", "c"], "Done."));
+  const onOpen = show();
+  await ask();
+  const sources = await screen.findByText("Sources");
+  expect(sources).toBeTruthy();
+  const rows = within(screen.getByLabelText("Answer")).getAllByRole("button", {
+    name: /Alpha sync|Gamma plan/,
+  });
+  expect(rows).toHaveLength(2);
+  await userEvent.click(rows[1]);
+  expect(onOpen).toHaveBeenLastCalledWith("c", null);
+});
+
 it("shows no matching passages as a status message, not an error", async () => {
   const message =
     "No passages in the selected content matched your question. Nothing was sent.";
@@ -145,7 +193,6 @@ it("shows no matching passages as a status message, not an error", async () => {
     message,
   });
   show();
-  await userEvent.click(screen.getByLabelText(/Alpha sync/));
   await ask();
   expect((await screen.findByText(message)).getAttribute("role")).toBe(
     "status",
@@ -156,7 +203,7 @@ it("shows no matching passages as a status message, not an error", async () => {
   expect(screen.queryByText(message)).toBeNull();
 });
 
-it("explains a blocked AI notes setup, disables Ask, and links to its Settings section", async () => {
+it("explains a blocked AI notes setup in one sentence and links to its Settings section", async () => {
   const onOpenSettings = vi.fn();
   show(
     vi.fn(),
@@ -166,13 +213,12 @@ it("explains a blocked AI notes setup, disables Ask, and links to its Settings s
     },
     onOpenSettings,
   );
-  await userEvent.click(screen.getByLabelText(/Alpha sync/));
   await userEvent.type(screen.getByLabelText("Question"), "What was decided?");
   expect(
     (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   expect(
-    screen.getByText("Choose a model for AI notes in Settings → AI notes."),
+    screen.getByText("Connect an AI service to ask questions."),
   ).toBeTruthy();
   await userEvent.click(
     screen.getByRole("button", { name: "Open Settings for AI notes" }),
@@ -208,13 +254,13 @@ it("lists saved answers with their scope, and deletes one only after confirmatio
     saved(1, ["b"], "Older answer.", "Older?"),
   ]);
   const onOpen = show();
-  await userEvent.selectOptions(
-    await screen.findByLabelText("Saved answers"),
-    "2",
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Newest\?/ }),
   );
-  const answer = await screen.findByLabelText("Library answer");
-  expect(answer.textContent).toContain("Q: Newest?");
-  expect(answer.textContent).toContain("M1 Gamma plan; M2 Alpha sync");
+  expect(screen.getByText("Recent questions")).toBeTruthy();
+  const answer = await screen.findByLabelText("Answer");
+  expect(answer.textContent).toContain("Newest?");
+  expect(answer.textContent).toContain("2 meetings");
   // M1 is the first meeting sent, not the first in the library.
   await userEvent.click(
     await screen.findByRole("button", { name: "Open Gamma plan at 0:08" }),
@@ -226,47 +272,52 @@ it("lists saved answers with their scope, and deletes one only after confirmatio
     screen.getByRole("button", { name: "Delete answer permanently" }),
   );
   expect(api.deleteLibraryAnswer).toHaveBeenCalledWith(2);
-  expect(screen.queryByLabelText("Library answer")).toBeNull();
-  expect(
-    within(screen.getByLabelText("Saved answers")).queryByText("Newest?"),
-  ).toBeNull();
+  expect(screen.queryByLabelText("Answer")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Newest\?/ })).toBeNull();
 });
 
 it("shows a sent answer as saved and adds it to the saved list", async () => {
   vi.mocked(api.askLibrary).mockResolvedValue(saved(7, ["a"], "Done."));
   show();
-  await userEvent.click(screen.getByLabelText(/Alpha sync/));
   await ask();
+  expect((await screen.findByLabelText("Answer")).textContent).toContain(
+    "Saved on this device",
+  );
   expect(
-    (await screen.findByLabelText("Library answer")).textContent,
-  ).toContain("Saved on this device");
-  expect(
-    (screen.getByLabelText("Saved answers") as HTMLSelectElement).value,
-  ).toBe("7");
+    screen.getByRole("button", { name: /What was decided\?/ }),
+  ).toBeTruthy();
   expect((screen.getByLabelText("Question") as HTMLTextAreaElement).value).toBe(
     "",
   );
 });
 
+it("copies the shown answer with the Copy button", async () => {
+  vi.mocked(api.askLibrary).mockResolvedValue(saved(7, ["a"], "Done."));
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText },
+    configurable: true,
+  });
+  show();
+  await ask();
+  await userEvent.click(await screen.findByRole("button", { name: "Copy" }));
+  expect(writeText).toHaveBeenCalledWith("Done.");
+  expect(screen.getByText("Copied.")).toBeTruthy();
+});
+
 function showMeetings(list: Meeting[]) {
   render(
     <LibraryQuestion
-      hidden={false}
-      panelRef={{ current: null }}
       meetings={list}
       recipes={[]}
       connectionRevision="1"
       llmBlocked={null}
       onOpenSettings={vi.fn()}
       disabled={false}
-      onClose={vi.fn()}
       onOpen={vi.fn()}
     />,
   );
 }
-const box = (name: RegExp) =>
-  screen.getByRole("checkbox", { name }) as HTMLInputElement;
-const counter = () => screen.getByRole("status").textContent;
 
 it("filters meetings by title, ignoring case and accents", async () => {
   showMeetings([
@@ -274,6 +325,7 @@ it("filters meetings by title, ignoring case and accents", async () => {
     make("ang", "Ångström notes", []),
     make("b", "Budget", []),
   ]);
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "pick");
   const filter = screen.getByLabelText("Filter meetings");
   await userEvent.type(filter, "cafe");
   expect(box(/Café planning/)).toBeTruthy();
@@ -289,14 +341,29 @@ const many = Array.from({ length: 25 }, (_, index) =>
   make(`m${index}`, `Weekly ${String(index).padStart(2, "0")}`, []),
 );
 
+it("refuses every-meeting scope beyond the 20-meeting limit and says how to fix it", async () => {
+  showMeetings(many);
+  expect(count()).toBe("25 meetings");
+  await userEvent.type(screen.getByLabelText("Question"), "What moved?");
+  expect(
+    (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(
+    screen.getByText(
+      "One question covers 20 meetings: pick them or use a tag.",
+    ),
+  ).toBeTruthy();
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "pick");
+  expect(count()).toBe("0 meetings");
+});
+
 it("selects the first 20 shown, disables the rest at the limit, and clears", async () => {
   showMeetings(many);
-  expect(counter()).toBe("0 of 20 selected.");
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "pick");
   await userEvent.click(
     screen.getByRole("button", { name: "Select first 20 shown" }),
   );
-  expect(counter()).toBe("20 of 20 selected.");
-  expect(screen.getByText("Limit reached: 20 meetings.")).toBeTruthy();
+  expect(count()).toBe("20 meetings");
   expect(box(/Weekly 19/).checked).toBe(true);
   expect(box(/Weekly 20/).checked).toBe(false);
   expect(box(/Weekly 20/).disabled).toBe(true);
@@ -305,30 +372,30 @@ it("selects the first 20 shown, disables the rest at the limit, and clears", asy
   await userEvent.click(
     screen.getByRole("button", { name: "Clear selection" }),
   );
-  expect(counter()).toBe("0 of 20 selected.");
-  expect(screen.queryByText(/Limit reached/)).toBeNull();
+  expect(count()).toBe("0 meetings");
   expect(box(/Weekly 20/).disabled).toBe(false);
 });
 
 it("never drops picks beyond the first 20 and never exceeds 20", async () => {
   showMeetings(many);
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "pick");
   await userEvent.click(box(/Weekly 24/));
   await userEvent.click(
     screen.getByRole("button", { name: "Select first 20 shown" }),
   );
-  expect(counter()).toBe("20 of 20 selected.");
+  expect(count()).toBe("20 meetings");
   expect(box(/Weekly 24/).checked).toBe(true);
   expect(box(/Weekly 00/).checked).toBe(true);
 });
 
 it("selects only the filtered meetings with the same button", async () => {
   showMeetings(many);
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "pick");
   await userEvent.type(screen.getByLabelText("Filter meetings"), "Weekly 1");
   await userEvent.click(
     screen.getByRole("button", { name: "Select first 20 shown" }),
   );
-  expect(counter()).toBe("10 of 20 selected.");
-  expect(screen.queryByText(/Limit reached/)).toBeNull();
+  expect(count()).toBe("10 meetings");
   await userEvent.clear(screen.getByLabelText("Filter meetings"));
   expect(box(/Weekly 00/).checked).toBe(false);
   expect(box(/Weekly 15/).checked).toBe(true);

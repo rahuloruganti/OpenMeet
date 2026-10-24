@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   errorMessage,
@@ -12,6 +12,7 @@ import {
   type Settings,
   type SttDownloadProgress,
   type SttStatus,
+  type Theme,
 } from "../shared/api/api";
 import {
   forgetLegacyProcessing,
@@ -21,7 +22,18 @@ import {
 } from "../entities/processing";
 import { MeetingPage, useMeetingPage } from "../pages/meeting";
 import { SettingsPage, useSettingsPage } from "../pages/settings";
+import { AskPage } from "../pages/ask";
 import { FirstRunPage, SetupPage, useSetupPage } from "../pages/setup";
+import { CommandPalette, type PaletteAction } from "../widgets/command-palette";
+
+type Panel = "setup" | "settings" | "library" | null;
+
+/** A key event belongs to a text field, so bare-letter shortcuts must not fire. */
+function isTyping(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
 
 export function App() {
   const desktop = api.isDesktop();
@@ -74,11 +86,9 @@ export function App() {
   const [health, setHealth] = useState<AudioHealth | null>(null);
   const [audioBytes, setAudioBytes] = useState<number | null>(null);
   const [closeRequested, setCloseRequested] = useState(false);
-  const [panel, setPanel] = useState<"setup" | "settings" | "library" | null>(
-    null,
-  );
-  // Kept mounted once opened so an answer survives following one of its links.
-  const [libraryOpened, setLibraryOpened] = useState(false);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteOrigin = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const panelTrigger = useRef<HTMLButtonElement | null>(null);
   // Closing a banner, card or panel hands focus here, so Tab resumes from the workspace.
@@ -117,7 +127,7 @@ export function App() {
         // The notes banner already shows a note-save failure; say why this action stopped.
         if (!keepMessages && failure === noteFailure.current)
           setError(
-            "That action needs your notes saved first. Fix the problem above or copy your text, then try again.",
+            "Save your notes first: fix the error above, then try again.",
           );
         else report(failure);
       } finally {
@@ -156,18 +166,18 @@ export function App() {
     );
   }, []);
   const openPanel = (
-    next: "setup" | "settings" | "library",
-    trigger: HTMLButtonElement,
+    next: Exclude<Panel, null>,
+    trigger?: HTMLButtonElement,
   ) => {
-    panelTrigger.current = trigger;
+    if (trigger) panelTrigger.current = trigger;
+    setPaletteOpen(false);
     setPanel(next);
   };
   const closePanel = useCallback(() => setPanel(null), []);
-  const openLibrary = (trigger: HTMLButtonElement) => {
-    setLibraryOpened(true);
+  /** The Ask page from a shortcut, the sidebar or the palette: one opener, optional trigger. */
+  const openAsk = (trigger?: HTMLButtonElement) =>
     openPanel("library", trigger);
-  };
-  // Shown until finished or skipped; any other panel takes precedence.
+  // Shown until finished or skipped, on its own: no sidebar, no recording bar.
   const firstRun =
     desktop && !!settings && !settings.setup_done && panel === null;
   const disabled = !ready || busy || controlBusy;
@@ -196,7 +206,7 @@ export function App() {
       const discovered = await api.listDevices();
       applyDevices(discovered);
       setNotice(
-        `Devices refreshed: ${discovered.microphones.length} microphone${discovered.microphones.length === 1 ? "" : "s"}, ${discovered.outputs.length} output${discovered.outputs.length === 1 ? "" : "s"}.`,
+        `Refreshed: ${discovered.microphones.length} microphone${discovered.microphones.length === 1 ? "" : "s"}, ${discovered.outputs.length} output${discovered.outputs.length === 1 ? "" : "s"}.`,
       );
     });
   const installStt = () =>
@@ -235,7 +245,6 @@ export function App() {
     setOutput,
     audioBytes,
     detectionSupported,
-    keyStatus,
     updateKeyStatus,
     stt,
     sttProgress,
@@ -270,9 +279,8 @@ export function App() {
     panel,
     openPanel,
     closePanel,
-    openLibrary,
+    openAsk,
     openSettings: settingsPage.openSettings,
-    libraryOpened,
     panelRef,
     workspaceRef: workspace,
     focusWorkspace,
@@ -297,6 +305,7 @@ export function App() {
     active,
     run,
     showSettings: settingsPage.showSection,
+    openNewRecording: () => openPanel("setup"),
     closePanel,
     panelRef,
     openMeeting: meeting.openMeeting,
@@ -490,32 +499,186 @@ export function App() {
       live = false;
     };
   }, [panel, desktop]);
+
+  // The forced theme wins over the OS; "system" leaves the choice to the media query.
+  // This effect is the only place that writes data-theme: every save goes through `settings`.
+  useEffect(() => {
+    const theme = settings?.theme ?? "system";
+    const root = document.documentElement;
+    if (theme === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+  }, [settings?.theme]);
+  /** Saves the two UI preferences; both are cheap and take effect immediately.
+   * One failure policy: report it, then re-read so the UI shows what the database holds. */
+  const savePrefs = (theme: Theme, open: boolean) => {
+    setSettings((current) =>
+      current ? { ...current, theme, inspector_open: open } : current,
+    );
+    void api.saveUiPrefs(theme, open).then(setSettings, (failure) => {
+      report(failure);
+      void api.getSettings().then(setSettings, () => undefined);
+    });
+  };
+  // A full page (Settings, Ask) replaces the meetings page, so its triggers are gone.
+  const hadPanel = useRef(false);
   useEffect(() => {
     if (panel) {
+      hadPanel.current = true;
       panelRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
-    } else {
-      const trigger = panelTrigger.current;
-      // A trigger inside a panel that is now hidden (the library behind Settings) cannot take focus.
-      if (trigger?.isConnected && !trigger.closest("[hidden]")) trigger.focus();
-      else if (trigger) focusWorkspace();
-      panelTrigger.current = null;
+      return;
     }
-  }, [panel]);
-  // Finishing or skipping the first-run wizard hands focus to the workspace. A panel opened over
-  // the wizard also makes firstRun false, but it keeps its own focus.
+    if (!hadPanel.current) return;
+    hadPanel.current = false;
+    const trigger = panelTrigger.current;
+    panelTrigger.current = null;
+    // The quit prompt owns focus while it is open.
+    if (closeRequested) return;
+    // A trigger inside a page that is gone cannot take focus.
+    if (trigger?.isConnected && !trigger.closest("[hidden]")) trigger.focus();
+    else focusWorkspace();
+  }, [panel, closeRequested]);
+  // A quit request must be visible: the prompt belongs to the meetings page.
+  useEffect(() => {
+    if (!closeRequested) return;
+    setPaletteOpen(false);
+    setPanel(null);
+  }, [closeRequested]);
+  // Finishing or skipping the first-run wizard hands focus to the workspace.
   const wasFirstRun = useRef(firstRun);
   useEffect(() => {
-    if (wasFirstRun.current && !firstRun && panel === null) focusWorkspace();
+    if (wasFirstRun.current && !firstRun) focusWorkspace();
     wasFirstRun.current = firstRun;
-  }, [firstRun, panel]);
+  }, [firstRun]);
+
+  // F2: open the title editor the meeting header owns, without duplicating its logic.
+  const renameCurrent = () => {
+    const root = workspace.current;
+    if (!root) return;
+    const open = root.querySelector<HTMLInputElement>(
+      'input[aria-label="Meeting title"]',
+    );
+    if (open) {
+      open.focus();
+      open.select();
+      return;
+    }
+    const button = Array.from(root.querySelectorAll("button")).find(
+      (item) => item.textContent?.trim() === "Rename",
+    );
+    if (!button) return;
+    button.click();
+    requestAnimationFrame(() =>
+      root
+        .querySelector<HTMLInputElement>('input[aria-label="Meeting title"]')
+        ?.focus(),
+    );
+  };
+
+  const openSettingsPage = () => {
+    panelTrigger.current = null;
+    setPaletteOpen(false);
+    settingsPage.showSection("general");
+  };
+
+  const onPaletteAction = (action: PaletteAction) => {
+    switch (action) {
+      case "new-recording":
+        openPanel("setup");
+        break;
+      case "new-note":
+        meeting.pageProps.onNewNote();
+        break;
+      case "ask":
+        openAsk();
+        break;
+      case "settings":
+        openSettingsPage();
+        break;
+      case "export":
+        meeting.pageProps.workspace.onExport();
+        break;
+      case "rename":
+        renameCurrent();
+        break;
+      case "theme-system":
+        savePrefs("system", inspectorOpen);
+        break;
+      case "theme-dark":
+        savePrefs("dark", inspectorOpen);
+        break;
+      case "theme-light":
+        savePrefs("light", inspectorOpen);
+        break;
+    }
+  };
+
+  // Global shortcuts. Ctrl+K, Ctrl+, and Ctrl+I always work; the rest yield to text fields.
+  // No dependency list: the handler reads this render's state and handlers, and the
+  // page hooks build their props anew every render.
   useEffect(() => {
-    if (!panel || closeRequested) return;
+    if (!desktop || !ready || firstRun) return;
+    const onKey = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLowerCase();
+      if (mod && key === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => {
+          if (!open)
+            paletteOrigin.current = document.activeElement as HTMLElement;
+          return !open;
+        });
+        return;
+      }
+      if (mod && event.key === ",") {
+        event.preventDefault();
+        openSettingsPage();
+        return;
+      }
+      if (mod && key === "i") {
+        event.preventDefault();
+        // The meeting page owns the inspector state; it saves the preference itself.
+        meeting.toggleInspector();
+        return;
+      }
+      if (paletteOpen || isTyping(event.target)) return;
+      const meetingOpen = !!meeting.pageProps.sidebar.selectedId;
+      if (mod && event.shiftKey && key === "n") {
+        event.preventDefault();
+        meeting.pageProps.onNewNote();
+      } else if (mod && !event.shiftKey && key === "n") {
+        // Never starts capture: the New recording dialog does that.
+        event.preventDefault();
+        openPanel("setup");
+      } else if (mod && event.shiftKey && key === "a") {
+        event.preventDefault();
+        openAsk();
+      } else if (mod && key === "e" && meetingOpen) {
+        event.preventDefault();
+        meeting.pageProps.workspace.onExport();
+      } else if (event.key === "F2" && meetingOpen) {
+        event.preventDefault();
+        renameCurrent();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  useEffect(() => {
+    if (closeRequested) return;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      // Escape inside a Settings field belongs to that field and must not close the page.
+      // The palette is above every page and closes first.
+      if (paletteOpen) {
+        setPaletteOpen(false);
+        return;
+      }
+      if (!panel) return;
+      // Escape inside a field of a full page belongs to that field: the Settings forms and the
+      // Ask question box must not close the page under the caret.
       const target = event.target;
       if (
-        panel === "settings" &&
+        (panel === "settings" || panel === "library") &&
         target instanceof HTMLElement &&
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) &&
         panelRef.current?.contains(target)
@@ -527,13 +690,57 @@ export function App() {
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
-  }, [panel, closeRequested, settingsPage.closeSettings]);
+  }, [panel, paletteOpen, closeRequested, settingsPage.closeSettings]);
+
+  const inspectorOpen = settings?.inspector_open ?? true;
+
+  // The Ask page needs the AI notes connection's name and whether it is remote.
+  const askConnection = useMemo(() => {
+    if (!settings?.llm) return null;
+    const assigned = settings.provider_assignments.llm;
+    const saved = settings.saved_connections.find(
+      (item) => item.id === assigned?.connection_id,
+    );
+    return {
+      name: saved?.name ?? settings.llm.model ?? settings.llm.base_url,
+      remote: !isLocalBase(settings.llm.base_url),
+    };
+  }, [settings]);
+
+  const paletteMeetings = meeting.pageProps.sidebar.meetings;
+
+  const page =
+    firstRun && settings ? (
+      <FirstRunPage {...setupPage.firstRunProps} />
+    ) : panel === "settings" ? (
+      <SettingsPage {...settingsPage.pageProps} />
+    ) : panel === "library" ? (
+      <AskPage
+        {...meeting.ask}
+        connection={askConnection}
+        onBack={() => setPanel(null)}
+      />
+    ) : (
+      <>
+        <MeetingPage {...meeting.pageProps} />
+        {panel === "setup" && <SetupPage {...setupPage.pageProps} />}
+      </>
+    );
 
   return (
-    <MeetingPage {...meeting.pageProps}>
-      {panel === "setup" && <SetupPage {...setupPage.pageProps} />}
-      {firstRun && settings && <FirstRunPage {...setupPage.firstRunProps} />}
-      {panel === "settings" && <SettingsPage {...settingsPage.pageProps} />}
-    </MeetingPage>
+    <>
+      {page}
+      {paletteOpen && (
+        <CommandPalette
+          meetings={paletteMeetings}
+          theme={settings?.theme ?? "system"}
+          currentMeetingId={meeting.pageProps.sidebar.selectedId ?? null}
+          returnFocus={paletteOrigin.current}
+          onClose={() => setPaletteOpen(false)}
+          onAction={onPaletteAction}
+          onOpenMeeting={meeting.pageProps.sidebar.onOpenMeeting}
+        />
+      )}
+    </>
   );
 }
