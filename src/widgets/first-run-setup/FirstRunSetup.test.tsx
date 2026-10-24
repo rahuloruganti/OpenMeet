@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, type Settings } from "../../shared/api/api";
 import { baseUrlError } from "../../features/provider-settings";
+import { CUSTOM_PROVIDER } from "../../shared/lib/providers";
 import { FirstRunSetup } from "./FirstRunSetup";
 
 vi.mock("../../shared/api/api", async (original) => ({
@@ -326,11 +327,178 @@ it("saves automatic transcription only when the box is ticked", async () => {
   expect(api.saveProcessingDefault).toHaveBeenCalledWith("final", null);
 });
 
+it("offers the major providers for AI notes and connects the default one", async () => {
+  vi.mocked(api.saveApiConnection).mockResolvedValue({
+    ...settings,
+    saved_connections: [
+      {
+        id: "conn-1",
+        name: "OpenAI",
+        base_url: "https://api.openai.com/v1",
+        revision: 4,
+      },
+    ],
+  } as unknown as Settings);
+  vi.mocked(api.listApiConnectionModels).mockResolvedValue([
+    { id: "gpt-5-mini" },
+    { id: "text-embedding-3-small" },
+  ]);
+  show();
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await userEvent.click(screen.getByRole("radio", { name: /API service/ }));
+  const picker = screen.getByLabelText("Provider") as HTMLSelectElement;
+  expect(
+    within(picker)
+      .getAllByRole("option")
+      .map((item) => item.textContent),
+  ).toEqual([
+    "OpenAI",
+    "Claude (Anthropic)",
+    "Gemini (Google)",
+    "Mistral",
+    "Groq",
+    "Grok (xAI)",
+    "DeepSeek",
+    "OpenRouter",
+    "Custom",
+  ]);
+  // The first preset is the default: no Base URL to type, and the name follows the label.
+  expect(picker.value).toBe("openai");
+  expect(screen.queryByLabelText("Base URL")).toBeNull();
+  expect(screen.getByRole("note").textContent).toBe("api.openai.com");
+  expect(
+    (screen.getByLabelText(/^API key/) as HTMLInputElement).placeholder,
+  ).toBe("Key from platform.openai.com");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Connect and list models" }),
+  );
+  await waitFor(() =>
+    expect(api.saveApiConnection).toHaveBeenCalledWith({
+      id: null,
+      name: "OpenAI",
+      baseUrl: "https://api.openai.com/v1",
+      keyChange: { kind: "keep" },
+      expectedRevision: null,
+    }),
+  );
+  expect(api.listApiConnectionModels).toHaveBeenCalledWith("conn-1", 4);
+  // The first model that fits the task is picked for the user.
+  await waitFor(() =>
+    expect((screen.getByLabelText("Model") as HTMLSelectElement).value).toBe(
+      "gpt-5-mini",
+    ),
+  );
+});
+
+it("numbers a provider name that a saved connection already uses", async () => {
+  vi.mocked(api.saveApiConnection).mockResolvedValue({
+    ...settings,
+    saved_connections: [
+      {
+        id: "conn-old",
+        name: "OpenAI",
+        base_url: "https://api.example.com/v1",
+        revision: 1,
+      },
+      {
+        id: "conn-new",
+        name: "OpenAI 2",
+        base_url: "https://api.openai.com/v1",
+        revision: 1,
+      },
+    ],
+  } as unknown as Settings);
+  vi.mocked(api.listApiConnectionModels).mockResolvedValue([{ id: "gpt-5" }]);
+  show({
+    saved_connections: [
+      {
+        id: "conn-old",
+        name: "OpenAI",
+        base_url: "https://api.example.com/v1",
+        revision: 1,
+      },
+    ],
+  } as Partial<Settings>);
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await userEvent.click(screen.getByRole("radio", { name: /Cloud service/ }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Connect and list models" }),
+  );
+  await waitFor(() =>
+    expect(api.saveApiConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: null,
+        name: "OpenAI 2",
+        baseUrl: "https://api.openai.com/v1",
+      }),
+    ),
+  );
+});
+
+it("offers only the speech providers for cloud transcription", async () => {
+  show();
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await userEvent.click(screen.getByRole("radio", { name: /Cloud service/ }));
+  const picker = screen.getByLabelText("Provider");
+  expect(
+    within(picker)
+      .getAllByRole("option")
+      .map((item) => item.textContent),
+  ).toEqual(["OpenAI", "Groq", "Custom"]);
+});
+
+it("saves a custom API under its destination when no name is typed", async () => {
+  vi.mocked(api.saveApiConnection).mockResolvedValue({
+    ...settings,
+    saved_connections: [
+      {
+        id: "conn-2",
+        name: "api.example.com",
+        base_url: "https://api.example.com/v1",
+        revision: 1,
+      },
+    ],
+  } as unknown as Settings);
+  vi.mocked(api.listApiConnectionModels).mockResolvedValue([{ id: "fun-1" }]);
+  show();
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await userEvent.click(screen.getByRole("radio", { name: /Cloud service/ }));
+  await userEvent.selectOptions(
+    screen.getByLabelText("Provider"),
+    CUSTOM_PROVIDER,
+  );
+  await userEvent.type(
+    screen.getByLabelText("Base URL"),
+    "https://api.example.com/v1",
+  );
+  // A name is optional now: the URL alone lets the user connect.
+  const connect = screen.getByRole("button", {
+    name: "Connect and list models",
+  }) as HTMLButtonElement;
+  expect(connect.disabled).toBe(false);
+  await userEvent.click(connect);
+  await waitFor(() =>
+    expect(api.saveApiConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: null,
+        name: "api.example.com",
+        baseUrl: "https://api.example.com/v1",
+      }),
+    ),
+  );
+});
+
 it("rejects a base URL the way Settings does, before asking the server", async () => {
   show();
   await screen.findByRole("heading", { name: "How should we transcribe?" });
   await userEvent.click(screen.getByRole("radio", { name: /Cloud service/ }));
-  await userEvent.type(screen.getByLabelText("Name"), "Work");
+  // A typed API is the Custom choice; every preset brings its own URL.
+  await userEvent.selectOptions(
+    screen.getByLabelText("Provider"),
+    CUSTOM_PROVIDER,
+  );
+  await userEvent.type(screen.getByLabelText(/^Name/), "Work");
   const url = screen.getByLabelText("Base URL");
   await userEvent.type(url, "http://api.example.com/v1");
   // Exactly the one-line rule the Settings connection editor shows: one validator, one message.

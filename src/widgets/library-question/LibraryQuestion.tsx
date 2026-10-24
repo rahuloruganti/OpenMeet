@@ -271,35 +271,25 @@ export function LibraryQuestion(props: Props) {
 
       <div className="ask-meta">
         {props.connection?.name ? (
-          <span className="who">
+          <span
+            className="who"
+            title="Question, meeting titles, notes and keyword-matched transcript excerpts are sent to this service. The answer is saved on this device."
+          >
             {props.connection.name}
             {props.connection.remote && (
               <span className="leaves">Leaves this device</span>
             )}
-            <span
-              className="info"
-              role="img"
-              aria-label="What is sent"
-              title="Question, meeting titles, notes and keyword-matched transcript excerpts are sent to this service. The answer is saved on this device."
-            >
-              i
-            </span>
           </span>
         ) : (
           <span className="who">No AI notes connection</span>
         )}
         <span className="spacer" />
-        <span className="count">
+        <span
+          className="count"
+          title="One question can cover up to 20 meetings."
+        >
           <span className="n">
             {scope.length} meeting{scope.length === 1 ? "" : "s"}
-          </span>
-          <span
-            className="info"
-            role="img"
-            aria-label="Meeting limit"
-            title="One question can cover up to 20 meetings."
-          >
-            i
           </span>
         </span>
       </div>

@@ -1,12 +1,21 @@
-import { useEffect, useState, type KeyboardEvent, type Ref } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type Ref,
+} from "react";
 import { version } from "../../../package.json";
-import { api } from "../../shared/api/api";
+import { api, isLocalBase } from "../../shared/api/api";
 import type {
   AudioDevice,
   AudioDevices,
   ExportOptions,
   KeyStatus,
+  LocalModel,
   MicApp,
+  ModelScan,
   ProviderRole,
   Settings,
   SttDownloadProgress,
@@ -20,8 +29,9 @@ import {
   type ProcessingChoice,
 } from "../../entities/processing";
 import { shortcutLabel } from "../../shared/lib/shortcut-label";
-import { tabTarget } from "../../shared/lib/tabs";
 import { ModelLibrary } from "../../features/model-library";
+import { LocalAi } from "../../features/local-ai";
+import { LiveSettings } from "../../features/live-settings";
 import { ConnectionEditor } from "../../features/provider-settings";
 import { SummaryTemplates } from "../../features/summary-templates";
 import { TranscriptionSettings } from "../../features/transcription-settings";
@@ -37,16 +47,8 @@ import {
   type SettingsSectionId,
 } from "../../shared/ui/settings-link";
 import "./ui/settings-page.css";
-import {
-  CardFoot,
-  Group,
-  More,
-  Row,
-  Rows,
-  Segmented,
-  Switch,
-  Tip,
-} from "./ui/rows";
+import { CardFoot, Group, More, Row, Rows, Segmented, Switch } from "./ui/rows";
+import type { Segment } from "./ui/rows";
 
 export { OpenSettingsButton, settingsSections };
 export type { AiBlock, OpenSettings, SettingsSection };
@@ -85,6 +87,12 @@ type Props = {
   sttProgress: SttDownloadProgress | null;
   installing: boolean;
   onInstallStt: () => void;
+  /** Saves a catalog model as the speech model, then downloads it. */
+  onDownloadStt?: (change: {
+    stt_language: string;
+    stt_prompt: string;
+    stt_model: string;
+  }) => void;
   onCancelStt: () => void;
   onSttMode: (mode: Settings["stt_mode"]) => void;
   /** Saves a transcription change (language, vocabulary hint or model) immediately. */
@@ -254,10 +262,7 @@ function GeneralSection(props: Props) {
   return (
     <div className="om-pane">
       <h2>General</h2>
-      <Group
-        label="Appearance"
-        tip="System follows the Windows light or dark setting. OpenMeet switches with it."
-      >
+      <Group label="Appearance">
         <Rows>
           <Row label="Theme">
             <Segmented
@@ -316,11 +321,7 @@ function RecordingSection(props: Props) {
     <div className="om-pane">
       <h2>Recording</h2>
 
-      <Group
-        label="Capture"
-        tip="A device that is not connected is never replaced automatically."
-        saved={capture.shown}
-      >
+      <Group label="Capture" saved={capture.shown}>
         <Rows>
           <Row label="Microphone">
             <DeviceSelect
@@ -357,10 +358,7 @@ function RecordingSection(props: Props) {
         </CardFoot>
       </Group>
 
-      <Group
-        label="Shortcuts"
-        tip="A shortcut needs Ctrl or Alt, or an F-key on its own. Nothing starts a recording: that always goes through New recording."
-      >
+      <Group label="Shortcuts">
         <Rows>
           <Row label="Pause / resume">
             <ShortcutCapture
@@ -387,11 +385,7 @@ function RecordingSection(props: Props) {
         ) : null}
       </Group>
 
-      <Group
-        label="Automation"
-        tip="Automatic processing runs after every recording. Meeting detection may only open New recording; it never starts capture."
-        saved={automation.shown}
-      >
+      <Group label="Automation" saved={automation.shown}>
         <Rows>
           <Row label="Automatic processing">
             <Switch
@@ -422,8 +416,7 @@ function RecordingSection(props: Props) {
                     props.onProcessing({
                       mode: event.target.value as ProcessingChoice["mode"],
                       summary:
-                        event.target.value === "final" ||
-                        event.target.value === "both"
+                        event.target.value === "final"
                           ? (props.processing.summary ?? "general-v1")
                           : null,
                     })
@@ -436,8 +429,7 @@ function RecordingSection(props: Props) {
                   ))}
                 </select>
               </div>
-              {(props.processing.mode === "final" ||
-                props.processing.mode === "both") && (
+              {props.processing.mode === "final" && (
                 <div className="om-frow">
                   <span>Summary</span>
                   <select
@@ -508,6 +500,8 @@ function RecordingSection(props: Props) {
           </More>
         )}
       </Group>
+
+      <LiveSettings settings={settings} disabled={disabled} />
     </div>
   );
 }
@@ -581,19 +575,21 @@ function ExportSection(props: Props) {
             label="Data folder"
             detail={
               <span className="om-path">
-                {dataFolder ? displayPath(dataFolder) : "Unknown"}
+                {dataFolder ? displayPath(dataFolder) : "Not available yet"}
               </span>
             }
           >
-            <button
-              type="button"
-              className="om-ghost om-sm"
-              aria-label="Copy data folder path"
-              disabled={disabled || !dataFolder}
-              onClick={copyDataFolder}
-            >
-              {copied ? "Copied" : "Copy"}
-            </button>
+            {dataFolder && (
+              <button
+                type="button"
+                className="om-ghost om-sm"
+                aria-label="Copy data folder path"
+                disabled={disabled}
+                onClick={copyDataFolder}
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            )}
           </Row>
         </Rows>
       </Group>
@@ -639,10 +635,7 @@ function ExportSection(props: Props) {
         </Rows>
       </Group>
 
-      <Group
-        label="Transcript files"
-        tip="Written beside the Markdown file with the same name. SRT and VTT need timed segments."
-      >
+      <Group label="Transcript files">
         <div className="om-card">
           <div className="om-chips" role="group" aria-label="Transcript files">
             {(["txt", "srt", "vtt"] as const).map((format) => (
@@ -669,12 +662,6 @@ function ExportSection(props: Props) {
             : formatBytes(props.audioBytes)}
         </span>
         <span>of audio</span>
-        <span>·</span>
-        <span>files are not encrypted</span>
-        <Tip
-          label="Encryption"
-          text="OpenMeet doesn't encrypt files yet. Anyone who can open the export folder can read them. Earlier snapshots are never renamed or overwritten."
-        />
       </div>
     </div>
   );
@@ -685,10 +672,7 @@ function AboutSection(props: Props) {
     <div className="om-pane">
       <h2>Privacy &amp; about</h2>
 
-      <Group
-        label="What leaves this device"
-        tip="Model searches send the words you type to huggingface.co; downloads come from huggingface.co and github.com. No meeting content."
-      >
+      <Group label="What leaves this device">
         <div className="om-card om-table-card">
           <table className="om-leaves-table">
             <tbody>
@@ -708,9 +692,20 @@ function AboutSection(props: Props) {
                 <th scope="row">Model searches</th>
                 <td>huggingface.co; no meeting content</td>
               </tr>
+              <tr>
+                <th scope="row">Local AI</th>
+                <td>Never; it runs on this PC</td>
+              </tr>
             </tbody>
           </table>
         </div>
+      </Group>
+
+      <Group label="Files">
+        <p className="om-file-note">
+          Meeting files are not encrypted. Keep the data and export folders in a
+          place only you can open.
+        </p>
       </Group>
 
       <Group label="About">
@@ -754,8 +749,36 @@ function CloudConnection(props: Props & { active: boolean }) {
 
 function TranscriptionSection(props: Props & { active: boolean }) {
   const settings = props.settings;
+  // Model files already on this PC, for the model menu. The scan is local and read-only, and
+  // runs only while the section is open on the local engine; the library's scans add to it.
+  const [localFiles, setLocalFiles] = useState<LocalModel[]>([]);
+  const local = settings?.stt_mode !== "cloud";
+  useEffect(() => {
+    if (!props.active || !local) return;
+    let live = true;
+    // Promise.resolve: a stubbed api in tests may return nothing.
+    void Promise.resolve()
+      .then(() => api.scanLocalModels(null))
+      .then((scan) => {
+        if (live && scan) setLocalFiles(scan.models);
+      })
+      .catch(() => {
+        /* The library shows scan errors; the menu keeps what it has. */
+      });
+    return () => {
+      live = false;
+    };
+  }, [props.active, local]);
+  const addFiles = (scan: ModelScan) =>
+    setLocalFiles((known) => [
+      ...known.filter(
+        (file) => !scan.models.some((found) => found.path === file.path),
+      ),
+      ...scan.models,
+    ]);
   return (
     <TranscriptionSettings
+      localFiles={localFiles}
       settings={settings}
       disabled={props.disabled}
       stt={props.stt}
@@ -763,12 +786,14 @@ function TranscriptionSection(props: Props & { active: boolean }) {
       installing={props.installing}
       onMode={props.onSttMode}
       onInstall={props.onInstallStt}
+      onDownload={props.onDownloadStt}
       onCancel={props.onCancelStt}
       onSave={props.onSaveStt}
       library={
         <ModelLibrary
           disabled={props.disabled}
           onImported={props.onImported}
+          onScan={addFiles}
           onUse={(id) =>
             settings &&
             props.onSaveStt({
@@ -784,24 +809,71 @@ function TranscriptionSection(props: Props & { active: boolean }) {
   );
 }
 
-function AiSection(props: Props & { active: boolean }) {
+/** The two places AI notes are written. */
+type AiBranch = "local" | "connection";
+
+/** The branch the saved settings describe: a remote connection, otherwise this PC. */
+function aiBranchOf(settings: Settings | null): AiBranch {
+  const llm = settings?.llm;
+  return llm && !isLocalBase(llm.base_url) ? "connection" : "local";
+}
+
+const aiChoices: Segment<AiBranch>[] = [
+  { id: "local", title: "On this PC", note: "Stays on this device" },
+  { id: "connection", title: "With a connection", leaves: true },
+];
+
+/**
+ * AI notes opens with one choice. Only the chosen path shows; during a search both paths stay
+ * in the page, so a match in the hidden one is found. The choice saves nothing by itself.
+ */
+function AiSection(
+  props: Props & {
+    active: boolean;
+    searching: boolean;
+    /** Set when the section was opened as "connections": that path opens first. */
+    preferred?: AiBranch;
+  },
+) {
+  // The user's pick for this session; until they make one, the settings (or the alias) decide.
+  const [pick, setPick] = useState<AiBranch | null>(null);
+  const branch = pick ?? props.preferred ?? aiBranchOf(props.settings);
   return (
     <div className="om-pane">
       <h2>AI notes</h2>
-      <Group label="Connection">
-        {props.settings ? (
-          <ConnectionEditor
-            role="llm"
-            settings={props.settings}
+      <Group label="Notes written">
+        <Segmented
+          label="Notes written"
+          value={branch}
+          options={aiChoices}
+          onChange={setPick}
+        />
+      </Group>
+      <div hidden={!props.searching && branch !== "connection"}>
+        <Group label="Connection">
+          {props.settings ? (
+            <ConnectionEditor
+              role="llm"
+              settings={props.settings}
+              active={props.active}
+              disabled={props.disabled}
+              onSaved={props.onSettings}
+              onKeyStatus={props.onKeyStatus}
+            />
+          ) : (
+            <p className="om-empty">Settings are still loading.</p>
+          )}
+        </Group>
+      </div>
+      <div hidden={!props.searching && branch !== "local"}>
+        <Group label="Local AI">
+          <LocalAi
             active={props.active}
             disabled={props.disabled}
-            onSaved={props.onSettings}
-            onKeyStatus={props.onKeyStatus}
+            onSettings={props.onSettings}
           />
-        ) : (
-          <p className="om-empty">Settings are still loading.</p>
-        )}
-      </Group>
+        </Group>
+      </div>
       <Group label="Templates">
         <SummaryTemplates
           settings={props.settings}
@@ -810,22 +882,129 @@ function AiSection(props: Props & { active: boolean }) {
           onDefaultTemplate={props.onSummaryDefault}
         />
       </Group>
-      <Group label="Tasks">
-        <Rows>
-          <Row label="Where they live" detail="In each meeting's inspector">
-            <Tip
-              label="Tasks"
-              text="Nothing is extracted automatically. Open a meeting's Tasks section to import action items from its summary, or add one by hand."
-            />
-          </Row>
-        </Rows>
-      </Group>
     </div>
   );
 }
 
+/** What needs the user in each section, as one short reason; empty when nothing does. */
+function needsYou(props: Props): Partial<Record<SettingsSectionId, string>> {
+  const needs: Partial<Record<SettingsSectionId, string>> = {};
+  const { settings, devices } = props;
+  if (devices?.capture_supported) {
+    const mic = devices.microphones.some((d) => d.id === props.microphone);
+    const speakers = devices.outputs.some((d) => d.id === props.output);
+    if (!mic || !speakers) needs.recording = "Choose a microphone and speakers";
+  }
+  if (
+    settings &&
+    settings.stt_mode !== "cloud" &&
+    props.stt &&
+    !props.stt.installed
+  )
+    needs.transcription = "Download a speech model";
+  if (settings && !settings.llm) needs.ai = "Choose where notes are written";
+  return needs;
+}
+
+/** Quick searches under the field: the words people look for most. */
+const quickSearches = [
+  "Theme",
+  "API key",
+  "Model",
+  "Shortcuts",
+  "Export folder",
+];
+
+const fold = (text: string) => text.toLocaleLowerCase().replace(/\s+/g, " ");
+
+/** Marks the label that search adds to a disclosure it opened; never searched itself. */
+const SEARCH_TAG = "data-search-label";
+/** Set on a disclosure search opened (it was closed); it counts as closed until search ends. */
+const SEARCH_OPENED = "data-search-opened";
+
+/**
+ * The text a person can read in a group. Menus count their picked option only. A closed
+ * disclosure counts only when `everything` is set, which is how search finds what sits behind
+ * "More options"; a disclosure that search opened counts as closed, so the page settles.
+ */
+function textOf(node: Node, everything: boolean): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (!(node instanceof Element)) return "";
+  if (node.hasAttribute(SEARCH_TAG)) return "";
+  if (node instanceof HTMLSelectElement)
+    return Array.from(node.selectedOptions, (option) => option.text).join(" ");
+  if (node.tagName === "OPTION") return "";
+  const closed =
+    !everything &&
+    node.tagName === "DETAILS" &&
+    (!(node as HTMLDetailsElement).open || node.hasAttribute(SEARCH_OPENED));
+  let text = "";
+  for (const child of Array.from(node.childNodes)) {
+    if (closed && !(child instanceof Element && child.tagName === "SUMMARY"))
+      continue;
+    text += " " + textOf(child, everything);
+  }
+  return text;
+}
+
+/** Opens a closed disclosure for search and labels it. */
+function openForSearch(details: HTMLDetailsElement) {
+  details.setAttribute(SEARCH_OPENED, "");
+  details.open = true;
+  const summary = Array.from(details.children).find(
+    (child) => child.tagName === "SUMMARY",
+  );
+  if (!summary || summary.querySelector(`[${SEARCH_TAG}]`)) return;
+  const tag = document.createElement("span");
+  tag.className = "om-search-tag";
+  tag.setAttribute(SEARCH_TAG, "");
+  tag.textContent = "in More options";
+  summary.append(tag);
+}
+
+/** Closes a disclosure search opened, as it was before, and takes its label away. */
+function closeAfterSearch(details: HTMLDetailsElement) {
+  details.open = false;
+  details.removeAttribute(SEARCH_OPENED);
+  details.querySelector(`[${SEARCH_TAG}]`)?.remove();
+}
+
+/** Top-level groups of a section: every `.om-group` that is not inside another one. */
+function groupsOf(section: HTMLElement): HTMLElement[] {
+  return Array.from(section.querySelectorAll<HTMLElement>(".om-group")).filter(
+    (group) => !group.parentElement?.closest(".om-group"),
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      className="om-search-icon"
+      viewBox="0 0 16 16"
+      width="16"
+      height="16"
+      aria-hidden="true"
+    >
+      <circle
+        cx="7"
+        cy="7"
+        r="4.75"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M10.5 10.5 14 14"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export function SettingsPanel(props: Props) {
-  // Uncontrolled fallback: without `section` the panel owns the visible section.
+  // Uncontrolled fallback: without `section` the panel owns the requested section.
   const [own, setOwn] = useState<SettingsSectionId>(() =>
     resolveSettingsSection(props.initialSection ?? "general"),
   );
@@ -833,21 +1012,181 @@ export function SettingsPanel(props: Props) {
   const section = controlled
     ? resolveSettingsSection(props.section as SettingsSection)
     : own;
+  // The section in view while scrolling; the index marks it.
+  const [current, setCurrent] = useState<SettingsSectionId>(section);
+  const [query, setQuery] = useState("");
+  const words = fold(query.trim());
+  // Matching groups per section while a search runs.
+  const [hits, setHits] = useState<Partial<Record<SettingsSectionId, number>>>(
+    {},
+  );
+  const main = useRef<HTMLDivElement>(null);
+  const indexNav = useRef<HTMLElement>(null);
+  // The section picked from the index or the shell; it stays current until the user scrolls.
+  const wanted = useRef<SettingsSectionId | null>(null);
+  const needs = needsYou(props);
+  const needCount = Object.keys(needs).length;
+
+  const scrollTo = (id: SettingsSectionId) => {
+    wanted.current = id;
+    setCurrent(id);
+    document
+      .getElementById(`settings-${id}`)
+      ?.scrollIntoView?.({ block: "start" });
+  };
+  // A section picked while a search hides it: the search clears, then the page scrolls there.
+  const pending = useRef<SettingsSectionId | null>(null);
   const pick = (id: SettingsSectionId) => {
     if (!controlled) setOwn(id);
     props.onSection?.(id);
+    if (words && !hits[id]) {
+      pending.current = id;
+      setQuery("");
+      return;
+    }
+    scrollTo(id);
   };
   // Before the section is controlled, the shell may open the panel again on another one.
   useEffect(() => {
     if (!controlled && props.initialSection)
       setOwn(resolveSettingsSection(props.initialSection));
   }, [controlled, props.initialSection]);
-  const panel = (id: SettingsSectionId) => ({
-    id: `settings-${id}`,
-    role: "tabpanel" as const,
-    "aria-labelledby": `settings-tab-${id}`,
-    hidden: section !== id,
+  // A requested section (from the shell or an "Open Settings" link) scrolls into view.
+  useEffect(() => {
+    scrollTo(section);
+  }, [section]);
+
+  // Scroll spy: the last section whose top has passed under the search bar is current. At the
+  // bottom of the page short sections never reach the top, so a visible pick is kept there.
+  useEffect(() => {
+    const root = main.current;
+    if (!root) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      if (wanted.current) return;
+      const line = root.getBoundingClientRect().top + 140;
+      const tops = settingsSections.map(([id]) => {
+        const el = document.getElementById(`settings-${id}`);
+        // Sections hidden by a search have no box and never count.
+        const shown = el && !el.hasAttribute("data-miss");
+        return [id, shown ? el.getBoundingClientRect() : null] as const;
+      });
+      const atBottom =
+        root.scrollTop + root.clientHeight >= root.scrollHeight - 2;
+      setCurrent((known) => {
+        if (atBottom) {
+          const box = tops.find(([id]) => id === known)?.[1];
+          if (box && box.top < root.getBoundingClientRect().bottom)
+            return known;
+        }
+        let next = known;
+        for (const [id, box] of tops) if (box && box.top <= line) next = id;
+        return next;
+      });
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    // A wheel, touch or key scroll is the user's own: the spy takes over again.
+    const release = () => {
+      wanted.current = null;
+    };
+    root.addEventListener("scroll", onScroll, { passive: true });
+    for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
+      root.addEventListener(type, release, { passive: true });
+    return () => {
+      root.removeEventListener("scroll", onScroll);
+      for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
+        root.removeEventListener(type, release);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  // Search hides the groups that do not mention the words; a section title match keeps the
+  // whole section. It reads the rendered text, so every label, option and value is findable.
+  useLayoutEffect(() => {
+    const next: Partial<Record<SettingsSectionId, number>> = {};
+    // Closed disclosures that hold a match: search opens them while the words are typed.
+    const opened = new Set<HTMLDetailsElement>();
+    for (const [id, label] of settingsSections) {
+      const el = document.getElementById(`settings-${id}`);
+      if (!el) continue;
+      const groups = groupsOf(el);
+      const whole = words === "" || fold(label).includes(words);
+      let count = 0;
+      for (const group of groups) {
+        let hit = whole || fold(textOf(group, false)).includes(words);
+        if (!hit && words) {
+          for (const details of Array.from(group.querySelectorAll("details"))) {
+            if (details.open && !details.hasAttribute(SEARCH_OPENED)) continue;
+            if (fold(textOf(details, true)).includes(words)) {
+              opened.add(details);
+              hit = true;
+            }
+          }
+        }
+        group.toggleAttribute("data-miss", !hit);
+        if (hit) count += 1;
+      }
+      if (groups.length === 0)
+        count = whole || fold(textOf(el, false)).includes(words) ? 1 : 0;
+      el.toggleAttribute("data-miss", count === 0);
+      next[id] = count;
+    }
+    // Search closes the disclosures it opened that no longer hold a match, and opens the rest.
+    const root = main.current;
+    for (const details of Array.from(
+      root?.querySelectorAll<HTMLDetailsElement>(`details[${SEARCH_OPENED}]`) ??
+        [],
+    ))
+      if (!opened.has(details)) closeAfterSearch(details);
+    for (const details of opened) openForSearch(details);
+    setHits((known) =>
+      settingsSections.every(([id]) => known[id] === next[id]) ? known : next,
+    );
+    if (pending.current && words === "") {
+      const id = pending.current;
+      pending.current = null;
+      scrollTo(id);
+    }
   });
+  // The one authored moment: results rise into place when the search changes.
+  const firstQuery = useRef(true);
+  useLayoutEffect(() => {
+    if (firstQuery.current) {
+      firstQuery.current = false;
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    for (const [id] of settingsSections) {
+      const el = document.getElementById(`settings-${id}`);
+      if (el && !el.hasAttribute("data-miss"))
+        el.animate?.(
+          [
+            { opacity: 0, transform: "translateY(4px)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { duration: 140, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+        );
+    }
+  }, [words]);
+  // A new search starts at the top, and the index follows the first section that matches.
+  useEffect(() => {
+    if (!words) return;
+    wanted.current = null;
+    main.current?.scrollTo?.({ top: 0, behavior: "instant" });
+  }, [words]);
+  useEffect(() => {
+    if (!words) return;
+    const first = settingsSections.find(([id]) => hits[id]);
+    if (first) setCurrent(first[0]);
+  }, [words, hits]);
+  const total = settingsSections.reduce(
+    (sum, [id]) => sum + (hits[id] ?? 0),
+    0,
+  );
+
   return (
     <section
       className="om-settings"
@@ -870,65 +1209,164 @@ export function SettingsPanel(props: Props) {
         <span className="om-version om-mono">{props.version ?? version}</span>
       </header>
       <div className="om-body">
-        <div
-          role="tablist"
-          aria-label="Settings sections"
-          aria-orientation="vertical"
-          className="om-sections"
-        >
-          {settingsSections.map(([id, label], index) => (
-            <button
-              key={id}
-              id={`settings-tab-${id}`}
-              role="tab"
-              aria-selected={section === id}
-              aria-controls={`settings-${id}`}
-              tabIndex={section === id ? 0 : -1}
-              onClick={() => pick(id)}
-              onKeyDown={(event) => {
-                if (event.ctrlKey || event.altKey || event.metaKey) return;
-                const next = tabTarget(
-                  event.key,
-                  index,
-                  settingsSections.length,
-                  true,
-                );
-                if (next === null) return;
+        <div className="om-main" ref={main}>
+          <div className="om-search">
+            <label className="om-search-field">
+              <SearchIcon />
+              <input
+                type="search"
+                aria-label="Search settings"
+                placeholder="Search settings"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  // Escape clears the search; Settings stays open (Escape outside a field leaves).
+                  if (event.key === "Escape" && query !== "") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setQuery("");
+                  }
+                }}
+              />
+              {words && (
+                <span className="om-search-count" role="status">
+                  {total === 1 ? "1 group" : `${total} groups`}
+                </span>
+              )}
+            </label>
+            <a
+              href="#settings-index"
+              className="om-skip"
+              onClick={(event) => {
                 event.preventDefault();
-                const target = settingsSections[next][0];
-                pick(target);
-                document.getElementById(`settings-tab-${target}`)?.focus();
+                const entry =
+                  indexNav.current?.querySelector<HTMLButtonElement>(
+                    "[aria-current]",
+                  ) ??
+                  indexNav.current?.querySelector<HTMLButtonElement>("button");
+                entry?.focus();
               }}
             >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="om-main">
-          <div className="om-wrap">
-            <div {...panel("general")}>
-              <GeneralSection {...props} />
-            </div>
-            <div {...panel("recording")}>
-              <RecordingSection {...props} />
-            </div>
-            <div {...panel("transcription")}>
-              <TranscriptionSection
-                {...props}
-                active={section === "transcription"}
-              />
-            </div>
-            <div {...panel("ai")}>
-              <AiSection {...props} active={section === "ai"} />
-            </div>
-            <div {...panel("export")}>
-              <ExportSection {...props} />
-            </div>
-            <div {...panel("about")}>
-              <AboutSection {...props} />
+              Skip to sections
+            </a>
+            <div className="om-qchips" role="group" aria-label="Quick searches">
+              {needCount > 0 && (
+                <button
+                  type="button"
+                  className="om-qchip om-qchip-need"
+                  onClick={() => {
+                    const first = settingsSections.find(([id]) => needs[id]);
+                    if (!first) return;
+                    setQuery("");
+                    pick(first[0]);
+                  }}
+                >
+                  <span className="om-need" aria-hidden="true" />
+                  {`Needs you · ${needCount}`}
+                </button>
+              )}
+              {quickSearches.map((term) => (
+                <button
+                  key={term}
+                  type="button"
+                  className="om-qchip"
+                  aria-pressed={fold(term) === words}
+                  onClick={() => setQuery(fold(term) === words ? "" : term)}
+                >
+                  {term}
+                </button>
+              ))}
             </div>
           </div>
+          <div className="om-wrap">
+            {words && total === 0 && (
+              <p className="om-no-match">
+                No settings match “{query.trim()}”.
+                <button
+                  type="button"
+                  className="om-ghost om-sm"
+                  onClick={() => setQuery("")}
+                >
+                  Clear search
+                </button>
+              </p>
+            )}
+            {settingsSections.map(([id, label]) => (
+              <section
+                key={id}
+                id={`settings-${id}`}
+                className="om-section"
+                aria-label={label}
+              >
+                {needs[id] && (
+                  <p className="om-need-line">
+                    <span className="om-need" aria-hidden="true" />
+                    {needs[id]}
+                  </p>
+                )}
+                {id === "general" && <GeneralSection {...props} />}
+                {id === "recording" && <RecordingSection {...props} />}
+                {id === "transcription" && (
+                  <TranscriptionSection {...props} active />
+                )}
+                {id === "ai" && (
+                  <AiSection
+                    {...props}
+                    active
+                    searching={words !== ""}
+                    preferred={
+                      (props.section ?? props.initialSection) === "connections"
+                        ? "connection"
+                        : undefined
+                    }
+                  />
+                )}
+                {id === "export" && <ExportSection {...props} />}
+                {id === "about" && <AboutSection {...props} />}
+              </section>
+            ))}
+          </div>
         </div>
+        <nav
+          id="settings-index"
+          ref={indexNav}
+          aria-label="Settings sections"
+          className="om-sections"
+        >
+          <span className="om-index-label">On this page</span>
+          {settingsSections.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={current === id ? "location" : undefined}
+              className={words && !hits[id] ? "om-dim" : undefined}
+              title={
+                words && !hits[id]
+                  ? "No match here; clears the search"
+                  : undefined
+              }
+              onClick={() => pick(id)}
+            >
+              <span>{label}</span>
+              {words ? (
+                <span className="om-hit-count" aria-hidden="true">
+                  {hits[id] ?? 0}
+                </span>
+              ) : (
+                needs[id] && (
+                  <span
+                    className="om-need"
+                    aria-hidden="true"
+                    title={needs[id]}
+                  />
+                )
+              )}
+              {needs[id] && (
+                <span className="om-sr-only">{`, needs you: ${needs[id]}`}</span>
+              )}
+            </button>
+          ))}
+        </nav>
       </div>
     </section>
   );

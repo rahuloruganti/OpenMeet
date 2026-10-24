@@ -31,7 +31,7 @@ it("scans common folders once on open, makes no network request, and respects a 
   await userEvent.click(screen.getByRole("button", { name: "Choose folder" }));
   expect(api.scanLocalModels).toHaveBeenCalledOnce();
 });
-it("imports only catalog candidates, shows external-server models separately, and updates found models on custom folder scan", async () => {
+it("imports only catalog candidates, hides files it cannot use, and updates found models on custom folder scan", async () => {
   vi.mocked(api.scanLocalModels).mockResolvedValue({
     models: [
       { path: "C:/small.bin", format: "whisper", size: 123, model_id: "small" },
@@ -43,17 +43,24 @@ it("imports only catalog candidates, shows external-server models separately, an
   vi.mocked(api.importLocalModel).mockResolvedValue({ model_id: "small" });
   const refresh = vi.fn();
   const onFound = vi.fn();
+  const onScan = vi.fn();
   render(
-    <ModelLibrary disabled={false} onImported={refresh} onFound={onFound} />,
+    <ModelLibrary
+      disabled={false}
+      onImported={refresh}
+      onFound={onFound}
+      onScan={onScan}
+    />,
   );
-  const select = await screen.findByLabelText("Found speech models");
+  const select = await screen.findByLabelText("Models found on this PC");
   await userEvent.selectOptions(select, "C:/small.bin");
   expect(onFound).toHaveBeenCalledWith(["small"]);
   expect(select.textContent).not.toMatch(/model\.gguf/);
-  expect(screen.getByText(/C:\/model\.gguf · gguf · 1 KB/)).toBeTruthy();
-  expect(
-    screen.getByText(/Use with an external server; compatibility unverified\./),
-  ).toBeTruthy();
+  // A file the speech engines cannot load is not offered anywhere.
+  expect(screen.queryByText(/model\.gguf/)).toBeNull();
+  expect(onScan).toHaveBeenCalledWith(
+    expect.objectContaining({ truncated: true }),
+  );
   await userEvent.click(
     await screen.findByRole("button", { name: "Verify and import small" }),
   );
@@ -199,9 +206,8 @@ it("lists only downloadable speech results and saves a complete sherpa-onnx fold
   render(<ModelLibrary disabled={false} onImported={vi.fn()} onUse={onUse} />);
   await userEvent.type(screen.getByLabelText("Hugging Face search"), "speech");
   await userEvent.click(screen.getByRole("button", { name: "Search" }));
-  expect(
-    screen.getByText(/public\/other · Other \(not downloadable\)/),
-  ).toBeTruthy();
+  // A repository with no usable speech model is not listed at all.
+  expect(screen.queryByText(/public\/other/)).toBeNull();
   expect(
     screen.queryByRole("button", { name: "Show files for public/other" }),
   ).toBeNull();
@@ -214,7 +220,63 @@ it("lists only downloadable speech results and saves a complete sherpa-onnx fold
     }),
   );
   expect(api.downloadHfFolder).toHaveBeenCalledWith(folder);
-  await screen.findByText(/Verified sherpa-onnx folder \(1 files\) saved to/);
+  await screen.findByText(
+    /Speech model folder downloaded and verified \(1 files\), saved to/,
+  );
   await userEvent.click(screen.getByRole("button", { name: "Use this model" }));
   expect(onUse).toHaveBeenCalledWith("sherpa-dir:public--sherpa");
+});
+
+it("opens with a heading and one plain sentence, and explains the empty search", () => {
+  render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
+  expect(screen.getByRole("heading", { name: "Your own models" })).toBeTruthy();
+  expect(
+    screen.getByText(
+      "Use a model file or folder you already have, or search Hugging Face.",
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText("Type a name to search.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Search" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+});
+
+it("shows the reason next to disabled library actions", () => {
+  render(<ModelLibrary disabled onImported={vi.fn()} />);
+  expect(screen.getByText("Wait for the current task to finish.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Scan folders" })).toHaveProperty(
+    "disabled",
+    true,
+  );
+});
+
+it("keeps technical wording out of the first level", async () => {
+  vi.mocked(api.searchHfModels).mockResolvedValue([
+    { id: "public/model", license: "mit", kind: "whisper_ggml" },
+  ]);
+  vi.mocked(api.listHfFiles).mockResolvedValue({
+    files: [
+      {
+        repo_id: "public/model",
+        revision: "abc",
+        filename: "ggml-model.bin",
+        size: 10,
+        sha256: "123",
+        license: "mit",
+        model_id: null,
+      },
+    ],
+    folders: [],
+  });
+  render(<ModelLibrary disabled={false} onImported={vi.fn()} />);
+  await userEvent.type(screen.getByLabelText("Hugging Face search"), "whisper");
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Show files for public/model" }),
+  );
+  expect(screen.getByText("Speech model file", { exact: false })).toBeTruthy();
+  expect(screen.queryByText(/Whisper ggml/)).toBeNull();
+  expect(screen.getByText("Technical details")).toBeTruthy();
+  expect(screen.queryByText(/Other \(not downloadable\)/)).toBeNull();
 });

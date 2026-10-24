@@ -29,6 +29,22 @@ const props = (input: Settings = settings) => ({
 });
 beforeEach(() => vi.resetAllMocks());
 
+it("explains each kind in one line when a template or recipe is made", async () => {
+  render(<SummaryTemplates {...props()} />);
+  await userEvent.click(screen.getByRole("button", { name: "New template" }));
+  const kind = screen.getByRole("group", { name: "Template kind" });
+  expect(
+    within(kind).getByRole("button", { name: /^Summary/ }).textContent,
+  ).toContain("Writes notes for the whole meeting.");
+  await userEvent.click(within(kind).getByRole("button", { name: /^Recipe/ }));
+  expect(
+    within(kind).getByRole("button", { name: /^Recipe/ }).textContent,
+  ).toContain("Fills the question box. Nothing is sent until you ask.");
+  // The old, unexplained wording is gone.
+  expect(screen.queryByText("Fills a question")).toBeNull();
+  expect(screen.queryByText("Used for summaries")).toBeNull();
+});
+
 it("shows summary templates and recipes as one tagged list", async () => {
   const input = props();
   render(<SummaryTemplates {...input} />);

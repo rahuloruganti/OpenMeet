@@ -21,6 +21,7 @@ import {
   initialSettings,
   installed,
   chooseProcessing,
+  settingsIndex,
   ready,
   installDefaultMocks,
 } from "../shared/test/app-harness";
@@ -30,6 +31,11 @@ vi.mock("../shared/api/api", async (original) =>
 );
 
 beforeEach(installDefaultMocks);
+
+/** One Settings section; every section renders at once, so queries must be scoped. */
+function settingsSection(name: string) {
+  return within(screen.getByRole("region", { name }));
+}
 
 describe("speech engine and automatic processing", () => {
   it("refreshes the engine status after transcription settings change the model", async () => {
@@ -61,15 +67,20 @@ describe("speech engine and automatic processing", () => {
     );
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Transcription" }));
-    expect(await screen.findByText("Not installed")).toBeTruthy();
-    // Choosing a model saves it and re-reads what the engine can now do.
-    await userEvent.click(
-      screen.getByRole("button", { name: "Use Whisper base" }),
+    await userEvent.click(settingsIndex("Transcription"));
+    expect(settingsIndex("Transcription").getAttribute("aria-current")).toBe(
+      "location",
     );
-    expect(await screen.findByText("Installed and verified")).toBeTruthy();
+    const transcription = settingsSection("Transcription");
+    expect(await transcription.findByText(/Not downloaded/)).toBeTruthy();
+    // Choosing a model saves it and re-reads what the engine can now do.
+    await userEvent.selectOptions(
+      transcription.getByRole("combobox", { name: "Speech model" }),
+      "base",
+    );
+    expect(await transcription.findByText("Ready")).toBeTruthy();
     expect(api.saveSttSettings).toHaveBeenCalledWith("auto", "", "base");
-    expect(screen.queryByText("Not installed")).toBeNull();
+    expect(transcription.queryByText(/Not downloaded/)).toBeNull();
   });
 
   it("downloads the speech engine only on request and reports verified status", async () => {
@@ -87,10 +98,11 @@ describe("speech engine and automatic processing", () => {
     await ready();
     expect(api.sttInstall).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Transcription" }));
-    expect(screen.getByText("Not installed")).toBeTruthy();
+    await userEvent.click(settingsIndex("Transcription"));
+    const transcription = settingsSection("Transcription");
+    expect(await transcription.findByText(/Not downloaded/)).toBeTruthy();
     await userEvent.click(
-      screen.getByRole("button", { name: "Download models" }),
+      transcription.getByRole("button", { name: "Download" }),
     );
     act(() =>
       progress({
@@ -99,12 +111,12 @@ describe("speech engine and automatic processing", () => {
         total: 465 * 1024 * 1024,
       }),
     );
-    expect(await screen.findByText(/100\.0 MB \/ 465\.0 MB/)).toBeTruthy();
+    expect(await transcription.findByText("Downloading 22%")).toBeTruthy();
     await act(async () => finish(installed));
-    await screen.findByText("Installed and verified");
+    await transcription.findByText("Ready");
     // Nothing is left to download, so the request is not offered again.
     expect(
-      screen.queryByRole("button", { name: "Download models" }),
+      transcription.queryByRole("button", { name: "Download" }),
     ).toBeNull();
   });
 
@@ -359,10 +371,7 @@ describe("speech engine and automatic processing", () => {
       expect(within(status).getByRole("status").textContent).toBe(
         "Finishing audio",
       );
-      // Sizes and counts are detail: they sit behind the ⓘ beside the status.
-      await userEvent.click(
-        screen.getByRole("button", { name: "More about session processing" }),
-      );
+      // Sizes and counts are detail: a muted line beside the status, no icon to open.
       expect(
         screen.getByText(
           `Used ${requests} ${noun}, 2.1 MB of audio and 4 KB of text.`,
@@ -464,22 +473,18 @@ describe("speech engine and automatic processing", () => {
     await userEvent.click(
       within(dialog).getByRole("button", { name: "Open Settings" }),
     );
-    expect(
-      screen
-        .getByRole("tab", { name: "Recording" })
-        .getAttribute("aria-selected"),
-    ).toBe("true");
+    expect(settingsIndex("Recording").getAttribute("aria-current")).toBe(
+      "location",
+    );
     await userEvent.keyboard("{Escape}");
-    await chooseProcessing("both", "general-v1");
+    await chooseProcessing("final", "general-v1");
     await userEvent.keyboard("{Escape}");
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
     );
     dialog = screen.getByRole("dialog", { name: "New recording" });
     await userEvent.click(within(dialog).getByText("More options"));
-    expect(
-      within(dialog).getByText(/Live and final transcription/),
-    ).toBeTruthy();
+    expect(within(dialog).getByText(/Transcribe after stop/)).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: "Review processing" }),
     ).toBeNull();
@@ -538,53 +543,54 @@ describe("speech engine and automatic processing", () => {
     expect(screen.getByDisplayValue("Unsaved private draft")).toBeTruthy();
   });
 
-  it("rejects stale and other-meeting live snapshots, deduplicates and bounds provisional rows", async () => {
-    const current = sessionSnapshot(5);
-    if (!current.workflow) throw new Error("Missing workflow");
-    current.workflow.provisional = Array.from({ length: 205 }, (_, index) => ({
-      id: `run:mic:${index}`,
-      chunk_id: index,
-      segment: {
-        speaker: "You",
-        timing: { kind: "untimed" },
-        text: `Live word ${index}`,
-      },
-    }));
-    current.workflow.provisional[204].segment.timing = {
-      kind: "timed",
-      start_ms: 123000,
-      end_ms: 124000,
-    };
-    current.workflow.provisional.push(current.workflow.provisional[204]);
-    vi.mocked(api.getSessionProcessing).mockResolvedValue(current);
+  it("shows live lines on the Transcript tab of the meeting being recorded", async () => {
+    vi.mocked(api.getRecordingState).mockResolvedValue({
+      revision: 1,
+      status: "recording",
+      meeting_id: "sample",
+      source: "desktop",
+      error: null,
+      recording_offset_ms: 65_400,
+    });
+    vi.mocked(api.getMeeting).mockResolvedValue({
+      ...sample,
+      meeting: { ...sample.meeting, status: "recording", source: "desktop" },
+    });
+    vi.mocked(api.liveTranscript).mockResolvedValue({
+      meeting_id: "sample",
+      lines: [
+        {
+          id: "mic:1",
+          lane: "mic",
+          speaker: "You",
+          start_ms: 61_000,
+          end_ms: 64_000,
+          text: "Live words.",
+          final: true,
+        },
+      ],
+      partials: [
+        {
+          id: "sys:1",
+          lane: "system",
+          speaker: "Others",
+          start_ms: 66_000,
+          end_ms: 66_500,
+          text: "Still being",
+          final: false,
+        },
+      ],
+      state: "running",
+      engine: "Streaming English (NeMo)",
+      leaves_device: false,
+      notice: null,
+    });
     await ready();
-    await screen.findByText("Live word 204");
-    expect(screen.queryByText("Live word 0")).toBeNull();
-    expect(screen.getAllByText("Live word 204")).toHaveLength(1);
-    expect(
-      screen.getByText("Live word 204").parentElement?.textContent,
-    ).toContain("[02:03] You: Live word 204");
-    expect(
-      screen.getByText("Live word 203").parentElement?.textContent,
-    ).toContain("Untimed");
-    const stale = sessionSnapshot(3, "failed");
-    vi.mocked(api.getSessionProcessing).mockResolvedValue(stale);
-    act(() =>
-      vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](stale),
-    );
-    await waitFor(() =>
-      expect(api.getSessionProcessing).toHaveBeenCalledTimes(2),
-    );
-    expect(screen.getByText("Live word 204")).toBeTruthy();
-    const other = { ...sessionSnapshot(9, "completed"), meeting_id: "other" };
-    vi.mocked(api.getSessionProcessing).mockResolvedValue(other);
-    act(() =>
-      vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](other),
-    );
-    await waitFor(() =>
-      expect(api.getSessionProcessing).toHaveBeenCalledWith("other"),
-    );
-    expect(screen.getByText("Live word 204")).toBeTruthy();
+    await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+
+    expect(await screen.findByText(/Live words\./)).toBeTruthy();
+    expect(screen.getByText("Streaming English (NeMo)")).toBeTruthy();
+    expect(screen.getByText("Still being")).toBeTruthy();
   });
 
   it("cancels the exact revision and retries in one step", async () => {
@@ -743,12 +749,13 @@ describe("speech engine and automatic processing", () => {
     vi.mocked(api.cancelModelDownload).mockResolvedValue();
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Transcription" }));
+    await userEvent.click(settingsIndex("Transcription"));
+    const transcription = settingsSection("Transcription");
     await userEvent.click(
-      screen.getByRole("button", { name: "Download models" }),
+      transcription.getByRole("button", { name: "Download" }),
     );
     await userEvent.click(
-      await screen.findByRole("button", { name: "Cancel" }),
+      await transcription.findByRole("button", { name: "Cancel" }),
     );
     expect(api.cancelModelDownload).toHaveBeenCalledOnce();
   });

@@ -11,10 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../shared/api/api";
 import {
   initialSettings,
-  chooseProcessing,
   notInstalled,
   ready,
   installDefaultMocks,
+  settingsIndex,
 } from "../shared/test/app-harness";
 
 vi.mock("../shared/api/api", async (original) =>
@@ -33,33 +33,37 @@ function mockShortcutSaves() {
 }
 
 describe("settings and meeting detection", () => {
-  it("supports arrow, Home and End keys across settings sections", async () => {
+  it("shows every section on one page and marks the index entry in view", async () => {
     await ready();
-    // The meeting page's Settings button opens Transcription.
+    // The meeting page's Settings button opens the page at the top, on General.
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    const transcription = screen.getByRole("tab", { name: "Transcription" });
-    expect(transcription.getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(transcription, { key: "ArrowDown" });
-    const ai = screen.getByRole("tab", { name: "AI notes" });
-    expect(document.activeElement).toBe(ai);
-    expect(ai.getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tabpanel", { name: "AI notes" })).toBeTruthy();
-    fireEvent.keyDown(ai, { key: "End" });
-    const about = screen.getByRole("tab", { name: "Privacy & about" });
-    expect(document.activeElement).toBe(about);
+    const general = settingsIndex("General");
+    expect(general.getAttribute("aria-current")).toBe("location");
+    // All six sections are on the page at once; nothing is hidden behind a tab.
+    const names = [
+      "General",
+      "Recording",
+      "Transcription",
+      "AI notes",
+      "Export & storage",
+      "Privacy & about",
+    ];
+    for (const name of names)
+      expect(screen.getByRole("region", { name })).toBeTruthy();
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    // Picking an entry moves the mark; the section it names is already on the page.
+    await userEvent.click(settingsIndex("AI notes"));
+    expect(settingsIndex("AI notes").getAttribute("aria-current")).toBe(
+      "location",
+    );
+    expect(general.getAttribute("aria-current")).toBeNull();
     const aboutPane = within(
-      screen.getByRole("tabpanel", { name: "Privacy & about" }),
+      screen.getByRole("region", { name: "Privacy & about" }),
     );
     expect(aboutPane.getByText("Version")).toBeTruthy();
     expect(aboutPane.getByText("0.9.0")).toBeTruthy();
     // Privacy prose is replaced by the short table of what leaves the device.
     expect(aboutPane.getByText("What leaves this device")).toBeTruthy();
-    fireEvent.keyDown(about, { key: "Home" });
-    const general = screen.getByRole("tab", { name: "General" });
-    expect(document.activeElement).toBe(general);
-    expect(transcription.getAttribute("tabindex")).toBe("-1");
-    fireEvent.keyDown(general, { key: "End", ctrlKey: true });
-    expect(general.getAttribute("aria-selected")).toBe("true");
   });
 
   describe("transcript and audio", () => {
@@ -99,7 +103,7 @@ describe("settings and meeting detection", () => {
       );
       expect(api.saveSttSettings).toHaveBeenLastCalledWith("de", "", "small");
       const pane = within(
-        screen.getByRole("tabpanel", { name: "Transcription" }),
+        screen.getByRole("region", { name: "Transcription" }),
       );
       await userEvent.click(
         pane.getByText("More options", { selector: "summary" }),
@@ -114,15 +118,16 @@ describe("settings and meeting detection", () => {
         "Okta",
         "small",
       );
-      await userEvent.click(
-        screen.getByRole("button", { name: "Use Whisper base" }),
+      await userEvent.selectOptions(
+        screen.getByRole("combobox", { name: "Speech model" }),
+        "base",
       );
       expect(api.saveSttSettings).toHaveBeenLastCalledWith(
         "de",
         "Okta",
         "base",
       );
-      await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+      await userEvent.click(settingsIndex("Recording"));
       expect(
         screen.queryByRole("button", { name: "Save shortcuts" }),
       ).toBeNull();
@@ -153,10 +158,8 @@ describe("settings and meeting detection", () => {
         "CommandOrControl+Shift+Space",
         null,
       );
-      // The explanation now sits behind a real button, not a hover-only glyph.
-      expect(
-        screen.getByRole("button", { name: "More about Shortcuts" }),
-      ).toBeTruthy();
+      // No info icon: the group explains itself in its rows.
+      expect(screen.queryByRole("button", { name: /^More about/ })).toBeNull();
     });
   });
 
@@ -175,8 +178,16 @@ describe("settings and meeting detection", () => {
     await waitFor(() =>
       expect(localStorage.getItem("openmeet.automaticProcessing")).toBeNull(),
     );
-    await chooseProcessing("live");
-    expect(api.saveProcessingDefault).toHaveBeenLastCalledWith("live", null);
+    // Turning automatic processing off saves the recording-only default.
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(settingsIndex("Recording"));
+    await userEvent.click(
+      screen.getByRole("switch", { name: "Automatic processing" }),
+    );
+    expect(api.saveProcessingDefault).toHaveBeenLastCalledWith(
+      "recording",
+      null,
+    );
   });
 
   it("saves default devices only when both are chosen and keeps a missing one visible", async () => {
@@ -191,7 +202,7 @@ describe("settings and meeting detection", () => {
     }));
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    await userEvent.click(settingsIndex("Recording"));
     const microphone = screen.getByLabelText(
       "Default microphone",
     ) as HTMLSelectElement;
@@ -215,11 +226,11 @@ describe("settings and meeting detection", () => {
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     const engines = within(
-      screen.getByRole("tabpanel", { name: "Transcription" }),
+      screen.getByRole("region", { name: "Transcription" }),
     );
-    expect(engines.getByRole("group", { name: "Runs" })).toBeTruthy();
+    expect(engines.getByRole("group", { name: "Process audio" })).toBeTruthy();
     expect(screen.queryByText("Other engines (not supported yet)")).toBeNull();
-    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    await userEvent.click(settingsIndex("Recording"));
     const capture = screen.getByRole("button", {
       name: "Change stop recording shortcut",
     });
@@ -260,7 +271,7 @@ describe("settings and meeting detection", () => {
     mockShortcutSaves();
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    await userEvent.click(settingsIndex("Recording"));
     const capture = screen.getByRole("button", {
       name: "Change stop recording shortcut",
     });
@@ -293,7 +304,7 @@ describe("settings and meeting detection", () => {
     mockShortcutSaves();
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+    await userEvent.click(settingsIndex("Recording"));
     const capture = screen.getByRole("button", {
       name: "Change stop recording shortcut",
     });
@@ -316,7 +327,9 @@ describe("settings and meeting detection", () => {
       altKey: true,
       shiftKey: true,
     });
-    expect(screen.queryByRole("alert")).toBeNull();
+    // The clash warning belongs to Recording; other sections' notices stay out of the way.
+    const recording = within(screen.getByRole("region", { name: "Recording" }));
+    expect(recording.queryByRole("alert")).toBeNull();
     expect(api.saveSettings).toHaveBeenCalledWith(
       "CommandOrControl+Shift+Space",
       "Alt+Shift+S",
@@ -336,17 +349,23 @@ describe("settings and meeting detection", () => {
     expect(localStorage.getItem("openmeet.automaticProcessing")).not.toBeNull();
   });
 
-  it("scans for local models only once the model library is opened, and shows a failed scan", async () => {
+  it("scans local model folders for the model menu, and shows a failed scan in the library", async () => {
     vi.mocked(api.scanLocalModels).mockRejectedValue(
       new Error("Model folder unreadable"),
     );
     await ready();
-    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(api.scanLocalModels).not.toHaveBeenCalled();
-    const pane = within(
-      screen.getByRole("tabpanel", { name: "Transcription" }),
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(settingsIndex("Transcription"));
+    // The model menu's own scan fails quietly; the library reports it.
+    await waitFor(() => expect(api.scanLocalModels).toHaveBeenCalledWith(null));
+    expect(screen.queryByText("Model folder unreadable")).toBeNull();
+    const pane = within(screen.getByRole("region", { name: "Transcription" }));
+    // Your own models sit under More options, behind "Add your own model".
+    await userEvent.click(pane.getAllByText("More options")[0]);
+    await userEvent.click(
+      pane.getByRole("button", { name: "Add your own model" }),
     );
-    await userEvent.click(pane.getByRole("button", { name: "Get models" }));
     expect(screen.getByRole("button", { name: "Scan folders" })).toBeTruthy();
     expect(await screen.findByText("Model folder unreadable")).toBeTruthy();
     expect(api.scanLocalModels).toHaveBeenCalledWith(null);
@@ -440,7 +459,7 @@ describe("settings and meeting detection", () => {
       ).toBeNull();
       vi.mocked(api.saveDetection).mockResolvedValue(detecting);
       await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-      await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+      await userEvent.click(settingsIndex("Recording"));
       const detection = screen.getByRole("switch", {
         name: "Meeting detection",
       });
@@ -471,7 +490,7 @@ describe("settings and meeting detection", () => {
   describe("closing settings", () => {
     const openRecording = async () => {
       await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-      await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+      await userEvent.click(settingsIndex("Recording"));
     };
     const stopShortcut = () => screen.getByLabelText("Stop recording shortcut");
     const settingsPage = () =>

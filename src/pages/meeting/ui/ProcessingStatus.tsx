@@ -1,12 +1,11 @@
 import { formatBytes } from "../../../entities/meeting";
 import { stageLabel } from "../../../entities/processing";
-import { Tip } from "../../../shared/ui/info-tip";
 import type { SessionProcessingSnapshot } from "../../../shared/api/api";
 import { awaitingNotes, endedStages, retryStages } from "../model/processing";
 
 /**
  * Session processing as ONE status line above the editor: what runs now, why it
- * stopped, and the single action that helps. Details sit behind the ⓘ.
+ * stopped, and the single action that helps. Usage details sit beside it in muted text.
  */
 export function ProcessingStatus(props: {
   processing: SessionProcessingSnapshot;
@@ -47,7 +46,7 @@ export function ProcessingStatus(props: {
         {retry && workflow?.error ? `: ${workflow.error}` : ""}
         {ackFailed ? `: ${ackFailed}` : ""}
       </span>
-      {details && <Tip label="session processing" text={details} />}
+      {details && <span className="proc-detail">{details}</span>}
       <span className="proc-acts">
         {waiting && (
           <button

@@ -1,28 +1,19 @@
 import type { ReactNode } from "react";
 import { Saved } from "../../../shared/ui/settings-link";
-import { Tip } from "../../../shared/ui/info-tip";
-
-/**
- * The ⓘ now lives in shared/ui so every slice can use it. It is re-exported here because that
- * is where other slices imported it from.
- */
-export { Tip };
 
 /** A labelled settings group: everything under one small uppercase label. */
 export function Group(props: {
   label: string;
-  tip?: string;
   /** Shows the brief "Saved" tick after an autosaved change in this group. */
   saved?: boolean;
   children: ReactNode;
 }) {
   return (
     <section className="om-group" aria-label={props.label}>
-      <span className="om-group-label">
-        {props.label}
-        {props.tip && <Tip text={props.tip} label={props.label} />}
+      <div className="om-group-head">
+        <h3 className="om-group-label">{props.label}</h3>
         {props.saved && <Saved show />}
-      </span>
+      </div>
       {props.children}
     </section>
   );

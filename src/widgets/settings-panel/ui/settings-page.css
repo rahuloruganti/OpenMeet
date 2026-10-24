@@ -60,26 +60,35 @@
   color: var(--ink);
 }
 
-/* Body: section list plus one visible pane */
+/* Body: an "On this page" index plus every section on one scrolling page */
 .om-body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: clamp(168px, 20vw, 200px) minmax(0, 1fr);
+  grid-template-columns: clamp(176px, 18vw, 216px) minmax(0, 1fr);
 }
+/* The index comes after the content in the DOM, so Tab reaches the search field first. */
 .om-sections {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 10px 8px;
+  padding: 18px 10px;
   overflow: auto;
   border-right: 1px solid var(--divider);
   background: var(--sidebar);
 }
+.om-index-label {
+  padding: 0 10px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
 .om-sections button {
-  justify-content: flex-start;
-  height: 30px;
-  min-height: 30px;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  min-height: 32px;
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -88,27 +97,228 @@
   font-size: 13px;
   font-weight: 400;
   text-align: left;
+  transition:
+    color 140ms ease-out,
+    background-color 140ms ease-out;
 }
 .om-sections button:hover:not(:disabled) {
   border-color: transparent;
   background: var(--hover);
   color: var(--ink);
 }
-.om-sections button[aria-selected="true"] {
+.om-sections button[aria-current="location"] {
   border-color: var(--divider);
   background: var(--raised);
-  box-shadow: inset 2px 0 0 var(--accent);
   color: var(--ink);
   font-weight: 500;
 }
+.om-sections button.om-dim {
+  font-style: italic;
+}
+.om-hit-count {
+  min-width: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.om-sections button:not(.om-dim) .om-hit-count {
+  color: var(--ink);
+}
+.om-need {
+  flex: none;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .om-main {
+  grid-column: 2;
+  grid-row: 1;
   min-width: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-color: var(--control-border) transparent;
 }
+@media (prefers-reduced-motion: reduce) {
+  .om-main {
+    scroll-behavior: auto;
+  }
+}
+
+/* Search: sticky at the top of the content column */
+.om-search {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  gap: 10px;
+  max-width: 776px;
+  padding: 18px 28px 14px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--workspace);
+}
+.om-search-field {
+  display: flex;
+  margin: 0;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--muted);
+  transition: border-color 160ms ease-out;
+}
+.om-search-field:hover {
+  border-color: var(--control-border-hover);
+}
+.om-search-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.om-search-icon {
+  flex: none;
+}
+.om-search-field input {
+  caret-color: var(--accent);
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+}
+.om-search-field input::placeholder {
+  color: var(--muted);
+}
+.om-search-field input::-webkit-search-cancel-button {
+  display: none;
+}
+.om-search-count {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* Skip link: hidden until it takes focus; the first stop after the search field */
+.om-skip {
+  position: absolute;
+  top: 62px;
+  left: 28px;
+  z-index: 3;
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 12.5px;
+  text-decoration: none;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+.om-skip:focus {
+  clip-path: none;
+  outline: none;
+}
+/* Read by screen readers only */
+.om-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* Note on a disclosure that search opened */
+.om-search-tag {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+/* One plain line under a heading: the file-safety note */
+.om-file-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.om-qchips {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.om-settings button.om-qchip {
+  min-height: 26px;
+  height: 26px;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.om-settings button.om-qchip:hover:not(:disabled) {
+  border-color: var(--control-border);
+  background: var(--hover);
+  color: var(--ink);
+}
+.om-settings button.om-qchip[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.om-settings button.om-qchip-need {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 .om-wrap {
-  max-width: 680px;
-  padding: 26px 28px 64px;
+  max-width: 776px;
+  padding: 8px 28px 96px;
+}
+.om-section {
+  position: relative;
+  scroll-margin-top: 116px;
+  padding: 30px 0 34px;
+}
+.om-section + .om-section {
+  border-top: 1px solid var(--divider);
+}
+.om-section[data-miss],
+.om-group[data-miss] {
+  display: none;
+}
+.om-need-line {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--warning);
+  font-size: 12px;
+}
+.om-no-match {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 28px 0 0;
+  color: var(--muted);
 }
 .om-pane {
   display: grid;
@@ -127,10 +337,15 @@
   gap: 6px;
   margin: 0;
 }
-.om-group-label {
+.om-group-head {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.om-group-label {
+  margin: 0;
+  font-weight: 400;
+  line-height: 1.5;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
@@ -297,14 +512,22 @@
   font-size: 11px;
 }
 
-/* Switch */
+/* Switch: a 34x24 hit area around the 34x20 track, so the target is at least 24px tall */
 .om-switch {
   position: relative;
   flex: none;
+  box-sizing: border-box;
   width: 34px;
-  height: 20px;
-  min-height: 20px;
+  height: 24px;
+  min-height: 24px;
   padding: 0;
+  border: 0;
+  background: transparent;
+}
+.om-switch::before {
+  content: "";
+  position: absolute;
+  inset: 2px 0;
   border: 1px solid var(--control-border);
   border-radius: 999px;
   background: var(--active);
@@ -312,19 +535,19 @@
 .om-switch::after {
   content: "";
   position: absolute;
-  top: 2px;
-  left: 2px;
+  top: 5px;
+  left: 3px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
   background: var(--muted);
 }
-.om-switch[aria-checked="true"] {
+.om-switch[aria-checked="true"]::before {
   border-color: var(--accent);
   background: var(--accent);
 }
 .om-switch[aria-checked="true"]::after {
-  left: 16px;
+  left: 17px;
   background: var(--accent-ink);
 }
 
@@ -369,13 +592,13 @@
   font-size: 11px;
 }
 
-/* "When on" preview under a toggle */
+/* "When on" preview under a toggle: muted text, not dimmed controls */
 .om-preview {
   display: grid;
   gap: 4px;
   padding: 2px 0 2px 12px;
   border-left: 2px solid var(--divider);
-  opacity: 0.6;
+  color: var(--muted);
 }
 .om-preview .om-group-label {
   font-size: 10px;
@@ -697,8 +920,15 @@
 }
 
 @media (max-width: 760px) {
+  .om-need-line {
+    position: static;
+    margin-bottom: 8px;
+  }
   .om-wrap {
-    padding: 20px 18px 48px;
+    padding: 4px 18px 64px;
+  }
+  .om-search {
+    padding: 14px 18px 12px;
   }
   .om-side select,
   .om-side input,

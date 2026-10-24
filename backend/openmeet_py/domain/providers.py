@@ -109,6 +109,33 @@ class Connection:
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.key}"} if self.key else {}
 
+    @property
+    def host(self) -> str:
+        return (urlsplit(self.base_url).hostname or "").lower()
+
+
+# Providers whose OpenAI-compatible API differs in one detail. Chat works with the Bearer key
+# everywhere; Anthropic's model list wants its own key header and pages at 20 by default, and
+# Gemini lists IDs as "models/<id>" while chat takes the bare ID.
+ANTHROPIC_HOST = "api.anthropic.com"
+ANTHROPIC_VERSION = "2023-06-01"
+GEMINI_HOST = "generativelanguage.googleapis.com"
+
+
+def _models_request(connection: "Connection") -> tuple[str, dict[str, str]]:
+    if connection.host == ANTHROPIC_HOST:
+        headers = {"anthropic-version": ANTHROPIC_VERSION}
+        if connection.key:
+            headers["x-api-key"] = connection.key
+        return connection.endpoint("models?limit=1000"), headers
+    return connection.endpoint("models"), connection.headers()
+
+
+def _model_id(connection: "Connection", value: str) -> str:
+    if connection.host == GEMINI_HOST and value.startswith("models/"):
+        return value[len("models/") :]
+    return value
+
 
 def missing_key() -> AppError:
     return AppError(
@@ -204,10 +231,11 @@ def models_invalid() -> AppError:
 def list_models(connection: Connection, timeout: float = MODELS_TIMEOUT) -> list[dict[str, str]]:
     """GET {base}/models. Returns sorted, de-duplicated IDs that pass model validation."""
     invalid = models_invalid()
+    url, headers = _models_request(connection)
     raw = request_capped(
         "GET",
-        connection.endpoint("models"),
-        headers=connection.headers(),
+        url,
+        headers=headers,
         content=None,
         timeout=timeout,
         transport=connection.transport,
@@ -230,8 +258,9 @@ def list_models(connection: Connection, timeout: float = MODELS_TIMEOUT) -> list
     for item in data:
         if not isinstance(item, dict) or not isinstance(item.get("id"), str):
             raise invalid
-        if _model_ok(item["id"]):
-            ids.add(item["id"])
+        model_id = _model_id(connection, item["id"])
+        if _model_ok(model_id):
+            ids.add(model_id)
     return [{"id": model_id} for model_id in sorted(ids)]
 
 

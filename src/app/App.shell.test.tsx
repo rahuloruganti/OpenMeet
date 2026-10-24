@@ -15,6 +15,7 @@ import {
   installDefaultMocks,
   ready,
   sample,
+  settingsIndex,
 } from "../shared/test/app-harness";
 
 vi.mock("../shared/api/api", async (original) =>
@@ -303,14 +304,14 @@ describe("shortcuts", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: "Settings" }),
     ).toBeTruthy();
-    // The palette closes and Settings opens on General.
+    // The palette closes and Settings opens on General, which the index marks.
     expect(
       screen.queryByRole("dialog", { name: "Command palette" }),
     ).toBeNull();
-    expect(
-      (await screen.findByRole("tab", { name: "General" })).getAttribute(
-        "aria-selected",
+    await waitFor(() =>
+      expect(settingsIndex("General").getAttribute("aria-current")).toBe(
+        "location",
       ),
-    ).toBe("true");
+    );
   });
 });

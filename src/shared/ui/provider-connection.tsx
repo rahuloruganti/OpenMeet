@@ -23,6 +23,15 @@ export async function publishSettings(settings: Settings, to: Publish) {
   }
 }
 
+/** Where a URL sends data, as plain text: the host (with its port when it has one). */
+export const hostOf = (baseUrl: string) => {
+  try {
+    return new URL(baseUrl.trim()).host || baseUrl.trim();
+  } catch {
+    return baseUrl.trim();
+  }
+};
+
 /** Badge text for a connection: loopback stays on this device. */
 export const destination = (baseUrl: string) =>
   isLocalBase(baseUrl) ? "This device" : "Leaves this device";

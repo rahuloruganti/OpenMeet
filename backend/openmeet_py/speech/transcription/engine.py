@@ -116,7 +116,9 @@ class WhisperCppEngine:
 
 
 SHERPA_THREADS_CAP = 8
-SHERPA_VAD_CHUNK = ENGINE_SAMPLE_RATE * 10  # fed to the VAD in 10 s chunks, drained after each
+# The VAD is fed one Silero window at a time. A large buffer in one accept_waveform call loses every
+# speech segment that ends inside it except the last one (a 10 s feed kept only ~3 s of a 22 s clip).
+SHERPA_VAD_CHUNK = 512
 SHERPA_VAD_BUFFER_SECONDS = 60
 
 

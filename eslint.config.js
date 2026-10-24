@@ -20,6 +20,9 @@ const slices = {
   ],
   features: [
     "action-items",
+    "live-settings",
+    "live-transcript",
+    "local-ai",
     "meeting-tags",
     "model-library",
     "note-writer",

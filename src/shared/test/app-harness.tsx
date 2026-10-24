@@ -1,9 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, vi } from "vitest";
 import { App } from "../../app/App";
 import {
   api,
+  type LiveModels,
+  type LocalAiStatus,
   type MeetingDetail,
   type Settings,
   type SessionProcessingPlan,
@@ -136,6 +138,8 @@ export const initialSettings: Settings = {
   setup_done: true,
   theme: "system",
   inspector_open: true,
+  live_transcript: true,
+  live_model: "",
 };
 
 export const notInstalled = {
@@ -165,9 +169,86 @@ export const installed = {
   languages: ["auto", "de", "en"],
 };
 
+/** Live transcript models: the Transcription model, one pinned stream, one cloud connection. */
+export const liveModels: LiveModels = {
+  models: [
+    {
+      id: "",
+      label: "Same as Transcription",
+      kind: "same",
+      installed: true,
+      download_bytes: null,
+      leaves_device: false,
+      languages: [],
+      reason: null,
+    },
+    {
+      id: "stream:nemo-en-80ms",
+      label: "Streaming English (NeMo)",
+      kind: "streaming",
+      installed: false,
+      download_bytes: 102_813_625,
+      leaves_device: false,
+      languages: ["en"],
+      reason: null,
+    },
+  ],
+  selected: "",
+  ready: true,
+  reason: null,
+  installing: null,
+};
+
+/** Local AI on a PC with no engine and nothing downloaded yet: the quickstart's place. */
+export const localAiIdle: LocalAiStatus = {
+  hardware: {
+    gpu_name: "NVIDIA GeForce RTX 3060",
+    gpu_vendor: "nvidia",
+    vram_bytes: 12 * 1024 ** 3,
+    ram_bytes: 32 * 1024 ** 3,
+    ram_available_bytes: 20 * 1024 ** 3,
+    backend: "cuda",
+  },
+  engine_installed: false,
+  engine_tag: "b11671",
+  engine_download_bytes: 578 * 1024 ** 2,
+  server: "stopped",
+  server_error: null,
+  active_model: null,
+  in_use: false,
+  models: [
+    {
+      id: "qwen3-14b",
+      name: "Qwen3 14B",
+      description: "General notes and answers.",
+      size_bytes: 9 * 1024 ** 3,
+      license: "Apache-2.0",
+      fit: "gpu",
+      recommended: true,
+      downloaded: false,
+      source: "catalog",
+    },
+  ],
+  job: null,
+};
+
+/**
+ * A Settings section entry in the page index. Settings is one scrolling page now: the sections
+ * are buttons in a nav, not tabs, so tests click these instead of `role="tab"`.
+ */
+export function settingsIndex(name: string) {
+  // A needs-you entry's name also carries its reason after the label.
+  return within(
+    screen.getByRole("navigation", { name: "Settings sections" }),
+  ).getByRole("button", {
+    name: (accessible) =>
+      accessible === name || accessible.startsWith(`${name}, needs you:`),
+  });
+}
+
 export async function chooseProcessing(mode: string, summary?: string) {
   await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-  await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+  await userEvent.click(settingsIndex("Recording"));
   // Automatic processing is a switch now; its mode and summary appear once it is on.
   const automation = screen.getByRole("switch", {
     name: "Automatic processing",
@@ -188,7 +269,7 @@ export async function chooseProcessing(mode: string, summary?: string) {
       summary,
     );
   // Leaves focus out of a field, so Escape can close Settings.
-  await userEvent.click(screen.getByRole("tab", { name: "Recording" }));
+  await userEvent.click(settingsIndex("Recording"));
 }
 
 export function installDefaultMocks() {
@@ -233,6 +314,8 @@ export function installDefaultMocks() {
   });
   vi.mocked(api.onModelLibraryProgress).mockResolvedValue(() => {});
   vi.mocked(api.apiConnectionKeyStatus).mockResolvedValue("present");
+  // Test lists models at a URL without saving; by default nothing answers.
+  vi.mocked(api.testApiConnection).mockResolvedValue([]);
   vi.mocked(api.getSettings).mockResolvedValue(initialSettings);
   vi.mocked(api.dataFolder).mockResolvedValue({
     path: "C:/Users/Test/AppData/Roaming/OpenMeetPy",
@@ -248,6 +331,29 @@ export function installDefaultMocks() {
   });
   vi.mocked(api.getStartupWarning).mockResolvedValue(null);
   vi.mocked(api.saveNotes).mockResolvedValue(1);
+  vi.mocked(api.localAiStatus).mockResolvedValue(localAiIdle);
+  vi.mocked(api.onLocalAiProgress).mockResolvedValue(vi.fn());
+  // Live transcript: nothing is running until a recording starts, and the model list is local.
+  vi.mocked(api.liveTranscript).mockResolvedValue({
+    meeting_id: "sample",
+    lines: [],
+    partials: [],
+    state: "stopped",
+    engine: null,
+    leaves_device: false,
+    notice: null,
+  });
+  vi.mocked(api.liveModels).mockResolvedValue(liveModels);
+  vi.mocked(api.saveLiveSettings).mockImplementation(
+    async (enabled, model) => ({
+      ...initialSettings,
+      live_transcript: enabled,
+      live_model: model,
+    }),
+  );
+  vi.mocked(api.liveModelInstall).mockResolvedValue(liveModels);
+  vi.mocked(api.liveModelCancel).mockResolvedValue(liveModels);
+  vi.mocked(api.detectLocalServers).mockResolvedValue([]);
   vi.mocked(api.providerKeyStatus).mockResolvedValue("missing");
   vi.mocked(api.sttStatus).mockResolvedValue(notInstalled);
   vi.mocked(api.audioUsage).mockResolvedValue(0);
@@ -264,6 +370,9 @@ export function installDefaultMocks() {
     api.onAudioHealth,
     api.onSttProgress,
     api.onMicrophoneApps,
+    api.onLiveTranscript,
+    api.onLiveState,
+    api.onLiveModelProgress,
   ]) {
     vi.mocked(method).mockResolvedValue(vi.fn());
   }

@@ -92,6 +92,7 @@ class FakeVad:
     def accept_waveform(self, samples: np.ndarray) -> None:
         assert samples.dtype == np.float32 and samples.flags["C_CONTIGUOUS"]
         self.accepts += 1
+        self.largest = max(getattr(self, "largest", 0), int(samples.size))
         self.fed = np.concatenate([self.fed, samples])
         self._emit(final=False)
 
@@ -238,7 +239,7 @@ def test_a_vocabulary_hint_is_ignored_by_the_sherpa_command(tmp_path: Path, sher
 def test_vad_windows_give_each_segment_its_own_start_offset_and_end(tmp_path: Path, sherpa: types.ModuleType) -> None:
     folder = layout(tmp_path, "p", {"encoder.int8.onnx": b"e", "decoder.int8.onnx": b"d",
                                     "joiner.int8.onnx": b"j", "tokens.txt": b"t"})
-    # Three regions across 25 s of audio: fed in 10 s chunks, so one region spans chunks.
+    # Three regions across 25 s of audio, fed one VAD window at a time.
     REGIONS.extend([(RATE * 1, RATE * 2 + RATE // 2), (RATE * 12, RATE * 13), (RATE * 22, RATE * 24)])
     engine = SherpaEngine(transducer_spec(folder), make_vad(tmp_path))
     results = run(engine, np.zeros(RATE * 25, dtype=np.float32))
@@ -248,6 +249,27 @@ def test_vad_windows_give_each_segment_its_own_start_offset_and_end(tmp_path: Pa
     assert vad == 60  # buffer seconds
     config = next(c[1]["config"] for c in CALLS if c[0] == "vad")
     assert config.sample_rate == RATE and config.silero_vad.model == str(tmp_path / "silero_vad.onnx")
+
+
+def test_the_vad_is_fed_one_silero_window_at_a_time(tmp_path: Path, sherpa: types.ModuleType,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    # The real VoiceActivityDetector keeps only the last segment that ends inside one large accept call
+    # (a 10 s feed turned a 22 s clip into one word), so no call may exceed the 512-sample Silero window.
+    folder = layout(tmp_path, "p", {"encoder.int8.onnx": b"e", "decoder.int8.onnx": b"d",
+                                    "joiner.int8.onnx": b"j", "tokens.txt": b"t"})
+    seen: list[FakeVad] = []
+    original = sherpa.VoiceActivityDetector
+
+    def record(config: FakeConfig, buffer_size_in_seconds: float) -> FakeVad:
+        vad = original(config, buffer_size_in_seconds)
+        seen.append(vad)
+        return vad
+
+    monkeypatch.setattr(sherpa, "VoiceActivityDetector", record)
+    REGIONS.extend([(RATE // 2, RATE), (RATE * 2, RATE * 3)])
+    run(SherpaEngine(transducer_spec(folder), make_vad(tmp_path)), np.zeros(RATE * 4, dtype=np.float32))
+    assert engine_module.SHERPA_VAD_CHUNK == 512
+    assert seen and seen[0].largest <= 512 and seen[0].accepts >= RATE * 4 // 512
 
 
 def test_a_segment_that_ends_inside_a_chunk_is_timed_from_its_start(tmp_path: Path, sherpa: types.ModuleType) -> None:

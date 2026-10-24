@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "context_tokens": 16384,
+  "engine": {
+    "tag": "b11671",
+    "source": "Pins match Hermes Agent's pm/lock.json (llamacpp-cuda/vulkan/cpu, win32-x64). Digests checked against the GitHub release API.",
+    "backends": {
+      "cuda": [
+        {
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11671/llama-b11671-bin-win-cuda-13.4-x64.zip",
+          "size": 154593693,
+          "sha256": "e1aef5883990f5ca4a71d9733f53538ddcb907bbb27e905bf39e148e0daa46eb"
+        },
+        {
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11671/cudart-llama-bin-win-cuda-13.4-x64.zip",
+          "size": 423535356,
+          "sha256": "738f8c251ac22b70c3ae6f83a10cf222725df0395246a2cf58f32bdb85fbe668"
+        }
+      ],
+      "vulkan": [
+        {
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11671/llama-b11671-bin-win-vulkan-x64.zip",
+          "size": 32193817,
+          "sha256": "53758a131e48b51b284a41cec997a89446286b90340dd30f33f7e2532d1b7195"
+        }
+      ],
+      "cpu": [
+        {
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11671/llama-b11671-bin-win-cpu-x64.zip",
+          "size": 19550938,
+          "sha256": "a9a407979a351add66016ffb558a53de8b6655fed1eec362591d66ea671fec81"
+        }
+      ]
+    }
+  },
+  "models": [
+    {
+      "id": "qwen3-30b-a3b-instruct",
+      "name": "Qwen3 30B A3B Instruct",
+      "description": "Best notes; needs a large GPU or plenty of RAM.",
+      "repo": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",
+      "revision": "eea7b2be5805a5f151f8847ede8e5f9a9284bf77",
+      "file": "Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+      "size_bytes": 18556686752,
+      "sha256": "6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0",
+      "license": "apache-2.0",
+      "n_layers": 48,
+      "kv_bytes_per_token": 98304,
+      "quality": 88
+    },
+    {
+      "id": "qwen3-14b",
+      "name": "Qwen3 14B",
+      "description": "Strong notes on a 12-16 GB GPU.",
+      "repo": "unsloth/Qwen3-14B-GGUF",
+      "revision": "a04a82c4739b3ef5fa6da7d10261db2c67dd1985",
+      "file": "Qwen3-14B-Q4_K_M.gguf",
+      "size_bytes": 9001753984,
+      "sha256": "5eaa0870bd81ed3b58a630a271234cfa604e43ffb3a19cd68e54a80dd9d52a66",
+      "license": "apache-2.0",
+      "n_layers": 40,
+      "kv_bytes_per_token": 163840,
+      "quality": 80
+    },
+    {
+      "id": "gemma-3-12b-it",
+      "name": "Gemma 3 12B",
+      "description": "Good notes, many languages.",
+      "repo": "unsloth/gemma-3-12b-it-GGUF",
+      "revision": "d15e4c7dc21dc55d56bf8549db57a71ad8a2a35d",
+      "file": "gemma-3-12b-it-Q4_K_M.gguf",
+      "size_bytes": 7300778336,
+      "sha256": "15b8fd9d8672cd4240c178c217ca781409291f34e353d2e913b29c7602ceb3ff",
+      "license": "gemma",
+      "n_layers": 48,
+      "kv_bytes_per_token": 393216,
+      "quality": 76
+    },
+    {
+      "id": "qwen3-8b",
+      "name": "Qwen3 8B",
+      "description": "Balanced speed and quality on an 8 GB GPU.",
+      "repo": "unsloth/Qwen3-8B-GGUF",
+      "revision": "a6adef130ffb23ddaf1a62fec9dced968c9bc482",
+      "file": "Qwen3-8B-Q4_K_M.gguf",
+      "size_bytes": 5027784512,
+      "sha256": "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4",
+      "license": "apache-2.0",
+      "n_layers": 36,
+      "kv_bytes_per_token": 147456,
+      "quality": 72
+    },
+    {
+      "id": "qwen3-4b-instruct",
+      "name": "Qwen3 4B Instruct",
+      "description": "Fast; fine for short meetings.",
+      "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+      "file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "size_bytes": 2497281120,
+      "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+      "license": "apache-2.0",
+      "n_layers": 36,
+      "kv_bytes_per_token": 147456,
+      "quality": 66
+    },
+    {
+      "id": "gemma-3-4b-it",
+      "name": "Gemma 3 4B",
+      "description": "Small, many languages.",
+      "repo": "unsloth/gemma-3-4b-it-GGUF",
+      "revision": "5a3566e716d80f709ed7b79817eaf7733d2a1fce",
+      "file": "gemma-3-4b-it-Q4_K_M.gguf",
+      "size_bytes": 2489894016,
+      "sha256": "04a43a22e8d2003deda5acc262f68ec1005fa76c735a9962a8c77042a74a7d19",
+      "license": "gemma",
+      "n_layers": 34,
+      "kv_bytes_per_token": 139264,
+      "quality": 60
+    },
+    {
+      "id": "llama-3.2-3b-instruct",
+      "name": "Llama 3.2 3B Instruct",
+      "description": "Smallest; runs on most PCs.",
+      "repo": "unsloth/Llama-3.2-3B-Instruct-GGUF",
+      "revision": "e7d0997e49c9cb00d88b4c1a6a16aa894b0bbc31",
+      "file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 2019377600,
+      "sha256": "6c99cc00ae910f6a532a80022cb4bc1939094527a089c29294b841c0bd87f74d",
+      "license": "llama3.2",
+      "n_layers": 28,
+      "kv_bytes_per_token": 114688,
+      "quality": 52
+    }
+  ]
+}

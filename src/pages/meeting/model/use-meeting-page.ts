@@ -173,6 +173,11 @@ export function useMeetingPage(env: MeetingPageEnv) {
 
   const unsavedEdits =
     Object.keys(summaryDrafts).length > 0 || segmentDraft !== null;
+  // Quitting saves everything by default. The quit dialog only appears when something could not be saved.
+  const [closeProblems, setCloseProblems] = useState<string[]>([]);
+  const [closeNotesFailed, setCloseNotesFailed] = useState(false);
+  const [closeAttempt, setCloseAttempt] = useState(0);
+  const saveAllAndQuit = useRef<() => Promise<void>>(async () => {});
   const setSummaryDraft = (id: string, draft: SummaryDraft | null) =>
     setSummaryDrafts((drafts) => {
       const next = { ...drafts };
@@ -483,7 +488,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
     onToggleSidebar: () => setSidebarOpen((open) => !open),
     onNewRecording: (trigger) => openPanel("setup", trigger),
     onNewNote: newNote,
-    onOpenSettings: (trigger) => openSettings("transcription", trigger),
+    onOpenSettings: (trigger) => openSettings("general", trigger),
     sidebar: {
       open: sidebarOpen,
       meetings,
@@ -493,7 +498,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
       recordingActive: active,
       onSearch: setSearch,
       onNewRecording: (trigger) => openPanel("setup", trigger),
-      onSettings: (trigger) => openSettings("transcription", trigger),
+      onSettings: (trigger) => openSettings("general", trigger),
       onAsk: env.openAsk,
       onOpenMeeting: (id) =>
         void run(async () => {
@@ -912,22 +917,83 @@ export function useMeetingPage(env: MeetingPageEnv) {
     },
     close: {
       requested: env.closeRequested,
-      unsavedEdits,
-      notesStatus,
-      notesErrorReason,
-      busy: env.busy,
-      controlBusy: env.controlBusy,
-      onQuit: () =>
-        void run(async () => {
-          await writer.current?.flush();
-          await api.close();
-        }),
+      problems: closeProblems,
+      notesFailed: closeNotesFailed,
+      onRetry: () => {
+        setCloseProblems([]);
+        setCloseAttempt((attempt) => attempt + 1);
+      },
+      // Notes are never discarded: Quit anyway is only offered when the notes are saved.
+      onQuitAnyway: () => {
+        if (!closeNotesFailed) void api.close().catch(env.report);
+      },
       onKeepWorking: () => {
+        setCloseProblems([]);
         env.focusWorkspace();
         env.setCloseRequested(false);
       },
     },
   };
+
+  // The window close asks the page first: save the notes and any open summary or transcript edit,
+  // then quit with no prompt. Only a failed save keeps the window open and says what is not saved.
+  useEffect(() => {
+    saveAllAndQuit.current = async () => {
+      const problems: string[] = [];
+      let notesFailed = false;
+      try {
+        await writer.current?.flush();
+      } catch (failure) {
+        notesFailed = true;
+        problems.push(
+          `Notes not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
+        );
+      }
+      for (const [id, draft] of Object.entries(summaryDrafts)) {
+        try {
+          await api.saveSummaryEdit(
+            id,
+            draft.baseId,
+            draft.latestId,
+            draft.text,
+          );
+          setSummaryDraft(id, null);
+        } catch (failure) {
+          problems.push(
+            `Summary edit not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
+          );
+        }
+      }
+      if (segmentDraft) {
+        try {
+          await api.editSegment(
+            segmentDraft.meetingId,
+            segmentDraft.segmentId,
+            segmentDraft.baseText,
+            segmentDraft.text,
+          );
+          setSegmentDraft(null);
+        } catch (failure) {
+          problems.push(
+            `Transcript edit not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
+          );
+        }
+      }
+      if (problems.length === 0) {
+        try {
+          await api.close();
+        } catch (failure) {
+          problems.push(errorMessage(failure));
+        }
+        if (problems.length === 0) return;
+      }
+      setCloseNotesFailed(notesFailed);
+      setCloseProblems(problems);
+    };
+  });
+  useEffect(() => {
+    if (env.closeRequested) void saveAllAndQuit.current();
+  }, [env.closeRequested, closeAttempt]);
 
   return {
     openMeeting,

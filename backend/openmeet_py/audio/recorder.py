@@ -138,7 +138,7 @@ class Session:
         self.meeting_id = meeting_id
         self.folder = folder
         self.tracks = tracks
-        self.live = live  # processing.LiveTap or None; fed by the writer after each successful write
+        self.live = live  # speech.live.LiveSession or None; fed by the writer after each successful write
         self.queue: "queue.Queue[Any]" = queue.Queue(QUEUE_BLOCKS)
         self.generation = 0
         self.accepting = False
@@ -281,7 +281,7 @@ class Session:
             log.exception("audio writer failed")
         finally:
             if self.live is not None:
-                self.live.flush_all()  # the last partial chunk goes to the preview before the files close
+                self.live.flush_all()  # the last block reaches the live session before the files close
             self._finalize()
             self.finished.set()
 
@@ -345,8 +345,10 @@ class Recorder:
         self.source: Optional[str] = None
         self.error: Optional[str] = None
         self.session: Optional[Session] = None
-        # Set by server wiring: processing.Processing (prepare, live_tap, attach, started, stopped, cancel_live).
+        # Set by server wiring: processing.Processing (prepare, attach, started, stopped).
         self.processing: Any = None
+        # Set by server wiring: live_commands.LiveService. It decides whether a live transcript runs.
+        self.live: Any = None
         # Why processing was skipped for the last start. Kept until the next start.
         self.processing_notice: Optional[str] = None
 
@@ -423,9 +425,13 @@ class Recorder:
             out = self._resolve(self.backend.output_devices, output_id, OUTPUT_MISSING)
             # Automatic processing is decided before any file exists. A skipped plan never blocks the recording.
             plan, notice = self._prepare_processing()
-            tap = self.processing.live_tap(plan, mic, out) if plan is not None else None
             meeting_id = str(uuid.uuid4())
-            session = self._open_session(meeting_id, mic, out, tap)
+            live_session = self._open_live(meeting_id, mic, out)
+            try:
+                session = self._open_session(meeting_id, mic, out, live_session)
+            except BaseException:
+                self._abandon_live(live_session)
+                raise
             try:
                 with self.store.lock:
                     with transaction(self.store.db) as db:
@@ -457,6 +463,7 @@ class Recorder:
                             self.processing.attach(db, plan, meeting_id)
             except BaseException:
                 session.discard()
+                self._abandon_live(live_session)
                 raise
             session.accepting = True
             self.session = session
@@ -467,8 +474,21 @@ class Recorder:
             self.processing_notice = notice
             self._start_meter(session)
             if plan is not None:
-                self.processing.started(meeting_id, plan["id"], tap)
+                self.processing.started(meeting_id, plan["id"])
             return self._publish()
+
+    def _open_live(self, meeting_id: str, mic: DeviceInfo, out: DeviceInfo) -> Any:
+        """The live session for this recording, or None when live transcript is off or cannot run."""
+        if self.live is None:
+            return None
+        return self.live.begin(
+            meeting_id, [("mic", mic.rate, mic.channels), ("system", out.rate, out.channels)]
+        )
+
+    def _abandon_live(self, live_session: Any) -> None:
+        """A recording that never reached the database gives its live session up."""
+        if live_session is not None and self.live is not None:
+            self.live.abandon(live_session)
 
     def _prepare_processing(self) -> tuple[Optional[dict[str, Any]], Optional[str]]:
         if self.processing is None:
@@ -576,8 +596,6 @@ class Recorder:
             session = self.session
             if session is None:
                 return self._state_locked()
-            if self.processing is not None:
-                self.processing.cancel_live(session.meeting_id)  # an in-flight live chunk stops with the recording
             session.halt_streams()
             if not session.close_writer():
                 session.fault |= WORKER_ERROR
@@ -601,9 +619,15 @@ class Recorder:
                 raise
             self.session = None
             self._capture_event("stopped" if error is None else "error", session)
+            self._finish_live(session)
             self.status = "stopped"
             self.error = error
             return self._publish()
+
+    def _finish_live(self, session: Session) -> None:
+        """Drains the live session on its own thread: the stop command never waits for a decoder."""
+        if session.live is not None and self.live is not None:
+            self.live.finish(session.live)
 
     def toggle_pause(self) -> dict[str, Any]:
         """The global pause/resume shortcut: the same calls the buttons make."""

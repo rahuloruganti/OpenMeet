@@ -1,10 +1,17 @@
 import { mockApiModule } from "../shared/test/api-mock";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Settings } from "../shared/api/api";
 import {
   initialSettings,
+  settingsIndex,
   ready,
   installDefaultMocks,
 } from "../shared/test/app-harness";
@@ -14,6 +21,11 @@ vi.mock("../shared/api/api", async (original) =>
 );
 
 beforeEach(installDefaultMocks);
+
+/** One Settings section; every section renders at once, so queries must be scoped. */
+function settingsSection(name: string) {
+  return within(screen.getByRole("region", { name }));
+}
 
 describe("export", () => {
   it("flushes typed notes before export", async () => {
@@ -148,11 +160,10 @@ describe("export", () => {
     }));
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(settingsIndex("Export & storage"));
+    const exporting = settingsSection("Export & storage");
     await userEvent.click(
-      screen.getByRole("tab", { name: "Export & storage" }),
-    );
-    await userEvent.click(
-      screen.getByRole("switch", { name: "Include transcript" }),
+      exporting.getByRole("switch", { name: "Include transcript" }),
     );
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: false,
@@ -162,13 +173,13 @@ describe("export", () => {
     });
     await waitFor(() =>
       expect(
-        screen
+        exporting
           .getByRole("switch", { name: "Include transcript" })
           .getAttribute("aria-checked"),
       ).toBe("false"),
     );
     await userEvent.selectOptions(
-      screen.getByRole("combobox", { name: "File name" }),
+      exporting.getByRole("combobox", { name: "File name" }),
       "date_title",
     );
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
@@ -186,24 +197,23 @@ describe("export", () => {
     }));
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-    await userEvent.click(
-      screen.getByRole("tab", { name: "Export & storage" }),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "SRT" }));
+    await userEvent.click(settingsIndex("Export & storage"));
+    const exporting = settingsSection("Export & storage");
+    await userEvent.click(exporting.getByRole("button", { name: "SRT" }));
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: true,
       summary: true,
       filename: "title",
       transcript_formats: ["srt"],
     });
-    await userEvent.click(screen.getByRole("button", { name: "TXT" }));
+    await userEvent.click(exporting.getByRole("button", { name: "TXT" }));
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: true,
       summary: true,
       filename: "title",
       transcript_formats: ["srt", "txt"],
     });
-    await userEvent.click(screen.getByRole("button", { name: "SRT" }));
+    await userEvent.click(exporting.getByRole("button", { name: "SRT" }));
     expect(api.saveExportOptions).toHaveBeenLastCalledWith({
       transcript: true,
       summary: true,
@@ -212,10 +222,14 @@ describe("export", () => {
     });
     // The chosen formats stay pressed, so the state is visible after saving.
     expect(
-      screen.getByRole("button", { name: "TXT" }).getAttribute("aria-pressed"),
+      exporting
+        .getByRole("button", { name: "TXT" })
+        .getAttribute("aria-pressed"),
     ).toBe("true");
     expect(
-      screen.getByRole("button", { name: "SRT" }).getAttribute("aria-pressed"),
+      exporting
+        .getByRole("button", { name: "SRT" })
+        .getAttribute("aria-pressed"),
     ).toBe("false");
   });
 });

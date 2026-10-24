@@ -24,6 +24,15 @@ vi.mock("../shared/api/api", async (original) =>
 
 beforeEach(installDefaultMocks);
 
+/** One entry of the Settings index: every section is on the page, the index scrolls to one. */
+const settingsIndex = (name: string) =>
+  within(
+    screen.getByRole("navigation", { name: "Settings sections" }),
+  ).getByRole("button", {
+    name: (accessible) =>
+      accessible === name || accessible.startsWith(`${name}, needs you:`),
+  });
+
 describe("meeting library", () => {
   it("filters meeting navigation without replacing the selected draft", async () => {
     vi.mocked(api.listMeetings).mockResolvedValue([
@@ -174,11 +183,15 @@ describe("meeting library", () => {
       expect(
         await screen.findByRole("heading", { level: 1, name: "Settings" }),
       ).toBeTruthy();
+      expect(settingsIndex("AI notes").getAttribute("aria-current")).toBe(
+        "location",
+      );
+      // The section it opens is on the page and says what it waits for.
       expect(
-        screen
-          .getByRole("tab", { name: "AI notes" })
-          .getAttribute("aria-selected"),
-      ).toBe("true");
+        within(screen.getByRole("region", { name: "AI notes" })).getByText(
+          "Choose where notes are written",
+        ),
+      ).toBeTruthy();
       await userEvent.keyboard("{Escape}");
       expect(await screen.findByRole("main")).toBeTruthy();
       expect(document.activeElement).toBe(screen.getByRole("main"));
@@ -203,11 +216,15 @@ describe("meeting library", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Open Settings for AI notes" }),
       );
+      expect(settingsIndex("AI notes").getAttribute("aria-current")).toBe(
+        "location",
+      );
+      // AI notes settings is where the missing key is added.
       expect(
-        screen
-          .getByRole("tab", { name: "AI notes" })
-          .getAttribute("aria-selected"),
-      ).toBe("true");
+        within(
+          screen.getByRole("region", { name: "AI notes connection" }),
+        ).getByLabelText("API key"),
+      ).toBeTruthy();
     });
 
     it("does not ask for a key when AI notes uses a server on this computer", async () => {
@@ -252,11 +269,26 @@ describe("meeting library", () => {
       await userEvent.click(
         screen.getByRole("button", { name: "Open Settings for AI notes" }),
       );
+      expect(settingsIndex("AI notes").getAttribute("aria-current")).toBe(
+        "location",
+      );
+      // The section it opens says what it is missing, and offers the place to fix it.
       expect(
-        (await screen.findByRole("tab", { name: "AI notes" })).getAttribute(
-          "aria-selected",
+        within(screen.getByRole("region", { name: "AI notes" })).getByText(
+          "Choose where notes are written",
         ),
-      ).toBe("true");
+      ).toBeTruthy();
+      await userEvent.click(
+        within(screen.getByRole("group", { name: "Notes written" })).getByRole(
+          "button",
+          { name: /^With a connection/ },
+        ),
+      );
+      expect(
+        within(
+          screen.getByRole("region", { name: "AI notes connection" }),
+        ).getByLabelText("API key"),
+      ).toBeTruthy();
     });
 
     it("renames on Enter and restores the title on Escape", async () => {

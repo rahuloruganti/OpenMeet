@@ -34,7 +34,7 @@ CLOSE_ANSWER_TIMEOUT = 15.0
 
 
 class CloseGuard:
-    """Decides whether a window close goes through, so the page can ask "Save and quit?".
+    """Decides whether a window close goes through, so the page can save everything before it quits.
 
     pywebview cancels a close when the `closing` handler returns False. Returning False once,
     after emitting `request_close`, lets the page flush a pending note save and then call

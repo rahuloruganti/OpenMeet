@@ -18,7 +18,7 @@ vi.mock("../shared/api/api", async (original) =>
 beforeEach(installDefaultMocks);
 
 describe("note drafts and shutdown", () => {
-  it("shows the quit prompt over the meetings page even when Settings was open", async () => {
+  it("saves and quits with no prompt, even when Settings was open", async () => {
     await ready();
     await userEvent.click(
       within(
@@ -27,10 +27,8 @@ describe("note drafts and shutdown", () => {
     );
     await screen.findByRole("heading", { level: 1, name: "Settings" });
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    const quit = await screen.findByRole("button", { name: "Save and quit" });
-    expect(document.activeElement).toBe(quit);
-    await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
-    expect(screen.getByRole("main")).toBeTruthy();
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("guards opening the active meeting when another meeting has an unsaved draft", async () => {
@@ -222,22 +220,20 @@ describe("note drafts and shutdown", () => {
       target: { value: "Keep these edits" },
     });
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    const quit = await screen.findByRole("dialog", { name: "Save and quit?" });
-    await userEvent.click(
-      within(quit).getByRole("button", { name: "Save and quit" }),
+    const dialog = await screen.findByRole("dialog", { name: "Not saved yet" });
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      "Notes not saved: Disk full.",
     );
-    // The banner and the quit dialog both explain the failed save.
-    await waitFor(() =>
-      expect(screen.getAllByText(/Notes not saved: Disk full/)).toHaveLength(2),
-    );
-    expect(within(quit).getByRole("alert").textContent).toContain(
-      "Quitting waits for them",
-    );
+    expect(dialog.textContent).toContain("Quitting waits for them");
+    // Notes are never discarded, so there is no way to quit past them.
+    expect(
+      within(dialog).queryByRole("button", { name: "Quit anyway" }),
+    ).toBeNull();
     expect(api.close).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
   });
 
-  it("explains a failed save in the quit dialog and keeps Keep working focused", async () => {
+  it("keeps Keep working focused after a failed save and quits once Try again saves", async () => {
     await ready();
     vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
     fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
@@ -245,22 +241,38 @@ describe("note drafts and shutdown", () => {
     });
     await screen.findByText(/Notes not saved: Disk full/);
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    const dialog = await screen.findByRole("dialog", {
-      name: "Save and quit?",
-    });
-    expect(within(dialog).getByRole("alert").textContent).toBe(
-      "Notes not saved: Disk full. Quitting waits for them. Copy your text or retry.",
-    );
+    await screen.findByRole("dialog", { name: "Not saved yet" });
     // Enter on the dialog must not retry a failing save by default.
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: "Keep working" }),
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save and quit" }),
-    );
-    await screen.findByText(/Save your notes first: fix the error above/);
     expect(api.close).not.toHaveBeenCalled();
-    expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
+    vi.mocked(api.saveNotes).mockResolvedValue(1);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(api.saveNotes).toHaveBeenLastCalledWith(
+      "sample",
+      "Keep these edits",
+      0,
+    );
+  });
+
+  it("closes the dialog on Keep working and asks again on the next close", async () => {
+    await ready();
+    vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
+    fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
+      target: { value: "Still here" },
+    });
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    await screen.findByRole("dialog", { name: "Not saved yet" });
+    await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByDisplayValue("Still here")).toBeTruthy();
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    expect(
+      await screen.findByRole("dialog", { name: "Not saved yet" }),
+    ).toBeTruthy();
+    expect(api.close).not.toHaveBeenCalled();
   });
 
   it("does not switch meetings when the current notes cannot be saved", async () => {
@@ -322,11 +334,10 @@ describe("note drafts and shutdown", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
       target: { value: "Last edit before quitting" },
     });
+    // No prompt: closing the window saves the notes, then quits.
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Save and quit" }),
-    );
     await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.saveNotes).toHaveBeenCalledWith(
       "sample",
       "Last edit before quitting",

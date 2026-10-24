@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { api, type Settings } from "../../shared/api/api";
 import { builtinTemplates } from "../../entities/processing";
-import { Tip } from "../../shared/ui/info-tip";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
 
 type Kind = "summary" | "recipe";
@@ -232,8 +231,8 @@ export function SummaryTemplates(props: Props) {
                 <span className="om-seg-t">{kindLabel[option]}</span>
                 <span className="om-seg-s">
                   {option === "summary"
-                    ? "Used for summaries"
-                    : "Fills a question"}
+                    ? "Writes notes for the whole meeting."
+                    : "Fills the question box. Nothing is sent until you ask."}
                 </span>
               </button>
             ))}
@@ -310,10 +309,6 @@ export function SummaryTemplates(props: Props) {
         <div className="om-more-body">
           <div className="om-frow">
             <span>Saved instructions</span>
-            <Tip
-              label="Saved instructions"
-              text="Sent with every summary request, before the template."
-            />
           </div>
           <textarea
             aria-label="Saved summary instructions"

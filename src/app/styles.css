@@ -1167,6 +1167,14 @@ textarea.notes-editor {
 .provider-settings > .panel-actions {
   margin-bottom: 12px;
 }
+/* Short actions and status beside an input (Test, Working, Key saved) never wrap or shrink. */
+.provider-settings .om-side > button,
+.provider-settings .om-side > .om-saved,
+.provider-settings .om-side > .om-error,
+.provider-settings .om-side > .om-muted {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .provider-settings code {
   overflow-wrap: anywhere;
 }
@@ -1246,18 +1254,6 @@ textarea.notes-editor {
   color: var(--success);
   font-family: var(--mono);
   font-size: 11px;
-}
-.info {
-  display: inline-grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--control-border);
-  border-radius: 50%;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  cursor: help;
 }
 kbd {
   padding: 0 5px;

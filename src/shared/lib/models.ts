@@ -61,6 +61,23 @@ const parakeetLanguages = [
   "uk",
 ];
 
+const senseVoiceLanguages = ["zh", "ja", "ko", "yue", "en"];
+
+/** Whether a local speech model can transcribe the chosen spoken language. "auto" fits
+ * every model; a Whisper `.en` file and Moonshine are English only; downloaded sherpa-onnx
+ * folders are unknown, so they are kept. */
+export function speechModelFits(id: string, language: string): boolean {
+  if (language === "auto") return true;
+  if (id.startsWith("sherpa-dir:")) return true;
+  if (id === "sherpa:parakeet-v3") return parakeetLanguages.includes(language);
+  if (id === "sherpa:moonshine-base-en") return language === "en";
+  if (id === "sherpa:sense-voice")
+    return senseVoiceLanguages.includes(language);
+  const name = (id.split(/[\\/]/).pop() ?? id).toLowerCase();
+  if (/(^|[.\-_])en($|[.\-_])/.test(name)) return language === "en";
+  return true;
+}
+
 /** Speech models to offer first for a spoken language, best first. */
 export function recommendedSpeechModels(language: string): string[] {
   return language === "auto" || parakeetLanguages.includes(language)

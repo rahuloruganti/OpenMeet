@@ -140,10 +140,18 @@ describe("transcript and audio", () => {
         await screen.findByText(/changed or no longer exists/),
       ).toBeTruthy();
       expect(screen.getByDisplayValue("Persimmon budget")).toBeTruthy();
+      // Quitting saves the open edit by default; a conflict keeps the window open and says so.
+      vi.mocked(api.editSegment).mockRejectedValueOnce({
+        code: "segment_conflict",
+        message: "This transcript segment changed or no longer exists.",
+      });
       act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
       expect(
-        await screen.findByRole("button", { name: "Discard and quit" }),
+        await screen.findByText(
+          "Transcript edit not saved: This transcript segment changed or no longer exists.",
+        ),
       ).toBeTruthy();
+      expect(api.close).not.toHaveBeenCalled();
       await userEvent.click(
         screen.getByRole("button", { name: "Keep working" }),
       );

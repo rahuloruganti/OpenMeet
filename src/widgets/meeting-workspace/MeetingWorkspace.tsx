@@ -30,6 +30,7 @@ import {
   type SettingsSection,
 } from "../../shared/ui/settings-link";
 import { MeetingTagsForm } from "../../features/meeting-tags";
+import { LiveTranscript, liveSeen } from "../../features/live-transcript";
 import { SpeakerNamesForm } from "../../features/speaker-names";
 import { TranscriptVersions } from "../../features/transcript-versions";
 import {
@@ -522,6 +523,14 @@ export function MeetingWorkspace(props: Props) {
   const playable = playableTracks(selected);
   const transcribable = playable.length > 0;
   const hasTranscript = selected.segments.length > 0;
+  // Live text runs while the meeting records; after stop it stays until the final transcript lands.
+  const liveNow = meeting.status === "recording" || meeting.status === "paused";
+  const liveShown =
+    liveNow ||
+    (meeting.source === "desktop" &&
+      meeting.status === "stopped" &&
+      !hasTranscript &&
+      liveSeen(meeting.id));
   // The Transcript tab already says "No transcript yet." with the same action, so the card stays off it.
   const nextSteps =
     meeting.source === "desktop" &&
@@ -1410,42 +1419,14 @@ export function MeetingWorkspace(props: Props) {
                           : "No finalized audio tracks."}
                 </p>
               )}
-              {!!props.processing?.workflow?.provisional.length && (
-                <div
-                  className="mw-live"
-                  role="group"
-                  aria-label="Live transcript (provisional)"
-                >
-                  <p className="mw-hint">Live transcript is provisional.</p>
-                  {Array.from(
-                    new Map(
-                      props.processing.workflow.provisional.map((row) => [
-                        row.id,
-                        row,
-                      ]),
-                    ).values(),
-                  )
-                    .slice(-200)
-                    .map((row) => (
-                      <p key={row.id} className="transcript-segment">
-                        {row.segment.timing.kind === "timed" ? (
-                          <span className="muted">
-                            {formatTimestamp(row.segment.timing.start_ms)}
-                          </span>
-                        ) : (
-                          <span className="muted">Untimed</span>
-                        )}{" "}
-                        <strong>
-                          {speakerLabel(
-                            selected.speaker_names,
-                            row.segment.speaker,
-                          )}
-                          :
-                        </strong>{" "}
-                        <span>{row.segment.text}</span>
-                      </p>
-                    ))}
-                </div>
+              {liveShown && (
+                <LiveTranscript
+                  meetingId={meeting.id}
+                  paused={meeting.status === "paused"}
+                  provisional={!liveNow}
+                  names={selected.speaker_names}
+                  onOpenSettings={props.onOpenSettings}
+                />
               )}
               {transcribable && (
                 <div className="mw-card-row">

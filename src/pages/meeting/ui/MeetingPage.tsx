@@ -15,14 +15,15 @@ export type MeetingPageProps = {
   feedback: FeedbackProps;
   workspace: ComponentProps<typeof MeetingWorkspace>;
   controls: ComponentProps<typeof RecordingControls>;
+  /** Quitting saves everything by default; this dialog only lists what could not be saved. */
   close: {
     requested: boolean;
-    unsavedEdits: boolean;
-    notesStatus: string;
-    notesErrorReason: string;
-    busy: boolean;
-    controlBusy: boolean;
-    onQuit: () => void;
+    /** One sentence per thing that is not saved; empty while saving or when nothing failed. */
+    problems: string[];
+    /** Notes failed: Quit anyway is not offered, so notes are never discarded. */
+    notesFailed: boolean;
+    onRetry: () => void;
+    onQuitAnyway: () => void;
     onKeepWorking: () => void;
   };
   onToggleSidebar: () => void;
@@ -75,41 +76,30 @@ export function MeetingPage(props: MeetingPageProps) {
           }
         />
         <RecordingControls {...props.controls} />
-        {close.requested && (
+        {close.requested && close.problems.length > 0 && (
           <section
             className="close-panel"
             role="dialog"
             aria-modal="true"
             aria-labelledby="close-title"
           >
-            <h2 id="close-title">Save and quit?</h2>
+            <h2 id="close-title">Not saved yet</h2>
+            <p>OpenMeet saves everything when you quit. This did not save:</p>
+            <ul role="alert">
+              {close.problems.map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
             <p>
-              Notes are saved first. The recording stops and background
-              processing is cancelled.
+              {close.notesFailed
+                ? "Copy your notes or try again. Quitting waits for them."
+                : "Quit anyway discards these edits."}
             </p>
-            {close.unsavedEdits && (
-              <p role="alert">
-                An unsaved summary or transcript edit will be discarded.
-              </p>
+            <button onClick={close.onRetry}>Try again</button>
+            {!close.notesFailed && (
+              <button onClick={close.onQuitAnyway}>Quit anyway</button>
             )}
-            {close.notesStatus === "error" && (
-              <p role="alert">
-                Notes not saved: {close.notesErrorReason}. Quitting waits for
-                them. Copy your text or retry.
-              </p>
-            )}
-            <button
-              autoFocus={!close.unsavedEdits && close.notesStatus !== "error"}
-              disabled={close.busy || close.controlBusy}
-              onClick={close.onQuit}
-            >
-              {close.unsavedEdits ? "Discard and quit" : "Save and quit"}
-            </button>
-            <button
-              autoFocus={close.unsavedEdits || close.notesStatus === "error"}
-              disabled={close.busy || close.controlBusy}
-              onClick={close.onKeepWorking}
-            >
+            <button autoFocus onClick={close.onKeepWorking}>
               Keep working
             </button>
           </section>
