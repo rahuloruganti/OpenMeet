@@ -218,22 +218,14 @@ it("uses an installed Whisper file in place and hides non-speech files", async (
   expect(props.onInstallStt).toHaveBeenCalled();
 });
 
-it("offers a detected local server for AI notes with chat models only", async () => {
-  vi.mocked(api.saveApiConnection).mockResolvedValue(settings);
+it("offers no local server for AI notes, even when one is detected", async () => {
   show();
   await screen.findByRole("heading", { name: "How should we transcribe?" });
   await next();
   await screen.findByRole("heading", { name: /AI notes/ });
-  await userEvent.click(
-    await screen.findByRole("radio", { name: "Ollama on this computer" }),
-  );
-  const model = screen.getByRole("combobox", { name: "Model" });
-  const options = within(model)
-    .getAllByRole("option")
-    .map((option) => option.textContent);
-  expect(options).toContain("llama3");
-  expect(options).not.toContain("nomic-embed-text");
-  expect(api.saveApiConnection).not.toHaveBeenCalled();
+  expect(screen.queryByRole("radio", { name: /on this computer/ })).toBeNull();
+  expect(screen.queryByText(/No local AI server/)).toBeNull();
+  expect(screen.getByRole("radio", { name: /API service/ })).toBeTruthy();
 });
 
 it("finishes with default devices and recording only, then starts a meeting", async () => {

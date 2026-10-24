@@ -795,7 +795,6 @@ function AiSection(props: Props & { active: boolean }) {
             settings={props.settings}
             active={props.active}
             disabled={props.disabled}
-            kindSwitch
             onSaved={props.onSettings}
             onKeyStatus={props.onKeyStatus}
           />

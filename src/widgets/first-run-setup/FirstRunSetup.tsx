@@ -383,7 +383,6 @@ export function FirstRunSetup(props: Props) {
       }
     })();
 
-  const chat = (servers ?? []).filter((item) => item.kind !== "speech");
   const speechServers = (servers ?? []).filter((item) => item.kind !== "chat");
   const speechConnection = settings.provider_assignments.cloud_stt;
   const localReady = settings.stt_mode === "local" && !!stt?.installed;
@@ -679,31 +678,6 @@ export function FirstRunSetup(props: Props) {
                 AI notes <span className="opt">(optional)</span>
               </h1>
               <div className="choices">
-                {chat.map((server) => (
-                  <label className="choice" key={server.base_url}>
-                    <input
-                      type="radio"
-                      className="radio"
-                      name="setup-notes"
-                      aria-label={`${server.name} on this computer`}
-                      checked={notesChoice === server.base_url}
-                      onChange={() => {
-                        setNotesChoice(server.base_url);
-                      }}
-                    />
-                    <span>
-                      <span className="head">
-                        <strong>{server.name}</strong>
-                        <span className="tag">Detected</span>
-                      </span>
-                      <span className="sub">
-                        {server.needs_key
-                          ? "Needs its API key"
-                          : `${server.models.length} model${server.models.length === 1 ? "" : "s"}`}
-                      </span>
-                    </span>
-                  </label>
-                ))}
                 {speechConnection && (
                   <label className="choice">
                     <input
@@ -742,12 +716,6 @@ export function FirstRunSetup(props: Props) {
                   </span>
                 </label>
               </div>
-              {servers !== null && chat.length === 0 && (
-                <p className="help">
-                  No local AI server found. Start Ollama or LM Studio, then
-                  retry.
-                </p>
-              )}
               {notesChoice && (
                 <div className="wizard-fields">
                   <ConnectAndPick
@@ -755,8 +723,7 @@ export function FirstRunSetup(props: Props) {
                     role="llm"
                     settings={settings}
                     server={
-                      chat.find((item) => item.base_url === notesChoice) ??
-                      (notesChoice === "speech"
+                      notesChoice === "speech"
                         ? (() => {
                             const saved = settings.saved_connections.find(
                               (item) =>
@@ -772,7 +739,7 @@ export function FirstRunSetup(props: Props) {
                                 }
                               : null;
                           })()
-                        : null)
+                        : null
                     }
                     onSettings={props.onSettings}
                     onKeyStatus={props.onKeyStatus}

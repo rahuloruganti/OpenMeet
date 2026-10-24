@@ -48,8 +48,6 @@ type Props = Publish & {
   disabled: boolean;
   /** False while the section is hidden: the typed key must not stay in the page. */
   active: boolean;
-  /** AI notes only: the local server / API service choice. */
-  kindSwitch?: boolean;
 };
 
 /** One OpenAI-compatible connection and the task that uses it: keys need an explicit Save. */
@@ -110,11 +108,6 @@ export function ConnectionEditor(props: Props) {
       : connectionDirty
         ? "Save the connection first."
         : null;
-  // A kind picked before anything is typed: an empty base URL says nothing on its own.
-  const [kindPick, setKindPick] = useState<"local" | "api" | null>(null);
-  const kind =
-    kindPick ??
-    (baseUrl.trim() === "" || isLocalBase(baseUrl) ? "local" : "api");
   useEffect(() => {
     if (password.current) password.current.value = "";
     setName(connection?.name ?? "");
@@ -207,33 +200,6 @@ export function ConnectionEditor(props: Props) {
     setError("");
     setNotice("");
   };
-  const pickKind = (next: "local" | "api") => {
-    if (
-      (connectionDirty || keyEntered) &&
-      !window.confirm("Discard unsaved connection edits?")
-    )
-      return;
-    const existing = props.settings.saved_connections.find(
-      (item) => isLocalBase(item.base_url) === (next === "local"),
-    );
-    if (existing) {
-      if (password.current) password.current.value = "";
-      setSelected(existing.id);
-      setKindPick(null);
-      setError("");
-      setNotice("");
-      return;
-    }
-    if (password.current) password.current.value = "";
-    setSelected("");
-    setName("");
-    setBaseUrl("");
-    setKindPick(next);
-    setModels([]);
-    setKeyEntered(false);
-    setError("");
-    setNotice("");
-  };
   const save = () =>
     run(async () => {
       const key = password.current?.value ?? "";
@@ -298,45 +264,12 @@ export function ConnectionEditor(props: Props) {
   return (
     <section className="provider-settings" aria-label={`${label} connection`}>
       <div className="om-card om-rows">
-        {props.kindSwitch && (
-          <div className="om-row">
-            <div className="om-what">
-              <strong>Where it runs</strong>
-            </div>
-            <div className="om-side">
-              <div className="om-seg" role="group" aria-label="AI connection">
-                {(
-                  [
-                    {
-                      id: "local",
-                      title: "Local server",
-                      note: "Detected on this PC",
-                    },
-                    { id: "api", title: "API service" },
-                  ] as const
-                ).map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    aria-pressed={kind === option.id}
-                    disabled={disabled || selected === NONE}
-                    onClick={() => pickKind(option.id)}
-                  >
-                    <span className="om-seg-t">{option.title}</span>
-                    {option.id === "api" ? (
-                      <span className="om-leaves">Leaves this device</span>
-                    ) : (
-                      <span className="om-seg-s">{option.note}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
         <div className="om-row">
           <div className="om-what">
             <strong>Connection</strong>
+            {props.role === "llm" && (
+              <span className="om-leaves">Leaves this device</span>
+            )}
           </div>
           <div className="om-side">
             <select
@@ -366,11 +299,7 @@ export function ConnectionEditor(props: Props) {
               type="url"
               value={baseUrl}
               disabled={disabled || selected === NONE}
-              placeholder={
-                kind === "local"
-                  ? "http://127.0.0.1:1234/v1"
-                  : "https://api.example.com/v1"
-              }
+              placeholder="https://api.example.com/v1"
               onChange={(event) => setBaseUrl(event.target.value)}
             />
           </div>

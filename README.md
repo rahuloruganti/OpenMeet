@@ -51,7 +51,7 @@ just dev
 
 ## Use the app
 
-On first launch, **Set up OpenMeet** walks through importing an earlier data folder when one is found, transcription (a speech model on this computer, a local speech server, or an online API), AI notes (a local server such as Ollama, LM Studio or Unsloth Studio, or an online API), and default devices. It finds models and local servers already installed. Skip it or run it again from **Settings → Privacy & about**.
+On first launch, **Set up OpenMeet** walks through importing an earlier data folder when one is found, transcription (a speech model on this computer, a local speech server, or an online API), AI notes (an online API service), and default devices. It finds speech models and local speech servers already installed. Skip it or run it again from **Settings → Privacy & about**.
 
 - **Meetings** is the home page, with the library in the sidebar. **Settings** and **Ask** open as full pages; **← Meetings** or **Escape** goes back.
 - **Ctrl+K** opens a command palette for actions and meeting titles. Other shortcuts: **Ctrl+N** new recording, **Ctrl+Shift+N** new note, **Ctrl+Shift+A** Ask, **Ctrl+,** Settings, **Ctrl+E** export, **F2** rename, **Ctrl+I** inspector.

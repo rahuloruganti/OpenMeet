@@ -292,38 +292,13 @@ it("offers fetched model IDs for the task it serves", async () => {
   ).toBeTruthy();
 });
 
-it("starts a new connection on the chosen side of the local/api choice", async () => {
-  const input = props();
-  const view = render(<ConnectionEditor {...input} kindSwitch />);
-  expect(screen.getByRole("group", { name: "AI connection" })).toBeTruthy();
-  expect(api.listApiConnectionModels).not.toHaveBeenCalled();
-  // A local server already exists, so the choice selects it instead of a blank form.
-  await userEvent.click(screen.getByRole("button", { name: /Local server/ }));
-  expect(screen.getByLabelText("Saved connection")).toHaveProperty(
-    "value",
-    "local",
-  );
-  view.unmount();
-  render(
-    <ConnectionEditor
-      {...input}
-      kindSwitch
-      settings={{
-        ...settings,
-        saved_connections: [connection],
-        provider_assignments: { llm: null, cloud_stt: null },
-      }}
-    />,
-  );
-  await userEvent.click(screen.getByRole("button", { name: /^Local server/ }));
-  expect(screen.getByLabelText("Base URL")).toHaveProperty("value", "");
+it("offers no local server choice for AI notes and marks it as leaving the device", () => {
+  render(<ConnectionEditor {...props()} />);
+  expect(screen.queryByRole("group", { name: "AI connection" })).toBeNull();
+  expect(screen.queryByText(/Local server/)).toBeNull();
+  expect(screen.getByText("Leaves this device")).toBeTruthy();
   expect(screen.getByLabelText("Base URL")).toHaveProperty(
     "placeholder",
-    "http://127.0.0.1:1234/v1",
+    "https://api.example.com/v1",
   );
-  expect(
-    screen
-      .getByRole("button", { name: /^Local server/ })
-      .getAttribute("aria-pressed"),
-  ).toBe("true");
 });
