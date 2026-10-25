@@ -1,6 +1,7 @@
 import type { Settings, SummaryTemplate } from "../../shared/api/api";
 
-export type ProcessingMode = "recording" | "live" | "final" | "both";
+/** What happens after a recording ends. Live text is its own setting now. */
+export type ProcessingMode = "recording" | "final";
 export type ProcessingChoice = {
   mode: ProcessingMode;
   summary: SummaryTemplate | null;
@@ -8,11 +9,12 @@ export type ProcessingChoice = {
 
 export const modeLabels: Record<ProcessingMode, string> = {
   recording: "Recording only",
-  live: "Live transcription only",
-  final: "Final transcription after stop",
-  both: "Live and final transcription",
+  final: "Transcribe after stop",
 };
-const modes = Object.keys(modeLabels) as ProcessingMode[];
+
+/** A stored mode as it is used now: older "live" reads as recording, "both" as final. */
+const readMode = (mode: unknown): ProcessingMode =>
+  mode === "final" || mode === "both" ? "final" : "recording";
 
 /** Workflow stages and session states; unknown values fall back to their words. */
 const stageLabels: Partial<Record<string, string>> = {
@@ -39,11 +41,11 @@ export const builtinTemplates: { id: SummaryTemplate; label: string }[] = [
 ];
 
 function choice(mode: unknown, summary: unknown): ProcessingChoice {
-  const chosen = modes.find((item) => item === mode) ?? "recording";
+  const chosen = readMode(mode);
   return {
     mode: chosen,
     summary:
-      chosen === "final" || chosen === "both"
+      chosen === "final"
         ? (builtinTemplates.find((item) => item.id === summary)?.id ?? null)
         : null,
   };

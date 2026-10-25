@@ -193,7 +193,7 @@ export type Settings = {
   summary_instructions: string;
   summary_templates: CustomTemplate[];
   recipes: Recipe[];
-  /** "recording", "live", "final" or "both"; applied to every new recording. */
+  /** "recording" or "final"; applied to every new recording. Old "live"/"both" rows read as "recording"/"final". */
   processing_mode: string;
   processing_summary: string | null;
   /** The template the Enhance picker starts at. */
@@ -208,6 +208,83 @@ export type Settings = {
   theme: Theme;
   /** Whether the meeting page's right inspector is open. */
   inspector_open: boolean;
+  /** Live transcript while recording (migration 032; on by default). It runs only when its model is ready. */
+  live_transcript: boolean;
+  /**
+   * The live engine: "" uses the Transcription model (or the cloud connection when Transcription is
+   * cloud), "stream:<id>" a pinned streaming ONNX model, "stream-dir:<folder>" a streaming model folder
+   * found under stt/streaming, "cloud" the saved cloud transcription connection (leaves this device).
+   */
+  live_model: string;
+};
+/** One live transcript line. Final lines are kept; a partial line is replaced by the next update with the same id. */
+export type LiveLine = {
+  /** Stable per utterance: a partial and the final that replaces it share this id. */
+  id: string;
+  lane: "mic" | "system";
+  /** "You" for the microphone, "Others" for system audio. */
+  speaker: string;
+  /** Session time (paused time excluded), like transcript segments. */
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  final: boolean;
+};
+export type LiveState = "off" | "starting" | "running" | "stopped" | "failed";
+export type LiveTranscript = {
+  meeting_id: string;
+  /** Final lines in time order. */
+  lines: LiveLine[];
+  /** The newest partial line per lane, if any. */
+  partials: LiveLine[];
+  state: LiveState;
+  /** Engine label such as "Streaming English (NeMo)"; null when off. */
+  engine: string | null;
+  /** True when the live audio leaves this device (cloud). */
+  leaves_device: boolean;
+  /** One sentence: why live is off, failed or incomplete. */
+  notice: string | null;
+};
+export type LiveTranscriptEvent = { meeting_id: string; line: LiveLine };
+export type LiveStateEvent = {
+  meeting_id: string;
+  state: LiveState;
+  engine: string | null;
+  leaves_device: boolean;
+  notice: string | null;
+};
+export type LiveModel = {
+  /** Value for Settings.live_model. */
+  id: string;
+  label: string;
+  kind: "same" | "streaming" | "custom" | "cloud";
+  /** Ready to run now (downloaded, engine present, connection saved). */
+  installed: boolean;
+  /** Download size for a pinned streaming model that is not installed; null otherwise. */
+  download_bytes: number | null;
+  leaves_device: boolean;
+  /** Languages the model can transcribe, as codes; empty when unknown. */
+  languages: string[];
+  /** Why it cannot run, in one sentence; null when it can. */
+  reason: string | null;
+};
+export type LiveModels = {
+  models: LiveModel[];
+  /** The saved Settings.live_model. */
+  selected: string;
+  /** True when the selected model can run now. */
+  ready: boolean;
+  reason: string | null;
+  /** A streaming model download in progress, if any. */
+  installing: string | null;
+};
+export type LiveModelProgress = {
+  model_id: string;
+  done: number;
+  total: number;
+  /** "downloading" | "verifying" | "done" | "failed" | "cancelled" */
+  stage: string;
+  error: string | null;
 };
 export type Theme = "system" | "dark" | "light";
 /** What the one-time import from the previous OpenMeet data folder would bring over. */
@@ -227,6 +304,60 @@ export type ImportResult = {
   audio_files: number;
   /** Short notes from the import report (skipped items, kept backup). */
   notes: string[];
+};
+/** Local AI: OpenMeet's own llama.cpp server running a downloaded model on this PC. */
+export type LocalAiBackend = "cuda" | "vulkan" | "cpu";
+export type LocalAiHardware = {
+  gpu_name: string | null;
+  gpu_vendor: "nvidia" | "amd" | "intel" | null;
+  /** Total dedicated GPU memory; null when no GPU could be read. */
+  vram_bytes: number | null;
+  ram_bytes: number;
+  ram_available_bytes: number;
+  /** The engine build this PC uses: CUDA for NVIDIA, Vulkan for AMD/Intel, else CPU. */
+  backend: LocalAiBackend;
+};
+/** `gpu`: runs entirely in GPU memory; `ram`: part runs from system RAM (slower);
+ * `too_big`: will not run here. */
+export type LocalAiFit = "gpu" | "ram" | "too_big";
+export type LocalAiModel = {
+  /** Catalog id, or `file:<absolute path>` for a .gguf file found on this PC. */
+  id: string;
+  name: string;
+  description: string;
+  size_bytes: number;
+  license: string | null;
+  fit: LocalAiFit;
+  recommended: boolean;
+  downloaded: boolean;
+  source: "catalog" | "file";
+};
+export type LocalAiJob = {
+  kind: "engine" | "model" | "quickstart";
+  /** The model id for a model download; the backend name for the engine. */
+  target: string;
+  phase: "download" | "verify" | "extract" | "start";
+  downloaded: number;
+  total: number;
+};
+export type LocalAiServer = "stopped" | "starting" | "running" | "failed";
+export type LocalAiStatus = {
+  hardware: LocalAiHardware;
+  engine_installed: boolean;
+  /** Pinned llama.cpp build, e.g. "b11671". */
+  engine_tag: string;
+  /** Bytes still to download for the engine on this PC's backend (0 once installed). */
+  engine_download_bytes: number;
+  server: LocalAiServer;
+  /** One sentence with the fix, set when `server` is "failed". */
+  server_error: string | null;
+  /** The model the local server runs; null until one is chosen. */
+  active_model: string | null;
+  /** True while AI notes are assigned to the local server. */
+  in_use: boolean;
+  models: LocalAiModel[];
+  /** The download or setup running now, if any. */
+  job: LocalAiJob | null;
 };
 /** An app using the microphone: a Windows privacy-store key or a macOS bundle identifier. */
 export type MicApp = { id: string; name: string };
@@ -357,7 +488,13 @@ export type SttStatus = {
   installed: boolean;
   missing_bytes: number;
   supported: boolean;
-  models: Array<{ id: string; size: number; installed: boolean }>;
+  /** `reason` is set when a model cannot run on this PC (for example its engine is missing). */
+  models: Array<{
+    id: string;
+    size: number;
+    installed: boolean;
+    reason?: string | null;
+  }>;
   languages: string[];
 };
 export type SttDownloadProgress = {
@@ -460,6 +597,11 @@ export const api = {
       id,
       expectedRevision,
     }),
+  /** Lists the models at a URL to prove it answers and the key works; no billable request.
+   * A typed key is used once and never stored; without one, the saved connection's key is used,
+   * and only for the URL it was saved with. */
+  testApiConnection: (baseUrl: string, key: string | null, id: string | null) =>
+    invoke<ProviderModel[]>("test_api_connection", { baseUrl, key, id }),
   saveProviderAssignment: (
     role: ProviderRole,
     selection: ProviderSelection,
@@ -503,6 +645,44 @@ export const api = {
     callback: (progress: ModelLibraryProgress) => void,
   ) =>
     listen<ModelLibraryProgress>("model_library_progress", (event) =>
+      callback(event.payload),
+    ),
+  /** Local AI (Settings > AI notes). Downloads only on these explicit calls; every file is
+   * checked against a pinned SHA-256. Long calls report through `onLocalAiProgress`. */
+  localAiStatus: () => invoke<LocalAiStatus>("local_ai_status"),
+  localAiInstallEngine: () => invoke<LocalAiStatus>("local_ai_install_engine"),
+  localAiDownloadModel: (modelId: string) =>
+    invoke<LocalAiStatus>("local_ai_download_model", { modelId }),
+  localAiRemoveModel: (modelId: string) =>
+    invoke<LocalAiStatus>("local_ai_remove_model", { modelId }),
+  localAiCancel: () => invoke<void>("local_ai_cancel"),
+  /** Makes the model the local server's model and assigns AI notes to the local server. */
+  localAiUse: (modelId: string) =>
+    invoke<Settings>("local_ai_use", { modelId }),
+  /** Engine + recommended model + use, in one call ("Set up for me"). */
+  localAiQuickstart: () => invoke<Settings>("local_ai_quickstart"),
+  localAiStart: () => invoke<LocalAiStatus>("local_ai_start"),
+  localAiStop: () => invoke<LocalAiStatus>("local_ai_stop"),
+  onLocalAiProgress: (callback: (job: LocalAiJob) => void) =>
+    listen<LocalAiJob>("local_ai_progress", (event) => callback(event.payload)),
+  /** Saved finals plus the current partials and state for one meeting. */
+  liveTranscript: (meetingId: string) =>
+    invoke<LiveTranscript>("live_transcript", { meetingId }),
+  saveLiveSettings: (enabled: boolean, model: string) =>
+    invoke<Settings>("save_live_settings", { enabled, model }),
+  liveModels: () => invoke<LiveModels>("live_models"),
+  /** Downloads a pinned streaming model; only ever called from a click. */
+  liveModelInstall: (modelId: string) =>
+    invoke<LiveModels>("live_model_install", { modelId }),
+  liveModelCancel: () => invoke<LiveModels>("live_model_cancel"),
+  onLiveTranscript: (callback: (event: LiveTranscriptEvent) => void) =>
+    listen<LiveTranscriptEvent>("live_transcript", (event) =>
+      callback(event.payload),
+    ),
+  onLiveState: (callback: (event: LiveStateEvent) => void) =>
+    listen<LiveStateEvent>("live_state", (event) => callback(event.payload)),
+  onLiveModelProgress: (callback: (event: LiveModelProgress) => void) =>
+    listen<LiveModelProgress>("live_model_progress", (event) =>
       callback(event.payload),
     ),
   saveSttMode: (mode: Settings["stt_mode"]) =>

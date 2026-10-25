@@ -271,10 +271,22 @@ describe("summaries and questions", () => {
           }) as HTMLTextAreaElement
         ).value,
       ).toBe("## Summary\nGenerated. Corrected.");
+      // Quitting saves the open edit by default; a conflict keeps the window open and says so.
+      vi.mocked(api.saveSummaryEdit).mockRejectedValueOnce({
+        code: "summary_conflict",
+        message: "A newer summary version was saved while you were editing.",
+      });
       act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+      const dialog = await screen.findByRole("dialog", {
+        name: "Not saved yet",
+      });
+      expect(within(dialog).getByRole("alert").textContent).toBe(
+        "Summary edit not saved: A newer summary version was saved while you were editing.",
+      );
       expect(
-        await screen.findByRole("button", { name: "Discard and quit" }),
+        within(dialog).getByRole("button", { name: "Quit anyway" }),
       ).toBeTruthy();
+      expect(api.close).not.toHaveBeenCalled();
       expect(document.activeElement).toBe(
         screen.getByRole("button", { name: "Keep working" }),
       );

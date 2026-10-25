@@ -1,0 +1,11 @@
+/* Settings > Recording > Live transcript. The rows reuse the page's own classes. */
+.ls-reason {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.om-card-foot progress {
+  width: 140px;
+  height: 6px;
+}

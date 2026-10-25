@@ -174,3 +174,47 @@ SHERPA_MODELS: tuple[SherpaModel, ...] = (
     ),
 )
 
+
+class StreamingModel(NamedTuple):
+    """A pinned streaming (online) sherpa-onnx model: one folder under streaming/, never a VAD."""
+
+    id: str          # the Settings.live_model value
+    folder: str      # folder under streaming/
+    label: str       # the name Settings shows
+    archive: Artifact
+    files: tuple[str, ...]   # files the recognizer needs, extracted by basename
+    family: str      # transducer | nemo_ctc
+    languages: tuple[str, ...]
+    license: str
+
+
+# Streaming models are downloaded only from an explicit click in Settings, with size and SHA-256
+# checked against these pins. Both load through sherpa_onnx.OnlineRecognizer with endpoint detection.
+STREAMING_MODELS: tuple[StreamingModel, ...] = (
+    StreamingModel(
+        'stream:kroko-en', 'kroko-en', 'Streaming English (Zipformer)',
+        Artifact(
+            'stream-kroko-en', 'sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06.tar.bz2',
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/'
+            'sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06.tar.bz2',
+            'c8676e5ff9ac2a85296e53ee0fd4d5fb1db6770e7a7647166eeafe349ade6834', 57_267_600,
+        ),
+        ('encoder.onnx', 'decoder.onnx', 'joiner.onnx', 'tokens.txt'),
+        'transducer',
+        ('en',),
+        'CC-BY-SA',  # community model, https://huggingface.co/Banafo/Kroko-ASR
+    ),
+    StreamingModel(
+        'stream:nemo-en-80ms', 'nemo-en-80ms', 'Streaming English (NeMo)',
+        Artifact(
+            'stream-nemo-en-80ms', 'sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms-int8.tar.bz2',
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/'
+            'sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms-int8.tar.bz2',
+            '7bd33a914e93370a1ba9c2066d9e841bdcad8613fa2a00537c1ae15d851a14d8', 102_813_625,
+        ),
+        ('encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt'),
+        'transducer',
+        ('en',),
+        'CC-BY-4.0',  # NVIDIA NeMo model
+    ),
+)

@@ -337,6 +337,13 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.proc-detail {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .proc-acts {
   display: flex;
   flex: none;
@@ -488,13 +495,6 @@
   color: var(--muted);
   font-family: var(--mono);
   font-size: 10.5px;
-}
-.mw-live {
-  margin: 8px 0;
-  padding: 8px 10px;
-  border: 1px dashed var(--divider);
-  border-radius: 6px;
-  font-size: 12px;
 }
 
 /* ------------------------------------------------------------------- hero */

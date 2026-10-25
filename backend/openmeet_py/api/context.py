@@ -35,6 +35,7 @@ class Context:
     stt_cancel: Optional[threading.Event] = None
     # Phase 5 services, set by server.create_app. Typed loosely to keep this module import-light.
     processing: Any = None  # processing.Processing
+    live: Any = None  # live_commands.LiveService
     hotkeys: Any = None  # hotkeys.HotkeyService
     detection: Any = None  # detection.DetectionService
     # Taskbar flash for the detection prompt; None when there is no window (tests, browser).

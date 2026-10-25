@@ -1,16 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import {
   api,
+  errorCode,
   errorMessage,
   isLocalBase,
   type KeyChange,
   type KeyStatus,
   type ProviderModel,
   type ProviderRole,
+  type SavedConnection,
   type Settings,
 } from "../../shared/api/api";
 import { modelsFor } from "../../shared/lib/models";
-import { destination, type Publish } from "../../shared/ui/provider-connection";
+import {
+  CUSTOM_PROVIDER,
+  freeName,
+  presetById,
+  presetForUrl,
+  presetsFor,
+} from "../../shared/lib/providers";
+import {
+  destination,
+  hostOf,
+  type Publish,
+} from "../../shared/ui/provider-connection";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
 
 // One sentence each, and each says the action that fixes it (TEXT RULES).
@@ -18,7 +31,7 @@ const urlFormat = "Use a full URL like https://api.example.com/v1.";
 const urlRules =
   "Use https, or http on localhost, without credentials or a query.";
 
-/** The first reason an API base URL cannot be saved, mirroring validate_base_url in providers.rs. */
+/** The first reason an API base URL cannot be saved, mirroring validate_base_url in domain/providers.py. */
 export function baseUrlError(value: string): string | null {
   const text = value.trim();
   if (text === "") return null;
@@ -39,6 +52,25 @@ export function baseUrlError(value: string): string | null {
   return url.protocol === "http:" && !isLocalBase(text) ? urlRules : null;
 }
 
+/**
+ * One sentence for a failed Test: what went wrong and what to do next. Every branch says
+ * nothing was saved, because Test only lists models and never stores anything.
+ */
+export function testFailure(failure: unknown): string {
+  switch (errorCode(failure)) {
+    case "provider_unauthorized":
+      return "Nothing was saved: the provider rejected this key, so check it for typos and Test again.";
+    case "provider_unreachable":
+      return "Nothing was saved: the address did not answer, so check the URL and your connection, then Test again.";
+    case "provider_models":
+      return "Nothing was saved: the provider's model list was not usable, so type a model ID under Other… instead.";
+    case "provider_rate_limited":
+      return "Nothing was saved: the provider is rate limiting, so wait a minute and Test again.";
+    default:
+      return "Nothing was saved: the check did not finish, so check the URL and key, then Test again.";
+  }
+}
+
 /** "No connection" in the saved-connection picker: the task runs without one. */
 const NONE = "-";
 
@@ -48,79 +80,147 @@ type Props = Publish & {
   disabled: boolean;
   /** False while the section is hidden: the typed key must not stay in the page. */
   active: boolean;
-  /** AI notes only: the local server / API service choice. */
-  kindSwitch?: boolean;
 };
+
+/** The model menu entry that reveals a free-text model ID. */
+const OTHER_MODEL = "__other__";
 
 /** One OpenAI-compatible connection and the task that uses it: keys need an explicit Save. */
 export function ConnectionEditor(props: Props) {
   const assignment = props.settings.provider_assignments[props.role];
+  const presets = presetsFor(props.role);
+  const takenNames = props.settings.saved_connections.map((item) => item.name);
   const [selected, setSelected] = useState(assignment?.connection_id ?? "");
+  // Only a new connection picks a provider; a saved one keeps its own URL.
+  const [provider, setProvider] = useState(presets[0]?.id ?? CUSTOM_PROVIDER);
   const connection =
     props.settings.saved_connections.find((item) => item.id === selected) ??
     null;
   const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState(assignment?.model ?? "");
   const [status, setStatus] = useState<KeyStatus>("unavailable");
-  const [models, setModels] = useState<ProviderModel[]>([]);
+  // Model IDs belong to one URL, saved revision and key edit, so an older answer never renders.
+  const [found, setFound] = useState<{
+    scope: string;
+    models: ProviderModel[];
+    edit: number;
+  } | null>(null);
+  // Counts key edits, never the key: a Test or model list from before an edit is stale.
+  const keyEdits = useRef(0);
+  const [keyEpoch, setKeyEpoch] = useState(0);
+  const editKey = () => {
+    keyEdits.current += 1;
+    setKeyEpoch(keyEdits.current);
+  };
+  const [baseUrl, setBaseUrl] = useState("");
+  const scopeOf = (id: string, revision: number | null, url: string) =>
+    `${id}|${revision ?? ""}|${url.trim()}`;
+  const scope = scopeOf(selected, connection?.revision ?? null, baseUrl);
+  const discovered =
+    found && found.scope === scope && found.edit === keyEpoch
+      ? found.models
+      : [];
+  // The scope on screen now, so a slow Test answer for an older revision prints nothing.
+  const liveScope = useRef(scope);
+  liveScope.current = scope;
+  // "Other" reveals a text field for a model the provider does not list.
+  const [typing, setTyping] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [keyEntered, setKeyEntered] = useState(false);
+  // Delete asks first, inline; Cancel is focused so Enter never deletes by accident.
+  const [confirming, setConfirming] = useState(false);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
   const { shown, mark } = useSaved();
-  // Results render below the card; bring them into view so a long page never hides them.
-  const outcome = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (notice || error)
-      outcome.current?.scrollIntoView?.({ block: "nearest" });
-  }, [notice, error]);
   const password = useRef<HTMLInputElement>(null);
   const lock = useRef(false);
-  const current = useRef(connection);
-  current.current = connection;
-  const connectionDirty =
-    name !== (connection?.name ?? "") ||
-    baseUrl !== (connection?.base_url ?? "");
+  // Bumped when the user moves on, so a slow model listing cannot land elsewhere.
+  const switches = useRef(0);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  const preset =
+    selected === "" && provider !== CUSTOM_PROVIDER
+      ? presetById(provider)
+      : null;
+  // A saved connection still names the key page its own URL belongs to.
+  const keyHint = preset ?? presetForUrl(baseUrl);
+  // What a new connection starts with, so an untouched preset is not a draft.
+  const draftName = preset ? freeName(preset.label, takenNames) : "";
+  const draftUrl = preset?.baseUrl ?? "";
+  const connectionDirty = connection
+    ? name !== connection.name || baseUrl !== connection.base_url
+    : name !== draftName || baseUrl !== draftUrl;
   const assigned = assignment?.connection_id ?? "";
   const selectedConnection = selected === NONE ? null : selected;
-  const roleDirty =
-    selectedConnection !== assigned ||
-    (selected !== NONE && model.trim() !== (assignment?.model ?? ""));
+  const modelValue = model.trim();
   const disabled = props.disabled || busy;
   const urlError = baseUrlError(baseUrl);
-  const missingFields = selected === "" && (!name.trim() || !baseUrl.trim());
-  const neededModel = selected !== NONE && model.trim() === "";
+  // A preset brings its own URL, so only a typed URL can still be missing.
+  const missingFields = selected === "" && !baseUrl.trim();
+  // A new or edited connection saves without a model; the task still needs one.
+  const connectionWork =
+    selected !== NONE && (selected === "" || connectionDirty || keyEntered);
+  const assignmentWork =
+    selectedConnection !== assigned ||
+    (modelValue !== "" && modelValue !== (assignment?.model ?? ""));
   const canSave =
     !disabled &&
     !missingFields &&
     urlError === null &&
-    !neededModel &&
-    (connectionDirty || roleDirty || keyEntered);
+    (connectionWork || assignmentWork);
+  // An empty new connection has neither a provider URL nor a typed one: say what is missing.
+  const saveReason = missingFields ? "Enter a URL first." : null;
   // One reason per disabled button, shown only for the cause that applies.
-  const refreshReason =
-    !connection || connectionDirty
-      ? "Save the connection first."
-      : !isLocalBase(connection.base_url) && status === "missing"
-        ? "Add an API key first."
-        : null;
+  const urlMoved = !!connection && baseUrl.trim() !== connection.base_url;
+  const testReason =
+    !baseUrl.trim() || urlError
+      ? "Enter a valid URL first."
+      : keyEntered || isLocalBase(baseUrl)
+        ? null
+        : urlMoved
+          ? "Enter the key for the new URL."
+          : status !== "present"
+            ? "Enter the API key first."
+            : null;
+  const [tested, setTested] = useState<{
+    scope: string;
+    ok: boolean;
+    edit: number;
+  } | null>(null);
+  const testResult =
+    tested && tested.scope === scope && tested.edit === keyEpoch
+      ? tested
+      : null;
+  const usable = modelsFor(discovered, props.role);
+  const modelListed = usable.some((item) => item.id === model);
   const removeReason =
     !connection || status === "missing"
       ? "No saved key to remove."
       : connectionDirty
         ? "Save the connection first."
         : null;
-  // A kind picked before anything is typed: an empty base URL says nothing on its own.
-  const [kindPick, setKindPick] = useState<"local" | "api" | null>(null);
-  const kind =
-    kindPick ??
-    (baseUrl.trim() === "" || isLocalBase(baseUrl) ? "local" : "api");
+  // Results render below the card; bring them into view so a long page never hides them, but
+  // only while the user works in this editor: a status found on load must not scroll the page.
+  const outcome = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = outcome.current;
+    const scope = box?.closest(".om-group") ?? box?.parentElement;
+    if ((notice || error) && scope?.contains(document.activeElement))
+      box?.scrollIntoView?.({ block: "nearest" });
+  }, [notice, error]);
   useEffect(() => {
     if (password.current) password.current.value = "";
-    setName(connection?.name ?? "");
-    setBaseUrl(connection?.base_url ?? "");
-    setModels([]);
+    setName(connection?.name ?? (selected === "" ? draftName : ""));
+    setBaseUrl(connection?.base_url ?? (selected === "" ? draftUrl : ""));
     setKeyEntered(false);
+    setTyping(false);
+    setConfirming(false);
     setStatus(connection ? "unavailable" : "missing");
     let live = true;
     if (connection)
@@ -140,6 +240,8 @@ export function ConnectionEditor(props: Props) {
     connection?.revision,
     connection?.name,
     connection?.base_url,
+    provider,
+    selected,
   ]);
   // The saved model follows the assignment, so a save elsewhere is not overwritten.
   useEffect(() => {
@@ -147,7 +249,11 @@ export function ConnectionEditor(props: Props) {
   }, [assignment?.model]);
   useEffect(() => {
     const field = password.current;
-    if (!props.active && field) field.value = "";
+    if (!props.active && field) {
+      field.value = "";
+      keyEdits.current += 1;
+      setKeyEpoch(keyEdits.current);
+    }
     return () => {
       if (field) field.value = "";
     };
@@ -203,69 +309,111 @@ export function ConnectionEditor(props: Props) {
     )
       return;
     if (password.current) password.current.value = "";
+    editKey();
+    switches.current += 1;
+    // A new connection starts on the first provider that serves this task.
+    if (id === "") setProvider(presets[0]?.id ?? CUSTOM_PROVIDER);
     setSelected(id);
     setError("");
     setNotice("");
   };
-  const pickKind = (next: "local" | "api") => {
-    if (
-      (connectionDirty || keyEntered) &&
-      !window.confirm("Discard unsaved connection edits?")
-    )
-      return;
-    const existing = props.settings.saved_connections.find(
-      (item) => isLocalBase(item.base_url) === (next === "local"),
-    );
-    if (existing) {
-      if (password.current) password.current.value = "";
-      setSelected(existing.id);
-      setKindPick(null);
-      setError("");
-      setNotice("");
-      return;
-    }
+  const changeProvider = (id: string) => {
     if (password.current) password.current.value = "";
-    setSelected("");
-    setName("");
-    setBaseUrl("");
-    setKindPick(next);
-    setModels([]);
-    setKeyEntered(false);
+    editKey();
+    switches.current += 1;
+    setProvider(id);
     setError("");
     setNotice("");
   };
+  useEffect(() => {
+    if (confirming) cancelDelete.current?.focus();
+  }, [confirming]);
   const save = () =>
     run(async () => {
       const key = password.current?.value ?? "";
       if (password.current) password.current.value = "";
+      const attempt = switches.current;
       let settings = props.settings;
       let connectionId: string | null = selected === NONE ? null : selected;
+      let saved: SavedConnection | null = null;
+      let keyStatus: KeyStatus = status;
       if (
         connectionId !== null &&
         (connectionDirty || connectionId === "" || key !== "")
       ) {
+        // A blank name falls back to where the connection sends data.
+        const connectionName = name.trim() || hostOf(baseUrl);
         settings = await api.saveApiConnection({
           id: connection?.id ?? null,
-          name: name.trim(),
+          name: connectionName,
           baseUrl: baseUrl.trim(),
           keyChange: key ? { kind: "replace", key } : { kind: "keep" },
           expectedRevision: connection?.revision ?? null,
         });
-        const saved = settings.saved_connections.find((item) =>
-          connectionId
-            ? item.id === connectionId
-            : item.name === name.trim() && item.base_url === baseUrl.trim(),
-        );
+        saved =
+          settings.saved_connections.find((item) =>
+            connectionId
+              ? item.id === connectionId
+              : item.name === connectionName &&
+                item.base_url === baseUrl.trim(),
+          ) ?? null;
         connectionId = saved?.id ?? null;
         if (saved) {
+          keyStatus = await api
+            .apiConnectionKeyStatus(saved.id)
+            .catch(() => "unavailable" as const);
           setSelected(saved.id);
-          setStatus(
-            await api
-              .apiConnectionKeyStatus(saved.id)
-              .catch(() => "unavailable" as const),
-          );
+          setStatus(keyStatus);
         }
         publish(settings);
+      }
+      // The model staged by Test, or else the first one the provider lists (the same rule
+      // Test uses), so one Save stores the connection and the task together.
+      let chosen = modelValue;
+      if (connectionId !== null && chosen === "") {
+        const listTarget = saved ?? connection;
+        if (!listTarget) return;
+        setKeyEntered(false);
+        mark();
+        // Without a key there is nothing to list; the card already says why.
+        if (!isLocalBase(listTarget.base_url) && keyStatus === "missing") {
+          setNotice("Saved. Add the key, then Test to load models.");
+          return;
+        }
+        try {
+          // Read after the save above, so this listing's own publication is not stale.
+          const edit = keyEdits.current;
+          const listed = await api.listApiConnectionModels(
+            listTarget.id,
+            listTarget.revision,
+          );
+          if (
+            !alive.current ||
+            switches.current !== attempt ||
+            keyEdits.current !== edit
+          )
+            return;
+          setFound({
+            scope: scopeOf(
+              listTarget.id,
+              listTarget.revision,
+              listTarget.base_url,
+            ),
+            models: listed,
+            edit,
+          });
+          chosen = modelsFor(listed, props.role)[0]?.id ?? "";
+          setModel(chosen);
+        } catch (failure) {
+          if (!alive.current || switches.current !== attempt) return;
+          setNotice("");
+          setError(errorMessage(failure));
+          return;
+        }
+        if (chosen === "") {
+          setNotice("Saved. Pick a model to finish.");
+          return;
+        }
       }
       const target = settings.provider_assignments[props.role];
       if (connectionId === null) {
@@ -277,14 +425,14 @@ export function ConnectionEditor(props: Props) {
           );
       } else if (
         connectionId !== target?.connection_id ||
-        model.trim() !== (target?.model ?? "")
+        chosen !== (target?.model ?? "")
       ) {
         settings = await api.saveProviderAssignment(
           props.role,
           {
             kind: "assigned",
             connection_id: connectionId,
-            model: model.trim(),
+            model: chosen,
           },
           target?.revision ?? null,
         );
@@ -294,49 +442,82 @@ export function ConnectionEditor(props: Props) {
       mark();
       setNotice("Saved on this device. No meeting content was sent.");
     });
+  const testConnection = () =>
+    run(async () => {
+      const key = password.current?.value.trim() ?? "";
+      const attempt = switches.current;
+      const edit = keyEdits.current;
+      const target = scope;
+      try {
+        const listed = await api.testApiConnection(
+          baseUrl.trim(),
+          key || null,
+          connection?.id ?? null,
+        );
+        // A key edit, a switch or an unmount makes this answer stale: it prints nothing.
+        if (
+          !alive.current ||
+          switches.current !== attempt ||
+          keyEdits.current !== edit
+        )
+          return;
+        setFound({ scope: target, models: listed, edit });
+        setTested({ scope: target, ok: true, edit });
+        if (liveScope.current !== target) return;
+        const offered = modelsFor(listed, props.role);
+        if (modelValue === "" && offered[0]) setModel(offered[0].id);
+        setNotice(
+          `Working. ${offered.length} model${offered.length === 1 ? "" : "s"} found; nothing was saved.`,
+        );
+      } catch (failure) {
+        // A failure for a key that was since replaced says nothing about the key now typed.
+        if (keyEdits.current !== edit) return;
+        if (alive.current && switches.current === attempt)
+          setTested({ scope: target, ok: false, edit });
+        throw new Error(testFailure(failure), { cause: failure });
+      }
+    });
+
   const label = props.role === "llm" ? "AI notes" : "Transcription";
   return (
     <section className="provider-settings" aria-label={`${label} connection`}>
       <div className="om-card om-rows">
-        {props.kindSwitch && (
+        {selected === "" && (
           <div className="om-row">
             <div className="om-what">
-              <strong>Where it runs</strong>
+              <strong>Provider</strong>
             </div>
             <div className="om-side">
-              <div className="om-seg" role="group" aria-label="AI connection">
-                {(
-                  [
-                    {
-                      id: "local",
-                      title: "Local server",
-                      note: "Detected on this PC",
-                    },
-                    { id: "api", title: "API service" },
-                  ] as const
-                ).map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    aria-pressed={kind === option.id}
-                    disabled={disabled || selected === NONE}
-                    onClick={() => pickKind(option.id)}
-                  >
-                    <span className="om-seg-t">{option.title}</span>
-                    {option.id === "api" ? (
-                      <span className="om-leaves">Leaves this device</span>
-                    ) : (
-                      <span className="om-seg-s">{option.note}</span>
-                    )}
-                  </button>
+              <select
+                aria-label="Provider"
+                value={provider}
+                disabled={disabled}
+                onChange={(event) => changeProvider(event.target.value)}
+              >
+                {presets.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
                 ))}
-              </div>
+                <option value={CUSTOM_PROVIDER}>Custom</option>
+              </select>
+              {preset && (
+                <span
+                  className="om-muted"
+                  style={{ fontFamily: "var(--mono)" }}
+                >
+                  {hostOf(preset.baseUrl)}
+                </span>
+              )}
             </div>
           </div>
         )}
         <div className="om-row">
           <div className="om-what">
             <strong>Connection</strong>
+            {props.role === "llm" && (
+              <span className="om-leaves">Leaves this device</span>
+            )}
           </div>
           <div className="om-side">
             <select
@@ -355,26 +536,24 @@ export function ConnectionEditor(props: Props) {
             </select>
           </div>
         </div>
-        <div className="om-row">
-          <div className="om-what">
-            <strong>Base URL</strong>
+        {(selected !== "" || !preset) && (
+          <div className="om-row">
+            <div className="om-what">
+              <strong>Base URL</strong>
+            </div>
+            <div className="om-side">
+              <input
+                aria-label="Base URL"
+                className="om-mono"
+                type="url"
+                value={baseUrl}
+                disabled={disabled || selected === NONE}
+                placeholder="https://api.example.com/v1"
+                onChange={(event) => setBaseUrl(event.target.value)}
+              />
+            </div>
           </div>
-          <div className="om-side">
-            <input
-              aria-label="Base URL"
-              className="om-mono"
-              type="url"
-              value={baseUrl}
-              disabled={disabled || selected === NONE}
-              placeholder={
-                kind === "local"
-                  ? "http://127.0.0.1:1234/v1"
-                  : "https://api.example.com/v1"
-              }
-              onChange={(event) => setBaseUrl(event.target.value)}
-            />
-          </div>
-        </div>
+        )}
         <div className="om-row">
           <div className="om-what">
             <strong>API key</strong>
@@ -388,10 +567,33 @@ export function ConnectionEditor(props: Props) {
               autoComplete="off"
               spellCheck={false}
               disabled={disabled || selected === NONE}
-              onChange={() => setKeyEntered(true)}
+              placeholder={keyHint ? `Key from ${keyHint.keyPage}` : undefined}
+              onChange={() => {
+                setKeyEntered(true);
+                setNotice("");
+                editKey();
+              }}
             />
-            {status === "present" ? (
-              <span className="om-saved">Key saved</span>
+            <button
+              type="button"
+              className="om-ghost om-sm"
+              disabled={disabled || selected === NONE || testReason !== null}
+              title={testReason ?? "Checks the URL and key by listing models"}
+              aria-busy={busy}
+              onClick={() => void testConnection()}
+            >
+              Test
+            </button>
+            {testResult ? (
+              testResult.ok ? (
+                <span className="om-saved">Working</span>
+              ) : (
+                <span className="om-error">Not working</span>
+              )
+            ) : status === "present" ? (
+              <span className="om-saved">
+                Key saved. Type a new key to replace it.
+              </span>
             ) : (
               <span className="om-muted">
                 {isLocalBase(baseUrl) ? "Key optional" : "No key"}
@@ -404,20 +606,43 @@ export function ConnectionEditor(props: Props) {
             <strong>Model</strong>
           </div>
           <div className="om-side">
-            <input
+            <select
               aria-label="Model"
               className="om-mono"
-              value={model}
-              list="om-provider-models"
-              maxLength={200}
+              value={typing ? OTHER_MODEL : model}
               disabled={disabled || selected === NONE}
-              onChange={(event) => setModel(event.target.value)}
-            />
-            <datalist id="om-provider-models">
-              {modelsFor(models, props.role).map((item) => (
-                <option key={item.id} value={item.id} />
+              onChange={(event) => {
+                const value = event.target.value;
+                setTyping(value === OTHER_MODEL);
+                if (value !== OTHER_MODEL) setModel(value);
+              }}
+            >
+              {model === "" && !typing && (
+                <option value="" disabled>
+                  {usable.length > 0 ? "Choose a model" : "Test to load models"}
+                </option>
+              )}
+              {model !== "" && !modelListed && (
+                <option value={model}>{model}</option>
+              )}
+              {usable.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.id}
+                </option>
               ))}
-            </datalist>
+              <option value={OTHER_MODEL}>Other…</option>
+            </select>
+            {typing && (
+              <input
+                aria-label="Model ID"
+                className="om-mono"
+                value={model}
+                maxLength={200}
+                placeholder="model-id"
+                disabled={disabled || selected === NONE}
+                onChange={(event) => setModel(event.target.value)}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -426,43 +651,12 @@ export function ConnectionEditor(props: Props) {
           type="button"
           className="om-sm"
           disabled={!canSave}
+          title={canSave ? undefined : (saveReason ?? undefined)}
           onClick={() => void save()}
         >
           Save
         </button>
         <span className="om-spacer" />
-        <button
-          type="button"
-          className="om-ghost om-sm"
-          disabled={
-            disabled ||
-            !connection ||
-            connectionDirty ||
-            (!isLocalBase(connection.base_url) && status !== "present")
-          }
-          title={refreshReason ?? undefined}
-          onClick={() =>
-            void run(async () => {
-              if (!connection) return;
-              const choices = await api.listApiConnectionModels(
-                connection.id,
-                connection.revision,
-              );
-              if (
-                current.current?.id !== connection.id ||
-                current.current?.revision !== connection.revision
-              )
-                return;
-              setModels(choices);
-              setNotice(
-                "Model IDs fetched. Compatibility with each task is unverified.",
-              );
-            })
-          }
-        >
-          Refresh models
-        </button>
-        {refreshReason && <span className="om-muted">{refreshReason}</span>}
         <Saved show={shown} />
       </div>
       <details className="om-more">
@@ -483,7 +677,7 @@ export function ConnectionEditor(props: Props) {
               {urlError}
             </p>
           )}
-          {missingFields && <p className="om-muted">Enter a name and a URL.</p>}
+          {missingFields && <p className="om-muted">Enter a URL.</p>}
           <div className="om-frow">
             <span>Saved key</span>
             <button
@@ -503,43 +697,71 @@ export function ConnectionEditor(props: Props) {
           </div>
           <div className="om-frow">
             <span>Connection</span>
-            <button
-              type="button"
-              className="om-ghost om-sm om-danger"
-              disabled={
-                disabled ||
-                !connection ||
-                Object.values(props.settings.provider_assignments).some(
-                  (item) => item?.connection_id === connection.id,
-                )
-              }
-              onClick={() =>
-                void run(async () => {
-                  if (!connection) return;
-                  publish(
-                    await api.deleteApiConnection(
-                      connection.id,
-                      connection.revision,
-                    ),
-                  );
-                  setSelected("");
-                })
-              }
-            >
-              Delete connection
-            </button>
+            {confirming && connection ? (
+              <div
+                className="om-side"
+                role="group"
+                aria-label="Confirm delete"
+                onKeyDown={(event) => {
+                  // Esc cancels here and never reaches the page's own Esc (go back).
+                  if (event.key !== "Escape") return;
+                  event.stopPropagation();
+                  setConfirming(false);
+                }}
+              >
+                <span className="om-muted">
+                  {`Delete ${connection.name}? Its key is removed too.`}
+                </span>
+                <button
+                  ref={cancelDelete}
+                  type="button"
+                  className="om-ghost om-sm"
+                  onClick={() => setConfirming(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="om-sm om-danger"
+                  disabled={disabled}
+                  onClick={() =>
+                    void run(async () => {
+                      if (!connection) return;
+                      publish(
+                        await api.deleteApiConnection(
+                          connection.id,
+                          connection.revision,
+                        ),
+                      );
+                      setConfirming(false);
+                      switches.current += 1;
+                      setProvider(presets[0]?.id ?? CUSTOM_PROVIDER);
+                      setSelected("");
+                    })
+                  }
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="om-ghost om-sm om-danger"
+                disabled={
+                  disabled ||
+                  !connection ||
+                  Object.values(props.settings.provider_assignments).some(
+                    (item) => item?.connection_id === connection.id,
+                  )
+                }
+                onClick={() => setConfirming(true)}
+              >
+                Delete connection
+              </button>
+            )}
           </div>
         </div>
       </details>
-      {models.length > 0 && (
-        <ul className="om-ids" aria-label="Discovered model IDs">
-          {models.map((item) => (
-            <li key={item.id}>
-              <span className="om-mono">{item.id}</span>
-            </li>
-          ))}
-        </ul>
-      )}
       <div ref={outcome}>
         {notice && <p className="om-muted">{notice}</p>}
         {error && (

@@ -20,6 +20,7 @@ from openmeet_py.api.reads import transcript_hash
 from openmeet_py.domain import llm, providers
 from openmeet_py.domain.connections import plan_changed
 from openmeet_py.infra.store import transaction
+from openmeet_py.local_ai import service as local_ai
 
 MAX_SUMMARY_EDIT_BYTES = 2 * 1024 * 1024
 MAX_SUMMARY_INSTRUCTIONS = 2000
@@ -94,6 +95,8 @@ def generate_summary(ctx: Context, id: Any, template: Any) -> None:
         config = require_llm(db)
         planned = llm.summary_requests(taken.notes, list(taken.lines))
     with ai_slot(ctx):
+        # A local model may have been turned off: bring the managed server back before sending.
+        local_ai.ensure_ready(ctx, config)
         connection = providers.load_connection(config, ctx.transport)
         sent = 0
 
@@ -270,15 +273,19 @@ def save_summary_default(ctx: Context, template: Any) -> dict[str, Any]:
         return reads.read_settings(db)
 
 
-PROCESSING_MODES = ("recording", "live", "final", "both")
+PROCESSING_MODES = ("recording", "final")
+# Modes the old live preview used. A saved value is mapped, not refused, so an older database can
+# still save its default.
+LEGACY_MODES = {"live": "recording", "both": "final"}
 
 
 def save_processing_default(ctx: Context, mode: Any, summary: Any) -> dict[str, Any]:
     """Only preselects the recording setup; it stores the default and starts nothing."""
     mode = text_arg(mode, "mode")
+    mode = LEGACY_MODES.get(mode, mode)
     summary = optional_text_arg(summary, "summary")
-    # A summary only applies to modes that produce one.
-    summary = summary if mode in ("final", "both") else None
+    # A summary only applies to the mode that produces one.
+    summary = summary if mode == "final" else None
     if mode not in PROCESSING_MODES or (summary is not None and summary not in llm.TEMPLATE_IDS):
         raise AppError(
             "processing_default", "Choose a listed processing mode and built-in summary template."

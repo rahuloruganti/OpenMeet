@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from openmeet_py.api import import_commands, reads, recording
+from openmeet_py.api import import_commands, live_commands, reads, recording
 from openmeet_py.api.context import (
     Context,
     bool_arg,
@@ -31,6 +31,7 @@ from openmeet_py.api.reads import EXPORT_FORMATS, read_settings
 from openmeet_py.domain import connections, processing, questions, summaries, tasks, transcript_edits
 from openmeet_py.domain.exporter import write_snapshot
 from openmeet_py.infra.store import transaction
+from openmeet_py.local_ai import service as local_ai
 from openmeet_py.platform import detection, hotkeys
 from openmeet_py.speech import model_library, stt
 from openmeet_py.speech.transcription import jobs
@@ -372,6 +373,16 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "cancel_model_download": model_library.cancel_model_download,
     "detect_local_servers": connections.detect_local_servers,
     "stt_status": stt.stt_status,
+    # Local AI: the managed llama.cpp server running a downloaded model on this PC
+    "local_ai_status": local_ai.local_ai_status,
+    "local_ai_install_engine": local_ai.local_ai_install_engine,
+    "local_ai_download_model": local_ai.local_ai_download_model,
+    "local_ai_remove_model": local_ai.local_ai_remove_model,
+    "local_ai_cancel": local_ai.local_ai_cancel,
+    "local_ai_use": local_ai.local_ai_use,
+    "local_ai_quickstart": local_ai.local_ai_quickstart,
+    "local_ai_start": local_ai.local_ai_start,
+    "local_ai_stop": local_ai.local_ai_stop,
     "get_settings": get_settings,
     "save_export_options": save_export_options,
     "save_setup_done": save_setup_done,
@@ -388,6 +399,7 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "api_connection_key_status": connections.api_connection_key_status,
     "save_provider_assignment": connections.save_provider_assignment,
     "list_api_connection_models": connections.list_api_connection_models,
+    "test_api_connection": connections.test_api_connection,
     "generate_summary": summaries.generate_summary,
     "save_summary_edit": summaries.save_summary_edit,
     "save_summary_instructions": summaries.save_summary_instructions,
@@ -395,6 +407,12 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "delete_summary_template": summaries.delete_summary_template,
     "save_summary_default": summaries.save_summary_default,
     "save_processing_default": summaries.save_processing_default,
+    # Live transcript: its switch, its engine and its one explicit streaming model download
+    "live_transcript": live_commands.live_transcript,
+    "save_live_settings": live_commands.save_live_settings,
+    "live_models": live_commands.live_models,
+    "live_model_install": live_commands.live_model_install,
+    "live_model_cancel": live_commands.live_model_cancel,
     "save_recipe": summaries.save_recipe,
     "delete_recipe": summaries.delete_recipe,
     "save_speaker_names": summaries.save_speaker_names,

@@ -1,4 +1,4 @@
-"""Automatic processing: plans, stages, the notes barrier, budgets, cancel, retry, restart and live preview.
+"""Automatic processing: plans, stages, the notes barrier, budgets, cancel, retry and restart.
 
 Fakes only: FakeEngine (OPENMEET_PY_FAKE_STT=1), FakeBackend tones, httpx.MockTransport for the summary.
 `manual` builds the app with workers=False, so each test drives Processing.step() itself and the order is
@@ -19,13 +19,12 @@ from conftest import TOKEN, invoke, invoke_error
 from openmeet_py.api.server import create_app
 from openmeet_py.audio.audio_backend import FakeBackend
 from openmeet_py.domain import processing
-from openmeet_py.domain.processing import DONE, WAIT, CONTINUE, LiveTap
+from openmeet_py.domain.processing import DONE, WAIT, CONTINUE
 from openmeet_py.infra.store import Store
 from test_ai import SUMMARY, Stub, configure, reply
 
 DEVICES = {"microphoneId": "fake-mic", "outputId": "fake-output"}
 FRAMES = 1024
-TEN_SECONDS = 160_000
 
 
 def build(tmp_path: Path, workers: bool) -> TestClient:
@@ -73,11 +72,11 @@ def snap(client: TestClient, meeting: str) -> dict:
     return result
 
 
-def drive(client: TestClient, meeting: str, run: str, tap: Optional[LiveTap] = None) -> str:
+def drive(client: TestClient, meeting: str, run: str) -> str:
     """Steps the workflow until it waits for something or ends. Returns the last action."""
     action = CONTINUE
     for _ in range(100):
-        action = ctx_of(client).processing.step(meeting, run, tap)
+        action = ctx_of(client).processing.step(meeting, run)
         if action != CONTINUE:
             return action
     raise AssertionError("the workflow did not settle")
@@ -104,7 +103,7 @@ def test_recording_only_attaches_nothing_and_shows_no_notice(manual: TestClient)
     started = start(manual)
     assert started["processing_notice"] is None
     assert invoke(manual, "get_session_processing", id=started["meeting_id"]) is None
-    assert ctx_of(manual).recorder.session.live is None
+    invoke(manual, "stop_recording")
 
 
 def test_summary_without_a_model_skips_processing_but_the_recording_starts(manual: TestClient) -> None:
@@ -132,17 +131,20 @@ def test_local_engine_that_is_not_installed_skips_with_a_notice(
         client.__exit__(None, None, None)
 
 
-@pytest.mark.parametrize("mode, live", [("live", True), ("final", False), ("both", True)])
-def test_modes_decide_the_plan_and_whether_live_runs(manual: TestClient, mode: str, live: bool) -> None:
+@pytest.mark.parametrize("mode, planned", [("recording", False), ("final", True)])
+def test_modes_decide_the_plan(manual: TestClient, mode: str, planned: bool) -> None:
     set_default(manual, mode, None)
     started = start(manual)
     meeting = started["meeting_id"]
+    if not planned:
+        # Recording only: no automatic processing at all. Live transcript is its own setting now.
+        assert invoke(manual, "get_session_processing", id=meeting) is None
+        invoke(manual, "stop_recording")
+        return
     state = snap(manual, meeting)
     assert state["state"] == "prepared"
-    assert state["plan"]["scope"]["kind"] == ("live_only" if mode == "live" else "final")
-    if mode != "live":
-        assert state["plan"]["scope"]["live"] is live
-    assert (ctx_of(manual).recorder.session.live is not None) is live
+    assert state["plan"]["scope"]["kind"] == "final"
+    assert "live" not in state["plan"]["scope"]
     assert state["plan"]["limits"] == {
         "duration_seconds": 14400,
         "post_stop_seconds": 14400,
@@ -174,7 +176,13 @@ def test_the_plan_is_frozen_and_holds_no_credentials(manual: TestClient) -> None
 # ---- the full run ------------------------------------------------------------
 
 
-def test_final_run_waits_for_the_notes_barrier_then_summarizes(manual: TestClient) -> None:
+def test_final_run_waits_for_the_notes_barrier_then_summarizes(
+    manual: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openmeet_py.local_ai import service as local_ai
+
+    readied: list[str] = []
+    monkeypatch.setattr(local_ai, "ensure_ready", lambda _ctx, config: readied.append(config["base_url"]))
     stub = llm_stub(manual)
     set_default(manual, "final", "general-v1")
     started = start(manual)
@@ -224,6 +232,8 @@ def test_final_run_waits_for_the_notes_barrier_then_summarizes(manual: TestClien
     assert detail["summary_template"] == "general-v1"
     assert len(stub.requests) == 1
     assert revisions == sorted(revisions) and len(set(revisions)) == len(revisions)
+    # An automatic summary asks Local AI to be ready first, like a manual one.
+    assert len(readied) == 1
 
 
 def test_a_notes_acknowledgement_before_the_stop_is_refused(manual: TestClient) -> None:
@@ -316,14 +326,13 @@ def test_cancel_keeps_the_transcript_and_retry_continues_with_the_summary(manual
     assert len(stub.requests) == 1
 
 
-def test_retry_refuses_a_live_only_preview_and_a_running_run(manual: TestClient) -> None:
-    set_default(manual, "live")
+def test_retry_refuses_a_recording_without_automatic_processing(manual: TestClient) -> None:
+    set_default(manual, "recording")
     started = start(manual)
     meeting = started["meeting_id"]
     invoke(manual, "stop_recording")
     status, body = invoke_error(manual, "retry_session_processing", id=meeting)
-    assert body["code"] == "processing_retry"
-    assert "live-only" in body["message"]
+    assert (status, body["code"]) == (400, "processing_cancelled")
 
 
 def test_a_restart_marks_unfinished_work_interrupted_once_and_replays_nothing(manual: TestClient) -> None:
@@ -365,89 +374,6 @@ def test_restart_keeps_the_notes_the_user_saved(manual: TestClient) -> None:
         )
     finally:
         second.close()
-
-
-# ---- live preview ------------------------------------------------------------
-
-
-def test_live_preview_is_provisional_and_leaves_search_and_the_transcript_alone(manual: TestClient) -> None:
-    set_default(manual, "live")
-    started = start(manual)
-    meeting = started["meeting_id"]
-    run = snap(manual, meeting)["workflow"]["run_id"]
-    tap = ctx_of(manual).recorder.session.live
-    record(manual, TEN_SECONDS)
-    wait_for(lambda: tap.queue.qsize() >= 1)
-    assert drive(manual, meeting, run, tap) == WAIT  # chunks processed; nothing left to do yet
-    live = snap(manual, meeting)["workflow"]
-    assert live["stage"] == "live"
-    assert live["provisional"], "the preview shows accepted audio as provisional rows"
-    assert all(item["segment"]["text"].startswith("Fictional line") for item in live["provisional"])
-    assert invoke(manual, "search_meetings", query="Fictional line") == []
-    assert invoke(manual, "get_meeting", id=meeting)["segments"] == []
-    invoke(manual, "stop_recording")
-    stopped = snap(manual, meeting)
-    assert stopped["workflow"]["stage"] == "completed"  # live only: no final transcript, no summary
-    assert stopped["workflow"]["provisional"], "a live-only session keeps its preview"
-    assert invoke(manual, "get_meeting", id=meeting)["summary"] is None
-
-
-def test_live_tap_keeps_chunks_bounded_and_marks_gaps(tmp_path: Path) -> None:
-    tap = LiveTap([("mic", 16000, 1)])
-    block = bytes(4 * 16000 * 10)  # ten seconds of mono float32
-    for index in range(5):
-        tap.accept(0, block, 16000 * 10, index * 10_000_000, 0)
-    # Five full chunks, a queue of three: the rest are dropped and the gap is visible.
-    assert tap.queue.qsize() == 3
-    assert tap.incomplete.is_set()
-
-
-def test_live_tap_seals_a_chunk_at_a_timing_gap(tmp_path: Path) -> None:
-    tap = LiveTap([("mic", 16000, 1)])
-    tap.accept(0, bytes(4 * 1600), 1600, 0, 0)
-    tap.accept(0, bytes(4 * 1600), 1600, 5_000_000, 0)  # a pause or a resumed run: a new chunk
-    first = tap.queue.get_nowait()
-    assert first.timing[0].frame_offset == 0 and first.timing[0].frames == 1600
-    tap.flush_all()
-    second = tap.queue.get_nowait()
-    assert second.timing[0].capture_start_us == 5_000_000
-
-
-def test_live_publication_is_capped_at_two_hundred_rows(manual: TestClient) -> None:
-    set_default(manual, "live")
-    started = start(manual)
-    meeting = started["meeting_id"]
-    run = snap(manual, meeting)["workflow"]["run_id"]
-    proc = ctx_of(manual).processing
-    segments = [{"speaker": "You", "timing": {"kind": "untimed"}, "text": f"Fictional {n}"} for n in range(150)]
-    proc._publish_provisional(meeting, run, "mic", 1, segments)
-    proc._publish_provisional(meeting, run, "mic", 2, segments)
-    # 300 rows were written; only the newest 200 are kept, so the oldest chunk's rows are the ones dropped.
-    rows = snap(manual, meeting)["workflow"]["provisional"]
-    assert len(rows) == 200
-    assert {item["chunk_id"] for item in rows} == {1, 2}
-    proc._publish_provisional(meeting, run, "mic", 3, segments[:60])
-    stored = manual.app.state.ctx.store.db.execute(  # type: ignore[attr-defined]
-        "SELECT COUNT(*) FROM processing_provisional WHERE meeting_id=?", (meeting,)
-    ).fetchone()[0]
-    assert stored == 200
-    newest = snap(manual, meeting)["workflow"]["provisional"][-1]["chunk_id"]
-    assert newest == 3
-    invoke(manual, "stop_recording")
-
-
-def test_a_chunk_over_the_row_cap_is_refused_and_marked_incomplete(manual: TestClient) -> None:
-    set_default(manual, "live")
-    started = start(manual)
-    meeting = started["meeting_id"]
-    run = snap(manual, meeting)["workflow"]["run_id"]
-    segments = [{"speaker": "You", "timing": {"kind": "untimed"}, "text": "x"}] * 201
-    ctx_of(manual).processing._publish_provisional(meeting, run, "mic", 1, segments)
-    workflow = snap(manual, meeting)["workflow"]
-    assert workflow["live_incomplete"] is True
-    assert workflow["provisional"] == []
-    assert "Live preview is incomplete" in workflow["error"]
-    invoke(manual, "stop_recording")
 
 
 # ---- threads -----------------------------------------------------------------

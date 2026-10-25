@@ -1,4 +1,4 @@
-"""Automatic processing after a recording: plan, durable stages, budgets, cancel, retry and the live preview.
+"""Automatic processing after a recording: plan, durable stages, budgets, cancel and retry.
 
 Covers the whole after-recording lifecycle: plan, attach, snapshot, cancel and retry; the durable
 stages with their budgets, notes barrier, publication, failure mapping and restart; the worker loop;
@@ -9,36 +9,32 @@ The database is the authority. Every publish re-checks the plan (configuration r
 deadline, budgets) under the store lock. Settings and provider changes flip a
 prepared session to needs_attention through the triggers in migrations 013 and 029.
 
-`step()` runs one transition synchronously, so tests can drive the whole workflow. The worker thread only
-calls it in a loop. Live preview runs on accepted audio that the recorder's writer copies after a successful
-write (LiveTap), so it never blocks capture. It is unqualified: no real model has been run.
+`step()` runs one transition synchronously, so tests can drive the whole workflow. The worker thread
+only calls it in a loop. Live transcript is no longer part of automatic processing: it runs from its
+own settings while the recording is captured (see api/live_commands.py). The durable stage 'live'
+still means "the recording is in progress" and waits for the stop.
 """
 
 from __future__ import annotations
 
 import hashlib
-import itertools
 import json
 import logging
-import queue
 import sqlite3
-import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Optional
 
 from openmeet_py.api import reads
 from openmeet_py.api.context import Context, int_arg, text_arg
 from openmeet_py.api.errors import AppError
 from openmeet_py.api.reads import read_settings
-from openmeet_py.audio import audio_wav
 from openmeet_py.domain import llm, providers
 from openmeet_py.domain.connections import plan_changed
 from openmeet_py.domain.transcript_edits import replace_transcript
 from openmeet_py.infra.store import transaction
+from openmeet_py.local_ai import service as local_ai
 from openmeet_py.speech import stt
 from openmeet_py.speech.transcription import jobs
 
@@ -49,14 +45,6 @@ POST_STOP_SECONDS = 14_400
 UPLOAD_BYTES = 256 * 1024 * 1024
 REQUESTS = 1000
 TEXT_BYTES = 800_000
-LIVE_CHUNK_SECONDS = 10
-LIVE_QUEUE_CHUNKS = 3
-LIVE_MAX_SAMPLES = 1_000_000
-LIVE_MAX_TIMING = 4096
-LIVE_MAX_ROWS = 200
-LIVE_MAX_BYTES = 1_048_576
-LIVE_TOLERANCE_US = 30_000
-LIVE_INCOMPLETE = "Live preview is incomplete. Final transcription uses the saved audio."
 TERMINAL = ("completed", "failed", "cancelled", "interrupted", "needs_attention")
 PLAN_CHANGED_CODES = ("session_plan_changed", "processing_plan_changed", "processing_cancelled")
 DONE, WAIT, CONTINUE = "done", "wait", "continue"
@@ -99,13 +87,8 @@ def _limits() -> dict[str, int]:
 def default_request(settings: dict[str, Any]) -> Optional[dict[str, Any]]:
     """What the saved default asks for after a recording, or None for recording only."""
     summary = settings["processing_summary"] if settings["processing_summary"] in llm.TEMPLATE_IDS else None
-    mode = settings["processing_mode"]
-    if mode == "live":
-        return {"kind": "live_only"}
-    if mode == "final":
-        return {"kind": "final", "live": False, "summary": summary}
-    if mode == "both":
-        return {"kind": "final", "live": True, "summary": summary}
+    if settings["processing_mode"] == "final":
+        return {"kind": "final", "summary": summary}
     return None
 
 
@@ -141,15 +124,12 @@ def build_plan(db: sqlite3.Connection, request: dict[str, Any], revision: int) -
         speech = _api_destination(settings, "cloud_stt")
     else:
         speech = {"kind": "local_whisper", "model": settings["stt_model"]}
-    if request["kind"] == "live_only":
-        scope: dict[str, Any] = {"kind": "live_only", "speech": speech}
-    else:
-        summary = None
-        if request["summary"] is not None:
-            summary = {"destination": _api_destination(settings, "llm"), "template": request["summary"]}
-            if settings["summary_instructions"]:
-                summary["instructions"] = settings["summary_instructions"]
-        scope = {"kind": "final", "live": request["live"], "speech": speech, "summary": summary}
+    summary = None
+    if request["summary"] is not None:
+        summary = {"destination": _api_destination(settings, "llm"), "template": request["summary"]}
+        if settings["summary_instructions"]:
+            summary["instructions"] = settings["summary_instructions"]
+    scope = {"kind": "final", "speech": speech, "summary": summary}
     return {
         "id": str(uuid.uuid4()),
         "meeting_id": None,
@@ -174,14 +154,9 @@ def read_workflow(db: sqlite3.Connection, meeting_id: str) -> Optional[dict[str,
     ).fetchone()
     if row is None:
         return None
-    provisional = [
-        {"id": item[0], "chunk_id": item[1], "segment": json.loads(item[2])}
-        for item in db.execute(
-            "SELECT id, chunk_id, segment_json FROM processing_provisional "
-            "WHERE meeting_id = ?1 AND run_id = ?2 ORDER BY chunk_id, id LIMIT ?3",
-            (meeting_id, row[0], LIVE_MAX_ROWS),
-        ).fetchall()
-    ]
+    # The live preview that filled processing_provisional is gone. The field and its table stay, so an
+    # older row is readable and the UI keeps one shape; nothing writes provisional rows now.
+    provisional: list[dict[str, Any]] = []
     return {
         "run_id": row[0],
         "attempt": row[1],
@@ -302,118 +277,11 @@ class Owner:
             return _Guard(self, operation)
 
 
-# ---- live preview ------------------------------------------------------------
-
-
-@dataclass
-class LiveChunk:
-    kind: str
-    chunk_id: int
-    sample_rate: int
-    channels: int
-    data: bytes
-    timing: list[audio_wav.Block]
-
-
-@dataclass
-class _Lane:
-    kind: str
-    rate: int
-    channels: int
-    data: bytearray = field(default_factory=bytearray)
-    frames: int = 0
-    timing: list[audio_wav.Block] = field(default_factory=list)
-    generation: int = 0
-    last_end_us: int = 0
-
-
-class LiveTap:
-    """Copies accepted audio into bounded chunks of about ten seconds. Only the recorder's writer calls accept().
-
-    put_nowait never blocks: a full queue sets `incomplete` (gaps are visible) and the chunk is dropped.
-    """
-
-    def __init__(self, lanes: list[tuple[str, int, int]]):
-        self.queue: "queue.Queue[LiveChunk]" = queue.Queue(LIVE_QUEUE_CHUNKS)
-        self.incomplete = threading.Event()
-        self._lanes = [_Lane(kind, rate, channels) for kind, rate, channels in lanes]
-        self._ids = itertools.count()
-
-    def accept(self, index: int, data: bytes, frames: int, start_us: int, generation: int) -> None:
-        lane = self._lanes[index]
-        broken = lane.timing and abs(lane.last_end_us - start_us) > LIVE_TOLERANCE_US
-        full = (
-            len(lane.timing) >= LIVE_MAX_TIMING
-            or lane.generation != generation
-            or (len(lane.data) + len(data)) // 4 > LIVE_MAX_SAMPLES
-        )
-        if broken or (lane.timing and full):
-            self._flush(index)
-        lane.generation = generation
-        if lane.timing and lane.last_end_us == start_us:
-            lane.timing[-1].frames += frames
-        else:
-            lane.timing.append(audio_wav.Block(lane.frames, frames, start_us, generation))
-        lane.data += data
-        lane.frames += frames
-        lane.last_end_us = start_us + frames * 1_000_000 // lane.rate
-        target = min(lane.rate * lane.channels * LIVE_CHUNK_SECONDS, LIVE_MAX_SAMPLES)
-        if lane.frames * lane.channels >= target:
-            self._flush(index)
-
-    def flush_all(self) -> None:
-        for index in range(len(self._lanes)):
-            self._flush(index)
-
-    def _flush(self, index: int) -> None:
-        lane = self._lanes[index]
-        if not lane.frames:
-            return
-        chunk = LiveChunk(lane.kind, next(self._ids), lane.rate, lane.channels, bytes(lane.data), lane.timing)
-        lane.data = bytearray()
-        lane.frames = 0
-        lane.timing = []
-        try:
-            self.queue.put_nowait(chunk)
-        except queue.Full:
-            self.incomplete.set()
-
-
-def _materialize(chunk: LiveChunk) -> tuple[dict[str, Any], tempfile.TemporaryDirectory]:
-    """A float WAV and timing index in a scratch folder, in the layout the final pass reads."""
-    scratch = tempfile.TemporaryDirectory(prefix="openmeet-live-")
-    folder = Path(scratch.name)
-    wav_path = folder / "audio.wav"
-    timing_path = folder / "audio.timing.jsonl"
-    try:
-        wav = audio_wav.WavFile(wav_path, chunk.sample_rate, chunk.channels)
-        wav.write(chunk.data)
-        if not wav.finalize():
-            raise AppError("audio", "Could not create live audio copy.")
-        with open(timing_path, "wb") as handle:
-            for block in chunk.timing:
-                line = audio_wav.timing_line(block.frame_offset, block.frames, block.capture_start_us, block.generation or 0)
-                handle.write(line.encode("ascii"))
-    except BaseException:
-        scratch.cleanup()
-        raise
-    frames = len(chunk.data) // (4 * chunk.channels)
-    track = {
-        "kind": chunk.kind,
-        "path": str(wav_path),
-        "timing_path": str(timing_path),
-        "sample_rate": chunk.sample_rate,
-        "channels": chunk.channels,
-        "frames": frames,
-    }
-    return track, scratch
-
-
 # ---- the service -------------------------------------------------------------
 
 
 class Processing:
-    """Owns the workflow for every recording. Recorder hooks: prepare, live_tap, attach, started, stopped."""
+    """Owns the workflow for every recording. Recorder hooks: prepare, attach, started, stopped."""
 
     def __init__(self, ctx: Context, workers: bool = True):
         self.ctx = ctx
@@ -448,14 +316,6 @@ class Processing:
         except AppError as error:
             return None, f"Automatic processing is off for this recording: {error.message}"
 
-    def live_tap(self, plan: Optional[dict[str, Any]], mic: Any, out: Any) -> Optional[LiveTap]:
-        if plan is None:
-            return None
-        scope = plan["scope"]
-        if scope["kind"] == "final" and not scope["live"]:
-            return None
-        return LiveTap([("mic", mic.rate, mic.channels), ("system", out.rate, out.channels)])
-
     def attach(self, db: sqlite3.Connection, plan: dict[str, Any], meeting_id: str) -> None:
         """Inside the recording's start transaction. The meeting row is inserted in that same transaction."""
         recording = db.execute(
@@ -484,9 +344,9 @@ class Processing:
             (meeting_id, plan["id"]),
         )
 
-    def started(self, meeting_id: str, run_id: str, tap: Optional[LiveTap]) -> None:
+    def started(self, meeting_id: str, run_id: str) -> None:
         if self.workers:
-            self._spawn(meeting_id, run_id, tap)
+            self._spawn(meeting_id, run_id)
 
     def stopped(self, db: sqlite3.Connection, meeting_id: str, success: bool) -> None:
         """Inside the stop transaction, after the meeting row is final: the stop moves the session on."""
@@ -510,7 +370,8 @@ class Processing:
                 "The recording is longer than automatic processing allows. Use Transcribe audio on the "
                 "Transcript tab instead.",
             )
-        elif plan["scope"]["kind"] == "live_only":
+        elif plan["scope"].get("kind") != "final":
+            # A plan from before live transcript had its own setting: it only ever showed a preview.
             stage, error = "completed", None
         else:
             stage, error = "finalizing_audio", None
@@ -608,10 +469,10 @@ class Processing:
             if scope["kind"] != "final":
                 raise AppError(
                     "processing_retry",
-                    "A stopped live-only preview cannot restart. Use manual final transcription instead.",
+                    "This session did not run final processing. Use Transcribe audio on the Transcript tab instead.",
                 )
             summary = scope["summary"]["template"] if scope["summary"] is not None else None
-            plan = build_plan(db, {"kind": "final", "live": False, "summary": summary}, configuration_revision(db))
+            plan = build_plan(db, {"kind": "final", "summary": summary}, configuration_revision(db))
             plan["meeting_id"] = meeting_id
             status = db.execute("SELECT status FROM meetings WHERE id = ?1", (meeting_id,)).fetchone()
             if status is None or status[0] != "stopped":
@@ -638,7 +499,7 @@ class Processing:
                 tx.execute("DELETE FROM processing_provisional WHERE meeting_id = ?1", (meeting_id,))
         self._notify(meeting_id)
         if self.workers:
-            self._spawn(meeting_id, plan["id"], None)
+            self._spawn(meeting_id, plan["id"])
         return self.snapshot(meeting_id)
 
     def cancel(self, meeting_id: str, expected: int) -> Optional[dict[str, Any]]:
@@ -689,21 +550,12 @@ class Processing:
         if configuration_revision(db) != snap["plan"]["configuration_revision"] or clock() >= snap["authorized_until"]:
             raise stale()
         scope = snap["plan"]["scope"]
-        if scope["kind"] == "live_only":
-            allowed = expected == "live"
-        elif expected == "live":
-            allowed = scope["live"]
-        elif expected == "summarizing":
-            allowed = scope["summary"] is not None
+        if expected == "summarizing":
+            allowed = scope.get("summary") is not None
         else:
             allowed = expected in ("finalizing_audio", "transcribing", "awaiting_notes")
         if not allowed:
             raise stale()
-        if expected == "live" and clock() > snap["started_at"] + snap["plan"]["limits"]["duration_seconds"]:
-            raise AppError(
-                "processing_budget",
-                "The live processing duration limit was reached. Recording continues.",
-            )
         return snap
 
     def _stage(self, meeting_id: str, run_id: str, expected: str, next_stage: str) -> None:
@@ -768,17 +620,6 @@ class Processing:
                 if moved:
                     _bump(db, meeting_id)
 
-    def _mark_live_incomplete(self, meeting_id: str, run_id: str) -> None:
-        with self.ctx.store.lock:
-            with transaction(self.ctx.store.db) as db:
-                changed = db.execute(
-                    "UPDATE processing_runs SET live_incomplete=1, error=?1 WHERE meeting_id=?2 AND run_id=?3 "
-                    "AND live_incomplete=0 AND stage='live'",
-                    (LIVE_INCOMPLETE, meeting_id, run_id),
-                ).rowcount
-                if changed:
-                    _bump(db, meeting_id)
-
     def _notify(self, meeting_id: str) -> None:
         try:
             snap = self.snapshot(meeting_id)
@@ -823,76 +664,6 @@ class Processing:
             return jobs._local(self.ctx, settings, tracks, guard.cancel, report)
         finally:
             self.ctx.stt_busy.release()
-
-    def _publish_provisional(
-        self, meeting_id: str, run_id: str, kind: str, chunk_id: int, segments: list[dict[str, Any]]
-    ) -> None:
-        db = self.ctx.store.db
-        existing = db.execute(
-            "SELECT COALESCE(SUM(length(CAST(segment_json AS BLOB))),0) FROM processing_provisional WHERE meeting_id=?1",
-            (meeting_id,),
-        ).fetchone()[0]
-        encoded = [
-            (f"{run_id}:{kind}:{chunk_id}:{index}", json.dumps(segment, ensure_ascii=False))
-            for index, segment in enumerate(segments)
-        ]
-        size = sum(len(text.encode("utf-8")) for _, text in encoded)
-        if existing + size > LIVE_MAX_BYTES or len(encoded) > LIVE_MAX_ROWS:
-            self._mark_live_incomplete(meeting_id, run_id)
-            return
-        with transaction(db) as tx:
-            for key, text in encoded:
-                tx.execute(
-                    "INSERT OR IGNORE INTO processing_provisional(id,meeting_id,run_id,chunk_id,segment_json) "
-                    "VALUES (?1,?2,?3,?4,?5)",
-                    (key, meeting_id, run_id, chunk_id, text),
-                )
-            tx.execute(
-                "DELETE FROM processing_provisional WHERE meeting_id=?1 AND id NOT IN ("
-                "SELECT id FROM processing_provisional WHERE meeting_id=?1 ORDER BY chunk_id DESC, id DESC LIMIT ?2)",
-                (meeting_id, LIVE_MAX_ROWS),
-            )
-            _bump(tx, meeting_id)
-
-    def _live_chunk(self, meeting_id: str, run_id: str, chunk: LiveChunk) -> None:
-        guard = self._begin(meeting_id, run_id, "live")
-        try:
-            with self.ctx.store.lock:
-                self._check(self.ctx.store.db, meeting_id, run_id, "live")
-                settings = read_settings(self.ctx.store.db)
-            track, scratch = _materialize(chunk)
-            try:
-                segments, _, _ = self._speech(meeting_id, run_id, "live", settings, [track], guard)
-            finally:
-                scratch.cleanup()
-
-            def publish() -> None:
-                with self.ctx.store.lock:
-                    self._check(self.ctx.store.db, meeting_id, run_id, "live")
-                    self._publish_provisional(meeting_id, run_id, chunk.kind, chunk.chunk_id, segments)
-
-            guard.finish(publish)
-        finally:
-            guard.release()
-
-    def _live_step(self, meeting_id: str, run_id: str, tap: Optional[LiveTap]) -> str:
-        if tap is None:
-            return WAIT
-        if tap.incomplete.is_set():
-            self._mark_live_incomplete(meeting_id, run_id)
-        try:
-            chunk = tap.queue.get_nowait()
-        except queue.Empty:
-            return WAIT
-        try:
-            self._live_chunk(meeting_id, run_id, chunk)
-        except AppError:  # live failures never stop recording or the final pass
-            self._mark_live_incomplete(meeting_id, run_id)
-        except Exception as error:
-            log.error("live preview chunk failed: %s", type(error).__name__)
-            self._mark_live_incomplete(meeting_id, run_id)
-        self._notify(meeting_id)
-        return CONTINUE
 
     def _final_transcript(self, meeting_id: str, run_id: str) -> None:
         guard = self._begin(meeting_id, run_id, "finalizing_audio")
@@ -957,6 +728,8 @@ class Processing:
                     "processing_busy", "Another AI request is still running. Wait for it to finish."
                 )
             try:
+                # Automatic summaries may use Local AI too: start its server first if it is off.
+                local_ai.ensure_ready(self.ctx, config)
                 connection = providers.load_connection(config, self.ctx.transport)
 
                 def before(body: bytes) -> None:
@@ -1001,7 +774,7 @@ class Processing:
         finally:
             guard.release()
 
-    def step(self, meeting_id: str, run_id: str, tap: Optional[LiveTap] = None) -> str:
+    def step(self, meeting_id: str, run_id: str) -> str:
         """One transition. Returns CONTINUE after progress, WAIT when nothing is due yet, DONE when the run ends."""
         if self.quitting:
             return DONE
@@ -1018,7 +791,7 @@ class Processing:
             return DONE
         try:
             if stage == "live":
-                return self._live_step(meeting_id, run_id, tap)
+                return WAIT  # the recording is still being captured; the stop moves the stage on
             if stage == "finalizing_audio":
                 self._final_transcript(meeting_id, run_id)
             elif stage == "awaiting_notes":
@@ -1039,17 +812,17 @@ class Processing:
         self._notify(meeting_id)
         return CONTINUE
 
-    def _spawn(self, meeting_id: str, run_id: str, tap: Optional[LiveTap]) -> None:
+    def _spawn(self, meeting_id: str, run_id: str) -> None:
         thread = threading.Thread(
-            target=self._worker, args=(meeting_id, run_id, tap), name="openmeet-processing", daemon=True
+            target=self._worker, args=(meeting_id, run_id), name="openmeet-processing", daemon=True
         )
         self._threads = [item for item in self._threads if item.is_alive()] + [thread]
         thread.start()
 
-    def _worker(self, meeting_id: str, run_id: str, tap: Optional[LiveTap]) -> None:
+    def _worker(self, meeting_id: str, run_id: str) -> None:
         while not self._stop.is_set():
             try:
-                action = self.step(meeting_id, run_id, tap)
+                action = self.step(meeting_id, run_id)
             except Exception:  # a closed database at shutdown ends the run quietly
                 log.error("processing worker stopped")
                 return

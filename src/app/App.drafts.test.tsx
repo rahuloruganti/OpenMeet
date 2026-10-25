@@ -17,8 +17,50 @@ vi.mock("../shared/api/api", async (original) =>
 
 beforeEach(installDefaultMocks);
 
+/** A promise the test settles by hand, so a save can be held open across user actions. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+const summaryVersion = {
+  id: 4,
+  provider: "merge",
+  model: "m1",
+  template: "general-v1",
+  markdown: "## Summary\nGenerated.",
+  edited_from: null,
+  stale: false,
+};
+
+/** Opens the Summary tab and starts an edit of the only version with the given text. */
+async function openSummaryEdit(text: string) {
+  vi.mocked(api.listSummaries).mockResolvedValue([summaryVersion]);
+  await ready();
+  await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Edit summary" }),
+  );
+  fireEvent.change(screen.getByRole("textbox", { name: "Edit summary" }), {
+    target: { value: text },
+  });
+}
+
+/** Opens a summary edit whose save fails, then asks to quit so the close dialog shows. */
+async function closeDialogWithFailedSummary() {
+  await openSummaryEdit("Edited summary");
+  vi.mocked(api.saveSummaryEdit).mockRejectedValue(
+    new Error("Summary service down"),
+  );
+  act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+  return screen.findByRole("dialog", { name: "Not saved yet" });
+}
+
 describe("note drafts and shutdown", () => {
-  it("shows the quit prompt over the meetings page even when Settings was open", async () => {
+  it("saves and quits with no prompt, even when Settings was open", async () => {
     await ready();
     await userEvent.click(
       within(
@@ -27,10 +69,8 @@ describe("note drafts and shutdown", () => {
     );
     await screen.findByRole("heading", { level: 1, name: "Settings" });
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    const quit = await screen.findByRole("button", { name: "Save and quit" });
-    expect(document.activeElement).toBe(quit);
-    await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
-    expect(screen.getByRole("main")).toBeTruthy();
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("guards opening the active meeting when another meeting has an unsaved draft", async () => {
@@ -222,22 +262,20 @@ describe("note drafts and shutdown", () => {
       target: { value: "Keep these edits" },
     });
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    const quit = await screen.findByRole("dialog", { name: "Save and quit?" });
-    await userEvent.click(
-      within(quit).getByRole("button", { name: "Save and quit" }),
+    const dialog = await screen.findByRole("dialog", { name: "Not saved yet" });
+    expect(within(dialog).getByRole("alert").textContent).toBe(
+      "Notes not saved: Disk full.",
     );
-    // The banner and the quit dialog both explain the failed save.
-    await waitFor(() =>
-      expect(screen.getAllByText(/Notes not saved: Disk full/)).toHaveLength(2),
-    );
-    expect(within(quit).getByRole("alert").textContent).toContain(
-      "Quitting waits for them",
-    );
+    expect(dialog.textContent).toContain("Quitting waits for them");
+    // Notes are never discarded, so there is no way to quit past them.
+    expect(
+      within(dialog).queryByRole("button", { name: "Quit anyway" }),
+    ).toBeNull();
     expect(api.close).not.toHaveBeenCalled();
     expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
   });
 
-  it("explains a failed save in the quit dialog and keeps Keep working focused", async () => {
+  it("keeps Keep working focused after a failed save and quits once Try again saves", async () => {
     await ready();
     vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
     fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
@@ -245,22 +283,38 @@ describe("note drafts and shutdown", () => {
     });
     await screen.findByText(/Notes not saved: Disk full/);
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    const dialog = await screen.findByRole("dialog", {
-      name: "Save and quit?",
-    });
-    expect(within(dialog).getByRole("alert").textContent).toBe(
-      "Notes not saved: Disk full. Quitting waits for them. Copy your text or retry.",
-    );
+    await screen.findByRole("dialog", { name: "Not saved yet" });
     // Enter on the dialog must not retry a failing save by default.
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: "Keep working" }),
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save and quit" }),
-    );
-    await screen.findByText(/Save your notes first: fix the error above/);
     expect(api.close).not.toHaveBeenCalled();
-    expect(screen.getByDisplayValue("Keep these edits")).toBeTruthy();
+    vi.mocked(api.saveNotes).mockResolvedValue(1);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(api.saveNotes).toHaveBeenLastCalledWith(
+      "sample",
+      "Keep these edits",
+      0,
+    );
+  });
+
+  it("closes the dialog on Keep working and asks again on the next close", async () => {
+    await ready();
+    vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
+    fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
+      target: { value: "Still here" },
+    });
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    await screen.findByRole("dialog", { name: "Not saved yet" });
+    await userEvent.click(screen.getByRole("button", { name: "Keep working" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByDisplayValue("Still here")).toBeTruthy();
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    expect(
+      await screen.findByRole("dialog", { name: "Not saved yet" }),
+    ).toBeTruthy();
+    expect(api.close).not.toHaveBeenCalled();
   });
 
   it("does not switch meetings when the current notes cannot be saved", async () => {
@@ -322,11 +376,10 @@ describe("note drafts and shutdown", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /My notes/ }), {
       target: { value: "Last edit before quitting" },
     });
+    // No prompt: closing the window saves the notes, then quits.
     act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Save and quit" }),
-    );
     await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.saveNotes).toHaveBeenCalledWith(
       "sample",
       "Last edit before quitting",
@@ -335,5 +388,152 @@ describe("note drafts and shutdown", () => {
     expect(vi.mocked(api.saveNotes).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(api.close).mock.invocationCallOrder[0],
     );
+  });
+
+  it("quits once when Quit anyway is clicked twice", async () => {
+    await closeDialogWithFailedSummary();
+    const quit = deferred();
+    vi.mocked(api.close).mockReturnValueOnce(quit.promise);
+    const dialog = screen.getByRole("dialog", { name: "Not saved yet" });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Quit anyway" }),
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Quit anyway" }),
+    );
+    await waitFor(() => expect(api.close).toHaveBeenCalled());
+    expect(api.close).toHaveBeenCalledOnce();
+    await act(async () => quit.resolve());
+  });
+
+  it("saves typed notes before Quit anyway quits", async () => {
+    const dialog = await closeDialogWithFailedSummary();
+    vi.mocked(api.saveNotes).mockResolvedValue(1);
+    fireEvent.change(
+      screen.getByRole("textbox", { name: /My notes/, hidden: true }),
+      { target: { value: "Written after the failure" } },
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Quit anyway" }),
+    );
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(api.saveNotes).toHaveBeenCalledWith(
+      "sample",
+      "Written after the failure",
+      0,
+    );
+    expect(vi.mocked(api.saveNotes).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.close).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("keeps the window open when Quit anyway cannot save the notes", async () => {
+    const dialog = await closeDialogWithFailedSummary();
+    vi.mocked(api.saveNotes).mockRejectedValue(new Error("Disk full"));
+    fireEvent.change(
+      screen.getByRole("textbox", { name: /My notes/, hidden: true }),
+      { target: { value: "Only copy of this" } },
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Quit anyway" }),
+    );
+    await waitFor(() =>
+      expect(within(dialog).getByRole("alert").textContent).toContain(
+        "Notes not saved: Disk full.",
+      ),
+    );
+    expect(api.close).not.toHaveBeenCalled();
+    expect(
+      within(dialog).queryByRole("button", { name: "Quit anyway" }),
+    ).toBeNull();
+    expect(screen.getByDisplayValue("Only copy of this")).toBeTruthy();
+  });
+
+  it("locks the notes and summary editors while the close save is pending", async () => {
+    await openSummaryEdit("Edited summary");
+    const save = deferred();
+    vi.mocked(api.saveSummaryEdit).mockReturnValueOnce(save.promise);
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    await waitFor(() => expect(api.saveSummaryEdit).toHaveBeenCalledOnce());
+    expect(
+      screen.getByRole("textbox", { name: "Edit summary" }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      screen
+        .getByRole("textbox", { name: /My notes/, hidden: true })
+        .hasAttribute("readonly"),
+    ).toBe(true);
+    expect(screen.getByText(/Saving before quit/)).toBeTruthy();
+    await act(async () => save.resolve());
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("keeps a summary edit typed during the close save and does not quit past it", async () => {
+    await openSummaryEdit("Edited summary");
+    const save = deferred();
+    vi.mocked(api.saveSummaryEdit).mockReturnValueOnce(save.promise);
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    await waitFor(() => expect(api.saveSummaryEdit).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit summary" }), {
+      target: { value: "Typed during the close save" },
+    });
+    await act(async () => save.resolve());
+    const dialog = await screen.findByRole("dialog", { name: "Not saved yet" });
+    expect(within(dialog).getByRole("alert").textContent).toContain(
+      "Summary edit changed while saving",
+    );
+    expect(api.close).not.toHaveBeenCalled();
+    expect(
+      screen.getByDisplayValue("Typed during the close save"),
+    ).toBeTruthy();
+    vi.mocked(api.saveSummaryEdit).mockResolvedValue(undefined);
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.saveSummaryEdit).mock.lastCall?.[3]).toBe(
+      "Typed during the close save",
+    );
+  });
+
+  it("reflushes notes typed during the close save before quitting", async () => {
+    await openSummaryEdit("Edited summary");
+    const save = deferred();
+    vi.mocked(api.saveSummaryEdit).mockReturnValueOnce(save.promise);
+    vi.mocked(api.saveNotes).mockResolvedValue(1);
+    act(() => vi.mocked(api.onCloseRequested).mock.calls[0][0]());
+    await waitFor(() => expect(api.saveSummaryEdit).toHaveBeenCalledOnce());
+    fireEvent.change(
+      screen.getByRole("textbox", { name: /My notes/, hidden: true }),
+      { target: { value: "Typed during the close save" } },
+    );
+    await act(async () => save.resolve());
+    await waitFor(() => expect(api.close).toHaveBeenCalledOnce());
+    expect(api.saveNotes).toHaveBeenCalledWith(
+      "sample",
+      "Typed during the close save",
+      0,
+    );
+    expect(vi.mocked(api.saveNotes).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(api.close).mock.invocationCallOrder[0],
+    );
+  });
+
+  it("locks the summary editor during its own save and keeps text typed meanwhile", async () => {
+    await openSummaryEdit("Edited summary");
+    const save = deferred();
+    vi.mocked(api.saveSummaryEdit).mockReturnValueOnce(save.promise);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save edited summary" }),
+    );
+    await waitFor(() => expect(api.saveSummaryEdit).toHaveBeenCalledOnce());
+    expect(
+      screen.getByRole("textbox", { name: "Edit summary" }),
+    ).toHaveProperty("disabled", true);
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit summary" }), {
+      target: { value: "Typed during the save" },
+    });
+    await act(async () => save.resolve());
+    await screen.findByText(/Edited summary saved as a new version/);
+    expect(screen.getByDisplayValue("Typed during the save")).toBeTruthy();
   });
 });

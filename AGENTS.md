@@ -18,14 +18,15 @@ Read `docs/architecture.md` and `docs/development.md` before substantial work. V
 | `src/app/` | App shell: providers, layout, page routing, global styles. |
 | `src/pages/meeting/`, `pages/settings/`, `pages/setup/`, `pages/ask/` | One page per route: meetings home, settings, first-run setup, Ask across meetings. |
 | `src/widgets/` | Composite UI blocks (`meeting-sidebar`, `meeting-workspace`, `settings-panel`, `setup-panel`, `recording-controls`, `library-question`, `first-run-setup`, `command-palette`). |
-| `src/features/` | User actions with their own state (`note-writer`, `transcription-settings`, `provider-settings`, `recipes`, `rewrite-selection`, `action-items`, `meeting-tags`, `model-library`, `speaker-names`, `summary-templates`, `transcript-versions`). |
+| `src/features/` | User actions with their own state (`note-writer`, `transcription-settings`, `provider-settings`, `recipes`, `rewrite-selection`, `action-items`, `meeting-tags`, `model-library`, `local-ai`, `speaker-names`, `summary-templates`, `transcript-versions`, `live-transcript`, `live-settings`). |
 | `src/entities/` | Domain models and their read/update logic (`meeting`, `processing`). |
 | `src/shared/` | Framework-free code: `api/` (command bindings, `transport.ts`), `lib/` (Markdown, timestamps), `ui/` (small shared components), `test/`. |
 | `backend/openmeet_py/app.py` | Desktop entry point: free loopback port, server thread, `pywebview` window, `--smoke`, `--import-from`. |
 | `backend/openmeet_py/api/` | HTTP/WebSocket surface and the command registry (`commands.py`), recording command handlers, reads. |
 | `backend/openmeet_py/domain/` | Summaries, questions, tasks, export, transcript edits, processing runs, provider connections and LLM calls. |
 | `backend/openmeet_py/audio/` | WASAPI capture backend, WAV writing and repair, timing indexes, recorder lifecycle. |
-| `backend/openmeet_py/speech/` | Local engines (whisper.cpp, sherpa-onnx), model catalogues and library, downloads, safe archive install, cloud STT, transcription pipeline. |
+| `backend/openmeet_py/speech/` | Local engines (whisper.cpp, sherpa-onnx), model catalogues and library, downloads, safe archive install, cloud STT, transcription pipeline, and `live/` (live transcript while recording: streaming ONNX, VAD plus offline model, or cloud per utterance). |
+| `backend/openmeet_py/local_ai/` | Local AI: hardware probe, pinned llama.cpp engine and GGUF catalogue (`catalog.json`), the managed `llama-server` supervisor, and `ensure_ready` before any AI request. |
 | `backend/openmeet_py/platform/` | Windows integration: global shortcuts, keyring credentials, meeting detection, Win32 helpers. |
 | `backend/openmeet_py/infra/` | SQLite store and migrations runner, and the one-time importer for an old data folder. |
 | `backend/openmeet_py/paths.py` | Data folder (`%APPDATA%\OpenMeetPy`) and bundled UI paths. |
@@ -66,7 +67,7 @@ just smoke     # OpenMeet.exe --smoke
 4. The backend is authoritative for recording state. Commands return authoritative state; events only notify. Preserve revision ordering and handle partially applied failures.
 5. Keep SQLite, inference, HTTP and file writes off the event loop and out of audio callbacks. Callbacks enqueue samples; no blocking locks, allocations in a tight loop, or unbounded queues.
 6. Never silently change the selected device or sample format, fall back to one-track capture, or substitute fake output for failed capture. Fail visibly and preserve recoverable data.
-7. SQLite migrations are append-only: add the next number (currently `031`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
+7. SQLite migrations are append-only: add the next number (currently `033`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
 8. Fake backends exist for tests only: `OPENMEET_PY_FAKE_AUDIO=1` and `OPENMEET_PY_FAKE_STT=1`. Never ship a path that enables them implicitly, and never present their output as real capture or a real transcript.
 9. Add a small regression test for nontrivial behavior. Routine audio tests use synthetic samples; real-device tests are separate and opt-in.
 10. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization, calendar or speculative integrations before their planned phase. Opt-in meeting detection may only offer a prompt that opens recording setup; it must never start capture, check consent or pick devices by itself.

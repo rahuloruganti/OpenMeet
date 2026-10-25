@@ -134,6 +134,20 @@ export function useSettingsPage(env: SettingsPageEnv) {
       if (modelChanged) updateStt(await api.sttStatus());
     });
 
+  // A catalog pick is saved first, so the install downloads the model just chosen. The install
+  // runs as a job with its own lock, so starting it here does not wait on this task.
+  const downloadStt = (draft: SttDraft) =>
+    void run(async () => {
+      setSettings(
+        await api.saveSttSettings(
+          draft.stt_language,
+          draft.stt_prompt,
+          draft.stt_model,
+        ),
+      );
+      installStt();
+    });
+
   const pageProps: SettingsPageProps = {
     panelRef,
     // The hook owns the visible section, so a tab click and a shell request cannot disagree.
@@ -176,6 +190,7 @@ export function useSettingsPage(env: SettingsPageEnv) {
     onCancelStt: () => void api.cancelModelDownload().catch(env.report),
     onInstallStt: installStt,
     onSaveStt: saveStt,
+    onDownloadStt: downloadStt,
     onSaveShortcuts: (pause, stop) =>
       void run(async () => {
         const saved = await api.saveSettings(pause, stop.trim() || null);

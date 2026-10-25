@@ -117,6 +117,38 @@ Downloaded only on an explicit Settings action, each checked against a pinned si
 
 Hugging Face downloads keep the repository's license metadata in a local provenance manifest, which is information for the user, not a clearance for redistribution.
 
+### Live transcript streaming models (not bundled)
+
+Downloaded only when the user clicks **Download** in **Settings → Recording → Live transcript**, and each checked against a pinned size and SHA-256 (see `STREAMING_MODELS` in `backend/openmeet_py/speech/stt_catalog.py`). Both archives come from the sherpa-onnx model release host, `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/`. No streaming model is inside the executable.
+
+| Artifact | Files wanted | License | Source | Status |
+| --- | --- | --- | --- | --- |
+| `sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06.tar.bz2`, 57,267,600 bytes | `encoder.onnx`, `decoder.onnx`, `joiner.onnx`, `tokens.txt` | CC-BY-SA as recorded in the catalogue | Community model, https://huggingface.co/Banafo/Kroko-ASR | **unverified**: the CC-BY-SA version and the attribution its model card asks for were not read. A distribution that includes this model must carry that attribution and the licence. |
+| `sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms-int8.tar.bz2`, 102,813,625 bytes | `encoder.int8.onnx`, `decoder.int8.onnx`, `joiner.int8.onnx`, `tokens.txt` | CC-BY-4.0 (NVIDIA NeMo model) | Same release host; NVIDIA NeMo export | **unverified**: the pinned model card was not opened. CC-BY-4.0 requires attribution to NVIDIA. |
+
+Custom streaming folders under `stt/streaming/custom/<name>` are placed there by the user and are outside this inventory.
+
+## Downloaded Local AI artifacts (not bundled)
+
+Downloaded only when you click **Install**, **Download** or **Set up for me** in **Settings → AI notes → Local AI**, and each checked against a pinned size and SHA-256 (see `backend/openmeet_py/local_ai/catalog.json`). None of it is inside the executable, and OpenMeet does not redistribute it.
+
+| Artifact | Source | License | Status |
+| --- | --- | --- | --- |
+| llama.cpp build `b11671`, Windows x64 CPU, Vulkan and CUDA zips (`llama-server.exe` and its DLLs) | github.com/ggml-org/llama.cpp releases | MIT | Recorded for llama.cpp; include its notice with a build that downloads it |
+| `cudart-llama-bin-win-cuda-13.4-x64.zip`, fetched with the CUDA build | Same llama.cpp release | NVIDIA CUDA runtime terms, not MIT | **unverified**: this is NVIDIA's CUDA runtime repackaged by llama.cpp; its redistribution terms were not read here |
+
+| Model | Repository | Size | Catalog license label | Status |
+| --- | --- | --- | --- | --- |
+| Qwen3 30B A3B Instruct | `unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF` | 17.28 GB | `apache-2.0` | Recorded from the catalog; not re-verified against the model card |
+| Qwen3 14B | `unsloth/Qwen3-14B-GGUF` | 8.38 GB | `apache-2.0` | Same |
+| Gemma 3 12B | `unsloth/gemma-3-12b-it-GGUF` | 6.80 GB | `gemma` | Gemma Terms of Use, not an open-source license; use restrictions apply. **unverified** terms |
+| Qwen3 8B | `unsloth/Qwen3-8B-GGUF` | 4.68 GB | `apache-2.0` | Recorded from the catalog; not re-verified against the model card |
+| Qwen3 4B Instruct | `unsloth/Qwen3-4B-Instruct-2507-GGUF` | 2.33 GB | `apache-2.0` | Same |
+| Gemma 3 4B | `unsloth/gemma-3-4b-it-GGUF` | 2.32 GB | `gemma` | Gemma Terms of Use. **unverified** terms |
+| Llama 3.2 3B Instruct | `unsloth/Llama-3.2-3B-Instruct-GGUF` | 1.88 GB | `llama3.2` | Llama 3.2 Community License, not an open-source license; use restrictions apply. **unverified** terms |
+
+The license labels are the strings in `catalog.json`; no model card was opened for this inventory. Gemma and Llama terms restrict some uses and require notices the download does not carry, so read the pinned model card before relying on a model commercially. A `.gguf` file found on the user's own PC is outside this inventory.
+
 ## Unverified, in one list
 
 1. `clr_loader` — no license field in installed metadata.
@@ -125,13 +157,16 @@ Hugging Face downloads keep the repository's license metadata in a local provena
 4. whisper.cpp — version bundled by `pywhispercpp` is not stated.
 5. SenseVoice small, Moonshine base, and the sherpa Silero VAD — model licenses not confirmed from a local or pinned card.
 6. Whether the React MIT notice survives minification.
+7. The NVIDIA CUDA runtime (`cudart`) zip in the Local AI CUDA download: terms not read.
+8. The Gemma Terms of Use and Llama 3.2 Community License behind the `gemma` and `llama3.2` catalog labels: terms not read.
+9. The two live transcript streaming models: the CC-BY-SA version for Kroko, and the attribution text both model cards require.
 
 ## Before distributing a build
 
 1. Decide the distribution form (single exe plus a `THIRD_PARTY_NOTICES` file is the simplest).
 2. Collect license texts for every row above, with the resolved versions from `backend/uv.lock` and `pnpm-lock.yaml`.
 3. Confirm or drop the unverified rows; drop the artifact rather than ship an unlicensed one.
-4. Include the Python PSF license and the model attribution (Parakeet is CC-BY-4.0).
+4. Include the Python PSF license, the llama.cpp MIT notice for Local AI downloads, and the model attribution (Parakeet is CC-BY-4.0; the Kroko streaming model is CC-BY-SA and the NeMo streaming model is CC-BY-4.0).
 5. Publish the SHA-256 of the exe alongside the notes.
 
 Nothing here is a substitute for a legal review.

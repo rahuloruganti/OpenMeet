@@ -260,6 +260,38 @@ def list_api_connection_models(ctx: Context, id: Any, expected_revision: Any) ->
     return models
 
 
+def test_api_connection(ctx: Context, base_url: Any, key: Any, id: Any) -> list[dict[str, str]]:
+    """Checks a connection before or after saving by listing its models, which proves the URL
+    answers and the key is accepted without a billable request. A typed key is used for this call
+    only and never stored. Without one, a saved connection's key is used, but only for the URL it
+    was saved with: a key never follows a changed destination."""
+    base_url = providers.validate_base_url(text_arg(base_url, "base_url"))
+    typed = optional_text_arg(key, "key")
+    id = optional_text_arg(id, "id")
+    if typed:
+        typed = typed.strip()
+        if not keys.valid_key(typed):
+            raise AppError("invalid_args", "That key has spaces or is too long. Paste it again.")
+        connection = providers.Connection(base_url, None, typed, ctx.transport)
+    else:
+        saved = None
+        if id is not None:
+            with ctx.store.lock:
+                saved = saved_connection(ctx.store.db, id)
+            if saved is None:
+                raise provider_conflict()
+        if saved is not None and saved["base_url"] == base_url:
+            connection = providers.load_connection(
+                {"base_url": base_url, "model": None, "credential_account": saved["credential_account"]},
+                ctx.transport,
+            )
+        elif providers.is_local_base(base_url):
+            connection = providers.Connection(base_url, None, "", ctx.transport)
+        else:
+            raise AppError("provider_key_missing", "Enter the API key first.")
+    return providers.list_models(connection)
+
+
 # Default loopback servers, in the order the UI lists them.
 LOCAL_SERVERS: tuple[tuple[str, int, str], ...] = (
     ("Ollama", 11434, "chat"),

@@ -232,6 +232,95 @@ def test_model_discovery_sends_bearer_key_and_sorts_ids(client: TestClient) -> N
     assert seen[0].headers["authorization"] == f"Bearer {SECRET}"
 
 
+def test_anthropic_discovery_uses_its_key_header_and_one_large_page(client: TestClient) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json={"data": [{"id": "claude-fictional-1", "type": "model"}], "has_more": False}
+        )
+
+    cid = connect(client, base="https://api.anthropic.com/v1", key=SECRET, name="Claude")["saved_connections"][0]["id"]
+    client.app.state.ctx.transport = httpx.MockTransport(handler)  # type: ignore[attr-defined]
+    found = invoke(client, "list_api_connection_models", id=cid, expectedRevision=1)
+    assert found == [{"id": "claude-fictional-1"}]
+    assert str(seen[0].url) == "https://api.anthropic.com/v1/models?limit=1000"
+    assert seen[0].headers["x-api-key"] == SECRET
+    assert seen[0].headers["anthropic-version"] == "2023-06-01"
+    assert "authorization" not in seen[0].headers
+
+
+def test_anthropic_chat_keeps_the_bearer_key(client: TestClient) -> None:
+    connection = providers.Connection(
+        "https://api.anthropic.com/v1", "claude-fictional-1", SECRET,
+        httpx.MockTransport(lambda request: reply("ok")),
+    )
+    assert connection.headers() == {"Authorization": f"Bearer {SECRET}"}
+    assert providers.chat_completion(connection, b"{}") == "ok"
+
+
+def test_gemini_model_ids_drop_the_models_prefix(client: TestClient) -> None:
+    cid = connect(
+        client, base="https://generativelanguage.googleapis.com/v1beta/openai", key=SECRET, name="Gemini"
+    )["saved_connections"][0]["id"]
+    client.app.state.ctx.transport = httpx.MockTransport(  # type: ignore[attr-defined]
+        lambda request: models("models/gemini-fictional-pro", "models/gemini-fictional-flash")
+    )
+    found = invoke(client, "list_api_connection_models", id=cid, expectedRevision=1)
+    assert found == [{"id": "gemini-fictional-flash"}, {"id": "gemini-fictional-pro"}]
+
+
+def test_testing_a_typed_key_lists_models_and_stores_nothing(
+    client: TestClient, memory_keyring: MemoryKeyring
+) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return models("m-2", "m-1")
+
+    client.app.state.ctx.transport = httpx.MockTransport(handler)  # type: ignore[attr-defined]
+    found = invoke(client, "test_api_connection", baseUrl="https://provider.example/v1", key=SECRET, id=None)
+    assert found == [{"id": "m-1"}, {"id": "m-2"}]
+    assert seen[0].headers["authorization"] == f"Bearer {SECRET}"
+    assert memory_keyring.items == {}
+    assert invoke(client, "get_settings")["saved_connections"] == []
+
+
+def test_testing_a_saved_connection_uses_its_key_only_for_its_own_url(client: TestClient) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return models("m-1")
+
+    cid = connect(client, base="https://provider.example/v1", key=SECRET)["saved_connections"][0]["id"]
+    client.app.state.ctx.transport = httpx.MockTransport(handler)  # type: ignore[attr-defined]
+    assert invoke(client, "test_api_connection", baseUrl="https://provider.example/v1", key=None, id=cid) == [
+        {"id": "m-1"}
+    ]
+    assert seen[0].headers["authorization"] == f"Bearer {SECRET}"
+    # A changed destination never receives the saved key.
+    _, body = invoke_error(client, "test_api_connection", baseUrl="https://other.example/v1", key=None, id=cid)
+    assert body["code"] == "provider_key_missing"
+    assert len(seen) == 1
+
+
+def test_testing_a_rejected_key_reports_the_failure(client: TestClient) -> None:
+    client.app.state.ctx.transport = httpx.MockTransport(  # type: ignore[attr-defined]
+        lambda request: httpx.Response(401, json={"error": {"message": "bad key"}})
+    )
+    _, body = invoke_error(client, "test_api_connection", baseUrl="https://provider.example/v1", key=SECRET, id=None)
+    assert body["code"] != "invalid_args"
+    assert SECRET not in json.dumps(body)
+
+
+def test_testing_a_loopback_server_needs_no_key(client: TestClient) -> None:
+    client.app.state.ctx.transport = httpx.MockTransport(lambda request: models("local-model"))  # type: ignore[attr-defined]
+    assert invoke(client, "test_api_connection", baseUrl=LOCAL, key=None, id=None) == [{"id": "local-model"}]
+
+
 def test_loopback_discovery_runs_without_a_key(client: TestClient) -> None:
     seen: list[httpx.Request] = []
 
@@ -290,6 +379,24 @@ def test_summary_is_saved_with_provider_model_and_template(client: TestClient) -
     assert body["model"] == "local-model"
     assert "Budget and launch date." in body["messages"][1]["content"]
     assert "untrusted data" in body["messages"][0]["content"]
+
+
+def test_every_ai_request_asks_local_ai_to_be_ready_before_sending(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openmeet_py.local_ai import service as local_ai
+
+    stub = Stub(lambda r: reply(SUMMARY), lambda r: reply("Shorter."))
+    order: list[str] = []
+    monkeypatch.setattr(
+        local_ai, "ensure_ready", lambda _ctx, config: order.append(f"ready {config['base_url']} {len(stub.requests)}")
+    )
+    configure(client, stub)
+    meeting = note(client, "Fictional planning", "Budget and launch date.")
+    invoke(client, "generate_summary", id=meeting, template="general-v1")
+    invoke(client, "rewrite_text", text="A long sentence here.", request="Make it shorter")
+    # Each call readies the assigned connection before its request goes out.
+    assert order == [f"ready {LOCAL} 0", f"ready {LOCAL} 1"]
 
 
 def test_no_request_is_retried_after_a_provider_error(client: TestClient) -> None:

@@ -150,7 +150,7 @@ def test_health_needs_no_token(client: TestClient) -> None:
 
 def test_schema_matches_the_migration_files(client: TestClient) -> None:
     db = client.app.state.ctx.store.db  # type: ignore[attr-defined]
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 30
+    assert db.execute("PRAGMA user_version").fetchone()[0] == 32
     tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"meetings", "notes", "search", "meeting_tags", "settings"} <= tables
 
@@ -180,7 +180,7 @@ def test_a_populated_v29_database_upgrades_and_keeps_its_rows(tmp_path: Path) ->
 
     store = Store(data)
     try:
-        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 30
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 32
         assert store.db.execute("SELECT user_markdown FROM notes").fetchone()[0] == "- Fictional note"
         assert store.db.execute("SELECT COUNT(*) FROM meetings").fetchone()[0] == 1
         assert store.db.execute("PRAGMA foreign_key_check").fetchall() == []

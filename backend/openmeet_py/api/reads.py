@@ -166,7 +166,7 @@ def read_settings(db: sqlite3.Connection) -> Settings:
         "export_transcript, export_summary, export_filename, stt_language, stt_prompt, "
         "stt_model, stop_shortcut, summary_instructions, export_transcript_formats, "
         "processing_mode, processing_summary, summary_default, detection_enabled, setup_done, "
-        "theme, inspector_open "
+        "theme, inspector_open, live_transcript, live_model "
         "FROM settings WHERE id = 1"
     ).fetchone()
     return {
@@ -200,6 +200,8 @@ def read_settings(db: sqlite3.Connection) -> Settings:
         "setup_done": bool(row[18]),
         "theme": row[19] if row[19] in ("dark", "light") else "system",
         "inspector_open": bool(row[20]),
+        "live_transcript": bool(row[21]),
+        "live_model": row[22] or "",
     }
 
 

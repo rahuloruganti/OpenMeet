@@ -19,6 +19,7 @@ from openmeet_py.domain import llm, providers
 from openmeet_py.domain.connections import plan_changed
 from openmeet_py.domain.summaries import require_llm
 from openmeet_py.infra.store import transaction
+from openmeet_py.local_ai import service as local_ai
 
 
 def insufficient_evidence() -> AppError:
@@ -137,6 +138,7 @@ def ask_meeting(ctx: Context, id: Any, question: Any, thread_id: Any = None) -> 
         content = question_content(detail["user_markdown"], lines, question, earlier)
         revision = detail["notes_revision"]
     with ai_slot(ctx):
+        local_ai.ensure_ready(ctx, config)
         connection = providers.load_connection(config, ctx.transport)
 
         def before(_body: bytes) -> None:
@@ -287,6 +289,7 @@ def ask_library(ctx: Context, meeting_ids: Any, question: Any) -> dict[str, Any]
         items, excerpted = library_scope(db, ids, question)
         config = require_llm(db)
     with ai_slot(ctx):
+        local_ai.ensure_ready(ctx, config)
         connection = providers.load_connection(config, ctx.transport)
 
         def before(_body: bytes) -> None:
@@ -332,6 +335,7 @@ def rewrite_text(ctx: Context, text: Any, request: Any) -> str:
         if not config["model"]:
             raise AppError("provider_model", "Choose and save a model in Settings first.")
     with ai_slot(ctx):
+        local_ai.ensure_ready(ctx, config)
         connection = providers.load_connection(config, ctx.transport)
 
         def before(_body: bytes) -> None:

@@ -2,6 +2,7 @@
 export { ConnectionEditor, baseUrlError } from "./ProviderSettings";
 export {
   destination,
+  hostOf,
   publishSettings,
 } from "../../shared/ui/provider-connection";
 export type { Publish } from "../../shared/ui/provider-connection";

@@ -6,13 +6,11 @@ import {
   type ReactNode,
 } from "react";
 import {
-  api,
   type ActionItem,
   type CustomTemplate,
   type Recipe,
   type SessionProcessingSnapshot,
   type SpeakerNames,
-  speakerLabel,
   type MeetingDetail,
   type Settings,
   type SummaryVersion,
@@ -30,7 +28,6 @@ import {
   type SettingsSection,
 } from "../../shared/ui/settings-link";
 import { MeetingTagsForm } from "../../features/meeting-tags";
-import { SpeakerNamesForm } from "../../features/speaker-names";
 import { TranscriptVersions } from "../../features/transcript-versions";
 import {
   formatBytes,
@@ -44,15 +41,15 @@ import {
   timestampAtCaret,
 } from "../../shared/lib/timestamps";
 import { Sheet } from "./ui/Sheet";
+import {
+  TranscriptDock,
+  TranscriptPanel,
+  TranscriptProvider,
+} from "./ui/TranscriptTab";
 import "./meeting-workspace.css";
 
 // Transcript segments are rendered in pages; citations open the page that holds them.
 const SEGMENT_PAGE = 200;
-
-const trackLabels: Record<string, string> = {
-  mic: "You (microphone)",
-  system: "Others (system audio)",
-};
 
 /** Inspector rows: short device kinds. */
 const deviceLabels: Record<string, string> = {
@@ -329,9 +326,6 @@ export function MeetingWorkspace(props: Props) {
   const tasksButton = useRef<HTMLButtonElement>(null);
   // Set by Enter or Escape in the title input, so focus returns to the title once the input is gone.
   const focusTitle = useRef(false);
-  const [retranscribing, setRetranscribing] = useState(false);
-  const retranscribeButton = useRef<HTMLButtonElement>(null);
-  const retranscribeCancel = useRef<HTMLButtonElement>(null);
   const toggleInspector = () => {
     const next = !inspectorOpen;
     if (props.inspectorOpen === undefined) setOwnInspector(next);
@@ -346,15 +340,10 @@ export function MeetingWorkspace(props: Props) {
     setTitleDraft(null);
     setJumpHint("");
     setPlaybackError("");
-    setRetranscribing(false);
     setHistoryOpen(false);
     setTasksOpen(false);
     if (actions.current) actions.current.open = false;
   }, [meetingId]);
-  // Opening the re-transcribe confirmation focuses Cancel, never the billable action.
-  useEffect(() => {
-    if (retranscribing) retranscribeCancel.current?.focus();
-  }, [retranscribing]);
   // A saved answer clears the box and shows its thread; a deleted thread closes the prompt.
   const newestThread = threads[0]?.id;
   useEffect(() => {
@@ -703,9 +692,10 @@ export function MeetingWorkspace(props: Props) {
     setTasksOpen(true);
   };
   // The menu closes on the way in, so its summary is what can take focus back.
-  const openHistory = () => {
+  // A toolbar History button passes itself so focus returns there instead.
+  const openHistory = (opener?: HTMLElement | null) => {
     sheetOpener.current =
-      actions.current?.querySelector<HTMLElement>("summary") ?? null;
+      opener ?? actions.current?.querySelector<HTMLElement>("summary") ?? null;
     setHistoryOpen(true);
   };
 
@@ -864,859 +854,540 @@ export function MeetingWorkspace(props: Props) {
 
       <div className="mw-body">
         <div className="mw-doc">
-          {deleting && !props.recordingThis && (
-            <div
-              className="dialog-card delete-card"
-              role="group"
-              aria-label={
-                deleting === "meeting"
-                  ? "Confirm meeting deletion"
-                  : "Confirm audio deletion"
-              }
-              onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
-                event.stopPropagation();
-                setDeleting(null);
-                focusActions();
-              }}
-            >
-              <p>
-                <strong>
-                  {deleting === "meeting"
-                    ? `Permanently delete “${meeting.title}”?`
-                    : `Permanently delete the audio of “${meeting.title}”?`}
-                </strong>
-              </p>
-              <p>
-                {deleting === "meeting"
-                  ? "Deletes its notes, transcript, summaries, audio and the saved answers that used it."
-                  : `Removes ${selected.tracks.length} audio track${selected.tracks.length === 1 ? "" : "s"} (${formatBytes(audioBytes)}). Notes, transcript and summaries stay.`}{" "}
-                This cannot be undone.
-              </p>
-              {needsTitle && (
-                <label>
-                  Type the meeting title to confirm
-                  <input
-                    ref={deleteTyped}
-                    value={typed}
-                    onChange={(event) => setTyped(event.target.value)}
-                  />
-                </label>
-              )}
-              <div className="panel-actions">
-                <button
-                  className="danger danger-filled"
-                  disabled={
-                    deleteDisabled || (needsTitle && typed !== meeting.title)
-                  }
-                  onClick={() => {
-                    setDeleting(null);
-                    if (deleting === "meeting") props.onDeleteMeeting();
-                    else props.onDeleteAudio();
-                  }}
-                >
-                  {deleting === "meeting" ? "Delete meeting" : "Delete audio"}
-                </button>
-                <button
-                  ref={deleteCancel}
-                  onClick={() => {
-                    setDeleting(null);
-                    focusActions();
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-          {recoverable && (
-            <div
-              className="mw-card"
-              role="group"
-              aria-label="Interrupted recording"
-            >
-              <p>Recording was interrupted before its audio finished.</p>
-              <div className="mw-card-row">
-                <button
-                  disabled={disabled || job !== null}
-                  onClick={props.onRecover}
-                >
-                  {job === "recover" ? "Recovering…" : "Recover audio"}
-                </button>
-              </div>
-            </div>
-          )}
-          {nextSteps && (
-            <div className="mw-card" role="group" aria-label="Next steps">
-              <p>No transcript yet.</p>
-              <div className="mw-card-row">
-                {props.speechReady ? (
-                  <button
-                    className="primary"
-                    disabled={disabled || job !== null}
-                    // Progress and Cancel live on the Transcript tab, so show it while this runs.
-                    onClick={() => {
-                      props.onTab("transcript");
-                      props.onTranscribe();
-                    }}
-                  >
-                    {job === "transcribe"
-                      ? "Transcribing…"
-                      : "Transcribe audio"}
-                  </button>
-                ) : (
-                  <>
-                    <span className="muted">{speechReason}</span>
-                    <OpenSettingsButton
-                      section="transcription"
-                      onOpenSettings={props.onOpenSettings}
-                    />
-                  </>
-                )}
-                {/\S/.test(props.notes) && (
-                  <button onClick={() => props.onTab("summary")}>
-                    Go to Summary
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-          <div className="mw-tabs" role="tablist" aria-label="Meeting content">
-            {contentTabs.map((item, index) => (
-              <button
-                key={item.id}
-                id={`tab-${item.id}`}
-                role="tab"
-                aria-selected={tab === item.id}
-                aria-controls={`panel-${item.id}`}
-                tabIndex={tab === item.id ? 0 : -1}
-                onClick={() => props.onTab(item.id)}
+          <TranscriptProvider
+            hidden={props.hidden}
+            tab={tab}
+            selected={selected}
+            disabled={disabled}
+            job={job}
+            speechReady={props.speechReady}
+            speechReason={speechReason}
+            sttMode={props.sttMode}
+            transcribeProgress={props.transcribeProgress}
+            segmentDraft={props.segmentDraft}
+            highlighted={highlighted}
+            shownCount={shownSegments}
+            onShowThrough={(count) =>
+              setSegmentWindow((state) => ({
+                meetingId,
+                count: Math.max(shownCount(state), count),
+              }))
+            }
+            playersRef={players}
+            playbackError={playbackError}
+            setPlaybackError={setPlaybackError}
+            onSeek={props.onSeek}
+            onSegmentDraft={props.onSegmentDraft}
+            onSaveSegment={props.onSaveSegment}
+            onTranscribe={props.onTranscribe}
+            onCancelTranscribe={props.onCancelTranscribe}
+            onOpenHistory={openHistory}
+            onSpeakerNames={props.onSpeakerNames}
+            onOpenSettings={props.onOpenSettings}
+          >
+            {deleting && !props.recordingThis && (
+              <div
+                className="dialog-card delete-card"
+                role="group"
+                aria-label={
+                  deleting === "meeting"
+                    ? "Confirm meeting deletion"
+                    : "Confirm audio deletion"
+                }
                 onKeyDown={(event) => {
-                  const next = tabTarget(event.key, index, contentTabs.length);
-                  if (next === null) return;
-                  event.preventDefault();
-                  props.onTab(contentTabs[next].id);
-                  document
-                    .getElementById(`tab-${contentTabs[next].id}`)
-                    ?.focus();
+                  if (event.key !== "Escape") return;
+                  event.stopPropagation();
+                  setDeleting(null);
+                  focusActions();
                 }}
               >
-                {item.label}
-              </button>
-            ))}
-          </div>
-          {props.status && <div className="mw-status">{props.status}</div>}
-          <div className="mw-scroll">
-            <section
-              className="notes-panel"
-              id="panel-notes"
-              role="tabpanel"
-              aria-labelledby="tab-notes"
-              hidden={tab !== "notes"}
-            >
-              <label className="sr-only" htmlFor="notes">
-                My notes <span className="muted">({props.notesStatus})</span>
-              </label>
-              <textarea
-                id="notes"
-                className="mw-editor"
-                value={props.notes}
-                readOnly={disabled}
-                rows={10}
-                placeholder="Start writing. Capture a thought, a decision, or what happens next…"
-                ref={editor}
-                onChange={(event) => props.onNotes(event.target.value)}
-                onKeyDown={(event) => {
-                  if (
-                    !disabled &&
-                    props.live &&
-                    event.shiftKey &&
-                    (event.ctrlKey || event.metaKey) &&
-                    event.key.toLowerCase() === "t"
-                  ) {
-                    event.preventDefault();
-                    void insertTimestamp();
-                  }
-                }}
-              />
-              <div className="mw-efoot">
-                <span className={`mw-saved ${savedState}`}>{savedLabel}</span>
-                <span className="mw-gap" />
-                <button
-                  className="mw-mini"
-                  disabled={disabled}
-                  onClick={props.onSaveNow}
-                >
-                  Save notes now
-                </button>
-                <RewriteSelection
-                  key={meeting.id}
-                  editor={editor}
-                  notes={props.notes}
-                  disabled={disabled}
-                  blocked={
-                    job !== null
-                      ? { message: "Another task is running.", section: null }
-                      : props.llmBlocked
-                  }
-                  onOpenSettings={props.onOpenSettings}
-                  onApply={props.onNotes}
-                />
-                {props.live && (
-                  <button
-                    className="mw-mini"
-                    disabled={disabled}
-                    title="Ctrl+Shift+T while typing"
-                    onClick={() => void insertTimestamp()}
-                  >
-                    Insert timestamp
-                  </button>
-                )}
-                {playable.length > 0 && (
-                  <button
-                    className="mw-mini"
-                    disabled={disabled}
-                    onClick={jumpToAudio}
-                  >
-                    Jump to audio
-                  </button>
-                )}
-                {jumpHint && (
-                  <span className="mw-mini-note" role="status">
-                    {jumpHint}
-                  </span>
-                )}
-              </div>
-            </section>
-            <section
-              className="reading-panel"
-              id="panel-summary"
-              role="tabpanel"
-              aria-labelledby="tab-summary"
-              hidden={tab !== "summary"}
-              tabIndex={0}
-            >
-              <div className="mw-summary-head">
-                <span className="mw-summary-label">
-                  {summaryLabel || "Summary"}
-                </span>
-                <span className="mw-gap" />
-                <label className="mw-inline-label">
-                  Template
-                  <select
-                    value={template}
-                    disabled={blocked}
-                    onChange={(event) => setTemplate(event.target.value)}
-                  >
-                    {templates.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                    {props.customTemplates.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  className="primary"
-                  disabled={blocked}
-                  aria-describedby="enhance-hint"
-                  onClick={() => props.onGenerate(template)}
-                >
-                  {job === "summary" ? "Generating…" : "Create summary"}
-                </button>
-              </div>
-              {summary && stale && (
-                <p className="mw-hint" role="status">
-                  Transcript changed after this summary.
+                <p>
+                  <strong>
+                    {deleting === "meeting"
+                      ? `Permanently delete “${meeting.title}”?`
+                      : `Permanently delete the audio of “${meeting.title}”?`}
+                  </strong>
                 </p>
-              )}
-              {props.enhanceBlocked !== null && (
-                <div className="mw-card-row">
-                  <span id="enhance-hint" className="mw-hint">
-                    {props.enhanceBlocked}
-                  </span>
-                  {props.llmBlocked && (
-                    <OpenSettingsButton
-                      section={props.llmBlocked.section}
-                      onOpenSettings={props.onOpenSettings}
+                <p>
+                  {deleting === "meeting"
+                    ? "Deletes its notes, transcript, summaries, audio and the saved answers that used it."
+                    : `Removes ${selected.tracks.length} audio track${selected.tracks.length === 1 ? "" : "s"} (${formatBytes(audioBytes)}). Notes, transcript and summaries stay.`}{" "}
+                  This cannot be undone.
+                </p>
+                {needsTitle && (
+                  <label>
+                    Type the meeting title to confirm
+                    <input
+                      ref={deleteTyped}
+                      value={typed}
+                      onChange={(event) => setTyped(event.target.value)}
                     />
-                  )}
-                </div>
-              )}
-              {versions.length > 1 && (
-                <label className="mw-inline-label">
-                  Version
-                  <select
-                    value={shown?.id ?? versions[0].id}
-                    disabled={draft !== undefined}
-                    onChange={(event) =>
-                      setVersionId(Number(event.target.value))
+                  </label>
+                )}
+                <div className="panel-actions">
+                  <button
+                    className="danger danger-filled"
+                    disabled={
+                      deleteDisabled || (needsTitle && typed !== meeting.title)
                     }
+                    onClick={() => {
+                      setDeleting(null);
+                      if (deleting === "meeting") props.onDeleteMeeting();
+                      else props.onDeleteAudio();
+                    }}
                   >
-                    {versions.map((version, index) => (
-                      <option key={version.id} value={version.id}>
-                        {`${versions.length - index} · ${version.model} · ${templateLabel(version.template, props.customTemplates)}${version.edited_from !== null ? " · edited" : ""}`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {draft ? (
-                <div className="summary-edit">
-                  <textarea
-                    aria-label="Edit summary"
-                    value={draft.text}
-                    onChange={(event) =>
-                      props.onSummaryDraft({
-                        ...draft,
-                        text: event.target.value,
-                      })
-                    }
-                  />
-                  <div className="mw-card-row">
+                    {deleting === "meeting" ? "Delete meeting" : "Delete audio"}
+                  </button>
+                  <button
+                    ref={deleteCancel}
+                    onClick={() => {
+                      setDeleting(null);
+                      focusActions();
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+            {recoverable && (
+              <div
+                className="mw-card"
+                role="group"
+                aria-label="Interrupted recording"
+              >
+                <p>Recording was interrupted before its audio finished.</p>
+                <div className="mw-card-row">
+                  <button
+                    disabled={disabled || job !== null}
+                    onClick={props.onRecover}
+                  >
+                    {job === "recover" ? "Recovering…" : "Recover audio"}
+                  </button>
+                </div>
+              </div>
+            )}
+            {nextSteps && (
+              <div className="mw-card" role="group" aria-label="Next steps">
+                <p>No transcript yet.</p>
+                <div className="mw-card-row">
+                  {props.speechReady ? (
                     <button
                       className="primary"
-                      disabled={disabled || !draft.text.trim()}
-                      onClick={() =>
-                        void props
-                          .onSaveSummaryEdit(draft)
-                          .then((saved) => saved && setVersionId(null))
-                      }
-                    >
-                      Save edited summary
-                    </button>
-                    <button onClick={() => props.onSummaryDraft(null)}>
-                      Discard edit
-                    </button>
-                  </div>
-                </div>
-              ) : summary ? (
-                <div className="summary-body">
-                  {renderMarkdown(summary, reference)}
-                </div>
-              ) : (
-                <p className="mw-hint">
-                  No summary yet. Add notes or a transcript first.
-                </p>
-              )}
-              {summary && !draft && (
-                <div className="mw-card-row">
-                  <button
-                    disabled={disabled || !current}
-                    onClick={() =>
-                      current &&
-                      props.onSummaryDraft({
-                        baseId: current.id,
-                        latestId: versions[0].id,
-                        text: current.markdown,
-                      })
-                    }
-                  >
-                    Edit summary
-                  </button>
-                  <button onClick={() => void copy(summary, "summary")}>
-                    Copy summary
-                  </button>
-                  <span className="mw-mini-note" role="status">
-                    {copyStatus}
-                  </span>
-                </div>
-              )}
-              {summary && provider !== "fixture" && (
-                <p className="mw-hint">
-                  AI-generated. Check it against the transcript.
-                </p>
-              )}
-              {threads.length > 0 && (
-                <div className="mw-card-row">
-                  <select
-                    aria-label="Question threads"
-                    value={activeThread?.id ?? ""}
-                    onChange={(event) =>
-                      setChosenThread(Number(event.target.value))
-                    }
-                  >
-                    {!activeThread && <option value="">New question</option>}
-                    {threads.map((thread) => (
-                      <option key={thread.id} value={thread.id}>
-                        {thread.turns[0]?.question.slice(0, 60)}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    disabled={!activeThread}
-                    onClick={() => setChosenThread("new")}
-                  >
-                    New question
-                  </button>
-                  {activeThread && (
-                    <button
                       disabled={disabled || job !== null}
-                      className="danger"
-                      onClick={() => setDeletingThread(true)}
-                    >
-                      Delete thread
-                    </button>
-                  )}
-                </div>
-              )}
-              {deletingThread && activeThread && (
-                <div
-                  className="mw-card"
-                  role="group"
-                  aria-label="Confirm deleting question thread"
-                >
-                  <p>
-                    <strong>Delete this question thread?</strong> Its{" "}
-                    {activeThread.turns.length} saved question
-                    {activeThread.turns.length === 1 ? "" : "s"} and answers are
-                    removed.
-                  </p>
-                  <div className="mw-card-row">
-                    <button
-                      className="danger danger-filled"
+                      // Progress and Cancel live on the Transcript tab, so show it while this runs.
                       onClick={() => {
-                        setDeletingThread(false);
-                        props.onDeleteThread(activeThread.id);
-                      }}
-                    >
-                      Delete thread
-                    </button>
-                    <button onClick={() => setDeletingThread(false)}>
-                      Keep
-                    </button>
-                  </div>
-                </div>
-              )}
-              <form
-                className="ask-meeting"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (question.trim())
-                    props.onAsk(question.trim(), activeThread?.id ?? null);
-                }}
-              >
-                <label htmlFor="ask-question">
-                  {activeThread ? "Ask a follow-up" : "Ask this meeting"}
-                </label>
-                <RecipePicker
-                  recipes={props.recipes}
-                  disabled={blocked}
-                  onPick={setQuestion}
-                />
-                <textarea
-                  id="ask-question"
-                  rows={2}
-                  maxLength={1000}
-                  value={question}
-                  placeholder="What did we decide about the launch date?"
-                  onChange={(event) => setQuestion(event.target.value)}
-                />
-                <div className="mw-card-row">
-                  <button type="submit" disabled={blocked || !question.trim()}>
-                    {job === "ask" ? "Asking…" : "Ask"}
-                  </button>
-                </div>
-              </form>
-              {activeThread?.turns.map((turn) => (
-                <div
-                  className="ask-answer"
-                  role="group"
-                  aria-label="Answer"
-                  key={turn.id}
-                >
-                  <p>
-                    <strong>Q: {turn.question}</strong>
-                  </p>
-                  {renderMarkdown(turn.answer, reference)}
-                  <p className="mw-hint">
-                    AI answer. Check it before relying on it.
-                  </p>
-                </div>
-              ))}
-            </section>
-            <section
-              className="reading-panel"
-              id="panel-transcript"
-              role="tabpanel"
-              aria-labelledby="tab-transcript"
-              hidden={tab !== "transcript"}
-              tabIndex={0}
-            >
-              {playbackError && (
-                <p className="error" role="alert">
-                  {playbackError}
-                </p>
-              )}
-              {playable.map((track) => (
-                <div className="mw-player" key={track.kind}>
-                  <audio
-                    controls
-                    preload="metadata"
-                    aria-label={trackLabels[track.kind] ?? track.kind}
-                    src={api.audioSrc(track.path)}
-                    onError={() =>
-                      setPlaybackError(
-                        "An audio file could not be opened. It may have been moved.",
-                      )
-                    }
-                    ref={(element) => {
-                      players.current[track.kind] = element;
-                    }}
-                  />
-                </div>
-              ))}
-              {selected.tracks
-                .filter((track) => track.finalized && track.frames === 0)
-                .map((track) => (
-                  <p
-                    key={`empty-${track.kind}`}
-                    className="mw-hint"
-                    role="status"
-                  >
-                    {track.kind === "mic"
-                      ? "Microphone track is empty. Check the device and its mute."
-                      : "System track is empty: no other app played audio."}
-                  </p>
-                ))}
-              {selected.tracks.length > 0 && (
-                <details className="mw-tracks">
-                  <summary>Audio track details</summary>
-                  {selected.tracks.map((track) => (
-                    <p key={track.kind}>
-                      {trackLabels[track.kind] ?? track.kind}: {track.path}
-                      {track.size_bytes === null
-                        ? " (file missing)"
-                        : ` (${formatBytes(track.size_bytes)})`}
-                    </p>
-                  ))}
-                </details>
-              )}
-              {!hasTranscript && (
-                <p className="mw-hint">
-                  {transcribable
-                    ? "No transcript yet."
-                    : meeting.source === "note"
-                      ? "Notes have no recorded audio."
-                      : meeting.source !== "desktop"
-                        ? "Samples and simulations have no audio."
-                        : meeting.status === "recording" ||
-                            meeting.status === "paused"
-                          ? "Stop the recording first."
-                          : "No finalized audio tracks."}
-                </p>
-              )}
-              {!!props.processing?.workflow?.provisional.length && (
-                <div
-                  className="mw-live"
-                  role="group"
-                  aria-label="Live transcript (provisional)"
-                >
-                  <p className="mw-hint">Live transcript is provisional.</p>
-                  {Array.from(
-                    new Map(
-                      props.processing.workflow.provisional.map((row) => [
-                        row.id,
-                        row,
-                      ]),
-                    ).values(),
-                  )
-                    .slice(-200)
-                    .map((row) => (
-                      <p key={row.id} className="transcript-segment">
-                        {row.segment.timing.kind === "timed" ? (
-                          <span className="muted">
-                            {formatTimestamp(row.segment.timing.start_ms)}
-                          </span>
-                        ) : (
-                          <span className="muted">Untimed</span>
-                        )}{" "}
-                        <strong>
-                          {speakerLabel(
-                            selected.speaker_names,
-                            row.segment.speaker,
-                          )}
-                          :
-                        </strong>{" "}
-                        <span>{row.segment.text}</span>
-                      </p>
-                    ))}
-                </div>
-              )}
-              {transcribable && (
-                <div className="mw-card-row">
-                  <button
-                    ref={retranscribeButton}
-                    className={hasTranscript ? undefined : "primary"}
-                    aria-label={
-                      job === "transcribe"
-                        ? "Transcribing"
-                        : hasTranscript
-                          ? "Re-transcribe audio"
-                          : "Transcribe audio"
-                    }
-                    disabled={disabled || job !== null || !props.speechReady}
-                    onClick={
-                      hasTranscript
-                        ? () => setRetranscribing(true)
-                        : props.onTranscribe
-                    }
-                  >
-                    {job === "transcribe"
-                      ? "Transcribing…"
-                      : hasTranscript
-                        ? "Re-transcribe"
-                        : "Transcribe audio"}
-                  </button>
-                  {!props.speechReady && (
-                    <span className="mw-hint">{speechReason}</span>
-                  )}
-                  {job === "transcribe" && (
-                    <button
-                      disabled={
-                        Object.keys(props.transcribeProgress).length === 0
-                      }
-                      onClick={props.onCancelTranscribe}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              )}
-              {retranscribing && (
-                <div
-                  className="mw-card"
-                  role="group"
-                  aria-label="Confirm re-transcription"
-                  onKeyDown={(event) => {
-                    if (event.key !== "Escape") return;
-                    event.stopPropagation();
-                    setRetranscribing(false);
-                    retranscribeButton.current?.focus();
-                  }}
-                >
-                  <p>
-                    <strong>Re-transcribe this audio?</strong> The current
-                    transcript, edits included, is kept in History.{" "}
-                    {props.sttMode === "cloud"
-                      ? "Audio is uploaded again and may be billed again."
-                      : "This runs on your computer and can take about as long as the recording."}
-                  </p>
-                  <div className="mw-card-row">
-                    <button
-                      aria-label="Re-transcribe audio"
-                      disabled={disabled || job !== null || !props.speechReady}
-                      onClick={() => {
-                        setRetranscribing(false);
+                        props.onTab("transcript");
                         props.onTranscribe();
                       }}
                     >
-                      Re-transcribe
+                      {job === "transcribe"
+                        ? "Transcribing…"
+                        : "Transcribe audio"}
                     </button>
+                  ) : (
+                    <>
+                      <span className="muted">{speechReason}</span>
+                      <OpenSettingsButton
+                        section="transcription"
+                        onOpenSettings={props.onOpenSettings}
+                      />
+                    </>
+                  )}
+                  {/\S/.test(props.notes) && (
+                    <button onClick={() => props.onTab("summary")}>
+                      Go to Summary
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            <div
+              className="mw-tabs"
+              role="tablist"
+              aria-label="Meeting content"
+            >
+              {contentTabs.map((item, index) => (
+                <button
+                  key={item.id}
+                  id={`tab-${item.id}`}
+                  role="tab"
+                  aria-selected={tab === item.id}
+                  aria-controls={`panel-${item.id}`}
+                  tabIndex={tab === item.id ? 0 : -1}
+                  onClick={() => props.onTab(item.id)}
+                  onKeyDown={(event) => {
+                    const next = tabTarget(
+                      event.key,
+                      index,
+                      contentTabs.length,
+                    );
+                    if (next === null) return;
+                    event.preventDefault();
+                    props.onTab(contentTabs[next].id);
+                    document
+                      .getElementById(`tab-${contentTabs[next].id}`)
+                      ?.focus();
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            {props.status && <div className="mw-status">{props.status}</div>}
+            <div className="mw-scroll">
+              <section
+                className="notes-panel"
+                id="panel-notes"
+                role="tabpanel"
+                aria-labelledby="tab-notes"
+                hidden={tab !== "notes"}
+              >
+                <label className="sr-only" htmlFor="notes">
+                  My notes <span className="muted">({props.notesStatus})</span>
+                </label>
+                <textarea
+                  id="notes"
+                  className="mw-editor"
+                  value={props.notes}
+                  readOnly={disabled}
+                  rows={10}
+                  placeholder="Start writing. Capture a thought, a decision, or what happens next…"
+                  ref={editor}
+                  onChange={(event) => props.onNotes(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      !disabled &&
+                      props.live &&
+                      event.shiftKey &&
+                      (event.ctrlKey || event.metaKey) &&
+                      event.key.toLowerCase() === "t"
+                    ) {
+                      event.preventDefault();
+                      void insertTimestamp();
+                    }
+                  }}
+                />
+                <div className="mw-efoot">
+                  <span className={`mw-saved ${savedState}`}>{savedLabel}</span>
+                  <span className="mw-gap" />
+                  <button
+                    className="mw-mini"
+                    disabled={disabled}
+                    onClick={props.onSaveNow}
+                  >
+                    Save notes now
+                  </button>
+                  <RewriteSelection
+                    key={meeting.id}
+                    editor={editor}
+                    notes={props.notes}
+                    disabled={disabled}
+                    blocked={
+                      job !== null
+                        ? { message: "Another task is running.", section: null }
+                        : props.llmBlocked
+                    }
+                    onOpenSettings={props.onOpenSettings}
+                    onApply={props.onNotes}
+                  />
+                  {props.live && (
                     <button
-                      ref={retranscribeCancel}
-                      onClick={() => {
-                        setRetranscribing(false);
-                        retranscribeButton.current?.focus();
-                      }}
+                      className="mw-mini"
+                      disabled={disabled}
+                      title="Ctrl+Shift+T while typing"
+                      onClick={() => void insertTimestamp()}
                     >
-                      Cancel
+                      Insert timestamp
+                    </button>
+                  )}
+                  {playable.length > 0 && (
+                    <button
+                      className="mw-mini"
+                      disabled={disabled}
+                      onClick={jumpToAudio}
+                    >
+                      Jump to audio
+                    </button>
+                  )}
+                  {jumpHint && (
+                    <span className="mw-mini-note" role="status">
+                      {jumpHint}
+                    </span>
+                  )}
+                </div>
+              </section>
+              <section
+                className="reading-panel"
+                id="panel-summary"
+                role="tabpanel"
+                aria-labelledby="tab-summary"
+                hidden={tab !== "summary"}
+                tabIndex={0}
+              >
+                <div className="mw-summary-head">
+                  <span className="mw-summary-label">
+                    {summaryLabel || "Summary"}
+                  </span>
+                  <span className="mw-gap" />
+                  <label className="mw-inline-label">
+                    Template
+                    <select
+                      value={template}
+                      disabled={blocked}
+                      onChange={(event) => setTemplate(event.target.value)}
+                    >
+                      {templates.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                      {props.customTemplates.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="primary"
+                    disabled={blocked}
+                    aria-describedby="enhance-hint"
+                    onClick={() => props.onGenerate(template)}
+                  >
+                    {job === "summary" ? "Generating…" : "Create summary"}
+                  </button>
+                </div>
+                {summary && stale && (
+                  <p className="mw-hint" role="status">
+                    Transcript changed after this summary.
+                  </p>
+                )}
+                {props.enhanceBlocked !== null && (
+                  <div className="mw-card-row">
+                    <span id="enhance-hint" className="mw-hint">
+                      {props.enhanceBlocked}
+                    </span>
+                    {props.llmBlocked && (
+                      <OpenSettingsButton
+                        section={props.llmBlocked.section}
+                        onOpenSettings={props.onOpenSettings}
+                      />
+                    )}
+                  </div>
+                )}
+                {versions.length > 1 && (
+                  <label className="mw-inline-label">
+                    Version
+                    <select
+                      value={shown?.id ?? versions[0].id}
+                      disabled={draft !== undefined}
+                      onChange={(event) =>
+                        setVersionId(Number(event.target.value))
+                      }
+                    >
+                      {versions.map((version, index) => (
+                        <option key={version.id} value={version.id}>
+                          {`${versions.length - index} · ${version.model} · ${templateLabel(version.template, props.customTemplates)}${version.edited_from !== null ? " · edited" : ""}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {draft ? (
+                  <div className="summary-edit">
+                    <textarea
+                      aria-label="Edit summary"
+                      value={draft.text}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        props.onSummaryDraft({
+                          ...draft,
+                          text: event.target.value,
+                        })
+                      }
+                    />
+                    <div className="mw-card-row">
+                      <button
+                        className="primary"
+                        disabled={disabled || !draft.text.trim()}
+                        onClick={() =>
+                          void props
+                            .onSaveSummaryEdit(draft)
+                            .then((saved) => saved && setVersionId(null))
+                        }
+                      >
+                        Save edited summary
+                      </button>
+                      <button
+                        disabled={disabled}
+                        onClick={() => props.onSummaryDraft(null)}
+                      >
+                        Discard edit
+                      </button>
+                    </div>
+                  </div>
+                ) : summary ? (
+                  <div className="summary-body">
+                    {renderMarkdown(summary, reference)}
+                  </div>
+                ) : (
+                  <p className="mw-hint">
+                    No summary yet. Add notes or a transcript first.
+                  </p>
+                )}
+                {summary && !draft && (
+                  <div className="mw-card-row">
+                    <button
+                      disabled={disabled || !current}
+                      onClick={() =>
+                        current &&
+                        props.onSummaryDraft({
+                          baseId: current.id,
+                          latestId: versions[0].id,
+                          text: current.markdown,
+                        })
+                      }
+                    >
+                      Edit summary
+                    </button>
+                    <button onClick={() => void copy(summary, "summary")}>
+                      Copy summary
+                    </button>
+                    <span className="mw-mini-note" role="status">
+                      {copyStatus}
+                    </span>
+                  </div>
+                )}
+                {summary && provider !== "fixture" && (
+                  <p className="mw-hint">
+                    AI-generated. Check it against the transcript.
+                  </p>
+                )}
+                {threads.length > 0 && (
+                  <div className="mw-card-row">
+                    <select
+                      aria-label="Question threads"
+                      value={activeThread?.id ?? ""}
+                      onChange={(event) =>
+                        setChosenThread(Number(event.target.value))
+                      }
+                    >
+                      {!activeThread && <option value="">New question</option>}
+                      {threads.map((thread) => (
+                        <option key={thread.id} value={thread.id}>
+                          {thread.turns[0]?.question.slice(0, 60)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={!activeThread}
+                      onClick={() => setChosenThread("new")}
+                    >
+                      New question
+                    </button>
+                    {activeThread && (
+                      <button
+                        disabled={disabled || job !== null}
+                        className="danger"
+                        onClick={() => setDeletingThread(true)}
+                      >
+                        Delete thread
+                      </button>
+                    )}
+                  </div>
+                )}
+                {deletingThread && activeThread && (
+                  <div
+                    className="mw-card"
+                    role="group"
+                    aria-label="Confirm deleting question thread"
+                  >
+                    <p>
+                      <strong>Delete this question thread?</strong> Its{" "}
+                      {activeThread.turns.length} saved question
+                      {activeThread.turns.length === 1 ? "" : "s"} and answers
+                      are removed.
+                    </p>
+                    <div className="mw-card-row">
+                      <button
+                        className="danger danger-filled"
+                        onClick={() => {
+                          setDeletingThread(false);
+                          props.onDeleteThread(activeThread.id);
+                        }}
+                      >
+                        Delete thread
+                      </button>
+                      <button onClick={() => setDeletingThread(false)}>
+                        Keep
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <form
+                  className="ask-meeting"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (question.trim())
+                      props.onAsk(question.trim(), activeThread?.id ?? null);
+                  }}
+                >
+                  <label htmlFor="ask-question">
+                    {activeThread ? "Ask a follow-up" : "Ask this meeting"}
+                  </label>
+                  <RecipePicker
+                    recipes={props.recipes}
+                    disabled={blocked}
+                    onPick={setQuestion}
+                  />
+                  <textarea
+                    id="ask-question"
+                    rows={2}
+                    maxLength={1000}
+                    value={question}
+                    placeholder="What did we decide about the launch date?"
+                    onChange={(event) => setQuestion(event.target.value)}
+                  />
+                  <div className="mw-card-row">
+                    <button
+                      type="submit"
+                      disabled={blocked || !question.trim()}
+                    >
+                      {job === "ask" ? "Asking…" : "Ask"}
                     </button>
                   </div>
-                </div>
-              )}
-              {job === "transcribe" &&
-                Object.entries(props.transcribeProgress).map(
-                  ([kind, percent]) => (
-                    <label className="mw-player" key={kind}>
-                      {kind === "preparing"
-                        ? "Preparing audio…"
-                        : `${trackLabels[kind] ?? kind}: ${percent}%`}
-                      <progress max={100} value={percent} />
-                    </label>
-                  ),
-                )}
-              {hasTranscript && meeting.source === "desktop" && (
-                <p className="mw-hint">
-                  {selected.transcript_provider === "whisper"
-                    ? "Transcribed locally with Whisper."
-                    : `Transcribed with ${selected.transcript_provider ?? "an earlier engine"}${selected.transcript_model ? ` / ${selected.transcript_model}` : ""}.`}{" "}
-                  Check names and numbers.
-                </p>
-              )}
-              {hasTranscript && (
-                <SpeakerNamesForm
-                  key={`${meeting.id}:${selected.speaker_names.you ?? ""}:${selected.speaker_names.others ?? ""}`}
-                  meetingId={meeting.id}
-                  names={selected.speaker_names}
-                  disabled={disabled}
-                  onNames={(names) => props.onSpeakerNames(meeting.id, names)}
-                />
-              )}
-              {selected.segments
-                .slice(0, shownSegments)
-                .map((segment, index) => {
-                  const kind = segment.speaker === "You" ? "mic" : "system";
-                  const speaker = speakerLabel(
-                    selected.speaker_names,
-                    segment.speaker,
-                  );
-                  const meta = selected.segment_meta[index];
-                  const draft =
-                    meta &&
-                    props.segmentDraft?.meetingId === meeting.id &&
-                    props.segmentDraft.segmentId === meta.id
-                      ? props.segmentDraft
-                      : null;
-                  const editLocked = disabled || job !== null;
-                  const timing = segment.timing;
-                  const stamp =
-                    timing.kind === "timed"
-                      ? formatTimestamp(timing.start_ms)
-                      : "Untimed";
-                  // Labels read better without the brackets.
-                  const time = stamp.replace(/^\[|\]$/g, "");
-                  return (
-                    <p
-                      className={
-                        meta && highlighted.includes(meta.id)
-                          ? "transcript-segment highlighted-segment"
-                          : "transcript-segment"
-                      }
-                      key={index}
-                      id={meta ? `segment-${meta.id}` : undefined}
-                      tabIndex={-1}
-                    >
-                      <strong>{speaker}</strong>{" "}
-                      {timing.kind === "timed" &&
-                      playable.some((track) => track.kind === kind) ? (
-                        <button
-                          className="seek-button"
-                          aria-label={`Play ${speaker} from ${time}`}
-                          onClick={() =>
-                            void props
-                              .onSeek(kind, timing.start_ms)
-                              .then((fileMs) => {
-                                if (fileMs !== null) play(kind, fileMs);
-                              })
-                          }
-                        >
-                          {stamp}
-                        </button>
-                      ) : (
-                        <span className="muted">{stamp}</span>
-                      )}{" "}
-                      —{" "}
-                      {draft ? (
-                        <span className="segment-edit">
-                          <input
-                            aria-label={`Edit segment at ${time}`}
-                            value={draft.text}
-                            maxLength={20000}
-                            onChange={(event) =>
-                              props.onSegmentDraft({
-                                ...draft,
-                                text: event.target.value,
-                              })
-                            }
-                          />
-                          <button
-                            disabled={editLocked || !draft.text.trim()}
-                            onClick={() => void props.onSaveSegment(draft)}
-                          >
-                            Save
-                          </button>
-                          <button onClick={() => props.onSegmentDraft(null)}>
-                            Cancel
-                          </button>
-                        </span>
-                      ) : (
-                        <>
-                          {segment.text}
-                          {meta && (
-                            <>
-                              {" "}
-                              {meta.original_text !== null && (
-                                <span
-                                  className="muted"
-                                  title={`Original: ${meta.original_text}`}
-                                >
-                                  (edited)
-                                </span>
-                              )}{" "}
-                              <button
-                                className="seek-button"
-                                aria-label={`Edit segment at ${time}`}
-                                disabled={
-                                  editLocked || props.segmentDraft !== null
-                                }
-                                onClick={() =>
-                                  props.onSegmentDraft({
-                                    meetingId: meeting.id,
-                                    segmentId: meta.id,
-                                    baseText: segment.text,
-                                    text: segment.text,
-                                  })
-                                }
-                              >
-                                Edit
-                              </button>
-                              {meta.original_text !== null && (
-                                <button
-                                  className="seek-button"
-                                  aria-label={`Revert segment at ${time}`}
-                                  disabled={
-                                    editLocked || props.segmentDraft !== null
-                                  }
-                                  onClick={() =>
-                                    void props.onSaveSegment({
-                                      meetingId: meeting.id,
-                                      segmentId: meta.id,
-                                      baseText: segment.text,
-                                      text: meta.original_text ?? segment.text,
-                                    })
-                                  }
-                                >
-                                  Revert
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </>
-                      )}
+                </form>
+                {activeThread?.turns.map((turn) => (
+                  <div
+                    className="ask-answer"
+                    role="group"
+                    aria-label="Answer"
+                    key={turn.id}
+                  >
+                    <p>
+                      <strong>Q: {turn.question}</strong>
                     </p>
-                  );
-                })}
-              {selected.segments.length > shownSegments && (
-                <div className="mw-card-row">
-                  <button
-                    onClick={() =>
-                      setSegmentWindow({
-                        meetingId,
-                        count: shownSegments + SEGMENT_PAGE,
-                      })
-                    }
-                  >
-                    {`Show next ${Math.min(SEGMENT_PAGE, selected.segments.length - shownSegments)}`}
-                  </button>
-                  <button
-                    onClick={() =>
-                      setSegmentWindow({
-                        meetingId,
-                        count: selected.segments.length,
-                      })
-                    }
-                  >
-                    Show all
-                  </button>
-                </div>
-              )}
-            </section>
-          </div>
+                    {renderMarkdown(turn.answer, reference)}
+                    <p className="mw-hint">
+                      AI answer. Check it before relying on it.
+                    </p>
+                  </div>
+                ))}
+              </section>
+              <section
+                className="reading-panel"
+                id="panel-transcript"
+                role="tabpanel"
+                aria-labelledby="tab-transcript"
+                hidden={tab !== "transcript"}
+                tabIndex={0}
+              >
+                <TranscriptPanel />
+              </section>
+            </div>
+            <TranscriptDock />
+          </TranscriptProvider>
         </div>
 
         {!narrow && (

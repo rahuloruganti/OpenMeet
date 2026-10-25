@@ -19,10 +19,17 @@ import {
   speechModelLabel,
 } from "../../shared/lib/models";
 import { useTask } from "../../shared/lib/use-task";
+import {
+  CUSTOM_PROVIDER,
+  freeName,
+  presetById,
+  presetsFor,
+} from "../../shared/lib/providers";
 import { BrandMark } from "../../shared/ui/brand-mark";
 import {
   baseUrlError,
   destination,
+  hostOf,
   publishSettings,
 } from "../../features/provider-settings";
 
@@ -69,6 +76,11 @@ function ConnectAndPick(props: {
   onKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
 }) {
   const { role, settings, server } = props;
+  // A detected server keeps its own name and URL; otherwise the user picks a provider.
+  const presets = presetsFor(role);
+  const [provider, setProvider] = useState(
+    server ? CUSTOM_PROVIDER : (presets[0]?.id ?? CUSTOM_PROVIDER),
+  );
   const [name, setName] = useState(server?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(server?.base_url ?? "");
   const key = useRef<HTMLInputElement>(null);
@@ -86,14 +98,23 @@ function ConnectAndPick(props: {
     });
   const shown = modelsFor(models, role, all);
   const assigned = settings.provider_assignments[role];
+  // A preset fills the URL and the name; "Custom" keeps the free-form fields.
+  const preset = server ? null : presetById(provider);
+  const url = preset ? preset.baseUrl : baseUrl.trim();
+  // Blank name on a custom API saves as its destination, so nothing blocks the connect.
+  const connectionName = preset
+    ? freeName(
+        preset.label,
+        settings.saved_connections.map((item) => item.name),
+      )
+    : name.trim() || hostOf(url);
   // The same rule Settings applies, so a URL rejected there is rejected here too.
-  const urlError = server ? null : baseUrlError(baseUrl);
+  const urlError = server || preset ? null : baseUrlError(baseUrl);
 
   const connect = () =>
     run(async () => {
       const typed = key.current?.value ?? "";
       if (key.current) key.current.value = "";
-      const url = baseUrl.trim();
       const existing = settings.saved_connections.find(
         (item) => item.base_url === url,
       );
@@ -101,7 +122,7 @@ function ConnectAndPick(props: {
       if (!existing || typed) {
         current = await api.saveApiConnection({
           id: existing?.id ?? null,
-          name: existing?.name ?? name.trim(),
+          name: existing?.name ?? connectionName,
           baseUrl: url,
           keyChange: typed ? { kind: "replace", key: typed } : { kind: "keep" },
           expectedRevision: existing?.revision ?? null,
@@ -122,8 +143,7 @@ function ConnectAndPick(props: {
     run(async () => {
       const id =
         connectionId ??
-        settings.saved_connections.find((item) => item.base_url === baseUrl)
-          ?.id;
+        settings.saved_connections.find((item) => item.base_url === url)?.id;
       if (!id) return;
       let next = await api.saveProviderAssignment(
         role,
@@ -132,7 +152,9 @@ function ConnectAndPick(props: {
       );
       if (role === "cloud_stt") next = await api.saveSttMode("cloud");
       await publish(next);
-      setNotice(`Using ${model.trim()}. Nothing was sent.`);
+      setNotice(
+        `Using ${model.trim()}. Saved on this device; no meeting content was sent.`,
+      );
     });
 
   return (
@@ -140,27 +162,49 @@ function ConnectAndPick(props: {
       {!server && (
         <>
           <label>
-            Name
-            <input
-              value={name}
-              maxLength={100}
-              placeholder="My connection"
-              onChange={(event) => setName(event.target.value)}
-            />
+            Provider
+            <select
+              aria-label="Provider"
+              value={provider}
+              onChange={(event) => setProvider(event.target.value)}
+            >
+              {presets.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+              <option value={CUSTOM_PROVIDER}>Custom</option>
+            </select>
           </label>
-          <label>
-            Base URL
-            <input
-              type="url"
-              value={baseUrl}
-              placeholder="https://api.openai.com/v1"
-              onChange={(event) => setBaseUrl(event.target.value)}
-            />
-          </label>
-          {urlError && (
-            <p role="alert" className="error">
-              {urlError}
+          {preset ? (
+            <p className="muted mono" role="note">
+              {hostOf(preset.baseUrl)}
             </p>
+          ) : (
+            <>
+              <label>
+                Base URL
+                <input
+                  type="url"
+                  value={baseUrl}
+                  placeholder="https://api.openai.com/v1"
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                />
+              </label>
+              {urlError && (
+                <p role="alert" className="error">
+                  {urlError}
+                </p>
+              )}
+              <label>
+                Name <span className="opt">(optional)</span>
+                <input
+                  value={name}
+                  maxLength={100}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </label>
+            </>
           )}
         </>
       )}
@@ -172,17 +216,13 @@ function ConnectAndPick(props: {
             type="password"
             autoComplete="off"
             spellCheck={false}
+            placeholder={preset ? `Key from ${preset.keyPage}` : undefined}
           />
         </label>
       )}
       {(!server || server.needs_key || models.length === 0) && (
         <button
-          disabled={
-            busy ||
-            !baseUrl.trim() ||
-            (!server && !name.trim()) ||
-            urlError !== null
-          }
+          disabled={busy || !url || urlError !== null}
           onClick={() => void connect()}
         >
           Connect and list models
@@ -383,7 +423,6 @@ export function FirstRunSetup(props: Props) {
       }
     })();
 
-  const chat = (servers ?? []).filter((item) => item.kind !== "speech");
   const speechServers = (servers ?? []).filter((item) => item.kind !== "chat");
   const speechConnection = settings.provider_assignments.cloud_stt;
   const localReady = settings.stt_mode === "local" && !!stt?.installed;
@@ -431,15 +470,8 @@ export function FirstRunSetup(props: Props) {
             <section className="wizard-step" aria-labelledby="setup-import">
               <h1 id="setup-import">Bring your meetings over</h1>
               <p className="help">
-                Found meetings from the previous OpenMeet.
-                <span
-                  className="info"
-                  role="img"
-                  aria-label="More about importing"
-                  title="Read-only copy. Nothing is deleted. API keys are not copied."
-                >
-                  i
-                </span>
+                Found meetings from the previous OpenMeet. They are copied
+                read-only: nothing is deleted, and API keys are not copied.
               </p>
               <div className="card found">
                 <div className="counts">
@@ -679,31 +711,6 @@ export function FirstRunSetup(props: Props) {
                 AI notes <span className="opt">(optional)</span>
               </h1>
               <div className="choices">
-                {chat.map((server) => (
-                  <label className="choice" key={server.base_url}>
-                    <input
-                      type="radio"
-                      className="radio"
-                      name="setup-notes"
-                      aria-label={`${server.name} on this computer`}
-                      checked={notesChoice === server.base_url}
-                      onChange={() => {
-                        setNotesChoice(server.base_url);
-                      }}
-                    />
-                    <span>
-                      <span className="head">
-                        <strong>{server.name}</strong>
-                        <span className="tag">Detected</span>
-                      </span>
-                      <span className="sub">
-                        {server.needs_key
-                          ? "Needs its API key"
-                          : `${server.models.length} model${server.models.length === 1 ? "" : "s"}`}
-                      </span>
-                    </span>
-                  </label>
-                ))}
                 {speechConnection && (
                   <label className="choice">
                     <input
@@ -742,12 +749,6 @@ export function FirstRunSetup(props: Props) {
                   </span>
                 </label>
               </div>
-              {servers !== null && chat.length === 0 && (
-                <p className="help">
-                  No local AI server found. Start Ollama or LM Studio, then
-                  retry.
-                </p>
-              )}
               {notesChoice && (
                 <div className="wizard-fields">
                   <ConnectAndPick
@@ -755,8 +756,7 @@ export function FirstRunSetup(props: Props) {
                     role="llm"
                     settings={settings}
                     server={
-                      chat.find((item) => item.base_url === notesChoice) ??
-                      (notesChoice === "speech"
+                      notesChoice === "speech"
                         ? (() => {
                             const saved = settings.saved_connections.find(
                               (item) =>
@@ -772,7 +772,7 @@ export function FirstRunSetup(props: Props) {
                                 }
                               : null;
                           })()
-                        : null)
+                        : null
                     }
                     onSettings={props.onSettings}
                     onKeyStatus={props.onKeyStatus}

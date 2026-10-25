@@ -11,6 +11,7 @@ $repo = Split-Path -Parent $packaging
 $backend = Join-Path $repo "backend"
 $web = Join-Path $backend "web"
 $migrations = Join-Path $backend "openmeet_py\migrations"
+$catalog = Join-Path $backend "openmeet_py\local_ai\catalog.json"
 $launcher = Join-Path $backend "launcher.py"
 $dist = Join-Path $packaging "dist"
 $work = Join-Path $packaging "build"
@@ -23,7 +24,7 @@ function Assert-Exit {
     if ($LASTEXITCODE -ne 0) { throw "$Label failed (exit $LASTEXITCODE)." }
 }
 
-foreach ($required in @($launcher, $migrations, $icon, (Join-Path $repo "package.json"))) {
+foreach ($required in @($launcher, $migrations, $catalog, $icon, (Join-Path $repo "package.json"))) {
     if (-not (Test-Path $required)) { throw "Missing $required." }
 }
 
@@ -54,6 +55,7 @@ try {
         --paths $backend `
         --add-data "$web;web" `
         --add-data "$migrations;openmeet_py/migrations" `
+        --add-data "$catalog;openmeet_py/local_ai" `
         --collect-submodules openmeet_py `
         --collect-submodules uvicorn `
         --hidden-import uvicorn.logging `

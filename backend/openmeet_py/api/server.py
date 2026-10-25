@@ -24,6 +24,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
+from openmeet_py.api import live_commands
 from openmeet_py.api.commands import Context, dispatch
 from openmeet_py.api.errors import AppError
 from openmeet_py.api.reads import read_settings
@@ -31,6 +32,7 @@ from openmeet_py.audio.audio_backend import CaptureBackend, make_backend
 from openmeet_py.audio.recorder import Recorder
 from openmeet_py.domain.processing import Processing
 from openmeet_py.infra.store import DB_FILE, Store
+from openmeet_py.local_ai import service as local_ai
 from openmeet_py.platform.detection import DetectionService, EmptyConsentRegistry
 from openmeet_py.platform.hotkeys import HotkeyService, press_action
 from openmeet_py.platform.win32 import FakeWin32
@@ -109,6 +111,8 @@ def create_app(
     )
     ctx.processing = Processing(ctx, workers=workers)
     recorder.processing = ctx.processing
+    ctx.live = live_commands.LiveService(ctx)
+    recorder.live = ctx.live
     ctx.hotkeys = HotkeyService(desktop, lambda kind: _start_hotkey_action(ctx, kind))
     ctx.detection = DetectionService(ctx, consent if consent is not None else EmptyConsentRegistry())
     ctx.attention = lambda: desktop.flash_window(TITLE)
@@ -125,11 +129,14 @@ def create_app(
         yield
         # Shutdown order: refuse processing work, finalize the recording (its stop marks the stage),
         # then stop the poll and hotkey threads and wait for workers before the database closes.
+        # The managed Local AI server is stopped before the database closes, so it never outlives the app.
         ctx.processing.quit()
         recorder.shutdown()
         ctx.detection.stop()
         ctx.hotkeys.stop()
         ctx.processing.join()
+        ctx.live.quit()  # final live lines are written before the database closes
+        local_ai.shutdown()
         store.close()
 
     app = FastAPI(title="OpenMeet (Python build)", lifespan=lifespan, docs_url=None, redoc_url=None)

@@ -1,0 +1,89 @@
+/* Local AI rows inside Settings > AI notes. Tokens only; every class is namespaced `lai-`.
+   The card, row and tag look comes from the settings page (om-card, om-row, om-tag). */
+
+.lai-machine,
+.lai-start {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+}
+.lai-what {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.lai-what strong,
+.lai-start strong {
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.lai-what .om-muted {
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+}
+
+.lai-rows,
+.lai-model {
+  padding: 0 14px;
+}
+.lai-model .om-row {
+  border-bottom: 0;
+}
+.lai-inline {
+  padding: 0 0 10px;
+}
+
+.lai-note {
+  margin: 0;
+  padding: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.lai-line {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lai-job {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.lai-bar {
+  width: 120px;
+  height: 6px;
+  accent-color: var(--accent);
+}
+
+/* The one primary action: the setup that does the three steps at once. */
+.om-settings button.lai-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.om-settings button.lai-primary:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+}
+
+.lai-pill-starting {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.lai-pill-running {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success);
+}
+.lai-pill-failed {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}

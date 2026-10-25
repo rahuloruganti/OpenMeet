@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { api, errorMessage, type SpeakerNames } from "../../shared/api/api";
-import { Tip } from "../../shared/ui/info-tip";
 
 type Props = {
   meetingId: string;
@@ -55,13 +54,7 @@ export function SpeakerNamesForm({
           onChange={(event) => setOthers(event.target.value)}
         />
       </label>
-      <p className="muted">
-        Others covers everyone on system audio.{" "}
-        <Tip
-          label="speaker names"
-          text="Names are added to the transcript text sent for summaries and questions."
-        />
-      </p>
+      <p className="muted">Others covers everyone on system audio. </p>
       <button type="submit" disabled={disabled || busy || !changed}>
         Save speaker names
       </button>
