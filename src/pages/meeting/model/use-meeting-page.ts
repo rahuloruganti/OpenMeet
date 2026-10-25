@@ -44,6 +44,19 @@ const gapTrackLabels: Record<string, string> = {
 
 const narrowWindowQuery = "(max-width: 800px)";
 
+/** A summary draft still holds exactly the text and versions that were saved. */
+const sameSummaryDraft = (current: SummaryDraft, saved: SummaryDraft) =>
+  current.baseId === saved.baseId &&
+  current.latestId === saved.latestId &&
+  current.text === saved.text;
+
+/** A transcript draft still holds exactly the segment and text that were saved. */
+const sameSegmentDraft = (current: SegmentDraft, saved: SegmentDraft) =>
+  current.meetingId === saved.meetingId &&
+  current.segmentId === saved.segmentId &&
+  current.baseText === saved.baseText &&
+  current.text === saved.text;
+
 /** What the meeting view needs from the app shell, which outlives it. */
 export type MeetingPageEnv = {
   desktop: boolean;
@@ -177,6 +190,10 @@ export function useMeetingPage(env: MeetingPageEnv) {
   const [closeProblems, setCloseProblems] = useState<string[]>([]);
   const [closeNotesFailed, setCloseNotesFailed] = useState(false);
   const [closeAttempt, setCloseAttempt] = useState(0);
+  const closing = useRef(false);
+  // Saves in flight. Editors are locked while any runs, so typing cannot race a snapshot.
+  const [savesInFlight, setSavesInFlight] = useState(0);
+  const locked = savesInFlight > 0;
   const saveAllAndQuit = useRef<() => Promise<void>>(async () => {});
   const setSummaryDraft = (id: string, draft: SummaryDraft | null) =>
     setSummaryDrafts((drafts) => {
@@ -185,6 +202,60 @@ export function useMeetingPage(env: MeetingPageEnv) {
       else delete next[id];
       return next;
     });
+  // Latest drafts, read after an await to tell whether a save raced with typing.
+  const summaryDraftsNow = useRef(summaryDrafts);
+  const segmentDraftNow = useRef(segmentDraft);
+  useEffect(() => {
+    summaryDraftsNow.current = summaryDrafts;
+    segmentDraftNow.current = segmentDraft;
+  });
+  /** Clears a saved draft only if it is unchanged; newer typing stays open. A draft already gone counts as settled. */
+  const settleSummaryDraft = (id: string, saved: SummaryDraft) => {
+    const current = summaryDraftsNow.current[id];
+    if (current && !sameSummaryDraft(current, saved)) return false;
+    setSummaryDraft(id, null);
+    return true;
+  };
+  const settleSegmentDraft = (saved: SegmentDraft) => {
+    const current = segmentDraftNow.current;
+    if (current && !sameSegmentDraft(current, saved)) return false;
+    setSegmentDraft(null);
+    return true;
+  };
+  const rebaseSummaryDraft = (id: string, latestId: number) =>
+    setSummaryDrafts((drafts) =>
+      drafts[id] ? { ...drafts, [id]: { ...drafts[id], latestId } } : drafts,
+    );
+  /** Runs one save with the note, summary and transcript editors locked. */
+  const lockWhile = async <T>(task: () => Promise<T>): Promise<T> => {
+    setSavesInFlight((count) => count + 1);
+    try {
+      return await task();
+    } finally {
+      setSavesInFlight((count) => count - 1);
+    }
+  };
+  /** One close attempt at a time: a request that arrives while one runs is ignored. */
+  const closeOnce = async (task: () => Promise<void>) => {
+    if (closing.current) return;
+    closing.current = true;
+    try {
+      await lockWhile(task);
+    } finally {
+      closing.current = false;
+    }
+  };
+  /** Flushes the open notes; a failure comes back as a sentence for the close dialog. */
+  const flushNotesForClose = async (): Promise<string | null> => {
+    try {
+      await writer.current?.flush();
+      return null;
+    } catch (failure) {
+      return `Notes not saved: ${errorMessage(failure).replace(/\.$/, "")}.`;
+    }
+  };
+  const changedWhileSaving = (what: string) =>
+    `${what} changed while saving; the newer text is still open.`;
 
   const applyProcessing = useCallback((next: SessionProcessingSnapshot) => {
     const previous = processingRevisions.current.get(next.meeting_id);
@@ -701,31 +772,32 @@ export function useMeetingPage(env: MeetingPageEnv) {
         const id = selected?.meeting.id;
         let saved = false;
         if (!id) return saved;
-        await run(async () => {
-          try {
-            await api.saveSummaryEdit(
-              id,
-              draft.baseId,
-              draft.latestId,
-              draft.text,
-            );
-          } catch (failure) {
-            // Rebase onto the newer version so saving again is the user's explicit choice.
-            if (errorCode(failure) === "summary_conflict") {
-              const newest = (await api.listSummaries(id))[0];
-              if (newest)
-                setSummaryDraft(id, { ...draft, latestId: newest.id });
-              await finishJob(id);
+        await run(() =>
+          lockWhile(async () => {
+            try {
+              await api.saveSummaryEdit(
+                id,
+                draft.baseId,
+                draft.latestId,
+                draft.text,
+              );
+            } catch (failure) {
+              // Rebase onto the newer version so saving again is the user's explicit choice.
+              if (errorCode(failure) === "summary_conflict") {
+                const newest = (await api.listSummaries(id))[0];
+                if (newest) rebaseSummaryDraft(id, newest.id);
+                await finishJob(id);
+              }
+              throw failure;
             }
-            throw failure;
-          }
-          saved = true;
-          setSummaryDraft(id, null);
-          await finishJob(id);
-          setNotice(
-            "Edited summary saved as a new version. Earlier versions are kept.",
-          );
-        });
+            saved = true;
+            settleSummaryDraft(id, draft);
+            await finishJob(id);
+            setNotice(
+              "Edited summary saved as a new version. Earlier versions are kept.",
+            );
+          }),
+        );
         return saved;
       },
       segmentDraft,
@@ -733,22 +805,19 @@ export function useMeetingPage(env: MeetingPageEnv) {
       onSaveSegment: async (draft) => {
         if (!draft.text.trim()) return false;
         let saved = false;
-        await run(async () => {
-          await api.editSegment(
-            draft.meetingId,
-            draft.segmentId,
-            draft.baseText,
-            draft.text,
-          );
-          saved = true;
-          setSegmentDraft((current) =>
-            current?.meetingId === draft.meetingId &&
-            current.segmentId === draft.segmentId
-              ? null
-              : current,
-          );
-          await finishJob(draft.meetingId);
-        });
+        await run(() =>
+          lockWhile(async () => {
+            await api.editSegment(
+              draft.meetingId,
+              draft.segmentId,
+              draft.baseText,
+              draft.text,
+            );
+            saved = true;
+            settleSegmentDraft(draft);
+            await finishJob(draft.meetingId);
+          }),
+        );
         return saved;
       },
       onTags: (id, tags) => {
@@ -798,7 +867,8 @@ export function useMeetingPage(env: MeetingPageEnv) {
       notes,
       notesStatus,
       tab,
-      disabled,
+      // Locked while a save runs: notes, summary and transcript editors all honor this.
+      disabled: disabled || locked,
       onTab: setTab,
       onNotes: (text) => {
         setNotes(text);
@@ -925,14 +995,29 @@ export function useMeetingPage(env: MeetingPageEnv) {
       requested: env.closeRequested,
       problems: closeProblems,
       notesFailed: closeNotesFailed,
+      saving: locked,
       onRetry: () => {
         setCloseProblems([]);
         setCloseAttempt((attempt) => attempt + 1);
       },
-      // Notes are never discarded: Quit anyway is only offered when the notes are saved.
-      onQuitAnyway: () => {
-        if (!closeNotesFailed) void api.close().catch(env.report);
-      },
+      // Notes are never discarded: Quit anyway flushes them first and stays open if that fails.
+      onQuitAnyway: () =>
+        void closeOnce(async () => {
+          const notesProblem = await flushNotesForClose();
+          if (notesProblem) {
+            setCloseNotesFailed(true);
+            setCloseProblems((previous) => [
+              notesProblem,
+              ...previous.filter((item) => !item.startsWith("Notes not saved")),
+            ]);
+            return;
+          }
+          try {
+            await api.close();
+          } catch (failure) {
+            env.report(failure);
+          }
+        }),
       onKeepWorking: () => {
         setCloseProblems([]);
         env.focusWorkspace();
@@ -944,62 +1029,57 @@ export function useMeetingPage(env: MeetingPageEnv) {
   // The window close asks the page first: save the notes and any open summary or transcript edit,
   // then quit with no prompt. Only a failed save keeps the window open and says what is not saved.
   useEffect(() => {
-    saveAllAndQuit.current = async () => {
-      const problems: string[] = [];
-      let notesFailed = false;
-      try {
-        await writer.current?.flush();
-      } catch (failure) {
-        notesFailed = true;
-        problems.push(
-          `Notes not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
-        );
-      }
-      for (const [id, draft] of Object.entries(summaryDrafts)) {
-        try {
-          await api.saveSummaryEdit(
-            id,
-            draft.baseId,
-            draft.latestId,
-            draft.text,
-          );
-          setSummaryDraft(id, null);
-        } catch (failure) {
-          problems.push(
-            `Summary edit not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
-          );
-        }
-      }
-      if (segmentDraft) {
-        if (!segmentDraft.text.trim()) {
-          setSegmentDraft(null);
-        } else {
+    saveAllAndQuit.current = () =>
+      closeOnce(async () => {
+        const problems: string[] = [];
+        for (const [id, draft] of Object.entries(summaryDrafts)) {
           try {
-            await api.editSegment(
-              segmentDraft.meetingId,
-              segmentDraft.segmentId,
-              segmentDraft.baseText,
-              segmentDraft.text,
+            await api.saveSummaryEdit(
+              id,
+              draft.baseId,
+              draft.latestId,
+              draft.text,
             );
-            setSegmentDraft(null);
+          } catch (failure) {
+            problems.push(
+              `Summary edit not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
+            );
+            continue;
+          }
+          if (!settleSummaryDraft(id, draft))
+            problems.push(changedWhileSaving("Summary edit"));
+        }
+        if (segmentDraft) {
+          try {
+            if (segmentDraft.text.trim())
+              await api.editSegment(
+                segmentDraft.meetingId,
+                segmentDraft.segmentId,
+                segmentDraft.baseText,
+                segmentDraft.text,
+              );
+            if (!settleSegmentDraft(segmentDraft))
+              problems.push(changedWhileSaving("Transcript edit"));
           } catch (failure) {
             problems.push(
               `Transcript edit not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
             );
           }
         }
-      }
-      if (problems.length === 0) {
-        try {
-          await api.close();
-        } catch (failure) {
-          problems.push(errorMessage(failure));
+        // Notes come last, right before quitting, so text typed during the saves above is written too.
+        const notesProblem = await flushNotesForClose();
+        if (notesProblem) problems.unshift(notesProblem);
+        if (problems.length === 0) {
+          try {
+            await api.close();
+            return;
+          } catch (failure) {
+            problems.push(errorMessage(failure));
+          }
         }
-        if (problems.length === 0) return;
-      }
-      setCloseNotesFailed(notesFailed);
-      setCloseProblems(problems);
-    };
+        setCloseNotesFailed(notesProblem !== null);
+        setCloseProblems(problems);
+      });
   });
   useEffect(() => {
     if (env.closeRequested) void saveAllAndQuit.current();

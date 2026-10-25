@@ -355,6 +355,7 @@ def supervisor(
     sleeps: Optional[list[float]] = None,
     clock: Any = None,
     timeout: float = 180.0,
+    sleep: Any = None,
 ) -> tuple[server.Supervisor, list[FakeProcess], list[FakeJob]]:
     queue = list(processes or [FakeProcess()])
     spawned: list[FakeProcess] = []
@@ -370,12 +371,14 @@ def supervisor(
         jobs.append(created)
         return created
 
+    if sleep is None:
+        sleep = sleeps.append if sleeps is not None else (lambda _seconds: time.sleep(0.01))
     found = server.Supervisor(
         spawn=spawn,
         probe=probe or (lambda _spec: True),
         touch=touch or (lambda _spec: True),
         job_factory=job,
-        sleep=(sleeps.append if sleeps is not None else (lambda _seconds: time.sleep(0.01))),
+        sleep=sleep,
         clock=clock or (lambda: 0.0),
         timeout=timeout,
     )
@@ -499,3 +502,235 @@ def test_a_spawn_failure_is_reported_with_the_fix(tmp_path: Path) -> None:
     found.start(spec(tmp_path), background=False)
     assert found.state == "failed"
     assert found.error_message == server.SPAWN_MESSAGE
+
+
+# ---- supervisor lifecycle races: every interleaving is held open by an Event, never by timing ----
+
+
+def wait_for(predicate: Any, timeout: float = 5.0) -> bool:
+    """Polls a condition the code under test produces. Bounded, so a regression fails instead of hanging."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.001)
+    return True
+
+
+def test_stop_does_not_wait_for_a_blocking_start_to_finish(tmp_path: Path) -> None:
+    waiting = threading.Event()
+    release = threading.Event()
+    ticks = itertools.count(0.0, 1.0)  # the readiness loop still ends if stop is not honoured
+
+    def sleep(_seconds: float) -> None:
+        waiting.set()
+        release.wait(timeout=5)
+
+    found, spawned, jobs = supervisor(
+        tmp_path,
+        probe=lambda _spec: False,
+        sleep=sleep,
+        clock=lambda: next(ticks),
+    )
+    starter = threading.Thread(
+        target=found.start, args=(spec(tmp_path),), kwargs={"background": False}
+    )
+    starter.start()
+    try:
+        assert waiting.wait(5)
+        stopper = threading.Thread(target=found.stop)
+        stopper.start()
+        stopper.join(2)
+        assert not stopper.is_alive(), "stop() waited for the readiness loop"
+        assert found.state == "stopped"
+    finally:
+        release.set()
+        starter.join(5)
+    assert not starter.is_alive()
+    assert found.state == "stopped"
+    assert spawned[0].terminated and jobs[0].closed
+
+
+def test_a_process_spawned_after_stop_is_terminated_not_leaked(tmp_path: Path) -> None:
+    process = FakeProcess()
+    spawning = threading.Event()
+    release = threading.Event()
+    jobs: list[FakeJob] = []
+
+    def spawn(_spec: server.Spec) -> FakeProcess:
+        spawning.set()
+        release.wait(timeout=5)
+        return process
+
+    def job() -> FakeJob:
+        created = FakeJob()
+        jobs.append(created)
+        return created
+
+    found = server.Supervisor(
+        spawn=spawn,
+        probe=lambda _spec: True,
+        touch=lambda _spec: True,
+        job_factory=job,
+        sleep=lambda _seconds: None,
+        clock=lambda: 0.0,
+    )
+    found.start(spec(tmp_path))
+    try:
+        assert spawning.wait(5)
+        stopper = threading.Thread(target=found.stop)
+        stopper.start()
+        stopper.join(2)
+        assert not stopper.is_alive()
+        assert found.state == "stopped"
+    finally:
+        release.set()
+    assert wait_for(lambda: process.terminated), "the late process was leaked"
+    assert found.state == "stopped"
+    assert jobs and jobs[0].closed
+
+
+def test_a_restart_that_finishes_after_stop_is_terminated(tmp_path: Path) -> None:
+    first, second = FakeProcess(), FakeProcess()
+    spawning = threading.Event()
+    release = threading.Event()
+    spawns: list[FakeProcess] = []
+
+    def spawn(_spec: server.Spec) -> FakeProcess:
+        spawns.append(first if not spawns else second)
+        if len(spawns) == 2:
+            spawning.set()
+            release.wait(timeout=5)
+        return spawns[-1]
+
+    found = server.Supervisor(
+        spawn=spawn,
+        probe=lambda _spec: True,
+        touch=lambda _spec: True,
+        job_factory=FakeJob,
+        sleep=lambda _seconds: None,
+        clock=lambda: 0.0,
+    )
+    found.start(spec(tmp_path), background=False)
+    first.alive = False
+    outcome: list[bool] = []
+    ticker = threading.Thread(target=lambda: outcome.append(found._tick()))
+    ticker.start()
+    try:
+        assert spawning.wait(5)
+        stopper = threading.Thread(target=found.stop)
+        stopper.start()
+        stopper.join(2)
+        assert not stopper.is_alive()
+    finally:
+        release.set()
+    ticker.join(5)
+    assert not ticker.is_alive()
+    assert outcome == [False]
+    assert second.terminated, "the restarted process was leaked"
+    assert found.state == "stopped"
+
+
+def test_ensure_resumes_supervision_after_the_watcher_gave_up(tmp_path: Path) -> None:
+    processes = [FakeProcess() for _ in range(4)]
+    gate = threading.Semaphore(0)
+    found, spawned, _ = supervisor(
+        tmp_path,
+        processes=processes,
+        sleep=lambda _seconds: gate.acquire(timeout=5),
+    )
+    try:
+        found.ensure(spec(tmp_path))
+        processes[0].alive = False
+        gate.release()  # watcher tick 1: restart with the second process
+        assert wait_for(lambda: len(spawned) == 2 and found.state == "running")
+        processes[1].alive = False
+        gate.release()  # watcher tick 2: second crash, the watcher gives up
+        assert found._thread is not None
+        found._thread.join(5)
+        assert found.state == "failed"
+
+        found.ensure(spec(tmp_path))  # recovery must supervise again
+        assert found.state == "running"
+        assert found._thread is not None and found._thread.is_alive()
+        processes[2].alive = False
+        gate.release()
+        assert wait_for(lambda: len(spawned) == 4 and found.state == "running")
+        assert spawned[3] is processes[3]
+    finally:
+        found.stop()
+        gate.release()
+
+
+def test_ensure_replaces_a_process_that_died_since_the_last_check(tmp_path: Path) -> None:
+    first, second = FakeProcess(), FakeProcess()
+    found, spawned, _ = supervisor(tmp_path, processes=[first, second])
+    found.start(spec(tmp_path), background=False)
+    first.alive = False
+    try:
+        found.ensure(spec(tmp_path))
+        assert len(spawned) == 2
+        assert found.state == "running" and second.alive
+    finally:
+        found.stop()
+
+
+def test_a_watcher_from_a_stopped_run_does_not_supervise_the_next_run(tmp_path: Path) -> None:
+    first, second, third = FakeProcess(), FakeProcess(), FakeProcess()
+    gate = threading.Semaphore(0)
+    found, spawned, _ = supervisor(
+        tmp_path,
+        processes=[first, second, third],
+        sleep=lambda _seconds: gate.acquire(timeout=5),
+    )
+    try:
+        found.ensure(spec(tmp_path))
+        old_watcher = found._thread
+        assert old_watcher is not None
+        stopper = threading.Thread(target=found.stop)
+        stopper.start()
+        stopper.join(2)  # stop() must not wait on the old watcher, which is still asleep
+        found.start(spec(tmp_path), background=False)
+        second.alive = False
+        gate.release()  # the old watcher wakes after the new run has started
+        old_watcher.join(5)
+        assert not old_watcher.is_alive()
+        assert len(spawned) == 2, "a stale watcher restarted the newer run"
+    finally:
+        found.stop()
+        gate.release()
+
+
+def test_an_unexpected_error_in_the_watcher_fails_the_run_instead_of_leaving_it_starting(
+    tmp_path: Path,
+) -> None:
+    first = FakeProcess()
+    attempts: list[int] = []
+    gate = threading.Semaphore(0)
+
+    def spawn(_spec: server.Spec) -> FakeProcess:
+        attempts.append(1)
+        if len(attempts) == 1:
+            return first
+        raise RuntimeError("unexpected spawn failure")
+
+    def pause(_seconds: float) -> None:
+        gate.acquire(timeout=5)
+
+    found = server.Supervisor(
+        spawn=spawn,
+        probe=lambda _spec: True,
+        touch=lambda _spec: True,
+        job_factory=FakeJob,
+        sleep=pause,
+        clock=lambda: 0.0,
+    )
+    try:
+        found.ensure(spec(tmp_path))
+        first.alive = False
+        gate.release()  # the watcher tries to restart and the spawn raises
+        assert wait_for(lambda: found.state == "failed"), "the run was left in 'starting'"
+        assert found.error_message == server.CRASH_MESSAGE
+    finally:
+        found.stop()
+        gate.release()

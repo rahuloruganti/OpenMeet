@@ -35,6 +35,7 @@ import { LiveSettings } from "../../features/live-settings";
 import { ConnectionEditor } from "../../features/provider-settings";
 import { SummaryTemplates } from "../../features/summary-templates";
 import { TranscriptionSettings } from "../../features/transcription-settings";
+import { hostOf } from "../../shared/ui/provider-connection";
 import {
   OpenSettingsButton,
   resolveSettingsSection,
@@ -501,7 +502,11 @@ function RecordingSection(props: Props) {
         )}
       </Group>
 
-      <LiveSettings settings={settings} disabled={disabled} />
+      <LiveSettings
+        settings={settings}
+        disabled={disabled}
+        onSaved={props.onSettings}
+      />
     </div>
   );
 }
@@ -823,6 +828,18 @@ const aiChoices: Segment<AiBranch>[] = [
   { id: "connection", title: "With a connection", leaves: true },
 ];
 
+/** The destination AI notes really use, so the view choice never implies a saved change. */
+function savedAiDestination(settings: Settings): string {
+  const llm = settings.llm;
+  if (!llm)
+    return "Saved destination: none yet. Switching this view saves nothing.";
+  if (isLocalBase(llm.base_url))
+    return `Saved destination: this PC (${hostOf(llm.base_url)}). Switching this view saves nothing.`;
+  const id = settings.provider_assignments.llm?.connection_id;
+  const name = settings.saved_connections.find((item) => item.id === id)?.name;
+  return `Saved destination: ${name ?? hostOf(llm.base_url)}, leaves this device. Switching this view saves nothing.`;
+}
+
 /**
  * AI notes opens with one choice. Only the chosen path shows; during a search both paths stay
  * in the page, so a match in the hidden one is found. The choice saves nothing by itself.
@@ -848,6 +865,9 @@ function AiSection(
           options={aiChoices}
           onChange={setPick}
         />
+        {props.settings && (
+          <p className="om-muted">{savedAiDestination(props.settings)}</p>
+        )}
       </Group>
       <div hidden={!props.searching && branch !== "connection"}>
         <Group label="Connection">

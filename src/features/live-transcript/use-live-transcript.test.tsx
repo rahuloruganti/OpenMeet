@@ -198,3 +198,132 @@ it("replaces the engine state from a state event and ignores other meetings", as
     "The live model failed to load.",
   );
 });
+
+/** A load the test answers by hand, so events can arrive while it is still pending. */
+function pendingLoad() {
+  let answer!: (value: LiveTranscript) => void;
+  vi.mocked(api.liveTranscript).mockReturnValueOnce(
+    new Promise<LiveTranscript>((resolve) => {
+      answer = resolve;
+    }),
+  );
+  return (value: LiveTranscript) => act(async () => answer(value));
+}
+
+it("keeps a flushed final and a state event that arrive before the first load resolves", async () => {
+  const answer = pendingLoad();
+  const { result } = renderHook(() => useLiveTranscript("m1", false));
+  await act(async () => undefined);
+
+  await speak(line("mic:2", "Newer words.", true, { start_ms: 5000 }));
+  await act(() => {
+    vi.advanceTimersByTime(200);
+  });
+  expect(result.current.lines.map((item) => item.text)).toEqual([
+    "Newer words.",
+  ]);
+
+  await act(async () => {
+    vi.mocked(api.onLiveState).mock.calls[0][0]({
+      meeting_id: "m1",
+      state: "failed",
+      engine: null,
+      leaves_device: false,
+      notice: "The live model failed to load.",
+    });
+  });
+
+  await answer(
+    loaded({
+      state: "running",
+      lines: [line("mic:1", "Older words.", true, { start_ms: 1000 })],
+    }),
+  );
+
+  expect(result.current.lines.map((item) => item.text)).toEqual([
+    "Older words.",
+    "Newer words.",
+  ]);
+  expect(result.current.transcript?.state).toBe("failed");
+  expect(result.current.transcript?.notice).toBe(
+    "The live model failed to load.",
+  );
+});
+
+it("does not let a stale snapshot partial replace a final that arrived as an event", async () => {
+  const answer = pendingLoad();
+  const { result } = renderHook(() => useLiveTranscript("m1", false));
+  await act(async () => undefined);
+
+  await speak(line("mic:2", "Half a sentence.", true, { start_ms: 4000 }));
+  await act(() => {
+    vi.advanceTimersByTime(200);
+  });
+
+  await answer(
+    loaded({
+      partials: [line("mic:2", "Half a sen", false, { start_ms: 4000 })],
+    }),
+  );
+
+  expect(result.current.lines.map((item) => item.text)).toEqual([
+    "Half a sentence.",
+  ]);
+  expect(result.current.partials).toHaveLength(0);
+});
+
+it("never lets a partial that arrives after a snapshot final replace it", async () => {
+  vi.mocked(api.liveTranscript).mockResolvedValueOnce(
+    loaded({
+      lines: [line("mic:2", "Done.", true, { start_ms: 4000 })],
+    }),
+  );
+  const { result } = await open();
+  expect(result.current.lines.map((item) => item.text)).toEqual(["Done."]);
+
+  await speak(line("mic:2", "Don", false, { start_ms: 4000 }));
+  await act(() => {
+    vi.advanceTimersByTime(200);
+  });
+
+  expect(result.current.lines.map((item) => item.text)).toEqual(["Done."]);
+  expect(result.current.partials).toHaveLength(0);
+});
+
+it("drops updates from a previous meeting after the page switches meetings", async () => {
+  const listeners: Array<(event: LiveTranscriptEvent) => void> = [];
+  vi.mocked(api.onLiveTranscript).mockImplementation(async (callback) => {
+    listeners.push(callback);
+    return () => {};
+  });
+  vi.mocked(api.liveTranscript).mockImplementation(async (meetingId) =>
+    loaded({
+      meeting_id: meetingId,
+      lines:
+        meetingId === "m2"
+          ? [line("mic:9", "Second meeting.", true, { start_ms: 0 })]
+          : [],
+    }),
+  );
+  const { result, rerender } = renderHook(
+    ({ id }) => useLiveTranscript(id, false),
+    { initialProps: { id: "m1" } },
+  );
+  await act(async () => undefined);
+  rerender({ id: "m2" });
+  await act(async () => undefined);
+
+  act(() => {
+    listeners[0]({
+      meeting_id: "m1",
+      line: line("mic:3", "Old meeting words.", true, { start_ms: 100 }),
+    });
+  });
+  await act(() => {
+    vi.advanceTimersByTime(200);
+  });
+
+  expect(result.current.lines.map((item) => item.text)).toEqual([
+    "Second meeting.",
+  ]);
+});

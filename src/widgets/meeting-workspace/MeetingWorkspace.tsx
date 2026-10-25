@@ -1199,6 +1199,7 @@ export function MeetingWorkspace(props: Props) {
                     <textarea
                       aria-label="Edit summary"
                       value={draft.text}
+                      disabled={disabled}
                       onChange={(event) =>
                         props.onSummaryDraft({
                           ...draft,
@@ -1218,7 +1219,10 @@ export function MeetingWorkspace(props: Props) {
                       >
                         Save edited summary
                       </button>
-                      <button onClick={() => props.onSummaryDraft(null)}>
+                      <button
+                        disabled={disabled}
+                        onClick={() => props.onSummaryDraft(null)}
+                      >
                         Discard edit
                       </button>
                     </div>

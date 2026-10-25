@@ -158,6 +158,15 @@ function meetingDuration(selected: MeetingDetail, playable: Playable[]) {
   }, 0);
 }
 
+// play() on an element that has ended, or sits at its duration, restarts it from zero.
+function exhausted(element: HTMLMediaElement | null | undefined) {
+  return (
+    !!element &&
+    (element.ended ||
+      (element.duration > 0 && element.currentTime >= element.duration))
+  );
+}
+
 function timeLabel(segment: MeetingDetail["segments"][number]) {
   return segment.timing.kind === "timed"
     ? formatClock(segment.timing.start_ms)
@@ -354,6 +363,8 @@ export function TranscriptProvider(
 
   const anchorRef = useRef<Anchor | null>(null);
   const playingRef = useRef(false);
+  // Set once a playback run has audio audible; silence after that means every track ended.
+  const heardRef = useRef(false);
   const rateRef = useRef(1);
   const mutedRef = useRef<Record<string, boolean>>({});
   const sessionRef = useRef(0);
@@ -365,6 +376,8 @@ export function TranscriptProvider(
   const retranscribeButton = useRef<HTMLButtonElement | null>(null);
   const retranscribeCancel = useRef<HTMLButtonElement | null>(null);
   const copyTimer = useRef<number | null>(null);
+  // Bumped by each seek, pause and meeting switch; async work from an older generation is dropped.
+  const seekGen = useRef(0);
 
   sessionRef.current = sessionMs;
   playingRef.current = playing;
@@ -411,56 +424,86 @@ export function TranscriptProvider(
 
   const playingIndex = playing ? indexAt(selected.segments, sessionMs) : null;
 
-  const seekTo = useCallback(async (nextMs: number, shouldPlay: boolean) => {
-    const tracks = playableRef.current;
-    // Do not clamp to the meeting length: a segment can start after pauses
-    // that the wall clock does not include. The scrubber clamps on its own.
-    const bounded = Math.max(0, nextMs);
-    const files: Record<string, number> = {};
-    for (const track of tracks) {
-      const file = await propsRef.current.onSeek(track.kind, bounded);
-      if (file === null) return;
-      files[track.kind] = file;
+  // Plays every live track and waits for all of them. If any refuses, nothing stays audible.
+  // A track that already reached its end is left out: play() would restart it from zero.
+  const startPlayback = useCallback(async (tracks: Playable[], gen: number) => {
+    const live = tracks.filter(
+      (track) => !exhausted(propsRef.current.playersRef.current[track.kind]),
+    );
+    if (live.length === 0) {
+      playingRef.current = false;
+      setPlaying(false);
+      return;
     }
-    const leader =
-      tracks.find((track) => !mutedRef.current[track.kind])?.kind ??
-      tracks[0]?.kind;
-    if (!leader) return;
-    // Approximate across pauses inside a recording. Re-anchor at each seek.
-    anchorRef.current = { sessionMs: bounded, files, leader };
-    setSessionMs(bounded);
-    sessionRef.current = bounded;
-    followingRef.current = true;
-    setAway(false);
-    for (const track of tracks) {
-      const element = propsRef.current.playersRef.current[track.kind];
-      if (!element) continue;
-      element.currentTime = (files[track.kind] ?? 0) / 1000;
-      element.playbackRate = rateRef.current;
-      element.muted = !!mutedRef.current[track.kind];
-    }
-    if (!shouldPlay) return;
-    propsRef.current.setPlaybackError("");
-    try {
-      await Promise.all(
-        tracks.map(
-          (track) =>
-            propsRef.current.playersRef.current[track.kind]?.play() ??
-            Promise.resolve(),
-        ),
-      );
-      playingRef.current = true;
-      setPlaying(true);
-    } catch {
+    heardRef.current = false;
+    const results = await Promise.allSettled(
+      live.map(
+        (track) =>
+          propsRef.current.playersRef.current[track.kind]?.play() ??
+          Promise.resolve(),
+      ),
+    );
+    if (gen !== seekGen.current) return;
+    if (results.some((result) => result.status === "rejected")) {
+      for (const track of live)
+        propsRef.current.playersRef.current[track.kind]?.pause();
       playingRef.current = false;
       setPlaying(false);
       propsRef.current.setPlaybackError(
         "Audio could not play. Check your output device and try again.",
       );
+      return;
     }
+    // Audio is audible now, so a later silence means it ended rather than never started.
+    heardRef.current = live.some((track) => {
+      const element = propsRef.current.playersRef.current[track.kind];
+      return !!element && !element.paused;
+    });
+    playingRef.current = true;
+    setPlaying(true);
   }, []);
 
+  const seekTo = useCallback(
+    async (nextMs: number, shouldPlay: boolean) => {
+      const gen = ++seekGen.current;
+      const tracks = playableRef.current;
+      // Do not clamp to the meeting length: a segment can start after pauses
+      // that the wall clock does not include. The scrubber clamps on its own.
+      const bounded = Math.max(0, nextMs);
+      const files: Record<string, number> = {};
+      for (const track of tracks) {
+        const file = await propsRef.current.onSeek(track.kind, bounded);
+        // A newer seek, a pause or another meeting superseded this one.
+        if (gen !== seekGen.current) return;
+        if (file === null) return;
+        files[track.kind] = file;
+      }
+      const leader =
+        tracks.find((track) => !mutedRef.current[track.kind])?.kind ??
+        tracks[0]?.kind;
+      if (!leader) return;
+      // Approximate across pauses inside a recording. Re-anchor at each seek.
+      anchorRef.current = { sessionMs: bounded, files, leader };
+      setSessionMs(bounded);
+      sessionRef.current = bounded;
+      followingRef.current = true;
+      setAway(false);
+      for (const track of tracks) {
+        const element = propsRef.current.playersRef.current[track.kind];
+        if (!element) continue;
+        element.currentTime = (files[track.kind] ?? 0) / 1000;
+        element.playbackRate = rateRef.current;
+        element.muted = !!mutedRef.current[track.kind];
+      }
+      if (!shouldPlay) return;
+      propsRef.current.setPlaybackError("");
+      await startPlayback(tracks, gen);
+    },
+    [startPlayback],
+  );
+
   const pause = useCallback(() => {
+    seekGen.current += 1;
     for (const track of playableRef.current)
       propsRef.current.playersRef.current[track.kind]?.pause();
     playingRef.current = false;
@@ -474,28 +517,20 @@ export function TranscriptProvider(
     }
     if (anchorRef.current) {
       propsRef.current.setPlaybackError("");
-      void Promise.all(
-        playableRef.current.map(
-          (track) =>
-            propsRef.current.playersRef.current[track.kind]?.play() ??
-            Promise.resolve(),
-        ),
-      )
-        .then(() => {
-          playingRef.current = true;
-          setPlaying(true);
-        })
-        .catch(() => {
-          playingRef.current = false;
-          setPlaying(false);
-          propsRef.current.setPlaybackError(
-            "Audio could not play. Check your output device and try again.",
-          );
-        });
+      // Every track has finished: Play starts the meeting again.
+      if (
+        playableRef.current.every((track) =>
+          exhausted(propsRef.current.playersRef.current[track.kind]),
+        )
+      ) {
+        void seekTo(0, true);
+        return;
+      }
+      void startPlayback(playableRef.current, ++seekGen.current);
       return;
     }
     void seekTo(sessionRef.current, true);
-  }, [pause, seekTo]);
+  }, [pause, seekTo, startPlayback]);
 
   const setRate = useCallback((next: number) => {
     rateRef.current = next;
@@ -544,6 +579,7 @@ export function TranscriptProvider(
     mutedRef.current = {};
     followingRef.current = true;
     sessionRef.current = 0;
+    seekGen.current += 1;
   }, [meeting.id]);
 
   useEffect(() => {
@@ -556,12 +592,51 @@ export function TranscriptProvider(
     if (!playing) return;
     let frame = 0;
     let painted = 0;
+    const audible = (kind: string) => {
+      const element = propsRef.current.playersRef.current[kind];
+      return element && !element.paused ? element : null;
+    };
+    const finish = (anchor: Anchor | null) => {
+      // Show the furthest point any track reached, not a frozen position.
+      let end = sessionRef.current;
+      if (anchor) {
+        for (const track of playableRef.current) {
+          const element = propsRef.current.playersRef.current[track.kind];
+          if (!element) continue;
+          end = Math.max(
+            end,
+            sessionFromFile(
+              anchor.sessionMs,
+              anchor.files[track.kind] ?? 0,
+              element.currentTime,
+            ),
+          );
+        }
+      }
+      playingRef.current = false;
+      sessionRef.current = end;
+      setSessionMs(end);
+      setPlaying(false);
+    };
     const tick = (now: number) => {
-      const anchor = anchorRef.current;
-      const leader = anchor
-        ? propsRef.current.playersRef.current[anchor.leader]
-        : null;
-      if (anchor && leader && !leader.paused) {
+      let anchor = anchorRef.current;
+      // A shorter track that ends reports itself paused. Move the clock to a track still playing.
+      if (anchor && !audible(anchor.leader)) {
+        const next = playableRef.current.find((track) => audible(track.kind));
+        if (next) {
+          anchor = { ...anchor, leader: next.kind };
+          anchorRef.current = anchor;
+        }
+      }
+      if (playableRef.current.some((track) => audible(track.kind))) {
+        heardRef.current = true;
+      } else if (heardRef.current) {
+        // Every track ended or paused on its own: leave the Pause state.
+        finish(anchor);
+        return;
+      }
+      const leader = anchor ? audible(anchor.leader) : null;
+      if (anchor && leader) {
         const session = sessionFromFile(
           anchor.sessionMs,
           anchor.files[anchor.leader] ?? 0,
@@ -1301,7 +1376,11 @@ function SegmentView(props: {
   const playing = model.playingIndex === props.index;
   const active = meta !== undefined && model.hoverId === meta.id && !draft;
   const startEdit = () => {
-    if (props.editLocked || !meta || draft) return;
+    // Another segment's draft, such as one whose save failed, stays until it is saved or cancelled.
+    const pending =
+      model.segmentDraft !== null &&
+      model.segmentDraft.meetingId === model.selected.meeting.id;
+    if (props.editLocked || !meta || draft || pending) return;
     model.onSegmentDraft({
       meetingId: model.selected.meeting.id,
       segmentId: meta.id,

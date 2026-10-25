@@ -326,8 +326,19 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
-def _port(stored: Optional[int]) -> int:
-    """The saved port while it is free, else 39281, else any free loopback port."""
+def _owned(ctx: Context, port: Optional[int]) -> bool:
+    """True when the managed server already runs on this port, so the port is ours, not taken."""
+    supervisor = _supervisor(ctx)
+    if supervisor is None or port is None:
+        return False
+    spec = supervisor.spec
+    return spec is not None and spec.port == port and supervisor.state in ("starting", "running")
+
+
+def _port(stored: Optional[int], owned: bool = False) -> int:
+    """The saved port while it is ours or free, else 39281, else any free loopback port."""
+    if stored and owned:
+        return int(stored)
     for candidate in (stored, PREFERRED_PORT):
         if candidate and _free(int(candidate)):
             return int(candidate)
@@ -439,11 +450,12 @@ def _ensure_connection(ctx: Context, db: Any, row: Row, base: str) -> tuple[str,
                 "The Local AI connection could not be saved. Reload Settings and try again.",
             )
         return created, key
-    key = _key_of(existing)
-    replace = key is None
-    if key is None:
-        key = secrets.token_urlsafe(KEY_BYTES)
-    if replace or existing["base_url"] != base or existing["name"] != CONNECTION_NAME:
+    # A stored key is reused only for this same local destination. Any other address (a changed
+    # port, or a connection edited to a remote address) gets a new key, so no other credential
+    # ever reaches the local server.
+    stored = _key_of(existing) if existing["base_url"] == base else None
+    key = stored if stored is not None else secrets.token_urlsafe(KEY_BYTES)
+    if stored is None or existing["name"] != CONNECTION_NAME or existing["base_url"] != base:
         connections.save_api_connection(
             ctx,
             existing["id"],
@@ -566,7 +578,7 @@ def local_ai_use(ctx: Context, model_id: Any) -> dict[str, Any]:
     with ctx.store.lock:
         db = ctx.store.db
         row = _row(db)
-        port = _port(row.port)
+        port = _port(row.port, _owned(ctx, row.port))
         base = server.base_url(port)
         connection_id, key = _ensure_connection(ctx, db, row, base)
         _assign_llm(ctx, db, connection_id, _alias(model_id))
@@ -635,12 +647,26 @@ def local_ai_start(ctx: Context) -> dict[str, Any]:
         )
         if connection is None:
             raise AppError("local_ai_connection", "Choose a Local AI model first.")
-        key = _key_of(connection)
-        if key is None:
-            raise AppError("local_ai_key", "The Local AI key is missing. Choose the model again.")
-        port = _port(row.port)
-        if port != row.port:
-            _save_row(db, Row(row.backend, port, row.active_model, row.connection_id))
+        if not providers.is_local_base(connection["base_url"]):
+            raise AppError(
+                "local_ai_connection",
+                "The Local AI connection points to a remote address, so the server was not "
+                "started. Choose the model again in Local AI.",
+            )
+        port = _port(row.port, _owned(ctx, row.port))
+        base = server.base_url(port)
+        if base == connection["base_url"]:
+            key = _key_of(connection)
+            if key is None:
+                raise AppError(
+                    "local_ai_key", "The Local AI key is missing. Choose the model again."
+                )
+            connection_id = connection["id"]
+        else:
+            # The port moved: the saved address and the row change together, with a new key.
+            connection_id, key = _ensure_connection(ctx, db, row, base)
+        if (port, connection_id) != (row.port, row.connection_id):
+            _save_row(db, Row(row.backend, port, row.active_model, connection_id))
         fit_kind = _fit_of(
             catalog, hardware_now, pin, pin.size_bytes if pin else path.stat().st_size
         )
@@ -669,7 +695,7 @@ def ensure_ready(ctx: Context, config: Optional[dict[str, Any]]) -> None:
     with ctx.store.lock:
         db = ctx.store.db
         row = _row(db)
-        if row.connection_id is None or row.active_model is None or row.port is None:
+        if row.connection_id is None or row.port is None:
             return
         connection = reads.saved_connection(db, row.connection_id)
     if connection is None:
@@ -677,6 +703,15 @@ def ensure_ready(ctx: Context, config: Optional[dict[str, Any]]) -> None:
     expected = (connection["base_url"] or "").rstrip("/")
     if (config.get("base_url") or "").rstrip("/") != expected:
         return
+    # Only a connection saved for this managed server may start it. A remote or other local
+    # address never receives this server's key, and this server never starts for it.
+    if expected != server.base_url(row.port):
+        return
+    if row.active_model is None:
+        raise AppError(
+            "local_ai_model",
+            "The Local AI model was removed. Choose a model in Local AI, then try again.",
+        )
     path, pin = _model_path(ctx, catalog, row.active_model)
     key = _key_of(connection)
     if key is None:

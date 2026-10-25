@@ -720,6 +720,25 @@ it("switches the AI branch on a click and saves nothing", async () => {
   expect(input.onProcessing).not.toHaveBeenCalled();
 });
 
+it("keeps the saved AI destination in view while the other branch is shown", async () => {
+  const remote = {
+    ...settings,
+    llm: { base_url: "https://api.openai.com/v1", model: "gpt", revision: 1 },
+  };
+  render(<SettingsPanel {...props()} settings={remote} initialSection="ai" />);
+  await userEvent.click(
+    within(screen.getByRole("group", { name: "Notes written" })).getByRole(
+      "button",
+      { name: /^On this PC/ },
+    ),
+  );
+  expect(hiddenBy(group("AI notes", "Local AI"))).toBe(false);
+  expect(
+    screen.getByText(/Saved destination: .*api\.openai\.com/),
+  ).toBeTruthy();
+  expect(screen.getByText(/Switching this view saves nothing/)).toBeTruthy();
+});
+
 it("finds a connection setting while the other AI branch is chosen", async () => {
   render(<SettingsPanel {...props()} />);
   // The API key field lives in the connection branch, which is hidden on this PC.

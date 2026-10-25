@@ -59,3 +59,13 @@ it("finds case-insensitive non-overlapping matches and ignores a blank query", (
     { segmentIndex: 0, start: 1, end: 4 },
   ]);
 });
+
+it("keeps match offsets when lowercasing changes the string length", () => {
+  // "İ" lowercases to two code units; a lowered copy would shift every later offset.
+  expect(findInSegments(["İ lock"], "lock")).toEqual([
+    { segmentIndex: 0, start: 2, end: 6 },
+  ]);
+  expect(findInSegments(["İİ export"], "export")).toEqual([
+    { segmentIndex: 0, start: 3, end: 9 },
+  ]);
+});

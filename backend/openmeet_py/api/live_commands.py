@@ -35,13 +35,15 @@ from openmeet_py.api.errors import AppError
 from openmeet_py.domain import providers
 from openmeet_py.platform import keys
 from openmeet_py.speech import cloud_stt, live, model_library, stt, streaming_models
+from openmeet_py.speech.live.session import INCOMPLETE_NOTICE
 
 log = logging.getLogger("openmeet_py")
 
 MAX_LINES = 20_000
 MAX_TEXT_BYTES = 8 * 1024 * 1024
-INCOMPLETE = "Live transcript is incomplete. The final transcript will have everything."
+INCOMPLETE = INCOMPLETE_NOTICE
 FAILED = "Live transcript stopped because the speech engine failed."
+STALE_CLOUD = "The saved cloud settings changed, so live cloud transcript stopped. Start a new recording to use them."
 MODEL_CHOICE = "Choose a listed live transcript model."
 MODEL_BUSY = "A live model download is already running. Cancel it first."
 MODEL_UNKNOWN = "That live model is not a download. Choose a streaming model."
@@ -77,7 +79,7 @@ class LiveService:
         self._meetings: dict[str, _Meeting] = {}
         self._writes: "queue.SimpleQueue[Any]" = queue.SimpleQueue()
         self._writer: Optional[threading.Thread] = None
-        self._finishing: list[threading.Thread] = []
+        self._finishing: list[tuple[Any, threading.Thread]] = []  # (session, drain thread) of stopped recordings
         self._closing = False
         # One download at a time, with the event live_model_cancel sets.
         self._install_lock = threading.Lock()
@@ -147,7 +149,7 @@ class LiveService:
 
         thread = threading.Thread(target=drain, name="openmeet-live-finish", daemon=True)
         with self._lock:
-            self._finishing = [item for item in self._finishing if item.is_alive()] + [thread]
+            self._finishing = [item for item in self._finishing if item[1].is_alive()] + [(session, thread)]
         thread.start()
 
     def abandon(self, session: Any) -> None:
@@ -167,10 +169,14 @@ class LiveService:
     def quit(self) -> None:
         """App closing: finish what was stopped, cancel what still runs, and stop the store thread."""
         with self._lock:
-            finishing = list(self._finishing)
+            finishing = [item for item in self._finishing if item[1].is_alive()]
+            # A stop that is already draining keeps its session: cancelling it would drop its final lines.
+            draining = [session for session, _ in finishing]
             cancel = self._install_cancel
             sessions = [
-                entry.session for entry in self._meetings.values() if entry.session is not None
+                entry.session
+                for entry in self._meetings.values()
+                if entry.session is not None and not any(entry.session is item for item in draining)
             ]
             for entry in self._meetings.values():
                 entry.session = None
@@ -183,7 +189,7 @@ class LiveService:
                 continue
         # A session that was already stopped still has finals to flush; joining it before closing the
         # queue is what keeps those lines. Only then does the store stop accepting new ones.
-        for thread in finishing:
+        for _, thread in finishing:
             thread.join(STOP_TIMEOUT)
         self._closing = True
         self.drain(DRAIN_TIMEOUT)
@@ -354,11 +360,14 @@ class LiveService:
         ]
         with self._lock:
             entry = self._meetings.get(meeting_id)
-            running = entry is not None and entry.session is not None
+            session = entry.session if entry is not None else None
+            running = session is not None
             state = entry.state if entry is not None else "off"
             engine = entry.engine if entry is not None else None
             leaves = entry.leaves_device if entry is not None else False
             notice = entry.notice if entry is not None else None
+            if running and getattr(session, "incomplete", False) is True and notice is None:
+                notice = INCOMPLETE  # a dropped block shows while the recording runs, not only after it stops
             partials = (
                 [entry.partials[lane] for lane in ("mic", "system") if lane in entry.partials]
                 if entry is not None and running
@@ -462,8 +471,8 @@ class LiveService:
         It is the same provider connection, key and client the final cloud pass uses. A request is
         never retried and its body is capped; the CloudDecoder keeps the per-recording limits.
         """
-        with self.ctx.store.lock:
-            config = reads.provider_config(self.ctx.store.db, "cloud_stt")
+        saved = self._cloud_saved()
+        config = saved[1]
         if config is None:
             return None
         connection = providers.load_connection(config, self.ctx.transport)
@@ -476,7 +485,13 @@ class LiveService:
             "Cannot reach the transcription provider. Check its API base URL and connection.",
         )
 
+        def unchanged() -> None:
+            """The saved live choice, speech options and cloud connection are still the ones this recording uses."""
+            if self._cloud_saved() != saved:
+                raise AppError("live_model", STALE_CLOUD)
+
         def upload(samples16k: np.ndarray) -> str:
+            unchanged()  # before the request: nothing leaves the device once the saved settings changed
             data = {"model": model, "response_format": "json"}
             if language != "auto":
                 data["language"] = language
@@ -499,9 +514,20 @@ class LiveService:
                     raise
                 except httpx.HTTPError:
                     raise unreachable from None
+            unchanged()  # a reply to a request sent under older settings is never published
             return _text_of(bytes(payload))
 
         return upload
+
+    def _cloud_saved(self) -> tuple[tuple[Any, ...], Optional[dict[str, Any]]]:
+        """The saved values a cloud upload depends on, read together, and the cloud connection row."""
+        with self.ctx.store.lock:
+            db = self.ctx.store.db
+            row = db.execute(
+                "SELECT live_transcript, live_model, stt_mode, stt_language, stt_prompt FROM settings WHERE id = 1"
+            ).fetchone()
+            config = reads.provider_config(db, "cloud_stt")
+        return (tuple(row) if row is not None else ()), config
 
 
 def _unusable() -> AppError:
@@ -535,8 +561,8 @@ def _wav_bytes(samples16k: np.ndarray) -> bytes:
 
 
 def _wants_cloud(settings: dict[str, Any]) -> bool:
-    model = settings.get("live_model") or ""
-    return model == "cloud" or (model == "" and settings.get("stt_mode") == "cloud")
+    """Only an explicit Cloud connection choice uploads audio; Same as Transcription never does."""
+    return settings.get("live_model") == "cloud"
 
 
 def _valid_model(ctx: Context, model: str) -> bool:

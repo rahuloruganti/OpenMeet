@@ -18,6 +18,7 @@ from openmeet_py.api.errors import AppError
 from openmeet_py.speech import sherpa_models, stt, streaming_models
 from openmeet_py.speech.live.contract import TARGET_RATE, Resolved
 from openmeet_py.speech.live.decoders import (
+    CloudBudget,
     CloudDecoder,
     FakeDecoder,
     LevelGate,
@@ -32,6 +33,10 @@ SAME_LABEL = "Same as Transcription"
 CLOUD_LABEL = "Cloud connection"
 FAKE_LABEL = "Test speech engine"
 CLOUD_REASON = "Save a cloud transcription connection in Settings first."
+SAME_CLOUD_REASON = (
+    "Same as Transcription is unavailable while Transcription is cloud, so nothing uploads. "
+    "Choose the explicit Cloud connection live model to send live audio to the cloud, or a local model."
+)
 CHOOSE_REASON = "Choose a live transcript model in Settings."
 DOWNLOAD_REASON = "Download the Transcription model in Settings first."
 MISSING_ENGINE = "The speech engine is missing from this build. Reinstall OpenMeet."
@@ -124,10 +129,11 @@ def _cloud_label(settings: dict) -> str:
 def _cloud(settings: dict, cloud_transcribe: Optional[Callable[[np.ndarray], str]], root: Path) -> Resolved:
     if cloud_transcribe is None:
         raise AppError("live_model", CLOUD_REASON)
+    budget = CloudBudget()  # one per recording: both lanes draw from the same requests and bytes
     return Resolved(
         _cloud_label(settings),
         True,
-        lambda: CloudDecoder(cloud_transcribe, gate=_gate(root)),
+        lambda: CloudDecoder(cloud_transcribe, gate=_gate(root), budget=budget),
     )
 
 
@@ -139,9 +145,10 @@ def _sherpa_label(model_id: str) -> str:
     return model_id.split(":", 1)[-1]
 
 
-def _same(root: Path, settings: dict, cloud_transcribe: Optional[Callable[[np.ndarray], str]]) -> Resolved:
+def _same(root: Path, settings: dict) -> Resolved:
     if str(settings.get("stt_mode") or "local") == CLOUD:
-        return _cloud(settings, cloud_transcribe, root)
+        # Same as Transcription never uploads: cloud live audio needs the explicit Cloud connection model.
+        raise AppError("live_model", SAME_CLOUD_REASON)
     model_id = str(settings.get("stt_model") or "")
     language = str(settings.get("stt_language") or "auto")
     if not model_id:
@@ -196,7 +203,7 @@ def resolve(root: Path, settings: dict,
     if model_id == CLOUD:
         return _cloud(settings, cloud_transcribe, root)
     if model_id == "":
-        return _same(root, settings, cloud_transcribe)
+        return _same(root, settings)
     if streaming_models.is_streaming(model_id):
         return _streaming(root, model_id)
     raise AppError("live_model", CHOOSE_REASON)
@@ -224,12 +231,12 @@ def _row(model_id: str, label: str, kind: str, installed: bool, download_bytes: 
     }
 
 
-def _same_state(root: Path, settings: dict, cloud_ready: bool) -> tuple[bool, Optional[str], bool]:
+def _same_state(root: Path, settings: dict) -> tuple[bool, Optional[str], bool]:
     """(installed, reason, leaves_device) for the "same as Transcription" row."""
     if stt.fake_engine():
         return True, None, False
     if str(settings.get("stt_mode") or "local") == CLOUD:
-        return bool(cloud_ready), None if cloud_ready else CLOUD_REASON, True
+        return False, SAME_CLOUD_REASON, False
     model_id = str(settings.get("stt_model") or "")
     if not model_id:
         return False, DOWNLOAD_REASON, False
@@ -253,7 +260,7 @@ def listing(root: Path, settings: dict, cloud_ready: bool, installing: Optional[
     """The LiveModels shape: every choice with its installed state and one-sentence reason."""
     chosen = selected(settings)
     fake = stt.fake_engine()
-    same_ready, same_reason, same_leaves = _same_state(root, settings, cloud_ready)
+    same_ready, same_reason, same_leaves = _same_state(root, settings)
     rows: list[dict[str, Any]] = [
         _row("", SAME_LABEL, "same", same_ready, None, same_leaves, _languages(settings), same_reason)
     ]

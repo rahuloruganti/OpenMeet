@@ -17,11 +17,13 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import httpx
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 from conftest import TOKEN, invoke, invoke_error
 from openmeet_py.api import live_commands
+from openmeet_py.api.errors import AppError
 from openmeet_py.api.server import create_app
 from openmeet_py.audio.audio_backend import FakeBackend
 from openmeet_py.infra.store import DB_FILE, Store
@@ -475,6 +477,165 @@ def test_quitting_a_recording_keeps_the_lines_the_finish_thread_flushes(
     finally:
         store.close()
     assert [row[0] for row in rows] == ["Fictional flushed line"]
+
+
+class DrainSession(SpySession):
+    """A stop that is still draining when quit arrives: it emits its final only if it was not cancelled."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.incomplete = False
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+        self.cancel_calls = 0
+
+    def stop(self, timeout: float = 10.0) -> None:
+        self.stops += 1
+        self.entered.set()
+        self.gate.wait(5.0)
+        if self.cancelled:
+            return
+        self.on_line(
+            {
+                "id": "mic:drain",
+                "lane": "mic",
+                "speaker": "You",
+                "start_ms": 0,
+                "end_ms": 900,
+                "text": "Fictional draining line",
+                "final": True,
+            }
+        )
+        self.on_state({"state": "stopped", "engine": self.resolved.label, "leaves_device": False})
+
+    def cancel(self) -> None:
+        self.cancel_calls += 1
+        super().cancel()
+
+
+def test_quit_keeps_the_finals_of_a_stop_that_is_already_draining(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENMEET_PY_FAKE_STT", "1")
+    DrainSession.made.clear()
+    monkeypatch.setattr(live_module, "LiveSession", DrainSession)
+    client = build(tmp_path)
+    ctx = ctx_of(client)
+    try:
+        meeting = start(client)["meeting_id"]
+        session = ctx.recorder.session.live
+        assert isinstance(session, DrainSession)
+        invoke(client, "stop_recording")
+        assert session.entered.wait(5)  # the drain thread is inside stop(), waiting on its decoder
+        threading.Timer(0.2, session.gate.set).start()
+        ctx.live.quit()  # shutdown while the stop still drains
+        assert session.cancel_calls == 0
+        rows = ctx.store.db.execute(
+            "SELECT text FROM live_lines WHERE meeting_id = ?1", (meeting,)
+        ).fetchall()
+        assert [row[0] for row in rows] == ["Fictional draining line"]
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_same_as_transcription_with_cloud_transcription_never_uploads_from_a_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENMEET_PY_FAKE_STT", raising=False)
+    client = build(tmp_path)
+    try:
+        ctx = ctx_of(client)
+        with ctx.store.lock:
+            ctx.store.db.execute("UPDATE settings SET stt_mode = 'cloud' WHERE id = 1")
+        invoke(client, "save_live_settings", enabled=True, model="")
+        uploads: list[int] = []
+        monkeypatch.setattr(
+            live_commands.LiveService, "_cloud_upload", lambda self, settings: uploads.append(1) or None
+        )
+        meeting = start(client)["meeting_id"]
+        data = transcript(client, meeting)
+        assert (data["state"], data["engine"], data["leaves_device"]) == ("off", None, False)
+        assert "explicit Cloud connection" in data["notice"]
+        assert uploads == []
+        same = next(row for row in invoke(client, "live_models")["models"] if row["id"] == "")
+        assert (same["installed"], same["leaves_device"]) == (False, False)
+        invoke(client, "stop_recording")
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_a_saved_cloud_change_stops_the_upload_before_any_request(tmp_path: Path) -> None:
+    """The upload closure rechecks the saved settings and connection before each send and before publishing."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"text": "hello"})
+
+    client = build(tmp_path)
+    try:
+        ctx = ctx_of(client)
+        ctx.transport = httpx.MockTransport(handler)
+        saved = invoke(
+            client, "save_api_connection", id=None, name="Local", baseUrl="http://127.0.0.1:1234/v1",
+            keyChange={"kind": "remove"}, expectedRevision=None,
+        )
+        connection_id = saved["saved_connections"][0]["id"]
+        invoke(
+            client, "save_provider_assignment", role="cloud_stt",
+            selection={"kind": "assigned", "connection_id": connection_id, "model": "whisper-1"},
+            expectedRevision=None,
+        )
+        invoke(client, "save_live_settings", enabled=True, model="cloud")
+        upload = ctx.live._cloud_upload(invoke(client, "get_settings"))
+        assert upload is not None
+        assert upload(np.zeros(1600, dtype=np.float32)) == "hello"
+        assert len(requests) == 1
+
+        invoke(client, "save_live_settings", enabled=True, model="")  # the saved live choice changed
+        with pytest.raises(AppError) as info:
+            upload(np.zeros(1600, dtype=np.float32))
+        assert info.value.code == "live_model"
+        assert len(requests) == 1  # nothing was sent after the change
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_disabling_live_transcript_stops_a_cloud_upload_before_any_request(tmp_path: Path) -> None:
+    """Turning Live off, with the cloud model still saved, invalidates the recording's captured cloud config."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"text": "hello"})
+
+    client = build(tmp_path)
+    try:
+        ctx = ctx_of(client)
+        ctx.transport = httpx.MockTransport(handler)
+        saved = invoke(
+            client, "save_api_connection", id=None, name="Local", baseUrl="http://127.0.0.1:1234/v1",
+            keyChange={"kind": "remove"}, expectedRevision=None,
+        )
+        connection_id = saved["saved_connections"][0]["id"]
+        invoke(
+            client, "save_provider_assignment", role="cloud_stt",
+            selection={"kind": "assigned", "connection_id": connection_id, "model": "whisper-1"},
+            expectedRevision=None,
+        )
+        invoke(client, "save_live_settings", enabled=True, model="cloud")
+        upload = ctx.live._cloud_upload(invoke(client, "get_settings"))
+        assert upload is not None
+        assert upload(np.zeros(1600, dtype=np.float32)) == "hello"
+        assert len(requests) == 1
+
+        invoke(client, "save_live_settings", enabled=False, model="cloud")  # only the on/off switch changed
+        with pytest.raises(AppError) as info:
+            upload(np.zeros(1600, dtype=np.float32))
+        assert info.value.code == "live_model"
+        assert len(requests) == 1  # nothing was sent after Live was turned off
+    finally:
+        client.__exit__(None, None, None)
 
 
 # ---- streaming model install -------------------------------------------------

@@ -9,16 +9,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import socket
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from conftest import MemoryKeyring, invoke, invoke_error
+from openmeet_py.api import reads
+from openmeet_py.api.errors import AppError
 from openmeet_py.infra.store import Store
 from openmeet_py.local_ai import catalog, engine, hardware, server, service
 from stt_fixtures import add_meeting
@@ -586,3 +590,153 @@ def test_a_populated_v30_database_gains_the_row_and_keeps_its_notes(tmp_path: Pa
             store.db.execute("INSERT INTO local_ai (id) VALUES (2)")
     finally:
         store.close()
+
+
+# ---- port, destination, key and removed model ----------------------------------------
+
+CLOUD_KEY = "fictional-cloud-key-not-real"
+REMOTE = "https://api.example.com/v1"
+
+
+@contextmanager
+def another_program_on(port: int) -> Iterator[None]:
+    """Holds a loopback port the way a running llama-server (or any other program) would."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        listener.bind((server.HOST, port))
+        listener.listen()
+        yield
+    finally:
+        listener.close()
+
+
+def start_local_model(client: TestClient) -> None:
+    """Downloads the tiny model and makes it the default; the fake server is running."""
+    use_transport(client, [])
+    invoke(client, "local_ai_download_model", modelId="tiny-model")
+    invoke(client, "local_ai_use", modelId="tiny-model")
+
+
+def saved_port(client: TestClient) -> int:
+    db = client.app.state.ctx.store.db  # type: ignore[attr-defined]
+    return int(db.execute("SELECT port FROM local_ai WHERE id = 1").fetchone()[0])
+
+
+def saved_connection(client: TestClient) -> dict[str, Any]:
+    db = client.app.state.ctx.store.db  # type: ignore[attr-defined]
+    connection_id = db.execute("SELECT connection_id FROM local_ai WHERE id = 1").fetchone()[0]
+    found = reads.saved_connection(db, connection_id)
+    assert found is not None
+    return found
+
+
+def point_connection_at_remote(client: TestClient, key: str) -> None:
+    """The user edits the Local AI connection in Settings to a cloud address with a cloud key."""
+    connection = saved_connection(client)
+    invoke(
+        client,
+        "save_api_connection",
+        id=connection["id"],
+        name="Local AI",
+        baseUrl=REMOTE,
+        keyChange={"kind": "replace", "key": key},
+        expectedRevision=connection["revision"],
+    )
+
+
+def test_start_reuses_the_port_its_own_server_already_holds(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
+) -> None:
+    start_local_model(client)
+    port = saved_port(client)
+    spawned = len(spawns)
+
+    with another_program_on(port):  # the running llama-server holds its own port
+        status = invoke(client, "local_ai_start")
+
+    assert status["server"] in ("starting", "running")
+    assert saved_port(client) == port
+    assert saved_connection(client)["base_url"] == server.base_url(port)
+    assert len(spawns) == spawned, "a server already on its port is not restarted"
+
+
+def test_start_on_a_taken_port_moves_the_row_and_the_saved_address_together(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any], memory_keyring: MemoryKeyring
+) -> None:
+    start_local_model(client)
+    old_port = saved_port(client)
+    old_key = spawns[-1][0].api_key
+    invoke(client, "local_ai_stop")
+
+    with another_program_on(old_port):  # a different program now owns the saved port
+        invoke(client, "local_ai_start")
+
+    port = saved_port(client)
+    assert port != old_port
+    assert saved_connection(client)["base_url"] == server.base_url(port)
+    spec, _process = spawns[-1]
+    assert spec.port == port and spec.base_url == saved_connection(client)["base_url"]
+    assert spec.api_key != old_key, "a changed destination needs a new key"
+    assert spec.api_key == next(iter(memory_keyring.items.values()))
+
+
+def test_a_local_connection_edited_to_a_remote_address_is_never_started_with_its_key(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
+) -> None:
+    start_local_model(client)
+    invoke(client, "local_ai_stop")
+    point_connection_at_remote(client, CLOUD_KEY)
+    spawned = len(spawns)
+
+    status, body = invoke_error(client, "local_ai_start")
+
+    assert (status, body["code"]) == (400, "local_ai_connection")
+    assert "remote" in body["message"]
+    assert len(spawns) == spawned
+    assert all(spec.api_key != CLOUD_KEY for spec, _ in spawns)
+
+
+def test_use_after_a_remote_edit_gives_the_server_a_new_key_not_the_cloud_one(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any], memory_keyring: MemoryKeyring
+) -> None:
+    start_local_model(client)
+    point_connection_at_remote(client, CLOUD_KEY)
+
+    invoke(client, "local_ai_use", modelId="tiny-model")
+
+    spec, _process = spawns[-1]
+    assert spec.api_key != CLOUD_KEY
+    assert CLOUD_KEY not in memory_keyring.items.values()
+    assert spec.api_key == next(iter(memory_keyring.items.values()))
+    assert saved_connection(client)["base_url"] == server.base_url(saved_port(client))
+
+
+def test_a_summary_never_starts_the_server_with_a_remote_connections_key(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
+) -> None:
+    start_local_model(client)
+    invoke(client, "local_ai_stop")
+    point_connection_at_remote(client, CLOUD_KEY)
+    spawned = len(spawns)
+
+    service.ensure_ready(client.app.state.ctx, {"base_url": REMOTE})  # type: ignore[attr-defined]
+
+    assert len(spawns) == spawned
+    assert all(spec.api_key != CLOUD_KEY for spec, _ in spawns)
+
+
+def test_a_removed_assigned_model_is_reported_before_a_request_reaches_a_dead_server(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
+) -> None:
+    start_local_model(client)
+    invoke(client, "local_ai_stop")
+    invoke(client, "local_ai_remove_model", modelId="tiny-model")
+    spawned = len(spawns)
+    config = {"base_url": saved_connection(client)["base_url"]}
+
+    with pytest.raises(AppError) as raised:
+        service.ensure_ready(client.app.state.ctx, config)  # type: ignore[attr-defined]
+
+    assert raised.value.code == "local_ai_model"
+    assert "removed" in raised.value.message and "Local AI" in raised.value.message
+    assert len(spawns) == spawned

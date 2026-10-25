@@ -36,17 +36,31 @@ export function formatTranscript(turns: readonly CopyTurn[]): string {
 
 export type TextMatch = { segmentIndex: number; start: number; end: number };
 
+/**
+ * Lowercases per code point and keeps each code point's UTF-16 length, so offsets
+ * found in the folded text are valid in the original. Full lowercasing can expand
+ * a character (e.g. "İ" becomes two code units) and shift every later match.
+ */
+function foldCase(text: string): string {
+  let folded = "";
+  for (const char of text) {
+    const lower = char.toLowerCase();
+    folded += lower.length === char.length ? lower : char;
+  }
+  return folded;
+}
+
 /** Case-insensitive non-overlapping substring matches. Empty or whitespace query returns []. */
 export function findInSegments(
   texts: readonly string[],
   query: string,
 ): TextMatch[] {
-  const needle = query.trim().toLowerCase();
+  const needle = foldCase(query.trim());
   if (needle.length === 0) return [];
   const matches: TextMatch[] = [];
   for (let segmentIndex = 0; segmentIndex < texts.length; segmentIndex += 1) {
     const text = texts[segmentIndex] ?? "";
-    const haystack = text.toLowerCase();
+    const haystack = foldCase(text);
     let from = 0;
     while (from < haystack.length) {
       const start = haystack.indexOf(needle, from);

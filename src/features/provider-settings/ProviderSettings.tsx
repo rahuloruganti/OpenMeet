@@ -99,16 +99,27 @@ export function ConnectionEditor(props: Props) {
   const [name, setName] = useState("");
   const [model, setModel] = useState(assignment?.model ?? "");
   const [status, setStatus] = useState<KeyStatus>("unavailable");
-  // Model IDs belong to one URL and saved revision, so an older answer never renders.
+  // Model IDs belong to one URL, saved revision and key edit, so an older answer never renders.
   const [found, setFound] = useState<{
     scope: string;
     models: ProviderModel[];
+    edit: number;
   } | null>(null);
+  // Counts key edits, never the key: a Test or model list from before an edit is stale.
+  const keyEdits = useRef(0);
+  const [keyEpoch, setKeyEpoch] = useState(0);
+  const editKey = () => {
+    keyEdits.current += 1;
+    setKeyEpoch(keyEdits.current);
+  };
   const [baseUrl, setBaseUrl] = useState("");
   const scopeOf = (id: string, revision: number | null, url: string) =>
     `${id}|${revision ?? ""}|${url.trim()}`;
   const scope = scopeOf(selected, connection?.revision ?? null, baseUrl);
-  const discovered = found && found.scope === scope ? found.models : [];
+  const discovered =
+    found && found.scope === scope && found.edit === keyEpoch
+      ? found.models
+      : [];
   // The scope on screen now, so a slow Test answer for an older revision prints nothing.
   const liveScope = useRef(scope);
   liveScope.current = scope;
@@ -180,8 +191,12 @@ export function ConnectionEditor(props: Props) {
   const [tested, setTested] = useState<{
     scope: string;
     ok: boolean;
+    edit: number;
   } | null>(null);
-  const testResult = tested && tested.scope === scope ? tested : null;
+  const testResult =
+    tested && tested.scope === scope && tested.edit === keyEpoch
+      ? tested
+      : null;
   const usable = modelsFor(discovered, props.role);
   const modelListed = usable.some((item) => item.id === model);
   const removeReason =
@@ -234,7 +249,11 @@ export function ConnectionEditor(props: Props) {
   }, [assignment?.model]);
   useEffect(() => {
     const field = password.current;
-    if (!props.active && field) field.value = "";
+    if (!props.active && field) {
+      field.value = "";
+      keyEdits.current += 1;
+      setKeyEpoch(keyEdits.current);
+    }
     return () => {
       if (field) field.value = "";
     };
@@ -290,6 +309,7 @@ export function ConnectionEditor(props: Props) {
     )
       return;
     if (password.current) password.current.value = "";
+    editKey();
     switches.current += 1;
     // A new connection starts on the first provider that serves this task.
     if (id === "") setProvider(presets[0]?.id ?? CUSTOM_PROVIDER);
@@ -299,6 +319,7 @@ export function ConnectionEditor(props: Props) {
   };
   const changeProvider = (id: string) => {
     if (password.current) password.current.value = "";
+    editKey();
     switches.current += 1;
     setProvider(id);
     setError("");
@@ -360,11 +381,18 @@ export function ConnectionEditor(props: Props) {
           return;
         }
         try {
+          // Read after the save above, so this listing's own publication is not stale.
+          const edit = keyEdits.current;
           const listed = await api.listApiConnectionModels(
             listTarget.id,
             listTarget.revision,
           );
-          if (!alive.current || switches.current !== attempt) return;
+          if (
+            !alive.current ||
+            switches.current !== attempt ||
+            keyEdits.current !== edit
+          )
+            return;
           setFound({
             scope: scopeOf(
               listTarget.id,
@@ -372,6 +400,7 @@ export function ConnectionEditor(props: Props) {
               listTarget.base_url,
             ),
             models: listed,
+            edit,
           });
           chosen = modelsFor(listed, props.role)[0]?.id ?? "";
           setModel(chosen);
@@ -417,6 +446,7 @@ export function ConnectionEditor(props: Props) {
     run(async () => {
       const key = password.current?.value.trim() ?? "";
       const attempt = switches.current;
+      const edit = keyEdits.current;
       const target = scope;
       try {
         const listed = await api.testApiConnection(
@@ -424,9 +454,15 @@ export function ConnectionEditor(props: Props) {
           key || null,
           connection?.id ?? null,
         );
-        if (!alive.current || switches.current !== attempt) return;
-        setFound({ scope: target, models: listed });
-        setTested({ scope: target, ok: true });
+        // A key edit, a switch or an unmount makes this answer stale: it prints nothing.
+        if (
+          !alive.current ||
+          switches.current !== attempt ||
+          keyEdits.current !== edit
+        )
+          return;
+        setFound({ scope: target, models: listed, edit });
+        setTested({ scope: target, ok: true, edit });
         if (liveScope.current !== target) return;
         const offered = modelsFor(listed, props.role);
         if (modelValue === "" && offered[0]) setModel(offered[0].id);
@@ -434,11 +470,14 @@ export function ConnectionEditor(props: Props) {
           `Working. ${offered.length} model${offered.length === 1 ? "" : "s"} found; nothing was saved.`,
         );
       } catch (failure) {
+        // A failure for a key that was since replaced says nothing about the key now typed.
+        if (keyEdits.current !== edit) return;
         if (alive.current && switches.current === attempt)
-          setTested({ scope: target, ok: false });
+          setTested({ scope: target, ok: false, edit });
         throw new Error(testFailure(failure), { cause: failure });
       }
     });
+
   const label = props.role === "llm" ? "AI notes" : "Transcription";
   return (
     <section className="provider-settings" aria-label={`${label} connection`}>
@@ -529,7 +568,11 @@ export function ConnectionEditor(props: Props) {
               spellCheck={false}
               disabled={disabled || selected === NONE}
               placeholder={keyHint ? `Key from ${keyHint.keyPage}` : undefined}
-              onChange={() => setKeyEntered(true)}
+              onChange={() => {
+                setKeyEntered(true);
+                setNotice("");
+                editKey();
+              }}
             />
             <button
               type="button"

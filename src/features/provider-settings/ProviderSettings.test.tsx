@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -890,4 +897,49 @@ it("shows the provider picker only while a new connection is being made", async 
   expect(screen.getByLabelText("Base URL")).toBeTruthy();
   await userEvent.selectOptions(screen.getByLabelText("Saved connection"), "");
   expect(screen.getByLabelText("Provider")).toHaveProperty("value", "openai");
+});
+
+it("drops a Test result and its models as soon as the key is edited", async () => {
+  vi.mocked(api.testApiConnection).mockResolvedValue([{ id: "fetched-model" }]);
+  render(<ConnectionEditor {...props()} />);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Test" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Test" }));
+  expect(
+    await screen.findByRole("option", { name: "fetched-model" }),
+  ).toBeTruthy();
+  expect(screen.getByText(/^Working\./)).toBeTruthy();
+  await userEvent.type(screen.getByLabelText("API key"), "x");
+  expect(screen.queryByRole("option", { name: "fetched-model" })).toBeNull();
+  expect(screen.queryByText(/^Working\./)).toBeNull();
+  expect(screen.queryByText("Working")).toBeNull();
+});
+
+it("discards a Test that a key edit overtakes while it is in flight", async () => {
+  let finish: (value: ProviderModel[]) => void = () => {};
+  vi.mocked(api.testApiConnection).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  render(<ConnectionEditor {...props()} />);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Test" })).toHaveProperty(
+      "disabled",
+      false,
+    ),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Test" }));
+  // The key field is locked while Test runs; an edit that lands anyway must still win.
+  fireEvent.change(screen.getByLabelText("API key"), {
+    target: { value: "x" },
+  });
+  await act(async () => finish([{ id: "old-model" }]));
+  expect(screen.queryByRole("option", { name: "old-model" })).toBeNull();
+  expect(screen.queryByText(/^Working\./)).toBeNull();
+  expect(screen.queryByText("Working")).toBeNull();
 });

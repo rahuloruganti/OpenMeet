@@ -9,6 +9,7 @@ every segment that ends inside it except the last one.
 
 from __future__ import annotations
 
+import threading
 from typing import Callable, Optional, Protocol
 
 import numpy as np
@@ -300,28 +301,61 @@ class VadDecoder:
         self._partial_text = ""
 
 
+class CloudBudget:
+    """One recording's cloud requests and upload bytes, shared by every lane.
+
+    Reserved under one lock before each request, so two lanes can never both spend the last request.
+    Once a reservation is refused the budget stays blocked: the session reads that and stops visibly.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.max_requests = CLOUD_MAX_REQUESTS
+        self.max_bytes = CLOUD_MAX_BYTES
+        self.requests = 0
+        self.bytes_sent = 0
+        self.blocked = False
+
+    def reserve(self, size: int) -> bool:
+        with self._lock:
+            if self.blocked or self.requests >= self.max_requests or self.bytes_sent + size > self.max_bytes:
+                self.blocked = True
+                return False
+            self.requests += 1
+            self.bytes_sent += size
+            return True
+
+
 class CloudDecoder(VadDecoder):
     """VAD utterances sent one at a time, final only. Caps and no retries; the transcript text stays here."""
 
     partials = False
 
-    def __init__(self, upload: Callable[[np.ndarray], str], gate: Optional[Gate] = None):
+    def __init__(self, upload: Callable[[np.ndarray], str], gate: Optional[Gate] = None,
+                 budget: Optional[CloudBudget] = None):
         super().__init__(gate or LevelGate(), self._send, partial_every=CLOUD_MAX_UTTERANCE,
                          max_utterance=CLOUD_MAX_UTTERANCE, min_final=CLOUD_MIN_UTTERANCE)
         self._upload = upload
-        self.requests = 0
-        self.bytes_sent = 0
-        self.blocked = False
+        self._budget = budget or CloudBudget()
+
+    @property
+    def requests(self) -> int:
+        return self._budget.requests
+
+    @property
+    def bytes_sent(self) -> int:
+        return self._budget.bytes_sent
+
+    @property
+    def blocked(self) -> bool:
+        return self._budget.blocked
 
     def _send(self, audio: np.ndarray) -> str:
-        if self.blocked:
+        if self._budget.blocked:
             return ""
         size = int(audio.size) * 2  # the upload is 16-bit mono
-        if self.requests >= CLOUD_MAX_REQUESTS or self.bytes_sent + size > CLOUD_MAX_BYTES:
-            self.blocked = True
+        if not self._budget.reserve(size):
             return ""
-        self.requests += 1
-        self.bytes_sent += size
         return str(self._upload(_contiguous(audio)) or "").strip()
 
 

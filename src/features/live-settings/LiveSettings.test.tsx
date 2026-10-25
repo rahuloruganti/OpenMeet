@@ -201,3 +201,48 @@ it("names the live switch and row the same, and says what Same as Transcription 
     screen.getByText("Same as Transcription uses the Speech model above."),
   ).toBeTruthy();
 });
+
+it("shows Leaves this device from the chosen row's metadata before any Same wording", async () => {
+  vi.mocked(api.liveModels).mockResolvedValue(
+    listing({
+      models: listing().models.map((model) =>
+        model.id === "" ? { ...model, leaves_device: true } : model,
+      ),
+    }),
+  );
+  render(<LiveSettings settings={settings} disabled={false} />);
+  expect(await screen.findByText("Leaves this device")).toBeTruthy();
+  expect(
+    screen.queryByText("Same as Transcription uses the Speech model above."),
+  ).toBeNull();
+});
+
+it("makes Same as Transcription unavailable in cloud speech mode and says why, once", async () => {
+  const reason =
+    "Same as Transcription cannot run live with cloud speech; choose Cloud connection to send live audio.";
+  vi.mocked(api.liveModels).mockResolvedValue(
+    listing({
+      ready: false,
+      reason,
+      models: listing().models.map((model) =>
+        model.id === ""
+          ? { ...model, installed: false, leaves_device: false, reason }
+          : model,
+      ),
+    }),
+  );
+  render(
+    <LiveSettings
+      settings={{ ...settings, stt_mode: "cloud" }}
+      disabled={false}
+    />,
+  );
+  const same = await screen.findByRole("option", {
+    name: "Same as Transcription",
+  });
+  expect(same).toHaveProperty("disabled", true);
+  expect(screen.getAllByText(reason)).toHaveLength(1);
+  expect(
+    screen.queryByText("Same as Transcription uses the Speech model above."),
+  ).toBeNull();
+});

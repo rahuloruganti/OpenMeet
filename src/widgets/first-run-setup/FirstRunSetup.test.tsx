@@ -391,6 +391,39 @@ it("offers the major providers for AI notes and connects the default one", async
   );
 });
 
+it("says what a saved AI connection did not send, without claiming nothing was sent", async () => {
+  vi.mocked(api.saveApiConnection).mockResolvedValue({
+    ...settings,
+    saved_connections: [
+      {
+        id: "conn-1",
+        name: "OpenAI",
+        base_url: "https://api.openai.com/v1",
+        revision: 4,
+      },
+    ],
+  } as unknown as Settings);
+  vi.mocked(api.listApiConnectionModels).mockResolvedValue([
+    { id: "gpt-5-mini" },
+  ]);
+  vi.mocked(api.saveProviderAssignment).mockResolvedValue(settings);
+  show();
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await userEvent.click(screen.getByRole("radio", { name: /API service/ }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Connect and list models" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Use this model" }),
+  );
+  expect(await screen.findByText(/Using gpt-5-mini/)).toBeTruthy();
+  expect(screen.queryByText(/Nothing was sent/)).toBeNull();
+  expect(
+    screen.getByText(/Saved on this device; no meeting content was sent/),
+  ).toBeTruthy();
+});
+
 it("numbers a provider name that a saved connection already uses", async () => {
   vi.mocked(api.saveApiConnection).mockResolvedValue({
     ...settings,

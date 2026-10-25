@@ -31,6 +31,8 @@ QUEUE_ITEMS = 4096
 PARTIAL_GAP_SECONDS = 0.2  # at most five partials a second per lane; finals are never throttled
 IDLE_SECONDS = 0.05
 SPEECH_FAILED = "Live transcript stopped because the speech engine failed."
+INCOMPLETE_NOTICE = "Live transcript is incomplete. The final transcript will have everything."
+CLOUD_LIMIT_NOTICE = "Live cloud transcript stopped at its limit for this recording. The final transcript will have everything."
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ class LiveSession:
         self._mark_at: list[list[int]] = [[] for _ in self._lanes]
         self._last_partial = [float("-inf") for _ in self._lanes]
         self._pending: list[Optional[Update]] = [None for _ in self._lanes]
+        self._announced = False  # the worker has told the page the recording is incomplete
 
     # ---- writer side -------------------------------------------------------------------------
 
@@ -144,13 +147,14 @@ class LiveSession:
             decoders = [self._resolved.make_decoder() for _ in self._lanes]
             self._state("running")
             while True:
+                if self._cancelled.is_set():
+                    break  # no queued block is dispatched once cancelled, and nothing is announced after it
+                self._announce_incomplete()
                 block = self._next()
                 if block is not None:
                     self._consume(block, decoders)
                     self._emit_due_partials()
                     continue
-                if self._cancelled.is_set():
-                    break
                 if self._flush.is_set():
                     self._finish(decoders)
                     self._flush.clear()
@@ -167,9 +171,8 @@ class LiveSession:
         except Exception as error:  # the engine's own message can echo transcript text: log the type only
             log.error("live transcript decoder failed: %s", type(error).__name__)
             self._fail(SPEECH_FAILED)
-        finally:
-            if self._failed:
-                self._close_quietly(decoders)
+        # A failed session is not finished: its open utterance may be the one whose request just failed,
+        # and sending it again would be a second upload. The decoders are simply dropped with this frame.
 
     def _next(self) -> Optional[_Block]:
         try:
@@ -177,8 +180,14 @@ class LiveSession:
         except queue.Empty:
             return None
 
+    def _announce_incomplete(self) -> None:
+        """Tells the page once, from the worker, that a block was dropped; the audio callback never emits."""
+        if self.incomplete and not self._announced:
+            self._announced = True
+            self._state("running", INCOMPLETE_NOTICE)
+
     def _drain(self, decoders: list[LaneDecoder]) -> None:
-        while True:
+        while not self._cancelled.is_set():
             try:
                 block = self._queue.get_nowait()
             except queue.Empty:
@@ -207,10 +216,13 @@ class LiveSession:
         for update in updates:
             self._publish(lane, update)
         self._release(lane, len(block.data))
+        self._check_limit(decoders[lane])
 
     def _finish(self, decoders: list[LaneDecoder]) -> None:
         """Closes every lane's open utterance: remaining resampler tail, then the decoder's finals."""
         for lane, decoder in enumerate(decoders):
+            if self._cancelled.is_set():
+                return  # a cancel during a drain stops new requests at the next lane
             converter = self._converters[lane]
             if converter is not None:
                 tail = converter.finish()
@@ -222,13 +234,13 @@ class LiveSession:
             for update in decoder.finish():
                 self._publish(lane, update)
             self._pending[lane] = None
-
-    def _close_quietly(self, decoders: list[LaneDecoder]) -> None:
         for decoder in decoders:
-            try:
-                decoder.finish()
-            except Exception:
-                continue
+            self._check_limit(decoder)
+
+    def _check_limit(self, decoder: LaneDecoder) -> None:
+        """A cloud decoder that refused a request has used the recording's budget: stop visibly."""
+        if getattr(decoder, "blocked", False) is True:
+            raise AppError("live_model", CLOUD_LIMIT_NOTICE)
 
     # ---- lines -------------------------------------------------------------------------------
 
@@ -288,6 +300,8 @@ class LiveSession:
             self._queued[lane] = max(0, self._queued[lane] - size)
 
     def _emit(self, line: dict[str, Any]) -> None:
+        if self._cancelled.is_set():
+            return  # cancelled: an in-flight decode may finish, but its line is never published
         try:
             self._on_line(line)
         except Exception:  # a broken listener must not stop decoding
@@ -298,6 +312,8 @@ class LiveSession:
         self._state("failed", notice)
 
     def _state(self, state: str, notice: Optional[str] = None) -> None:
+        if notice is None and self.incomplete:
+            notice = INCOMPLETE_NOTICE  # a dropped block is visible on every later state, not only the first
         payload = {
             "state": state,
             "engine": self._resolved.label,

@@ -14,9 +14,14 @@ import "./live-settings.css";
 type Props = {
   settings: Settings | null;
   disabled: boolean;
+  /** The saved settings a live change returns, so the rest of the page sees the new choice. */
+  onSaved?: (settings: Settings) => void;
 };
 
 const SAME = "Same as Transcription";
+/** Shown for Same while Transcription is cloud: it would have to upload live audio. */
+const SAME_CLOUD_REASON =
+  "Transcription is cloud, so Same cannot run live here. Choose Cloud connection, or a model on this PC.";
 
 /** "(download 55 MB)" for a pinned model that is not on this PC yet. */
 const optionLabel = (model: LiveModel) =>
@@ -30,10 +35,10 @@ const running = (progress: LiveModelProgress | null) =>
 
 /**
  * Settings > Recording > Live transcript: the switch, the engine to run, and the one explicit
- * download of a pinned streaming model. Nothing is fetched until this group opens, and nothing is
- * downloaded until Download is clicked.
+ * download of a pinned streaming model. Model status is read when this panel mounts, which is when
+ * Settings opens; nothing is downloaded until Download is clicked.
  */
-export function LiveSettings({ settings, disabled }: Props) {
+export function LiveSettings({ settings, disabled, onSaved }: Props) {
   const [models, setModels] = useState<LiveModels | null>(null);
   const [progress, setProgress] = useState<LiveModelProgress | null>(null);
   const [error, setError] = useState("");
@@ -89,7 +94,8 @@ export function LiveSettings({ settings, disabled }: Props) {
     setError("");
     void Promise.resolve()
       .then(() => api.saveLiveSettings(nextEnabled, nextModel))
-      .then(() => {
+      .then((saved) => {
+        if (saved) onSaved?.(saved);
         mark();
         void refresh();
       })
@@ -133,6 +139,13 @@ export function LiveSettings({ settings, disabled }: Props) {
     !transfer &&
     !models?.installing;
   const sameListed = models?.models.some((model) => model.id === "") ?? true;
+  // Transcription in cloud mode: Same would upload live audio, so it is unavailable here.
+  const sameBlocked = settings?.stt_mode === "cloud";
+  const sameReason =
+    models?.models.find((model) => model.id === "")?.reason ??
+    SAME_CLOUD_REASON;
+  // The footer does not repeat the Model line's reason.
+  const helperReason = chosen === "" && sameBlocked ? sameReason : null;
 
   return (
     <section className="om-group" aria-label="Live transcript">
@@ -163,10 +176,14 @@ export function LiveSettings({ settings, disabled }: Props) {
         <div className="om-row">
           <div className="om-what">
             <strong>Model</strong>
-            {chosen === "" ? (
-              <span>Same as Transcription uses the Speech model above.</span>
-            ) : selected?.leaves_device ? (
+            {/* The chosen row's leaves-device metadata comes first, so wording never hides it. */}
+            {selected?.leaves_device ? (
               <span className="om-leaves">Leaves this device</span>
+            ) : chosen === "" ? (
+              <span>
+                {helperReason ??
+                  "Same as Transcription uses the Speech model above."}
+              </span>
             ) : (
               <span>What listens while you record</span>
             )}
@@ -178,9 +195,17 @@ export function LiveSettings({ settings, disabled }: Props) {
               disabled={disabled || !settings || !models}
               onChange={(event) => save(enabled, event.target.value)}
             >
-              {!sameListed && <option value="">{SAME}</option>}
+              {!sameListed && (
+                <option value="" disabled={sameBlocked}>
+                  {SAME}
+                </option>
+              )}
               {(models?.models ?? []).map((model) => (
-                <option key={model.id} value={model.id}>
+                <option
+                  key={model.id}
+                  value={model.id}
+                  disabled={model.id === "" && sameBlocked}
+                >
                   {optionLabel(model)}
                 </option>
               ))}
@@ -214,7 +239,7 @@ export function LiveSettings({ settings, disabled }: Props) {
         </div>
       )}
 
-      {!models?.ready && models?.reason && (
+      {!models?.ready && models?.reason && models.reason !== helperReason && (
         <p className="ls-reason">{models.reason}</p>
       )}
       {error && (

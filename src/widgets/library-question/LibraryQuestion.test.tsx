@@ -145,6 +145,27 @@ it("names the AI notes connection and marks a remote one as leaving the device",
   expect(screen.getByText("Leaves this device")).toBeTruthy();
 });
 
+it("keeps the disclosure of a remote connection reachable from the keyboard", () => {
+  render(
+    <LibraryQuestion
+      meetings={meetings}
+      recipes={[]}
+      connectionRevision="1"
+      llmBlocked={null}
+      onOpenSettings={vi.fn()}
+      disabled={false}
+      onOpen={vi.fn()}
+      connection={{ name: "Gemini 2.5 Flash · Google", remote: true }}
+    />,
+  );
+  const who = screen.getByText("Gemini 2.5 Flash · Google");
+  expect(who.getAttribute("tabindex")).toBe("0");
+  const note = document.getElementById(
+    who.getAttribute("aria-describedby") ?? "",
+  );
+  expect(note?.textContent).toContain("sent to this service");
+});
+
 it("links only in-scope citations that match a stored segment and marks the rest unverified", async () => {
   vi.mocked(api.askLibrary).mockResolvedValue(
     saved(

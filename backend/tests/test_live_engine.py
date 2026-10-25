@@ -350,7 +350,9 @@ def test_a_full_queue_drops_blocks_and_marks_the_transcript_incomplete() -> None
     assert live.incomplete is True
     gate.set()
     live.stop()
-    assert [item["state"] for item in states] == ["starting", "running", "stopped"]
+    # The worker announces the first drop once, as its own running state, before the stop.
+    assert [item["state"] for item in states] == ["starting", "running", "running", "stopped"]
+    assert states[-1]["notice"] == "Live transcript is incomplete. The final transcript will have everything."
 
 
 def test_blocks_are_kept_in_order_and_the_lane_reports_its_speaker_and_id() -> None:
@@ -506,6 +508,91 @@ def test_cancel_stops_without_finishing_the_decoder() -> None:
     assert decoder.finishes == 0
 
 
+def test_cancel_dispatches_no_queued_block_and_emits_no_final_from_an_in_flight_decode() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[int] = []
+
+    class InFlight(RecordingDecoder):
+        def feed(self, samples16k: np.ndarray) -> list[Update]:
+            calls.append(int(np.asarray(samples16k).size))
+            if len(calls) == 1:
+                entered.set()
+                release.wait(5.0)  # the first decode is in flight when cancel arrives
+            return [Update(len(calls) - 1, f"line {len(calls)}", 0, self.fed, True)]
+
+    lines: list[dict] = []
+    live = session([("mic", RATE, 1)], InFlight(), lines, [])
+    live.start()
+    live.accept(0, packed(tone(0.1)), BLOCK, 0, 0)
+    assert entered.wait(5.0)
+    live.accept(0, packed(tone(0.1)), BLOCK, 100_000, 0)  # queued behind the in-flight decode
+    live.accept(0, packed(tone(0.1)), BLOCK, 200_000, 0)
+    canceller = threading.Thread(target=live.cancel)
+    canceller.start()
+    assert wait_for(live._cancelled.is_set)
+    release.set()
+    canceller.join(5.0)
+    assert live._thread is not None
+    live._thread.join(5.0)
+    assert not live._thread.is_alive()
+    assert calls == [BLOCK], "queued blocks are not dispatched after cancel"
+    assert lines == [], "an in-flight decode may finish, but its final is not emitted"
+
+
+def test_a_dropped_block_is_announced_by_the_worker_not_by_the_audio_callback() -> None:
+    gate = threading.Event()
+    states: list[dict] = []
+    lines: list[dict] = []
+    live = session([("mic", RATE, 1)], BlockingDecoder(gate), lines, states, queue_seconds=2.0)
+    live.start()
+    assert wait_for(lambda: any(item["state"] == "running" for item in states))
+    for index in range(4):
+        live.accept(0, packed(tone(1.0)), RATE, index * 1_000_000, 0)  # the queue holds two; the rest drop
+    assert live.incomplete is True
+    assert not any(item.get("notice") for item in states), "accept() on the audio path emits nothing"
+    gate.set()
+    incomplete = "Live transcript is incomplete. The final transcript will have everything."
+    assert wait_for(lambda: any(item["state"] == "running" and item["notice"] == incomplete for item in states))
+    live.stop()
+    assert states[-1]["state"] == "stopped" and states[-1]["notice"] == incomplete
+
+
+def test_a_failed_cloud_upload_is_attempted_once_and_cleanup_never_resends_it() -> None:
+    attempts: list[int] = []
+
+    def upload(audio: np.ndarray) -> str:
+        attempts.append(int(audio.size))
+        raise AppError("cloud_stt", "Fictional upload refused.")
+
+    states: list[dict] = []
+    lines: list[dict] = []
+    live = session([("mic", RATE, 1)], CloudDecoder(upload, FakeGate([(0, RATE)])), lines, states)
+    live.start()
+    live.accept(0, packed(tone(1.0)), RATE, 0, 0)  # the utterance closes and its upload is refused
+    live.stop()
+    assert states[-1]["state"] == "failed"
+    assert states[-1]["notice"] == "Fictional upload refused."
+    assert attempts == [RATE], "the buffered utterance is sent once, never again by cleanup"
+    assert lines == []
+
+
+def test_a_failed_offline_decode_is_attempted_once_and_cleanup_never_resends_it() -> None:
+    attempts: list[int] = []
+
+    def decode(audio: np.ndarray) -> str:
+        attempts.append(int(audio.size))
+        raise AppError("speech", "Fictional decode refused.")
+
+    states: list[dict] = []
+    live = session([("mic", RATE, 1)], VadDecoder(FakeGate([(0, RATE)]), decode), [], states)
+    live.start()
+    live.accept(0, packed(tone(1.0)), RATE, 0, 0)
+    live.stop()
+    assert states[-1]["state"] == "failed"
+    assert attempts == [RATE], "cleanup must not decode the open utterance a second time"
+
+
 # ---- resolve -----------------------------------------------------------------------------
 
 
@@ -553,15 +640,61 @@ def test_resolve_runs_an_offline_sherpa_model_behind_the_vad(real_mode: None, tm
     assert isinstance(resolved.make_decoder(), VadDecoder)
 
 
-def test_resolve_uses_the_cloud_connection_when_transcription_is_cloud(real_mode: None, tmp_path: Path) -> None:
+def test_same_as_transcription_never_uploads_when_transcription_is_cloud(real_mode: None, tmp_path: Path) -> None:
+    uploads: list[int] = []
+
+    def upload(samples: np.ndarray) -> str:
+        uploads.append(int(samples.size))
+        return "cloud words"
+
     with pytest.raises(AppError) as info:
-        resolve(tmp_path, {"stt_mode": "cloud"})
-    assert info.value.message == "Save a cloud transcription connection in Settings first."
-    resolved = resolve(tmp_path, {"stt_mode": "cloud"}, lambda samples: "cloud words")
+        resolve(tmp_path, {"stt_mode": "cloud", "live_model": ""}, upload)
+    assert info.value.code == "live_model"
+    assert "explicit Cloud connection" in info.value.message
+    assert uploads == []
+
+
+def test_only_an_explicit_cloud_live_model_uploads_audio(real_mode: None, tmp_path: Path) -> None:
+    resolved = resolve(tmp_path, {"stt_mode": "cloud", "live_model": "cloud"}, lambda samples: "cloud words")
     assert resolved.leaves_device is True
     decoder = resolved.make_decoder()
     assert isinstance(decoder, CloudDecoder)
     assert [item.text for item in decoder.feed(tone(1.0))] == []  # nothing until the VAD closes
+
+
+def test_the_cloud_budget_is_shared_by_both_lanes_of_one_recording(
+    real_mode: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("openmeet_py.speech.live.decoders.CLOUD_MAX_REQUESTS", 2)
+    uploads: list[int] = []
+    resolved = resolve(tmp_path, {"live_model": "cloud"}, lambda samples: uploads.append(int(samples.size)) or "line")
+    mic, system = resolved.make_decoder(), resolved.make_decoder()
+    mic.feed(tone(30.0))  # one forced cut per lane
+    system.feed(tone(30.0))
+    assert uploads == [CLOUD_MAX_UTTERANCE, CLOUD_MAX_UTTERANCE]
+    mic.feed(tone(30.0))  # the recording has used both requests, whichever lane sent them
+    assert getattr(mic, "blocked", False) is True and len(uploads) == 2
+
+
+def test_exhausting_the_cloud_limit_stops_the_session_visibly(
+    real_mode: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("openmeet_py.speech.live.decoders.CLOUD_MAX_REQUESTS", 1)
+    resolved = resolve(tmp_path, {"live_model": "cloud"}, lambda samples: "line")
+    states: list[dict] = []
+    lines: list[dict] = []
+    live = LiveSession("meeting-1", [("mic", RATE, 1), ("system", RATE, 1)], resolved,
+                       lines.append, states.append, queue_seconds=60.0)
+    live.start()
+    for lane in (0, 1):
+        for index in range(310):  # 31 s per lane: each lane reaches its forced 30 s cut
+            live.accept(lane, packed(tone(0.1)), BLOCK, index * 100_000, 0)
+    live.stop()
+    assert states[-1]["state"] == "failed"
+    assert states[-1]["notice"] == (
+        "Live cloud transcript stopped at its limit for this recording. The final transcript will have everything."
+    )
+    assert [line["lane"] for line in lines] == ["mic"]
 
 
 def test_cloud_needs_a_saved_connection(real_mode: None, tmp_path: Path) -> None:
@@ -629,6 +762,17 @@ def test_listing_offers_same_streaming_custom_and_cloud_with_reasons(real_mode: 
     assert rows["stream-dir:team-kroko"]["kind"] == "custom" and rows["stream-dir:team-kroko"]["installed"] is True
     assert rows["cloud"]["leaves_device"] is True and rows["cloud"]["installed"] is False
     assert rows["cloud"]["reason"] == "Save a cloud transcription connection in Settings first."
+
+
+def test_same_as_transcription_is_unavailable_while_transcription_is_cloud(
+    real_mode: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(streaming_models, "engine_available", lambda: True)
+    rows = {row["id"]: row for row in listing(tmp_path, {"stt_mode": "cloud", "live_model": ""}, True)["models"]}
+    same = rows[""]
+    assert (same["installed"], same["leaves_device"]) == (False, False)
+    assert "explicit Cloud connection" in same["reason"]
+    assert rows["cloud"]["leaves_device"] is True and rows["cloud"]["installed"] is True
 
 
 def test_listing_reports_readiness_for_the_selected_model(real_mode: None, tmp_path: Path,

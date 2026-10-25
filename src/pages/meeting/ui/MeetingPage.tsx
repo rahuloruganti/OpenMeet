@@ -22,6 +22,8 @@ export type MeetingPageProps = {
     problems: string[];
     /** Notes failed: Quit anyway is not offered, so notes are never discarded. */
     notesFailed: boolean;
+    /** A close save or Quit anyway is running; the editors are locked and the buttons wait. */
+    saving: boolean;
     onRetry: () => void;
     onQuitAnyway: () => void;
     onKeepWorking: () => void;
@@ -76,6 +78,11 @@ export function MeetingPage(props: MeetingPageProps) {
           }
         />
         <RecordingControls {...props.controls} />
+        {close.requested && close.saving && (
+          <p className="mw-hint" role="status">
+            Saving before quit. Editing is locked until it finishes.
+          </p>
+        )}
         {close.requested && close.problems.length > 0 && (
           <section
             className="close-panel"
@@ -95,11 +102,19 @@ export function MeetingPage(props: MeetingPageProps) {
                 ? "Copy your notes or try again. Quitting waits for them."
                 : "Quit anyway discards these edits."}
             </p>
-            <button onClick={close.onRetry}>Try again</button>
+            <button disabled={close.saving} onClick={close.onRetry}>
+              Try again
+            </button>
             {!close.notesFailed && (
-              <button onClick={close.onQuitAnyway}>Quit anyway</button>
+              <button disabled={close.saving} onClick={close.onQuitAnyway}>
+                Quit anyway
+              </button>
             )}
-            <button autoFocus onClick={close.onKeepWorking}>
+            <button
+              autoFocus
+              disabled={close.saving}
+              onClick={close.onKeepWorking}
+            >
               Keep working
             </button>
           </section>

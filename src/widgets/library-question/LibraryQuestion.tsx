@@ -273,12 +273,19 @@ export function LibraryQuestion(props: Props) {
         {props.connection?.name ? (
           <span
             className="who"
+            tabIndex={0}
+            aria-describedby="library-connection-note"
             title="Question, meeting titles, notes and keyword-matched transcript excerpts are sent to this service. The answer is saved on this device."
           >
             {props.connection.name}
             {props.connection.remote && (
               <span className="leaves">Leaves this device</span>
             )}
+            <span id="library-connection-note" className="sr-only">
+              Question, meeting titles, notes and keyword-matched transcript
+              excerpts are sent to this service. The answer is saved on this
+              device.
+            </span>
           </span>
         ) : (
           <span className="who">No AI notes connection</span>

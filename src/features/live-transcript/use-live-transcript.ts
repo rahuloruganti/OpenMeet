@@ -3,9 +3,10 @@ import {
   api,
   errorMessage,
   type LiveLine,
+  type LiveStateEvent,
   type LiveTranscript,
 } from "../../shared/api/api";
-import { addLines, loadLines, noLines, type LiveLines } from "./lines";
+import { addLines, mergeLoaded, noLines, type LiveLines } from "./lines";
 
 /** Otter's numbers: 200 ms while the page is visible, 5 s while it is in the background. */
 export const VISIBLE_FLUSH_MS = 200;
@@ -74,6 +75,8 @@ export function useLiveTranscript(meetingId: string, paused: boolean) {
 
   useEffect(() => {
     let live = true;
+    // The newest state event for this meeting. It beats the snapshot even if the load resolves later.
+    let stateEvent: LiveStateEvent | null = null;
     setTranscript(null);
     setLines(noLines);
     setError(null);
@@ -85,14 +88,29 @@ export function useLiveTranscript(meetingId: string, paused: boolean) {
       .then(() => api.liveTranscript(meetingId))
       .then((loaded) => {
         if (!live || !loaded || loaded.meeting_id !== meetingId) return;
+        const next: LiveTranscript = stateEvent
+          ? {
+              ...loaded,
+              state: stateEvent.state,
+              engine: stateEvent.engine,
+              leaves_device: stateEvent.leaves_device,
+              notice: stateEvent.notice,
+            }
+          : loaded;
         if (
-          loaded.state !== "off" ||
-          loaded.lines.length > 0 ||
-          loaded.partials.length > 0
+          next.state !== "off" ||
+          next.lines.length > 0 ||
+          next.partials.length > 0
         )
           seen.add(meetingId);
-        setTranscript(loaded);
-        setLines(loadLines({ lines: loaded.lines, partials: loaded.partials }));
+        setTranscript(next);
+        // Lines the events already applied stay; the snapshot only fills in what they missed.
+        setLines((current) =>
+          mergeLoaded(current, {
+            lines: loaded.lines,
+            partials: loaded.partials,
+          }),
+        );
       })
       .catch((failure) => {
         if (live) setError(errorMessage(failure));
@@ -103,6 +121,7 @@ export function useLiveTranscript(meetingId: string, paused: boolean) {
     });
     const unlistenState = api.onLiveState((event) => {
       if (!live || event.meeting_id !== meetingId) return;
+      stateEvent = event;
       setTranscript((current) => ({
         meeting_id: meetingId,
         lines: current?.lines ?? [],

@@ -14,10 +14,13 @@ const speaks = (line: LiveLine) => line.text.trim() !== "";
 
 /**
  * One update from the live engine. A partial replaces the line with its id; a final replaces it
- * too and stays, in time order. A lane keeps only its newest partial.
+ * too and stays, in time order. A lane keeps only its newest partial. A partial that arrives after
+ * the final of its utterance is stale and changes nothing.
  */
 export function addLine(state: LiveLines, line: LiveLine): LiveLines {
   if (!speaks(line)) return state;
+  if (!line.final && state.lines.some((item) => item.id === line.id))
+    return state;
   const lines = state.lines.filter((item) => item.id !== line.id);
   const partials = state.partials.filter(
     (item) => item.id !== line.id && item.lane !== line.lane,
@@ -33,21 +36,37 @@ export function addLine(state: LiveLines, line: LiveLine): LiveLines {
 export const addLines = (state: LiveLines, batch: LiveLine[]) =>
   batch.reduce(addLine, state);
 
-/** The lines a fresh load starts from: the saved finals and the open partials. */
-export function loadLines(saved: LiveLines): LiveLines {
-  const lines = saved.lines.filter(speaks).slice().sort(byStart);
-  const partials = saved.partials
-    .filter(speaks)
-    .reduce<LiveLine[]>(
-      (kept, line) => [
-        ...kept.filter(
-          (item) => item.id !== line.id && item.lane !== line.lane,
-        ),
-        line,
-      ],
-      [],
-    )
-    .sort((a, b) => laneOrder.indexOf(a.lane) - laneOrder.indexOf(b.lane));
+/**
+ * Merges a loaded snapshot under the lines the events already put on screen while the load was
+ * pending. One line per utterance: a final beats a partial of the same id (a stale snapshot partial
+ * never reverts a final); between two of the same kind the event copy wins. Each lane keeps its
+ * newest partial by start time.
+ */
+export function mergeLoaded(current: LiveLines, saved: LiveLines): LiveLines {
+  const rank = (line: LiveLine) => (line.final ? 2 : 1);
+  const byId = new Map<string, LiveLine>();
+  // Snapshot first, then the events, so an event copy wins a tie.
+  for (const line of [
+    ...saved.lines,
+    ...saved.partials,
+    ...current.lines,
+    ...current.partials,
+  ]) {
+    if (!speaks(line)) continue;
+    const held = byId.get(line.id);
+    if (!held || rank(line) >= rank(held)) byId.set(line.id, line);
+  }
+  const all = [...byId.values()];
+  const lines = all.filter((line) => line.final).sort(byStart);
+  const newest = new Map<LiveLine["lane"], LiveLine>();
+  for (const line of all) {
+    if (line.final) continue;
+    const held = newest.get(line.lane);
+    if (!held || line.start_ms >= held.start_ms) newest.set(line.lane, line);
+  }
+  const partials = [...newest.values()].sort(
+    (a, b) => laneOrder.indexOf(a.lane) - laneOrder.indexOf(b.lane),
+  );
   return { lines, partials };
 }
 

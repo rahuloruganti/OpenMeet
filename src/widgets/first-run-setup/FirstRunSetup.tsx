@@ -152,7 +152,9 @@ function ConnectAndPick(props: {
       );
       if (role === "cloud_stt") next = await api.saveSttMode("cloud");
       await publish(next);
-      setNotice(`Using ${model.trim()}. Nothing was sent.`);
+      setNotice(
+        `Using ${model.trim()}. Saved on this device; no meeting content was sent.`,
+      );
     });
 
   return (

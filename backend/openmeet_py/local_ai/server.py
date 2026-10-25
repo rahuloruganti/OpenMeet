@@ -48,6 +48,7 @@ TIMEOUT_MESSAGE = (
 )
 SILENT_MESSAGE = "Local AI started but did not answer. Turn it off and on again."
 SPAWN_MESSAGE = "Local AI could not start. Check local-ai/server.log, then turn it off and on again."
+STOPPED_MESSAGE = "Local AI was turned off before it finished starting."
 
 
 def error(message: str) -> AppError:
@@ -286,14 +287,14 @@ class Supervisor:
         self._clock = clock
         self._timeout = timeout
         self._lock = threading.RLock()
-        self._start_lock = threading.Lock()
+        self._changed = threading.Condition(self._lock)
         self._state = "stopped"
         self._error: Optional[str] = None
         self._spec: Optional[Spec] = None
         self._process: Any = None
         self._job: Any = None
         self._thread: Optional[threading.Thread] = None
-        self._stopping = threading.Event()
+        self._generation = 0
         self._restarts = 0
 
     # -- reads --
@@ -315,168 +316,99 @@ class Supervisor:
     # -- commands --
     def start(self, spec: Spec, background: bool = True) -> None:
         """Starts the server. `background` returns at once; False waits until it answers."""
-        pending: Optional[threading.Thread] = None
-        with self._start_lock:
-            with self._lock:
-                same = self._spec == spec
-                state = self._state
-                if same and state == "running":
-                    return
-                if same and state == "starting":
-                    # Another caller is already bringing this exact run up: share its wait.
-                    if background:
-                        return
-                    pending = self._thread
-                else:
-                    self._stop_locked()
-                    self._spec = spec
-                    self._error = None
-                    self._restarts = 0
-                    self._stopping = threading.Event()
-                    self._set_state("starting")
-                    if background:
-                        self._thread = threading.Thread(
-                            target=self._run, name="openmeet-local-ai", daemon=True
-                        )
-                        self._thread.start()
-                        return
-            if pending is None:
-                self._settle()  # blocking start: wait for readiness, the caller adds the watcher
+        with self._lock:
+            if self._spec == spec and self._state == "running" and self._alive_locked():
                 return
-        pending.join(timeout=self._timeout + TERMINATE_SECONDS)
+            if self._spec == spec and self._state == "starting":
+                # Another caller is already bringing this exact run up: share its outcome.
+                if not background:
+                    generation = self._generation
+                    self._changed.wait_for(
+                        lambda: self._generation != generation or self._state != "starting",
+                        timeout=self._timeout + TERMINATE_SECONDS,
+                    )
+                return
+            generation, detached, thread = self._begin_locked(spec, background)
+        self._release(*detached)
+        if thread is not None:
+            thread.start()
+        else:
+            self._run(generation, watch=False)
 
     def ensure(self, spec: Spec) -> None:
         """Starts the server if it is not already answering, waits for it, then supervises it."""
         with self._lock:
-            ready = self._state == "running" and self._spec == spec
-        if ready:
-            return
+            if self._state == "running" and self._spec == spec and self._alive_locked():
+                self._supervise_locked()
+                return
         self.start(spec, background=False)
-        if self.state == "failed":
-            raise error(self.error_message or CRASH_MESSAGE)
         with self._lock:
-            if self._state == "running" and self._thread is None:
-                self._thread = threading.Thread(
-                    target=self._watch, name="openmeet-local-ai", daemon=True
-                )
-                self._thread.start()
+            if self._state != "running" or self._spec != spec:
+                raise error(self._error or STOPPED_MESSAGE)
+            self._supervise_locked()
 
     def stop(self) -> None:
-        """Turns the server off and frees the memory it held."""
-        with self._start_lock:
-            self._stopping.set()
-            self._stop_locked()
-            thread, self._thread = self._thread, None
+        """Turns the server off and frees the memory it held. Never waits for a start in progress."""
+        with self._lock:
+            detached = self._retire_locked()
             self._spec = None
-            self._set_state("stopped")
             self._error = None
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=TERMINATE_SECONDS)
+            self._set_state_locked("stopped")
+        self._release(*detached)
 
     # -- internals --
-    def _set_state(self, state: str) -> None:
-        with self._lock:
-            self._state = state
+    def _alive_locked(self) -> bool:
+        return self._process is not None and self._process.poll() is None
 
-    def _fail(self, message: str) -> None:
-        with self._lock:
-            self._state = "failed"
-            self._error = message
+    def _set_state_locked(self, state: str) -> None:
+        self._state = state
+        self._changed.notify_all()
 
-    def _stop_locked(self) -> None:
-        self._terminate()
+    def _detach_locked(self) -> tuple[Any, Any]:
+        process, job = self._process, self._job
+        self._process = None
+        self._job = None
+        return process, job
 
-    def _run(self) -> None:
-        self._settle()
-        if self.state == "running":
-            self._watch()
+    def _retire_locked(self) -> tuple[Any, Any]:
+        """Ends the current generation. Its process and job are returned for release outside the lock."""
+        self._generation += 1
+        self._thread = None
+        self._changed.notify_all()
+        return self._detach_locked()
 
-    def _settle(self) -> None:
-        """Spawns the process and waits until it answers. Leaves the state running or failed."""
-        try:
-            process = self._launch()
-            self._wait_ready(process)
-        except AppError as cause:
-            if self._stopping.is_set():
-                return  # stopped while starting: stopped is the right state, not failed
-            self._fail(cause.message)
-            self._terminate()
+    def _begin_locked(
+        self, spec: Spec, background: bool
+    ) -> tuple[int, tuple[Any, Any], Optional[threading.Thread]]:
+        detached = self._retire_locked()
+        self._spec = spec
+        self._error = None
+        self._restarts = 0
+        self._set_state_locked("starting")
+        generation = self._generation
+        thread = None
+        if background:
+            thread = threading.Thread(
+                target=self._run, args=(generation,), name="openmeet-local-ai", daemon=True
+            )
+            self._thread = thread
+        return generation, detached, thread
+
+    def _supervise_locked(self) -> None:
+        """Starts a watcher for the current run unless a live one already exists."""
+        if self._thread is not None and self._thread.is_alive():
             return
-        if self._stopping.is_set():
-            self._terminate()
-            return
-        self._set_state("running")
+        self._thread = threading.Thread(
+            target=self._watch, args=(self._generation,), name="openmeet-local-ai", daemon=True
+        )
+        self._thread.start()
 
-    def _launch(self) -> Any:
-        spec = self._spec
-        if spec is None:
-            raise error(SPAWN_MESSAGE)
-        try:
-            process = self._spawn(spec)
-        except OSError as cause:
-            raise error(SPAWN_MESSAGE) from cause
-        job = self._job_factory()
-        try:
-            job.assign(process)
-        except Exception:  # a job that cannot be assigned must not keep the server from running
-            job.close()
-            job = None
+    def _current(self, generation: int) -> bool:
         with self._lock:
-            self._process = process
-            self._job = job
-        return process
+            return self._generation == generation
 
-    def _wait_ready(self, process: Any) -> None:
-        spec = self._spec
-        if spec is None:
-            raise error(SPAWN_MESSAGE)
-        deadline = self._clock() + self._timeout
-        while True:
-            if self._stopping.is_set():
-                raise error(SPAWN_MESSAGE)
-            if process.poll() is not None:
-                raise error(CRASH_MESSAGE if self._restarts else SPAWN_MESSAGE)
-            if self._probe(spec):
-                break
-            if self._clock() >= deadline:
-                raise error(TIMEOUT_MESSAGE)
-            self._sleep(POLL_SECONDS)
-        if not self._touch(spec):
-            raise error(SILENT_MESSAGE)
-
-    def _watch(self) -> None:
-        while self._tick():
-            self._sleep(WATCH_SECONDS)
-
-    def _tick(self) -> bool:
-        """One supervision step. False when the server must not run any more."""
-        if self._stopping.is_set():
-            return False
-        process = self._process
-        if process is None:
-            return False
-        if process.poll() is None:
-            return True
-        if self._restarts >= MAX_RESTARTS:
-            self._fail(CRASH_MESSAGE)
-            self._terminate()
-            return False
-        self._restarts += 1
-        self._set_state("starting")
-        self._terminate()  # close the dead run's job before starting the replacement
-        try:
-            self._wait_ready(self._launch())
-        except AppError as cause:
-            self._fail(cause.message)
-            self._terminate()
-            return False
-        self._set_state("running")
-        return True
-
-    def _terminate(self) -> None:
-        with self._lock:
-            process, self._process = self._process, None
-            job, self._job = self._job, None
+    def _release(self, process: Any, job: Any) -> None:
+        """Ends one process and closes its job. Runs outside the lock: a stubborn process may take seconds."""
         if process is not None:
             try:
                 if process.poll() is None:
@@ -490,3 +422,124 @@ class Supervisor:
                 pass
         if job is not None:
             job.close()
+
+    def _finish(self, generation: int, message: str) -> None:
+        """Marks the run failed and frees its process, unless the run was already retired."""
+        with self._lock:
+            if self._generation != generation:
+                return
+            self._error = message
+            self._set_state_locked("failed")
+            detached = self._detach_locked()
+        self._release(*detached)
+
+    def _publish_running(self, generation: int) -> bool:
+        with self._lock:
+            if self._generation != generation:
+                return False
+            self._set_state_locked("running")
+            return True
+
+    def _run(self, generation: int, watch: bool = True) -> None:
+        try:
+            self._settle(generation)
+        except Exception:  # an unexpected failure must not leave the state stuck on "starting"
+            self._finish(generation, SPAWN_MESSAGE)
+            return
+        if watch and self._is_running(generation):
+            self._watch(generation)
+
+    def _is_running(self, generation: int) -> bool:
+        with self._lock:
+            return self._generation == generation and self._state == "running"
+
+    def _settle(self, generation: int) -> None:
+        """Spawns the process and waits until it answers. Leaves the state running or failed."""
+        try:
+            self._wait_ready(generation, self._launch(generation))
+        except AppError as cause:
+            self._finish(generation, cause.message)
+            return
+        self._publish_running(generation)
+
+    def _launch(self, generation: int) -> Any:
+        with self._lock:
+            spec = self._spec if self._generation == generation else None
+        if spec is None:
+            raise error(STOPPED_MESSAGE)
+        try:
+            process = self._spawn(spec)
+        except OSError as cause:
+            raise error(SPAWN_MESSAGE) from cause
+        job = self._job_factory()
+        try:
+            job.assign(process)
+        except Exception:  # a job that cannot be assigned must not keep the server from running
+            job.close()
+            job = None
+        with self._lock:
+            if self._generation == generation:
+                self._process = process
+                self._job = job
+                return process
+        # Stopped while the process was starting: nothing else knows about it, so end it here.
+        self._release(process, job)
+        raise error(STOPPED_MESSAGE)
+
+    def _wait_ready(self, generation: int, process: Any) -> None:
+        with self._lock:
+            spec = self._spec if self._generation == generation else None
+            restarted = self._restarts > 0
+        if spec is None:
+            raise error(STOPPED_MESSAGE)
+        deadline = self._clock() + self._timeout
+        while True:
+            if not self._current(generation):
+                raise error(STOPPED_MESSAGE)
+            if process.poll() is not None:
+                raise error(CRASH_MESSAGE if restarted else SPAWN_MESSAGE)
+            if self._probe(spec):
+                break
+            if self._clock() >= deadline:
+                raise error(TIMEOUT_MESSAGE)
+            self._sleep(POLL_SECONDS)
+        answered = self._touch(spec)
+        if not self._current(generation):
+            raise error(STOPPED_MESSAGE)
+        if not answered:
+            raise error(SILENT_MESSAGE)
+
+    def _watch(self, generation: int) -> None:
+        try:
+            while self._tick(generation):
+                self._sleep(WATCH_SECONDS)
+        except Exception:  # never leave a dead watcher behind a server that still says it is running
+            self._finish(generation, CRASH_MESSAGE)
+
+    def _tick(self, generation: Optional[int] = None) -> bool:
+        """One supervision step for `generation` (default: the current run). False when that run
+        must not be watched any more: stopped, replaced, failed, or restarted and no longer running."""
+        with self._lock:
+            if generation is None:
+                generation = self._generation
+            if self._generation != generation or self._process is None:
+                return False
+            if self._process.poll() is None:
+                return True
+            restart = self._restarts < MAX_RESTARTS
+            if restart:
+                self._restarts += 1
+                self._set_state_locked("starting")
+            else:
+                self._error = CRASH_MESSAGE
+                self._set_state_locked("failed")
+            detached = self._detach_locked()  # the dead run's job closes before any replacement starts
+        self._release(*detached)
+        if not restart:
+            return False
+        try:
+            self._wait_ready(generation, self._launch(generation))
+        except AppError as cause:
+            self._finish(generation, cause.message)
+            return False
+        return self._publish_running(generation)
