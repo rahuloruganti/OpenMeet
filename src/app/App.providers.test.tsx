@@ -404,6 +404,7 @@ describe("saved connections and provider workflows", () => {
       ).toBeNull();
       expect(screen.queryByText("[00:00]")).toBeNull();
       // The engine that produced the text is still named, so it can be checked.
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
       expect(
         screen.getByText(
           /Transcribed with https:\/\/speech.example\/v1 \/ speech-model/,

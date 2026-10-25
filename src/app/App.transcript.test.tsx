@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { api, type MeetingDetail, type Settings } from "../shared/api/api";
 import {
@@ -88,6 +88,7 @@ describe("transcript and audio", () => {
       });
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
+      await userEvent.click(screen.getByRole("button", { name: "More" }));
       const details = screen
         .getByText("Audio track details")
         .closest("details");
@@ -120,16 +121,21 @@ describe("transcript and audio", () => {
       ]);
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
-      expect(screen.getByText("(edited)")).toBeTruthy();
+      expect(screen.getByTitle("Original: Agred")).toBeTruthy();
+      const segment = document.getElementById("segment-11");
+      if (!segment) throw new Error("Missing segment");
+      await act(async () => {
+        segment.focus();
+      });
       await userEvent.click(
-        screen.getByRole("button", { name: "Edit segment at 00:01" }),
+        screen.getByRole("button", { name: "Edit segment at 0:01" }),
       );
       const input = screen.getByRole("textbox", {
-        name: "Edit segment at 00:01",
+        name: "Edit segment at 0:01",
       });
       await userEvent.clear(input);
       await userEvent.type(input, "Persimmon budget");
-      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+      await userEvent.keyboard("{Enter}");
       expect(api.editSegment).toHaveBeenCalledWith(
         "sample",
         11,
@@ -141,7 +147,8 @@ describe("transcript and audio", () => {
       ).toBeTruthy();
       expect(screen.getByDisplayValue("Persimmon budget")).toBeTruthy();
       // Quitting saves the open edit by default; a conflict keeps the window open and says so.
-      vi.mocked(api.editSegment).mockRejectedValueOnce({
+      // The dialog also blurs the field, which saves again, so both calls must fail.
+      vi.mocked(api.editSegment).mockRejectedValue({
         code: "segment_conflict",
         message: "This transcript segment changed or no longer exists.",
       });
@@ -156,12 +163,20 @@ describe("transcript and audio", () => {
         screen.getByRole("button", { name: "Keep working" }),
       );
       vi.mocked(api.editSegment).mockResolvedValue(undefined);
-      await userEvent.click(screen.getByRole("button", { name: "Save" }));
+      await userEvent.click(
+        screen.getByRole("textbox", { name: "Edit segment at 0:01" }),
+      );
+      await userEvent.keyboard("{Enter}");
       await waitFor(() =>
         expect(
-          screen.queryByRole("textbox", { name: "Edit segment at 00:01" }),
+          screen.queryByRole("textbox", { name: "Edit segment at 0:01" }),
         ).toBeNull(),
       );
+      const untimed = document.getElementById("segment-12");
+      if (!untimed) throw new Error("Missing untimed segment");
+      await act(async () => {
+        untimed.focus();
+      });
       await userEvent.click(
         screen.getByRole("button", { name: "Revert segment at Untimed" }),
       );
@@ -173,7 +188,13 @@ describe("transcript and audio", () => {
       );
       // Earlier transcripts moved behind the meeting menu: ⋯ > History, and stay read-only.
       await userEvent.click(screen.getByLabelText("More meeting actions"));
-      await userEvent.click(screen.getByRole("button", { name: "History" }));
+      const menu = screen
+        .getByLabelText("More meeting actions")
+        .closest("details");
+      if (!menu) throw new Error("Missing meeting menu");
+      await userEvent.click(
+        within(menu).getByRole("button", { name: "History" }),
+      );
       const history = await screen.findByRole("dialog", {
         name: "Transcript history",
       });
@@ -415,16 +436,17 @@ describe("transcript and audio", () => {
       ) as HTMLAudioElement;
       expect(system.getAttribute("src")).toBe("asset://system.wav");
       const play = screen.getByRole("button", {
-        name: "Play Others from 00:08",
+        name: "Play from 0:08",
       });
-      expect(play.textContent).toBe("[00:08]");
+      expect(play.textContent).toBe("0:08");
       await userEvent.click(play);
+      expect(api.audioPosition).toHaveBeenCalledWith("sample", "mic", 8250);
       expect(api.audioPosition).toHaveBeenCalledWith("sample", "system", 8250);
       await waitFor(() => expect(system.currentTime).toBe(2.25));
       expect(
         (screen.getByLabelText("You (microphone)") as HTMLAudioElement)
           .currentTime,
-      ).toBe(0);
+      ).toBe(2.25);
     });
 
     it("shows rejected timing and never plays a guessed timestamp", async () => {
@@ -437,7 +459,7 @@ describe("transcript and audio", () => {
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
       await userEvent.click(
-        screen.getByRole("button", { name: "Play Others from 00:08" }),
+        screen.getByRole("button", { name: "Play from 0:08" }),
       );
       expect((await screen.findByRole("alert")).textContent).toContain(
         "The audio timing index is incomplete. Originals and previous transcripts are unchanged.",
@@ -459,7 +481,7 @@ describe("transcript and audio", () => {
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
       await userEvent.click(
-        screen.getByRole("button", { name: "Play Others from 00:08" }),
+        screen.getByRole("button", { name: "Play from 0:08" }),
       );
       expect(await screen.findByRole("alert")).toHaveProperty(
         "textContent",
@@ -915,6 +937,43 @@ describe("transcript and audio", () => {
 });
 
 describe("long transcripts", () => {
+  const observers: {
+    callback: IntersectionObserverCallback;
+  }[] = [];
+
+  beforeEach(() => {
+    observers.length = 0;
+    class MockObserver {
+      callback: IntersectionObserverCallback;
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", MockObserver);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const revealMore = async () => {
+    const observer = observers.at(-1);
+    if (!observer) throw new Error("No transcript observer");
+    await act(async () => {
+      observer.callback(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        observer as unknown as IntersectionObserver,
+      );
+    });
+  };
+
   const long: MeetingDetail = {
     ...sample,
     summary: "## Decisions\n- Late point [06:39]",
@@ -941,11 +1000,11 @@ describe("long transcripts", () => {
     await ready();
     await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
     expect(rows()).toHaveLength(200);
-    await userEvent.click(
-      screen.getByRole("button", { name: "Show next 200" }),
-    );
+    expect(screen.queryByRole("button", { name: /Show next/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+    await revealMore();
     expect(rows()).toHaveLength(400);
-    await userEvent.click(screen.getByRole("button", { name: "Show all" }));
+    await revealMore();
     expect(rows()).toHaveLength(450);
     expect(screen.queryByRole("button", { name: /Show next/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
@@ -981,7 +1040,8 @@ describe("long transcripts", () => {
     );
     await ready();
     await userEvent.click(screen.getByRole("tab", { name: "Transcript" }));
-    await userEvent.click(screen.getByRole("button", { name: "Show all" }));
+    await revealMore();
+    await revealMore();
     expect(rows()).toHaveLength(450);
     await userEvent.click(screen.getByRole("button", { name: /Other sync/ }));
     await userEvent.click(screen.getByRole("button", { name: /Sample sync/ }));

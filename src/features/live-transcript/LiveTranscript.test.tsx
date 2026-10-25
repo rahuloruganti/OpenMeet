@@ -81,12 +81,12 @@ it("groups consecutive finals of one speaker into one paragraph with one time", 
   const { container } = render(view());
 
   const paragraphs = await screen.findAllByText(
-    (_, element) => element?.className === "lt-line",
+    (_, element) => element?.className === "tx-turn",
   );
   expect(paragraphs).toHaveLength(2);
   expect(screen.getByText(/First part\. Second part\./)).toBeTruthy();
   // One timestamp for the run, from its first line.
-  expect(screen.getAllByText("01:01")).toHaveLength(1);
+  expect(screen.getAllByText("1:01")).toHaveLength(1);
   // Finals are announced politely; partials are not.
   expect(container.querySelectorAll('[aria-live="polite"]')).toHaveLength(2);
 });
@@ -106,11 +106,11 @@ it("puts a partial after the last paragraph of its lane in muted text", async ()
   const { container } = render(view());
 
   await screen.findByText(/Said aloud\./);
-  const rows = Array.from(container.querySelectorAll(".lt-line"));
+  const rows = Array.from(container.querySelectorAll(".tx-p"));
   expect(rows).toHaveLength(2);
-  expect(rows[1].className).toContain("lt-partial");
+  expect(rows[1].className).toContain("is-live");
   expect(rows[1].textContent).toContain("Still being");
-  expect(rows[1].querySelector('[aria-live="polite"]')).toBeNull();
+  expect(rows[1].getAttribute("aria-live")).toBeNull();
 });
 
 it("keeps partials after every final in time order, whichever lane they belong to", async () => {
@@ -135,7 +135,7 @@ it("keeps partials after every final in time order, whichever lane they belong t
   const { container } = render(view());
 
   await screen.findByText(/Then Friday\./);
-  const rows = Array.from(container.querySelectorAll(".lt-line")).map(
+  const rows = Array.from(container.querySelectorAll(".tx-p")).map(
     (row) => row.textContent ?? "",
   );
   expect(rows).toHaveLength(4);

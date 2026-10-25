@@ -1,10 +1,14 @@
 /* The live transcript above the saved one, in the meeting's Transcript tab. */
 .lt {
-  margin: 10px 0 4px;
-  padding: 10px 12px 12px;
-  border: 1px solid var(--divider);
-  border-radius: 8px;
-  background: var(--panel, transparent);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.mw-scroll .lt-scroll {
+  max-height: none;
+  overflow: visible;
 }
 
 .lt-head {

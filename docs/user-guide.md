@@ -58,16 +58,16 @@ OpenMeet has one home page and two full pages.
 - **Ctrl+K** opens the command palette over any page except first-run setup. Type to filter commands and meeting titles, then choose a row; **Escape** closes it.
 - The meeting header's **Inspector** button, or **Ctrl+I**, shows the right-hand inspector: **Details**, **Tasks** and **Devices**. Below 1100 px window width the inspector is hidden and a **Tasks (n)** button opens the same tasks in a sheet.
 
-| Shortcut | Action |
-| --- | --- |
-| **Ctrl+K** | Command palette. |
-| **Ctrl+N** | New recording dialog (never starts capture). |
-| **Ctrl+Shift+N** | New note. |
-| **Ctrl+Shift+A** | Ask across meetings. |
-| **Ctrl+,** | Settings. |
-| **Ctrl+E** | Export the open meeting. |
-| **F2** | Rename the open meeting. |
-| **Ctrl+I** | Show or hide the meeting inspector. |
+| Shortcut         | Action                                       |
+| ---------------- | -------------------------------------------- |
+| **Ctrl+K**       | Command palette.                             |
+| **Ctrl+N**       | New recording dialog (never starts capture). |
+| **Ctrl+Shift+N** | New note.                                    |
+| **Ctrl+Shift+A** | Ask across meetings.                         |
+| **Ctrl+,**       | Settings.                                    |
+| **Ctrl+E**       | Export the open meeting.                     |
+| **F2**           | Rename the open meeting.                     |
+| **Ctrl+I**       | Show or hide the meeting inspector.          |
 
 These shortcuts do nothing while you are typing in a text field or editor, except **Ctrl+K**, **Ctrl+,** and **Ctrl+I**. Recording pause and stop have their own shortcuts under **Settings → Recording**.
 
@@ -81,27 +81,27 @@ A dot beside an index name means that section needs you, and the same line sits 
 
 Toggles, choices and paths save as you change them and show a brief **✓ Saved**; only API keys and connection details (name, address, key) keep an explicit **Save** button.
 
-| Section | Holds |
-| --- | --- |
-| **General** | **Theme**: **System** (follows Windows), **Dark** or **Light**, with a small preview. |
-| **Recording** | Default microphone and system audio, pause and stop shortcuts, **Live transcript** (its switch and its model), and **Automation**: automatic processing and meeting detection. |
-| **Transcription** | **Process audio** (**On this PC** or **Cloud**), language, **Speech model** (one status line and one **Download** for the recommended model), the **Engine** status, **Other models** with their own downloads, and under **More options** the vocabulary hint and **Add your own model** (folder scans and Hugging Face). The cloud speech connection shows when **Cloud** is chosen. |
-| **AI notes** | The AI connection, **Templates** (summary templates and recipes in one list, tagged **Summary** or **Recipe**), the default summary template, and **Local AI** (a llama.cpp server and model on this PC). |
-| **Export & storage** | Export folder, Markdown options, transcript files (TXT, SRT, VTT), and the size of stored audio. |
-| **Privacy & about** | What leaves this device, version, licenses, and **Run setup again**. |
+| Section              | Holds                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **General**          | **Theme**: **System** (follows Windows), **Dark** or **Light**, with a small preview.                                                                                                                                                                                                                                                                                                  |
+| **Recording**        | Default microphone and system audio, pause and stop shortcuts, **Live transcript** (its switch and its model), and **Automation**: automatic processing and meeting detection.                                                                                                                                                                                                         |
+| **Transcription**    | **Process audio** (**On this PC** or **Cloud**), language, **Speech model** (one status line and one **Download** for the recommended model), the **Engine** status, **Other models** with their own downloads, and under **More options** the vocabulary hint and **Add your own model** (folder scans and Hugging Face). The cloud speech connection shows when **Cloud** is chosen. |
+| **AI notes**         | The AI connection, **Templates** (summary templates and recipes in one list, tagged **Summary** or **Recipe**), the default summary template, and **Local AI** (a llama.cpp server and model on this PC).                                                                                                                                                                              |
+| **Export & storage** | Export folder, Markdown options, transcript files (TXT, SRT, VTT), and the size of stored audio.                                                                                                                                                                                                                                                                                       |
+| **Privacy & about**  | What leaves this device, version, licenses, and **Run setup again**.                                                                                                                                                                                                                                                                                                                   |
 
 Where earlier options went:
 
-| Earlier place | Now |
-| --- | --- |
-| **Settings → Connections** | The **Connection** group in **AI notes**, and **Cloud speech** in **Transcription** when the engine is **Cloud**. |
-| **Settings → Models** | **Transcription → More options → Add your own model**. |
-| **Settings → Recording → Automatic processing**, **Meeting detection** | **Recording → Automation**. |
-| **Settings → AI notes → Summary templates**, **Recipes** | **AI notes → Templates**, one list tagged **Summary** or **Recipe**. |
-| Tasks below the Summary tab | The meeting inspector's **Tasks** section. |
-| **AI notes → Tasks** | Each meeting's inspector. The group is gone; **Local AI** takes its place. |
-| **Earlier transcripts** on the Transcript tab | The meeting's **⋯** menu → **History**. |
-| The processing panel | One status line above the editor. |
+| Earlier place                                                          | Now                                                                                                               |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **Settings → Connections**                                             | The **Connection** group in **AI notes**, and **Cloud speech** in **Transcription** when the engine is **Cloud**. |
+| **Settings → Models**                                                  | **Transcription → More options → Add your own model**.                                                            |
+| **Settings → Recording → Automatic processing**, **Meeting detection** | **Recording → Automation**.                                                                                       |
+| **Settings → AI notes → Summary templates**, **Recipes**               | **AI notes → Templates**, one list tagged **Summary** or **Recipe**.                                              |
+| Tasks below the Summary tab                                            | The meeting inspector's **Tasks** section.                                                                        |
+| **AI notes → Tasks**                                                   | Each meeting's inspector. The group is gone; **Local AI** takes its place.                                        |
+| **Earlier transcripts** on the Transcript tab                          | The meeting's **⋯** menu → **History**.                                                                           |
+| The processing panel                                                   | One status line above the editor.                                                                                 |
 
 The theme is stored in the local database and applied at once; **System** follows the Windows light or dark setting.
 
@@ -126,12 +126,12 @@ The **Meetings** button collapses or opens the sidebar. While it is collapsed, t
 
 ## Distinguish meeting sources
 
-| Label | Meaning |
-| --- | --- |
-| Note | A notes-only entry with no capture. |
-| Desktop capture | An entry created through real capture. Its status and errors still determine whether recording completed. |
-| Simulation | A recording-state demonstration that opened no audio devices. |
-| Fictional sample | Test notes, transcript and a hand-written summary. |
+| Label            | Meaning                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| Note             | A notes-only entry with no capture.                                                                       |
+| Desktop capture  | An entry created through real capture. Its status and errors still determine whether recording completed. |
+| Simulation       | A recording-state demonstration that opened no audio devices.                                             |
+| Fictional sample | Test notes, transcript and a hand-written summary.                                                        |
 
 Sample and simulation creation has been removed. Those labels describe preserved historical records only; edited notes stay accessible. Use **New note** to write without capture.
 
@@ -218,15 +218,19 @@ Models download only on an explicit action; the speech engines themselves are pa
 
 **You** identifies the microphone track and **Others** identifies system audio. Those labels do not identify individual people, so review names, numbers and decisions before using a transcript.
 
-Under the transcript's **Speaker names**, name the two labels for this meeting, for example "Rahul" for You. The transcript, export and the text sent for summaries and questions then show "Rahul (You)". Others covers all system audio, so one name applies to everyone heard through it. Clearing a name restores the label. Renaming while a summary or question is running stops that result from being saved.
+Consecutive segments from the same speaker join one paragraph when the gap between a segment's start and the previous segment's start is 10 seconds or less. A longer gap or a speaker change starts a new turn. A segment with no time joins the current turn of the same speaker. The turn's start time sits to the left of the name.
 
-Click **Edit** beside a transcript segment to correct its text, then **Save**. Edited segments show "(edited)"; hover to see the original, or click **Revert** to restore it. Search, summaries, questions and export use the corrected text, and export marks the transcript with `transcript_edited: true`. An open segment edit is kept while you switch meetings, and closing the window saves it. If that save fails, **Not saved yet** offers **Try again**, **Keep working** or **Quit anyway**. Editing is unavailable while a transcription or summary you started from this screen runs. If the segment changed since you started, for example after re-transcription, the save is refused and your text stays open. Re-transcribing never discards your edits: the current transcript, including edits, is kept in the meeting's **⋯** menu → **History**, where you can read it but not restore it. Once a transcript exists, **Re-transcribe audio** first asks for confirmation. The question says the audio is uploaded and may be billed again when the speech connection is online, or that it runs on your computer and can take about as long as the recording. **Cancel** leaves the transcript as it is; the first transcription still runs on one click.
+**Speakers** opens a small panel to name the two labels for this meeting, for example "Rahul" for You. The transcript, export and the text sent for summaries and questions then show "Rahul (You)". Others covers all system audio, so one name applies to everyone heard through it. Clearing a name restores the label. Renaming while a summary or question is running stops that result from being saved.
+
+Click a segment's text to correct it in place. Enter saves, Shift+Enter inserts a line, and Esc cancels. Leaving the field also saves. Empty text cannot be saved. Hover or focus a segment for **Edit**, **Revert**, and a play button at that segment's time. An edited segment shows a small mark; hover the mark to read the original. **Revert** restores it. Search, summaries, questions and export use the corrected text, and export marks the transcript with `transcript_edited: true`. An open segment edit is kept while you switch meetings, and closing the window saves it. If that save fails, **Not saved yet** offers **Try again**, **Keep working** or **Quit anyway**. Editing is unavailable while a transcription or summary you started from this screen runs, and while the meeting is recording. If the segment changed since you started, for example after re-transcription, the save is refused and your text stays open. Re-transcribing never discards your edits: the current transcript, including edits, is kept in **History** on the Transcript toolbar and in the meeting's **⋯** menu, where you can read it but not restore it. Once a transcript exists, **Re-transcribe** first asks for confirmation. The question says the audio is uploaded and may be billed again when the speech connection is online, or that it runs on your computer and can take about as long as the recording. **Cancel** leaves the transcript as it is; the first transcription still runs on one click.
 
 When the transcript or speaker names change after a summary was made, the Summary tab says the summary is out of date. Generate a new summary to include the changes; reverting the change clears the notice. Summaries made before this check existed are never flagged.
 
-Long transcripts show the first 200 segments. **Show next 200 segments** shows the next page and says how many remain, and **Show all** shows the rest. Opening a citation or search result beyond the shown segments reveals it first. Each meeting starts again at the first 200 when you open it.
+**Find in transcript** searches the text, including segments not yet drawn. Ctrl+F focuses the field while the Transcript tab is open. The count reads "N of M". Enter moves to the next match, Shift+Enter to the previous, and Esc clears the search. **Copy** copies the whole transcript as plain text, with your edits, one turn per block.
 
-Each playable track has its own player. Select a transcript timestamp to seek the corresponding track. Timestamp links inserted in notes can jump to audio; system-track seeking is approximate. Leaving the Transcript tab or opening settings pauses playback. Missing or incomplete files produce a visible error.
+Long transcripts draw more as you scroll. Opening a citation, a find match, or the line being played beyond what is drawn shows it first. Each meeting starts again at the first page when you open it.
+
+One player at the bottom plays the microphone and system tracks together. The timeline is the meeting's time. Mute **You** or **Others**. A track with no audio shows **No audio** and cannot be toggled. Space plays and pauses when the Transcript tab is open and focus is not in a text field. The left and right arrow keys move 5 seconds, and Shift with those keys moves 30 seconds. The line being played is tinted, and the view follows it until you scroll. **Back to playing** returns to that line. Seeking is approximate across pauses inside a recording and is re-anchored at each seek. Leaving the Transcript tab or opening settings pauses playback. Missing or incomplete files produce a visible error.
 
 For cloud transcription, choose **Cloud** under **Settings → Transcription** and add the connection in **Cloud speech**: pick OpenAI or Groq, or **Custom** for another OpenAI-compatible API, then select a connection and a model for the **Speech API** task. A provider fills in the base URL and a name. **Test** beside the key lists that provider's models to check the URL and key without sending audio; a typed key is used for that one check and not stored, and a saved key is used only for the URL it was saved with. The **Model** list fills from **Test**, or by itself after saving a new connection without a model, so pick one and save again; **Other…** takes a model ID the provider does not list. Loopback HTTP permits optional keys; remote APIs require HTTPS. The connection form checks the base URL as you type: it must be an https URL, or http only for localhost or 127.0.0.1, without credentials, query parameters or a fragment, and **Save** stays disabled until it passes. A remote connection can be saved without a key, but it cannot be used until a key is saved; changing a saved connection's URL to a remote address needs a new key. **Save**, **Test** and **Remove key** say why they are unavailable. Local model downloads are not needed for cloud mode. Language and vocabulary settings stay available, but a provider may reject unsupported options visibly.
 
@@ -291,15 +295,15 @@ Select text in **My notes** and click **Rewrite with AI…**. The card says the 
 
 **Your PC** shows the GPU and its VRAM, or **No GPU found**, with system RAM. Each model is labelled **Fits your GPU**, **Uses system RAM** or **Too big**, one is marked **Recommended** when a model fits, and models that are too big are counted below the list instead of being offered.
 
-| Model | Size | License |
-| --- | --- | --- |
-| Qwen3 30B A3B Instruct | 17.28 GB | Apache-2.0 |
-| Qwen3 14B | 8.38 GB | Apache-2.0 |
-| Gemma 3 12B | 6.80 GB | Gemma terms |
-| Qwen3 8B | 4.68 GB | Apache-2.0 |
-| Qwen3 4B Instruct | 2.33 GB | Apache-2.0 |
-| Gemma 3 4B | 2.32 GB | Gemma terms |
-| Llama 3.2 3B Instruct | 1.88 GB | Llama 3.2 license |
+| Model                  | Size     | License           |
+| ---------------------- | -------- | ----------------- |
+| Qwen3 30B A3B Instruct | 17.28 GB | Apache-2.0        |
+| Qwen3 14B              | 8.38 GB  | Apache-2.0        |
+| Gemma 3 12B            | 6.80 GB  | Gemma terms       |
+| Qwen3 8B               | 4.68 GB  | Apache-2.0        |
+| Qwen3 4B Instruct      | 2.33 GB  | Apache-2.0        |
+| Gemma 3 4B             | 2.32 GB  | Gemma terms       |
+| Llama 3.2 3B Instruct  | 1.88 GB  | Llama 3.2 license |
 
 The engine is llama.cpp build `b11671`: CUDA on NVIDIA, which also downloads its CUDA runtime, Vulkan on AMD or Intel, and CPU otherwise. Downloads happen only when you click **Install**, **Download** or **Set up for me**. The engine comes from github.com/ggml-org/llama.cpp releases and the models from Hugging Face, each checked against a pinned size and SHA-256. Nothing is uploaded.
 

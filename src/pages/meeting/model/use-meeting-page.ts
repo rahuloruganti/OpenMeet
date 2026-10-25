@@ -731,6 +731,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
       segmentDraft,
       onSegmentDraft: setSegmentDraft,
       onSaveSegment: async (draft) => {
+        if (!draft.text.trim()) return false;
         let saved = false;
         await run(async () => {
           await api.editSegment(
@@ -740,7 +741,12 @@ export function useMeetingPage(env: MeetingPageEnv) {
             draft.text,
           );
           saved = true;
-          setSegmentDraft(null);
+          setSegmentDraft((current) =>
+            current?.meetingId === draft.meetingId &&
+            current.segmentId === draft.segmentId
+              ? null
+              : current,
+          );
           await finishJob(draft.meetingId);
         });
         return saved;
@@ -965,18 +971,22 @@ export function useMeetingPage(env: MeetingPageEnv) {
         }
       }
       if (segmentDraft) {
-        try {
-          await api.editSegment(
-            segmentDraft.meetingId,
-            segmentDraft.segmentId,
-            segmentDraft.baseText,
-            segmentDraft.text,
-          );
+        if (!segmentDraft.text.trim()) {
           setSegmentDraft(null);
-        } catch (failure) {
-          problems.push(
-            `Transcript edit not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
-          );
+        } else {
+          try {
+            await api.editSegment(
+              segmentDraft.meetingId,
+              segmentDraft.segmentId,
+              segmentDraft.baseText,
+              segmentDraft.text,
+            );
+            setSegmentDraft(null);
+          } catch (failure) {
+            problems.push(
+              `Transcript edit not saved: ${errorMessage(failure).replace(/\.$/, "")}.`,
+            );
+          }
         }
       }
       if (problems.length === 0) {

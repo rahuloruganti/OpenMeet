@@ -608,6 +608,7 @@ Default device selects now show the saved defaults instead of the working select
 User asked to work on automatic meeting detection. That overrides the earlier rule-8 deferral for detection only, as opt-in prompts that never start capture; AGENTS.md rule 8 now records this.
 
 Behaviour:
+
 - On Windows, a thread reads the microphone privacy store (`CapabilityAccessManager\ConsentStore\microphone`, packaged and NonPackaged keys) every 3 s while detection is on. An app counts as in use when `LastUsedTimeStart` is greater than `LastUsedTimeStop`, which was checked read-only against an idle app. OpenMeet's own exe is excluded.
 - An app must be in use for two polls before it is reported, and `microphone_apps` is emitted only when the list changes.
 - The frontend shows a "Meeting detected" card (Set up recording / Not now / Never for <app>) once per microphone session per app, not while OpenMeet records. It flashes the taskbar through a Rust command.
@@ -620,6 +621,7 @@ Full checks passed: typecheck, lint, formatting, 167 frontend tests, frontend bu
 User asked to add macOS meeting detection and a refresh for microphones that are not available.
 
 macOS detection:
+
 - It reads CoreAudio process objects every 3 s while detection is on: `kAudioHardwarePropertyProcessObjectList`, then each process's running-input flag, PID and bundle ID, through direct CoreAudio/CoreFoundation FFI in the style of `capture_gate.rs`, so no new dependency.
 - OpenMeet's own PID is excluded. Apps are keyed by bundle ID and named after the outermost `.app` in `proc_pidpath`, so a browser helper reads as the browser. Processes without a bundle ID are skipped.
 - It is supported where recording is (Apple Silicon, macOS 14.2+, via `capture_gate::supported`).
@@ -632,6 +634,7 @@ Checks: full set passed on Windows with 169 frontend tests and 185 Rust tests (t
 User asked for a whole-repo over-engineering review, then to apply its 18 Rust findings and run the full check set.
 
 Rust simplifications (no behaviour change intended):
+
 - One `lock_core` helper replaces the hand-written core-lock blocks in `lib.rs` and `session_runtime.rs`; lock scopes are unchanged, and send paths still map a poisoned lock to `plan_changed`.
 - The migration table is `#[rustfmt::skip]` with one line per entry, and `LATEST_SCHEMA` is derived from its last entry.
 - `llm.rs` and `providers.rs` take the `Connection` directly instead of `_at(url, key, model, timeout)` wrappers; tests use `Connection::for_test`. The unreachable `None`-key branch in the question path is gone; `confirm()` in `lib.rs` remains the consent gate.
@@ -642,6 +645,7 @@ Rust simplifications (no behaviour change intended):
 User asked to apply the review's frontend findings 19–31 and run the full check set.
 
 Frontend simplifications (no behaviour change intended except byte display):
+
 - `App.tsx`: `patchSelected` for the six "patch the open meeting" sites, `planFor` for the three review-plan handlers, `report` and `errorCode` instead of repeated error casts, and one `awaitingNotes` predicate for the notes-acknowledgement check.
 - Shared pieces: `builtinTemplates` and `modeLabels` in `lib/processing.ts`, `tagChoices` in `lib/meeting-labels.ts`, `errorCode` in `lib/api.ts`, `useTask` (busy/error/notice runner for rewrite, saved texts, summary instructions and task assignments), `tabTarget` for tablist keys, and a `TextConsent` list for the four text consent cards. The audio upload card keeps its own wording.
 - Download and model sizes use `formatBytes`, so they read "100.0 MB" or "1 KB" instead of whole or one-decimal MB; two test assertions were updated.
@@ -916,3 +920,4 @@ Checked: `node node_modules/eslint/bin/eslint.js src` exits 0 with no output, be
 Nothing was run for this entry beyond the lint pass: no recording, no audio device, no model download and no provider request. Live text was exercised with a fictional text-to-speech clip and with synthetic and mocked tests only, so live text, streaming model quality, cloud live uploads and pause privacy on real hardware remain unqualified.
 
 - Settings UX review (Impeccable critique, 24/40) and fixes: search reaches inside More options; AI notes opens with Notes written (On this PC or With a connection); one Speech model row with one Download, Other models, Your own models under More options; confirmed connection delete, actionable Test failures, one-Save connections, explained template kinds; skip link, h3 group headings, announced needs-you dots, 24px switch targets; encryption note moved to Privacy; info icons removed; Settings button opens at the top.
+- Transcript tab redesign: shared speaker turns, find, copy, in-place edit, one synced player, scroll rendering, and the live transcript uses the same turn layout. Frontend only.
