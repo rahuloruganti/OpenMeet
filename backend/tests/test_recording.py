@@ -6,6 +6,7 @@ backend.deliver() and then pause, stop or wait for the writer through public cal
 
 from __future__ import annotations
 
+import logging
 import struct
 import threading
 import time
@@ -15,9 +16,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
+from conftest import invoke, invoke_error
 from fastapi.testclient import TestClient
 
-from conftest import invoke, invoke_error
+from openmeet_py.api.errors import AppError
 from openmeet_py.audio import recorder as recorder_module
 from openmeet_py.audio.audio_wav import WavFile, read_timing, timing_line
 
@@ -163,8 +165,10 @@ def test_recording_state_shape_when_idle(client: TestClient) -> None:
         "error",
         "recording_offset_ms",
         "processing_notice",
+        "origin",
     }
     assert state["status"] == "idle" and state["recording_offset_ms"] is None
+    assert state["origin"] is None
 
 
 # ---- pause privacy at the boundaries ---------------------------------------------------
@@ -457,3 +461,207 @@ def test_stale_recording_is_interrupted_at_startup(tmp_path: Path) -> None:
     finally:
         reopened.close()
     assert status == "interrupted"
+
+
+
+# ---- lifecycle events and origin (RecorderListener hook) ------------------------------
+
+Event = tuple
+
+
+class SpyListener:
+    """Records (kind, meeting_id, origin, reason, thread name) for each event it receives."""
+
+    def __init__(self) -> None:
+        self.events: list[Event] = []
+
+    def recorder_event(self, kind: str, meeting_id: str | None, origin: str, reason: str | None) -> None:
+        self.events.append((kind, meeting_id, origin, reason, threading.current_thread().name))
+
+    def kinds(self) -> list[str]:
+        return [event[0] for event in self.events]
+
+
+def attach(client: TestClient) -> SpyListener:
+    spy = SpyListener()
+    recorder(client).add_listener(spy)
+    return spy
+
+
+def test_listener_gets_started_paused_resumed_stopped_in_order(client: TestClient) -> None:
+    spy = attach(client)
+    meeting_id = start(client)
+    invoke(client, "pause_recording")
+    invoke(client, "resume_recording")
+    invoke(client, "stop_recording")
+    invoke(client, "stop_recording")  # idle: no second event
+    assert [event[:4] for event in spy.events] == [
+        ("started", meeting_id, "manual", None),
+        ("paused", meeting_id, "manual", None),
+        ("resumed", meeting_id, "manual", None),
+        ("stopped", meeting_id, "manual", None),
+    ]
+
+
+def test_events_are_delivered_after_the_database_commit(client: TestClient) -> None:
+    store = client.app.state.ctx.store  # type: ignore[attr-defined]
+    statuses: dict[str, str] = {}
+
+    class DatabaseChecker:
+        def recorder_event(self, kind: str, meeting_id: str | None, origin: str, reason: str | None) -> None:
+            row = store.db.execute("SELECT status FROM meetings WHERE id = ?1", (meeting_id,)).fetchone()
+            statuses[kind] = row[0]
+
+    recorder(client).add_listener(DatabaseChecker())
+    start(client)
+    invoke(client, "pause_recording")
+    invoke(client, "resume_recording")
+    invoke(client, "stop_recording")
+    assert statuses == {"started": "recording", "paused": "paused", "resumed": "recording", "stopped": "stopped"}
+
+
+def test_auto_origin_is_stored_on_the_recording_and_carried_by_its_events(client: TestClient) -> None:
+    spy = attach(client)
+    rec = recorder(client)
+    assert rec.state()["origin"] is None and rec.origin is None
+    started = rec.start("Auto call", "fake-mic", "fake-output", origin="auto")
+    assert started["origin"] == "auto" and rec.origin == "auto"
+    assert spy.events[0][:3] == ("started", started["meeting_id"], "auto")
+    paused = rec.pause(origin="lifecycle")
+    assert paused["origin"] == "auto"  # the recording keeps the origin it started with
+    assert spy.events[-1][:3] == ("paused", started["meeting_id"], "lifecycle")
+    rec.resume()
+    stopped = rec.stop(origin="lifecycle")
+    assert stopped["origin"] is None  # no active recording once stopped
+    assert spy.events[-1][:3] == ("stopped", started["meeting_id"], "lifecycle")
+
+
+def test_unknown_origin_is_refused_before_anything_starts(client: TestClient) -> None:
+    rec = recorder(client)
+    with pytest.raises(AppError) as refused:
+        rec.start("Bot call", "fake-mic", "fake-output", origin="bot")
+    assert refused.value.code == "invalid_args"
+    assert rec.state()["status"] == "idle"
+    assert not audio_dir(client).exists() or not any(audio_dir(client).iterdir())
+
+
+def test_manual_api_commands_pass_origin_manual_explicitly(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rec = recorder(client)
+    seen: list[tuple[str, Any]] = []
+
+    def spy_for(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def call(*args: Any, **kwargs: Any) -> Any:
+            seen.append((name, kwargs.get("origin")))
+            return real(*args, **kwargs)
+
+        return call
+
+    for name in ("start", "pause", "resume", "stop"):
+        monkeypatch.setattr(rec, name, spy_for(name, getattr(rec, name)))
+    start(client)
+    invoke(client, "pause_recording")
+    invoke(client, "resume_recording")
+    invoke(client, "stop_recording")
+    assert seen == [("start", "manual"), ("pause", "manual"), ("resume", "manual"), ("stop", "manual")]
+
+
+def test_stalled_writer_on_stop_emits_stop_failed_and_keeps_the_recording(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = attach(client)
+    meeting_id = start(client)
+    deliver(client, mic=0.3, out=0.3)
+    monkeypatch.setattr(recorder_module.Session, "close_writer", lambda self: False)
+    status, body = invoke_error(client, "stop_recording")
+    assert (status, body["code"]) == (400, "audio_worker_busy")
+    assert spy.events[-1][:4] == ("stop_failed", meeting_id, "manual", "audio_worker_busy")
+    state = invoke(client, "get_recording_state")
+    assert state["status"] == "paused" and state["origin"] == "manual"
+    assert invoke(client, "get_meeting", id=meeting_id)["meeting"]["status"] == "paused"
+    monkeypatch.undo()  # the writer answers now: a retried stop finishes the recording
+    invoke(client, "stop_recording")
+    assert spy.kinds()[-1] == "stopped"
+
+
+def test_device_fault_emits_fault_with_the_capture_error_code(client: TestClient) -> None:
+    spy = attach(client)
+    meeting_id = start(client)
+    deliver(client, mic=0.4, out=0.4)
+    backend(client).stream_for("fake-mic").fail("device removed")
+    wait_for(lambda: "fault" in spy.kinds())
+    assert spy.events[-1][:4] == ("fault", meeting_id, "manual", "audio")
+    invoke(client, "stop_recording")
+    assert spy.kinds()[-1] == "stopped"
+
+
+def test_writer_fault_is_reported_from_the_meter_thread(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = attach(client)
+
+    def full(self: WavFile, data: bytes) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(WavFile, "write", full)
+    start(client)
+    deliver(client, mic=0.4, out=0.4)
+    wait_for(lambda: "fault" in spy.kinds())
+    fault = next(event for event in spy.events if event[0] == "fault")
+    assert fault[4] == "openmeet-audio-meter"
+    invoke(client, "stop_recording")
+
+
+def test_a_raising_listener_does_not_break_stop_or_the_other_listeners(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Broken:
+        def recorder_event(self, kind: str, meeting_id: str | None, origin: str, reason: str | None) -> None:
+            raise RuntimeError("listener bug")
+
+    rec = recorder(client)
+    rec.add_listener(Broken())
+    spy = attach(client)
+    start(client)
+    with caplog.at_level(logging.ERROR, logger="openmeet_py"):
+        stopped = invoke(client, "stop_recording")
+    assert stopped["status"] == "stopped" and stopped["error"] is None
+    assert spy.kinds() == ["started", "stopped"]
+    assert any("recorder listener" in record.getMessage() for record in caplog.records)
+
+
+def test_removed_listener_gets_no_more_events(client: TestClient) -> None:
+    rec = recorder(client)
+    spy = attach(client)
+    rec.remove_listener(spy)
+    start(client)
+    invoke(client, "stop_recording")
+    assert spy.events == []
+
+
+def test_listeners_never_run_on_the_audio_callback_or_the_writer_thread(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = attach(client)
+    in_callback = threading.local()
+    real_on_audio = recorder_module.Session.on_audio
+
+    def marked_on_audio(self: Any, *args: Any) -> None:
+        in_callback.active = True
+        try:
+            real_on_audio(self, *args)
+        finally:
+            in_callback.active = False
+
+    monkeypatch.setattr(recorder_module.Session, "on_audio", marked_on_audio)
+    start(client)
+    deliver(client, mic=0.2, out=0.2)
+    invoke(client, "pause_recording")
+    invoke(client, "resume_recording")
+    deliver(client, mic=0.2, out=0.2)
+    invoke(client, "stop_recording")
+    assert spy.kinds() == ["started", "paused", "resumed", "stopped"]
+    for kind, _meeting, _origin, _reason, thread_name in spy.events:
+        assert thread_name != "openmeet-audio-writer", kind
+        assert not getattr(in_callback, "active", False)

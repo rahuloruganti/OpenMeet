@@ -83,6 +83,8 @@ type Props = {
   onProcessing: (choice: ProcessingChoice) => void;
   detectionSupported: boolean;
   onDetection: (enabled: boolean) => void;
+  /** Saves the automatic capture switch; only reachable while meeting detection is on. */
+  onAutoCapture: (enabled: boolean) => void;
   onDetectionIgnored: (app: MicApp, ignored: boolean) => void;
   stt: SttStatus | null;
   sttProgress: SttDownloadProgress | null;
@@ -472,6 +474,31 @@ function RecordingSection(props: Props) {
               disabled={disabled || !settings || !props.detectionSupported}
               onChange={(on) => {
                 props.onDetection(on);
+                automation.mark();
+              }}
+            />
+          </Row>
+          <Row
+            label="Automatic capture"
+            detail={
+              <span>
+                Starts a recording with your saved devices when a supported call
+                app (Teams, Zoom, Slack, Discord, Webex, Skype) uses the
+                microphone. Browsers and other apps still only prompt. You can
+                stop or pause at any time. A manual stop or pause blocks
+                automatic restart for that call. Audio is stored on this PC, as
+                for any recording.
+                {!settings?.detection_enabled &&
+                  " Turn on meeting detection first."}
+              </span>
+            }
+          >
+            <Switch
+              label="Automatic capture"
+              checked={settings?.auto_capture ?? false}
+              disabled={disabled || !settings || !settings.detection_enabled}
+              onChange={(on) => {
+                props.onAutoCapture(on);
                 automation.mark();
               }}
             />

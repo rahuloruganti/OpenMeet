@@ -25,7 +25,7 @@ from openmeet_py.infra.store import Store
 MIGRATIONS = Path(__file__).resolve().parents[1] / "openmeet_py" / "migrations"
 MEETING = "22222222-2222-2222-2222-222222222222"
 THROUGH = 27  # the previous app's schema: importing it has to migrate the copy to LATEST
-LATEST = 32
+LATEST = 33
 AUDIO_FILES = ("mic.wav", "system.wav", "mic.timing.jsonl")
 NO_DATA = "No previous OpenMeet data found."
 DESTINATION_USED = "This OpenMeet already has meetings."

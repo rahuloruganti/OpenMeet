@@ -6,7 +6,10 @@ with a function that fails the test, so a detection can only ever emit an event.
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,7 +19,7 @@ from conftest import TOKEN, invoke, invoke_error
 from openmeet_py.api.server import create_app
 from openmeet_py.platform import detection
 from openmeet_py.platform.detection import (
-    ConsentEntry, Debounce, DetectionService, active_apps, display_name, in_use,
+    ConsentEntry, Debounce, DetectionService, Signal, active_apps, display_name, in_use,
 )
 from openmeet_py.platform.win32 import FakeWin32
 
@@ -37,6 +40,10 @@ class ListRegistry:
 
     def entries(self) -> list[ConsentEntry]:
         return list(self.entries_)
+
+    def replace(self, *entries: ConsentEntry) -> None:
+        """Exact store contents for one poll, plus this process's own entry (which must never be reported)."""
+        self.entries_ = list(entries) + [ConsentEntry(OWN, 9, 0)]
 
 
 @pytest.fixture
@@ -211,3 +218,124 @@ def test_the_fake_consent_file_drives_detection(tmp_path: Path, monkeypatch: pyt
     assert [entry.name for entry in registry.entries()] == [ZOOM]
     (data / detection.FAKE_FILE).write_text("not json", encoding="utf-8")
     assert registry.entries() == []
+
+
+# ---- listeners (raw signals for the lifecycle; the prompt above is unchanged) ----
+
+
+def signals_of(signals: tuple[Signal, ...]) -> list[tuple[str, str, bool]]:
+    return sorted((s.app_id, s.name, s.in_use) for s in signals)
+
+
+def test_listeners_see_in_use_and_idle_apps_on_the_first_poll(setup: Any) -> None:
+    client, registry, service, events = setup
+    seen: list[tuple[Signal, ...]] = []
+    service.subscribe(seen.append)
+    registry.replace(ConsentEntry(ZOOM, 5, 0), ConsentEntry(CHROME, 0, 5))
+    service.tick()
+    assert signals_of(seen[-1]) == [(ZOOM, "Zoom", True), (CHROME, "Chrome", False)]
+    assert apps_emitted(events) == [[]]  # the debounced prompt still waits for a second poll
+
+
+def test_a_single_in_use_poll_then_release_is_seen_immediately_and_never_prompted(setup: Any) -> None:
+    client, registry, service, events = setup
+    seen: list[tuple[Signal, ...]] = []
+    service.subscribe(seen.append)
+    registry.replace(ConsentEntry(ZOOM, 5, 0))
+    service.tick()
+    registry.replace(ConsentEntry(ZOOM, 0, 5))
+    service.tick()
+    assert [signals_of(batch) for batch in seen] == [[(ZOOM, "Zoom", True)], [(ZOOM, "Zoom", False)]]
+    assert not any(apps for apps in apps_emitted(events))
+
+
+def test_a_listener_sees_a_release_on_the_poll_it_happens_even_after_a_prompt(setup: Any) -> None:
+    client, registry, service, events = setup
+    seen: list[tuple[Signal, ...]] = []
+    service.subscribe(seen.append)
+    registry.replace(ConsentEntry(ZOOM, 5, 0))
+    service.tick()
+    service.tick()
+    assert apps_emitted(events)[-1] == [{"id": ZOOM, "name": "Zoom"}]
+    registry.replace(ConsentEntry(ZOOM, 0, 5))
+    service.tick()
+    assert signals_of(seen[-1]) == [(ZOOM, "Zoom", False)]
+
+
+def test_listeners_get_an_empty_tuple_while_detection_is_off_and_the_store_is_not_read(
+    setup: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, registry, service, events = setup
+    seen: list[tuple[Signal, ...]] = []
+    service.subscribe(seen.append)
+    invoke(client, "save_detection", enabled=False)
+
+    def no_store_read() -> list[ConsentEntry]:
+        raise AssertionError("the consent store must not be read while detection is off")
+
+    monkeypatch.setattr(registry, "entries", no_store_read)
+    service.tick()
+    assert seen == [()]
+
+
+def test_ignored_apps_are_excluded_from_listener_signals(setup: Any) -> None:
+    client, registry, service, events = setup
+    seen: list[tuple[Signal, ...]] = []
+    service.subscribe(seen.append)
+    invoke(client, "set_detection_ignored", appId=ZOOM, name="Zoom", ignored=True)
+    registry.replace(ConsentEntry(ZOOM, 5, 0), ConsentEntry(CHROME, 5, 0))
+    service.tick()
+    assert signals_of(seen[-1]) == [(CHROME, "Chrome", True)]
+
+
+def test_this_process_is_excluded_from_listener_signals(setup: Any) -> None:
+    client, registry, service, events = setup
+    seen: list[tuple[Signal, ...]] = []
+    service.subscribe(seen.append)
+    registry.replace(ConsentEntry("C:#Apps#openmeet.exe", 5, 0), ConsentEntry(ZOOM, 0, 5))
+    service.tick()
+    assert signals_of(seen[-1]) == [(ZOOM, "Zoom", False)]
+
+
+def test_a_raising_listener_is_logged_and_does_not_stop_the_prompt_or_the_other_listeners(
+    setup: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    client, registry, service, events = setup
+    seen: list[tuple[Signal, ...]] = []
+
+    def broken(_signals: tuple[Signal, ...]) -> None:
+        raise RuntimeError("listener bug")
+
+    service.subscribe(broken)
+    service.subscribe(seen.append)
+    registry.replace(ConsentEntry(ZOOM, 5, 0))
+    with caplog.at_level(logging.WARNING, logger="openmeet_py"):
+        service.tick()
+        service.tick()
+    assert apps_emitted(events)[-1] == [{"id": ZOOM, "name": "Zoom"}]
+    assert len(seen) == 2
+    assert "meeting detection listener failed" in caplog.text
+
+
+def test_the_prompt_timing_is_unchanged_with_a_listener_subscribed(setup: Any) -> None:
+    client, registry, service, events = setup
+    service.subscribe(lambda _signals: None)
+    in_use_zoom, idle_zoom = ConsentEntry(ZOOM, 5, 0), ConsentEntry(ZOOM, 0, 5)
+    for entry in (in_use_zoom, in_use_zoom, idle_zoom, idle_zoom, in_use_zoom, in_use_zoom):
+        registry.replace(entry)
+        service.tick()
+    assert apps_emitted(events) == [[], [{"id": ZOOM, "name": "Zoom"}], [], [{"id": ZOOM, "name": "Zoom"}]]
+
+
+def test_signals_are_frozen_and_stamped_with_the_monotonic_clock(setup: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, registry, service, events = setup
+    monkeypatch.setattr(detection, "time", SimpleNamespace(monotonic=lambda: 42.5))
+    seen: list[tuple[Signal, ...]] = []
+    service.subscribe(seen.append)
+    registry.replace(ConsentEntry(ZOOM, 5, 0))
+    service.tick()
+    signal = seen[-1][0]
+    assert signal.observed_at == 42.5
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        signal.in_use = False  # type: ignore[misc]
+

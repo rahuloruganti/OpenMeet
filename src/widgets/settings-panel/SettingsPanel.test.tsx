@@ -63,6 +63,7 @@ const settings: Settings = {
   summary_default: "general-v1",
   detection_enabled: false,
   detection_ignored: [],
+  auto_capture: false,
   setup_done: true,
   theme: "system",
   inspector_open: true,
@@ -88,6 +89,7 @@ const props = () => ({
   detectionSupported: true,
   onDetection: vi.fn(),
   onDetectionIgnored: vi.fn(),
+  onAutoCapture: vi.fn(),
   stt: {
     engine: true,
     model: true,
@@ -341,6 +343,32 @@ it("explains the automation switches and hides their details until they are on",
   expect(detecting.getAttribute("aria-checked")).toBe("false");
   await userEvent.click(detecting);
   expect(input.onDetection).toHaveBeenCalledWith(true);
+});
+
+it("offers automatic capture only while meeting detection is on", async () => {
+  const input = props();
+  const view = render(<SettingsPanel {...input} initialSection="recording" />);
+  const auto = screen.getByRole<HTMLButtonElement>("switch", {
+    name: "Automatic capture",
+  });
+  expect(auto.disabled).toBe(true);
+  expect(screen.getByText(/Turn on meeting detection first/)).toBeTruthy();
+  view.unmount();
+
+  render(
+    <SettingsPanel
+      {...input}
+      settings={{ ...settings, detection_enabled: true }}
+      initialSection="recording"
+    />,
+  );
+  const enabled = screen.getByRole<HTMLButtonElement>("switch", {
+    name: "Automatic capture",
+  });
+  expect(enabled.disabled).toBe(false);
+  expect(screen.queryByText(/Turn on meeting detection first/)).toBeNull();
+  await userEvent.click(enabled);
+  expect(input.onAutoCapture).toHaveBeenCalledWith(true);
 });
 
 it("tags cloud transcription as leaving this device", () => {

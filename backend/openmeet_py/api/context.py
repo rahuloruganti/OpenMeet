@@ -38,6 +38,7 @@ class Context:
     live: Any = None  # live_commands.LiveService
     hotkeys: Any = None  # hotkeys.HotkeyService
     detection: Any = None  # detection.DetectionService
+    lifecycle: Any = None  # lifecycle.LifecycleController (automatic capture)
     # Taskbar flash for the detection prompt; None when there is no window (tests, browser).
     attention: Optional[Callable[[], None]] = None
 

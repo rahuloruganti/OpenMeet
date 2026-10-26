@@ -38,6 +38,11 @@ def test_every_command_the_ui_invokes_is_implemented_or_explicitly_unavailable()
     assert unrouted == []
 
 
+def test_save_auto_capture_is_registered_and_bound_by_the_ui() -> None:
+    assert "save_auto_capture" in COMMANDS
+    assert 'invoke<Settings>("save_auto_capture", { enabled })' in API_TS.read_text(encoding="utf-8")
+
+
 def test_unknown_command_is_404(client: TestClient) -> None:
     status, body = invoke_error(client, "no_such_command")
     assert (status, body["code"]) == (404, "unknown_command")
@@ -150,7 +155,7 @@ def test_health_needs_no_token(client: TestClient) -> None:
 
 def test_schema_matches_the_migration_files(client: TestClient) -> None:
     db = client.app.state.ctx.store.db  # type: ignore[attr-defined]
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 32
+    assert db.execute("PRAGMA user_version").fetchone()[0] == 33
     tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"meetings", "notes", "search", "meeting_tags", "settings"} <= tables
 
@@ -180,7 +185,7 @@ def test_a_populated_v29_database_upgrades_and_keeps_its_rows(tmp_path: Path) ->
 
     store = Store(data)
     try:
-        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 32
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 33
         assert store.db.execute("SELECT user_markdown FROM notes").fetchone()[0] == "- Fictional note"
         assert store.db.execute("SELECT COUNT(*) FROM meetings").fetchone()[0] == 1
         assert store.db.execute("PRAGMA foreign_key_check").fetchall() == []

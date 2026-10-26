@@ -128,7 +128,7 @@ def test_migration_032_maps_preview_modes_and_adds_the_live_columns(
 
     store = Store(data)
     try:
-        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 32
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 33
         settings = store.db.execute(
             "SELECT processing_mode, live_transcript, live_model FROM settings WHERE id = 1"
         ).fetchone()

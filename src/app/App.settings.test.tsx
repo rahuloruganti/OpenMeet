@@ -451,6 +451,28 @@ describe("settings and meeting detection", () => {
       ).toBeNull();
     });
 
+    it("saves automatic capture only while detection is on", async () => {
+      vi.mocked(api.getSettings).mockResolvedValue(detecting);
+      vi.mocked(api.saveAutoCapture).mockResolvedValue({
+        ...detecting,
+        auto_capture: true,
+      });
+      await ready();
+      await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+      await userEvent.click(settingsIndex("Recording"));
+      await userEvent.click(
+        screen.getByRole("switch", { name: "Automatic capture" }),
+      );
+      expect(api.saveAutoCapture).toHaveBeenCalledWith(true);
+      await waitFor(() =>
+        expect(
+          screen
+            .getByRole("switch", { name: "Automatic capture" })
+            .getAttribute("aria-checked"),
+        ).toBe("true"),
+      );
+    });
+
     it("does not prompt while detection is off or OpenMeet is recording", async () => {
       await ready();
       deliver([zoom]);

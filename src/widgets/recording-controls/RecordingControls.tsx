@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AudioHealth, RecordingState } from "../../shared/api/api";
+import { CallLifecycleBanner } from "../../features/auto-capture";
 import "./recording-controls.css";
 
 /** The bar says a recording's state in one capitalised word. */
@@ -155,6 +156,7 @@ export function RecordingControls(props: Props) {
           No microphone signal. Check the device and its mute.
         </span>
       )}
+      <CallLifecycleBanner />
       <span className="rec-acts">
         {props.showOpenActive && (
           <button disabled={props.disabled} onClick={props.onOpenActive}>

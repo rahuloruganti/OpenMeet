@@ -1,6 +1,6 @@
 # Data and privacy
 
-This page describes the Python build, version 0.9.0. It is not a claim that hardware pause privacy, local-only network behavior, or the complete release security boundary has passed qualification. See [implementation status](implementation-status.md) and the [Phase 7 checklist](phase-7-hardware-qualification.md).
+This page describes the Python build, version 0.9.0. It is not a claim that hardware pause privacy, local-only network behavior, or the complete release security boundary has passed qualification. See the [Phase 7 checklist](phase-7-hardware-qualification.md).
 
 ## Local storage
 
@@ -20,7 +20,7 @@ Everything OpenMeet writes lives under one folder:
 | `local-ai/models/` | GGUF models downloaded from the pinned Local AI catalog. |
 | `local-ai/server.log` | llama-server's own output, appended across runs. |
 
-`%APPDATA%` is `C:\Users\<you>\AppData\Roaming` unless the environment overrides it. The folder name `OpenMeetPy` is deliberately distinct from the earlier build's folder: this build never opens, migrates or writes that database. Copying data across is an explicit import; see [the user guide](user-guide.md#import-an-earlier-data-folder).
+`%APPDATA%` is `C:\Users\<you>\AppData\Roaming` unless the environment overrides it. The folder name `OpenMeetPy` is deliberately distinct from the earlier build's folder: this build never opens, migrates or writes that database. Copying data across is an explicit import (`OpenMeet.exe --import-from <old data folder>`).
 
 Importing an earlier folder keeps everything on this device. The source folder is read only and never modified. The import refuses a destination that already holds meetings or audio, so it cannot merge or overwrite an existing library; an empty `meetings.db` there is moved to `pre-import-backup/<UTC timestamp>/` and kept (it is restored if the import fails). Stored credentials are blanked in the copied database (settings columns whose names contain key, token, secret or password), and the earlier build's speech models are not copied. A short report of counts is written to `import-report.txt` in the destination.
 
@@ -44,6 +44,7 @@ Capture writes the selected microphone and system audio locally as two tracks. O
 | Rewrite with AI | Same saved chat-completions route. | Only the selected note text (up to 20,000 characters) and your rewrite request. No other notes, transcript, audio or meeting metadata. The result is shown, not stored, until you replace the selection with it. |
 | First-run setup and Local AI speech-server detection | `http://127.0.0.1` ports 11434, 1234, 8888, 8000 and 8080 only. | `GET /v1/models` with no key and no meeting content, while setup or Settings is open. Setup offers only speech servers. The Local AI group names other chat servers already running as a hint and adds no connection by itself. A key typed for a detected server goes to the Credential Manager like any other connection. |
 | Meeting detection (opt-in) | Nothing leaves the device. | Every 3 seconds while on, reads which apps are using the microphone from the Windows microphone privacy store (app identifiers and usage times). Never audio. Ignored apps are stored locally. A detection only shows a prompt and flashes the taskbar entry; it never starts recording. |
+| Automatic capture (second opt-in, off by default) | Nothing extra leaves the device; the recording then follows the same rules as a manual one. | When on, and only while meeting detection is on, a supported desktop call app (Teams, Zoom, Slack, Discord, Webex, Skype) seen using the microphone on two consecutive polls starts a normal recording with the devices saved in Settings. Browsers and other apps still only prompt. The recording bar shows it is automatic; Stop and Pause work as usual, and a manual stop or pause blocks an automatic restart for that call. A capture ends automatically only after the app has released the microphone for a grace period and you did not choose Keep recording. Call bookkeeping (app identifier, state, times, meeting link) is stored locally in `meetings.db`. If the live transcript or automatic processing points at a cloud connection, that applies to automatic recordings too. Timings are untested on real hardware. |
 | Cloud transcription | The separately saved speech base plus `/audio/transcriptions`. | Finalized microphone and system audio as bounded WAV chunks, with model, language and vocabulary hint. |
 | Live transcript on this PC | Nothing leaves the device. | The Transcription model, a streaming model, or a streaming folder on this PC. Audio and text stay local. |
 | Live transcript with **Cloud connection** | The saved cloud speech base plus `/audio/transcriptions`. | Each finished utterance, up to 30 seconds, uploaded once. One recording sends at most 240 requests and 100 MiB, and no request is retried. |

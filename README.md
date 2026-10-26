@@ -2,9 +2,9 @@
 
 A local-first meeting notetaker for Windows: notes, microphone and system-audio recording, transcription on this PC, and optional AI summaries from a connection you choose, on this PC or a remote provider.
 
-**Status:** Windows 11 only, version 0.9.0, shipped as one file (`OpenMeet.exe`) with no installer. Real-hardware qualification is **not** finished: audio capture, local transcription, global shortcuts, meeting detection and the Windows credential store have been exercised only with fakes and stubs. Nothing here claims verified recording reliability, transcript accuracy or live model quality. See [implementation status](docs/implementation-status.md) and the [Phase 7 checklist](docs/phase-7-hardware-qualification.md).
+**Status:** Windows 11 only, version 0.9.0, shipped as one file (`OpenMeet.exe`) with no installer. Real-hardware qualification is **not** finished: audio capture, local transcription, global shortcuts, meeting detection and the Windows credential store have been exercised only with fakes and stubs. Nothing here claims verified recording reliability, transcript accuracy or live model quality. See the [Phase 7 checklist](docs/phase-7-hardware-qualification.md).
 
-See the [documentation index](docs/README.md) for the [user guide](docs/user-guide.md), [architecture](docs/architecture.md), [dependencies and versions](docs/dependencies.md), [privacy](docs/privacy.md) and [development guide](docs/development.md).
+See the [documentation index](docs/README.md) for [dependencies and versions](docs/dependencies.md), [privacy](docs/privacy.md) and the [development guide](docs/development.md).
 
 ## Install on Windows
 
@@ -166,7 +166,7 @@ Files are **unencrypted**. OS backups and cloud-synced folders may copy them els
 
 There is no telemetry and no automatic cloud processing. Downloads and model discovery require explicit actions. Text and cloud audio are sent only when you trigger a transcription, summary, question or rewrite, choose automatic processing in Settings, or set **Cloud connection** as the live transcript model. **Local AI** keeps summaries and questions on this PC; its engine and model downloads contact github.com and huggingface.co only when you click, and nothing is uploaded. API keys live only in Windows Credential Manager. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm; exported snapshots are never touched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
 
-See [privacy](docs/privacy.md) for the full boundary and [implementation status](docs/implementation-status.md) for open work.
+See [privacy](docs/privacy.md) for the full boundary and the [Phase 7 checklist](docs/phase-7-hardware-qualification.md) for open qualification work.
 
 ## License
 

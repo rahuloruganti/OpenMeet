@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, vi } from "vitest";
 import { App } from "../../app/App";
+import { idleLifecycle } from "../../features/auto-capture";
 import {
   api,
   type LiveModels,
@@ -135,6 +136,7 @@ export const initialSettings: Settings = {
   summary_default: "general-v1",
   detection_enabled: false,
   detection_ignored: [],
+  auto_capture: false,
   setup_done: true,
   theme: "system",
   inspector_open: true,
@@ -358,6 +360,7 @@ export function installDefaultMocks() {
   vi.mocked(api.sttStatus).mockResolvedValue(notInstalled);
   vi.mocked(api.audioUsage).mockResolvedValue(0);
   vi.mocked(api.detectionSupported).mockResolvedValue(true);
+  vi.mocked(api.getCallLifecycle).mockResolvedValue(idleLifecycle);
   vi.mocked(api.requestAttention).mockResolvedValue();
   vi.mocked(api.searchMeetings).mockResolvedValue([]);
   vi.mocked(api.listSummaries).mockResolvedValue([]);
@@ -370,6 +373,7 @@ export function installDefaultMocks() {
     api.onAudioHealth,
     api.onSttProgress,
     api.onMicrophoneApps,
+    api.onCallLifecycleChanged,
     api.onLiveTranscript,
     api.onLiveState,
     api.onLiveModelProgress,

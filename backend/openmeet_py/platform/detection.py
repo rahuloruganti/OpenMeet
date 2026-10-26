@@ -1,8 +1,9 @@
-"""Opt-in meeting detection: which other apps are using the microphone. Only ever emits `microphone_apps`.
+"""Opt-in meeting detection: which other apps are using the microphone.
 
 Covers the Windows part of meeting detection and its commands. The poll thread
-reads a ConsentRegistry every 3 seconds, reports an app only after two polls in a row, and emits the stable
-list when it changes. It has no reference to the recorder, so a detection can never start capture, check
+reads a ConsentRegistry every 3 seconds. It emits `microphone_apps` for the prompt only after two polls in a row,
+and emits the stable list when it changes. On every poll it also hands the raw, undebounced signals (in use and
+idle) to subscribed listeners. It has no reference to the recorder, so a detection can never start capture, check
 consent or pick devices. The user's click on the prompt is what opens New recording setup.
 
 ConsentRegistry readers:
@@ -19,6 +20,8 @@ import json
 import logging
 import sys
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Protocol
@@ -44,6 +47,16 @@ class ConsentEntry:
     name: str
     last_used_start: int
     last_used_stop: int
+
+
+@dataclass(frozen=True)
+class Signal:
+    """One non-ignored app seen in the consent store on a poll. `app_id` is the store key, not a call id."""
+
+    app_id: str
+    name: str
+    in_use: bool
+    observed_at: float
 
 
 class ConsentRegistry(Protocol):
@@ -181,6 +194,16 @@ def active_apps(entries: list[ConsentEntry], own: str) -> dict[str, str]:
     return found
 
 
+def observed_apps(entries: list[ConsentEntry], own: str) -> dict[str, tuple[str, bool]]:
+    """Every app in the store except this one, in use or idle, as key to (display name, in use)."""
+    found: dict[str, tuple[str, bool]] = {}
+    for entry in entries:
+        file = entry.name.rsplit("#", 1)[-1].lower()
+        if file != own:
+            found[entry.name] = (display_name(entry.name), in_use(entry.last_used_start, entry.last_used_stop))
+    return found
+
+
 class Debounce:
     """Reports an app after two consecutive polls, and reports the list only when it changes."""
 
@@ -198,7 +221,7 @@ class Debounce:
 
 
 class DetectionService:
-    """Poll thread. Emits microphone_apps; never starts, checks or configures a recording."""
+    """Poll thread. Emits microphone_apps and feeds listeners; never starts, checks or configures a recording."""
 
     def __init__(self, ctx: Context, registry: ConsentRegistry, own: Optional[str] = None, poll: float = POLL_SECONDS):
         self.ctx = ctx
@@ -206,8 +229,18 @@ class DetectionService:
         self.own = own if own is not None else own_file_name()
         self.poll = poll
         self.debounce = Debounce()
+        self._listeners: list[Callable[[tuple[Signal, ...]], None]] = []
+        self._listeners_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+
+    def subscribe(self, listener: Callable[[tuple[Signal, ...]], None]) -> None:
+        """Calls `listener` with every poll's signals, in use and idle, regardless of the prompt's debounce.
+
+        Listeners run on the poll thread and must not block. A listener that raises is logged and skipped.
+        """
+        with self._listeners_lock:
+            self._listeners.append(listener)
 
     def start(self) -> None:
         if self._thread is None and supported():
@@ -227,19 +260,37 @@ class DetectionService:
             except Exception:  # an unreadable store means no apps this poll
                 log.warning("meeting detection poll failed")
 
+    def _notify(self, signals: tuple[Signal, ...]) -> None:
+        with self._listeners_lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(signals)
+            except Exception:  # a broken listener must not stop the prompt or the other listeners
+                log.warning("meeting detection listener failed", exc_info=True)
+
     def tick(self) -> Optional[list[dict[str, str]]]:
         """One poll. Returns the emitted list, or None when nothing changed (also used by tests)."""
         with self.ctx.store.lock:
             settings = read_settings(self.ctx.store.db)
+        signals: tuple[Signal, ...] = ()
         if not settings["detection_enabled"]:
             current: dict[str, str] = {}
         else:
             ignored = {item["id"] for item in settings["detection_ignored"]}
+            entries = self.registry.entries()
             current = {
                 key: name
-                for key, name in active_apps(self.registry.entries(), self.own).items()
+                for key, name in active_apps(entries, self.own).items()
                 if key not in ignored
             }
+            now = time.monotonic()
+            signals = tuple(
+                Signal(key, name, active, now)
+                for key, (name, active) in observed_apps(entries, self.own).items()
+                if key not in ignored
+            )
+        self._notify(signals)
         stable = self.debounce.update(set(current))
         if stable is None:
             return None

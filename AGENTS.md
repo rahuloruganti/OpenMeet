@@ -9,7 +9,7 @@ OpenMeet is a local-first Windows meeting notetaker: one PyInstaller executable 
 - Real-hardware qualification is **not** done. Audio capture, local transcription, global shortcuts, meeting detection and the Windows credential store are exercised only with fakes and stubs. Every `unqualified` label in the docs is current. See `docs/phase-7-hardware-qualification.md`.
 - Simulation and fictional fixtures are not recordings or generated summaries. Preserve that distinction in the UI, database, exports and reports.
 
-Read `docs/architecture.md` and `docs/development.md` before substantial work. Verify claims against code and executed checks; documentation can lag implementation.
+Read `docs/README.md` and `docs/development.md` before substantial work. The product direction is an original, open-source, local-first meeting assistant in the style of Granola, using models the user chooses; never copy Granola code, assets, prompts or private APIs. Verify claims against code and executed checks; documentation can lag implementation.
 
 ## Layout
 
@@ -34,7 +34,7 @@ Read `docs/architecture.md` and `docs/development.md` before substantial work. V
 | `backend/tests/` | pytest suite; fakes instead of devices and engines. |
 | `packaging/build.ps1` | Builds the UI into `backend/web` and produces `packaging/dist/OpenMeet.exe`, with the icon `packaging/openmeet.ico` (source `openmeet-icon.svg`). |
 | `.preview/` | Untracked browser harness on port 1430 with fictional data. |
-| `docs/` | Current documentation; `docs/archive/` holds retired records and is not a source of truth. |
+| `docs/` | Current documentation. Retired product and status documents live in Git history only. |
 
 ## Run and check
 
@@ -67,10 +67,10 @@ just smoke     # OpenMeet.exe --smoke
 4. The backend is authoritative for recording state. Commands return authoritative state; events only notify. Preserve revision ordering and handle partially applied failures.
 5. Keep SQLite, inference, HTTP and file writes off the event loop and out of audio callbacks. Callbacks enqueue samples; no blocking locks, allocations in a tight loop, or unbounded queues.
 6. Never silently change the selected device or sample format, fall back to one-track capture, or substitute fake output for failed capture. Fail visibly and preserve recoverable data.
-7. SQLite migrations are append-only: add the next number (currently `033`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
+7. SQLite migrations are append-only: add the next number (currently `034`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
 8. Fake backends exist for tests only: `OPENMEET_PY_FAKE_AUDIO=1` and `OPENMEET_PY_FAKE_STT=1`. Never ship a path that enables them implicitly, and never present their output as real capture or a real transcript.
 9. Add a small regression test for nontrivial behavior. Routine audio tests use synthetic samples; real-device tests are separate and opt-in.
-10. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization, calendar or speculative integrations before their planned phase. Opt-in meeting detection may only offer a prompt that opens recording setup; it must never start capture, check consent or pick devices by itself.
+10. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization or speculative integrations before their planned phase. Meeting detection is opt-in and only offers a prompt that opens recording setup. Automatic capture is a second, separate opt-in (`auto_capture`, off by default): when the user has enabled it, the backend lifecycle may start capture for a supported desktop call app using the devices saved in Settings, with a visible recording indicator and the same stop, pause and cancel controls as a manual recording. Detection itself never starts capture, checks consent or picks devices; uncertain signals (browsers, unknown apps) prompt instead of starting; silence or a calendar end time alone never ends a capture; manual stop or pause suppresses automatic restart for that call. Nothing listens or records while both settings are off.
 
 ## Data, consent and privacy
 

@@ -20,6 +20,7 @@ const slices = {
   ],
   features: [
     "action-items",
+    "auto-capture",
     "live-settings",
     "live-transcript",
     "local-ai",

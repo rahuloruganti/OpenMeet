@@ -28,6 +28,22 @@ export type RecordingState = {
   recording_offset_ms: number | null;
   /** Why automatic processing was skipped for this recording, if it was. */
   processing_notice?: string | null;
+  /** Who started this recording; "auto" sessions come from the call lifecycle. */
+  origin?: "manual" | "auto" | "lifecycle" | "shutdown" | null;
+};
+/** Automatic capture state from the backend lifecycle. Events only notify; re-read on each one. */
+export type CallLifecycle = {
+  state: string;
+  enabled: boolean;
+  session_id: string | null;
+  meeting_id: string | null;
+  app_name: string | null;
+  origin: "auto" | "manual" | null;
+  revision: number;
+  reason: string;
+  /** Deadline of the end countdown, in epoch milliseconds; null outside end_pending. */
+  end_deadline_ms: number | null;
+  error: string | null;
 };
 export type SessionDestination =
   | { kind: "local_whisper"; model: string }
@@ -202,6 +218,8 @@ export type Settings = {
   detection_enabled: boolean;
   /** Apps never to prompt about; `name` is empty for ones ignored before names were kept. */
   detection_ignored: MicApp[];
+  /** Opt-in: start capture for a supported call app automatically with the saved devices. Off by default. */
+  auto_capture: boolean;
   /** First-run setup was finished or skipped. */
   setup_done: boolean;
   /** Colour theme; "system" follows Windows. */
@@ -636,6 +654,22 @@ export const api = {
     listen<MicApp[]>("microphone_apps", (event) => callback(event.payload)),
   saveDetection: (enabled: boolean) =>
     invoke<Settings>("save_detection", { enabled }),
+  /** Stores the automatic capture switch. Saving it starts nothing by itself. */
+  saveAutoCapture: (enabled: boolean) =>
+    invoke<Settings>("save_auto_capture", { enabled }),
+  /** Current automatic capture state; the lifecycle events only say it changed. */
+  getCallLifecycle: () => invoke<CallLifecycle>("get_call_lifecycle"),
+  lifecycleKeepRecording: (sessionId: string, expectedRevision: number) =>
+    invoke<CallLifecycle>("lifecycle_keep_recording", {
+      sessionId,
+      expectedRevision,
+    }),
+  lifecycleEndNow: (sessionId: string, expectedRevision: number) =>
+    invoke<CallLifecycle>("lifecycle_end_now", { sessionId, expectedRevision }),
+  onCallLifecycleChanged: (callback: (payload: CallLifecycle) => void) =>
+    listen<CallLifecycle>("call_lifecycle_changed", (event) =>
+      callback(event.payload),
+    ),
   setDetectionIgnored: (appId: string, name: string, ignored: boolean) =>
     invoke<Settings>("set_detection_ignored", { appId, name, ignored }),
   detectionSupported: () => invoke<boolean>("detection_supported"),

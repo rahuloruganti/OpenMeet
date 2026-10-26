@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from openmeet_py.api import import_commands, live_commands, reads, recording
+from openmeet_py.api import auto_capture, import_commands, lifecycle, live_commands, reads, recording
 from openmeet_py.api.context import (
     Context,
     bool_arg,
@@ -349,6 +349,10 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "detection_supported": detection.detection_supported,
     "save_detection": detection.save_detection,
     "set_detection_ignored": detection.set_detection_ignored,
+    "save_auto_capture": auto_capture.save_auto_capture,
+    "get_call_lifecycle": lifecycle.get_call_lifecycle,
+    "lifecycle_keep_recording": lifecycle.lifecycle_keep_recording,
+    "lifecycle_end_now": lifecycle.lifecycle_end_now,
     "request_attention": detection.request_attention,
     "get_session_processing": processing.get_session_processing,
     "acknowledge_processing_notes": processing.acknowledge_processing_notes,
@@ -427,8 +431,7 @@ COMMANDS: dict[str, Callable[..., Any]] = {
 }
 
 # Commands that answer HTTP 501, mapped to the feature name. Empty after phase 5: every command the UI
-# invokes is implemented. Tray controls are deferred (docs/rebuild-status.md, tray section), but they
-# have no command.
+# invokes is implemented. Tray controls are deferred, but they have no command.
 NOT_AVAILABLE: dict[str, str] = {}
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")

@@ -17,11 +17,11 @@ just dev
 
 ## Find the relevant code
 
-Use the [architecture code map](architecture.md#code-ownership). The frontend follows Feature-Sliced Design: `app` > `pages` > `widgets` > `features` > `entities` > `shared`, imports only downward, and each slice exposes a public `index.ts`. ESLint's `no-restricted-imports` rule enforces the boundary.
+Use the layout table in [AGENTS.md](../AGENTS.md). The frontend follows Feature-Sliced Design: `app` > `pages` > `widgets` > `features` > `entities` > `shared`, imports only downward, and each slice exposes a public `index.ts`. ESLint's `no-restricted-imports` rule enforces the boundary.
 
 The backend is `backend/openmeet_py/`: `api/` (HTTP surface and `commands.py` registry), `domain/` (meetings, notes, transcripts, summaries, settings, processing, provider HTTP, chat calls and export), `audio/`, `speech/` (engines, cloud STT, model library, safe archive, live transcript decoding in `live/`, streaming models in `streaming_models.py`), `platform/` (Windows integration), `infra/` (SQLite store and migrations, plus the read-only importer), plus `app.py`, `paths.py` and `migrations/`. Command arguments must agree between `src/shared/api/api.ts`, `api/commands.py` and the payload types the handlers return; `backend/tests/test_commands.py` catches a command the UI invokes but the backend does not serve.
 
-Follow [AGENTS.md](../AGENTS.md) when using coding agents, especially its recording, data-preservation and repository rules. Consult [implementation status](implementation-status.md) for current capabilities; [rebuild status](rebuild-status.md) explains how the Python build relates to the retired implementation.
+Follow [AGENTS.md](../AGENTS.md) when using coding agents, especially its recording, data-preservation and repository rules.
 
 ## Run checks
 
@@ -40,7 +40,7 @@ The recipe runs, in order:
 | Frontend production build | `corepack pnpm build` |
 | Backend tests | `uv run --directory backend pytest` |
 
-Format frontend changes with `corepack pnpm format`. The formatting scripts exclude Markdown, so pass documents explicitly: `corepack pnpm exec prettier --check README.md docs/architecture.md`, and `--write` to fix them. `just --fmt --check` checks the justfile.
+Format frontend changes with `corepack pnpm format`. The formatting scripts exclude Markdown, so pass documents explicitly: `corepack pnpm exec prettier --check README.md docs/README.md`, and `--write` to fix them. `just --fmt --check` checks the justfile.
 
 Compilation and mocked tests do not establish hardware capture or live provider quality.
 

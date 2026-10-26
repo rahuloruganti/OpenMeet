@@ -16,7 +16,7 @@ from openmeet_py.infra.store import Store
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "openmeet_py" / "migrations"
 MEETING = "11111111-1111-1111-1111-111111111111"
-LATEST = 32
+LATEST = 33
 THROUGH = 27
 
 

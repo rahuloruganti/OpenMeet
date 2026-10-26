@@ -1,0 +1,27 @@
+/* Automatic capture strip inside the recording bar. Owned by the auto-capture slice. */
+
+.call-life {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.call-life-end {
+  color: var(--warning);
+}
+.call-life-acts {
+  display: inline-flex;
+  gap: 6px;
+}
+.call-life-acts button {
+  height: 23px;
+  min-height: 23px;
+  padding: 0 9px;
+  background: var(--paper);
+  font-family: var(--mono);
+  font-size: 11px;
+}

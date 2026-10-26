@@ -167,6 +167,8 @@ export function useSettingsPage(env: SettingsPageEnv) {
     detectionSupported,
     onDetection: (enabled) =>
       void run(async () => setSettings(await api.saveDetection(enabled))),
+    onAutoCapture: (enabled) =>
+      void run(async () => setSettings(await api.saveAutoCapture(enabled))),
     onDetectionIgnored: (app: MicApp, ignored: boolean) =>
       void run(async () =>
         setSettings(await api.setDetectionIgnored(app.id, app.name, ignored)),

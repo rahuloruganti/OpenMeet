@@ -15,6 +15,7 @@ Lock order: Recorder.lock, then Store.lock. Callbacks and the writer never take 
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import queue
@@ -24,7 +25,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Optional
+from typing import Any, BinaryIO, Callable, Optional, Protocol
 
 from openmeet_py.api.context import now
 from openmeet_py.api.errors import AppError
@@ -48,6 +49,8 @@ MIC_MISSING = (
 OUTPUT_MISSING = "Selected system-output device is unavailable. Refresh devices."
 FORMAT_LIMITS = "This preview supports 1–8 channels at 8–192 kHz. Choose another device format."
 FORMAT_CHANGED = "Device format changed. Stop and start a new recording."
+CAPTURE_ERROR_CODE = "audio"  # the AppError code for capture errors; the reason of a fault or an errored stop
+ORIGINS = frozenset({"manual", "auto", "lifecycle", "shutdown"})
 
 # Fault bits. A nonzero fault pauses capture and stops writing.
 STREAM_ERROR = 1
@@ -58,7 +61,40 @@ WORKER_ERROR = 32
 
 
 def audio_error(message: str) -> AppError:
-    return AppError("audio", f"Audio capture: {message}")
+    return AppError(CAPTURE_ERROR_CODE, f"Audio capture: {message}")
+
+
+def _checked_origin(origin: str) -> str:
+    if origin not in ORIGINS:
+        raise AppError("invalid_args", "Unknown recording origin.")
+    return origin
+
+
+class RecorderListener(Protocol):
+    """Observer of recording state changes.
+
+    Called after the database commit of each change, on the thread that made it, outside the recorder
+    lock. Never called from the audio callback or the writer thread; a fault comes from the meter
+    thread. kind is started, paused, resumed, stopped, stop_failed or fault. origin is the origin of the
+    call that caused the event; a fault carries the origin the recording started with. reason is None,
+    or a short code: audio_worker_busy or database for stop_failed, audio for fault and for a stop that
+    ends with an error. Implementations must not block.
+    """
+
+    def recorder_event(self, kind: str, meeting_id: str | None, origin: str, reason: str | None) -> None: ...
+
+
+def _notifies(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Delivers the events a Recorder method queued, once the method has released the recorder lock."""
+
+    @functools.wraps(method)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._deliver()
+
+    return wrapper
 
 
 def validate_title(title: str) -> str:
@@ -144,6 +180,7 @@ class Session:
         self.accepting = False
         self.fault = 0  # written from several threads; any nonzero value pauses capture
         self.details: list[str] = []
+        self.origin = "manual"  # who began this recording; Recorder.start sets it
         self.finished = threading.Event()
         self._started_ns = time.monotonic_ns()
         self._writer = threading.Thread(target=self._run_writer, name="openmeet-audio-writer", daemon=True)
@@ -351,6 +388,10 @@ class Recorder:
         self.live: Any = None
         # Why processing was skipped for the last start. Kept until the next start.
         self.processing_notice: Optional[str] = None
+        # Observers. Events are queued under self.lock and delivered by _deliver() after the lock is released.
+        self.listeners: list[RecorderListener] = []
+        self._pending: list[tuple[str, Optional[str], str, Optional[str]]] = []
+        self._deliver_lock = threading.RLock()
 
     # State and events ------------------------------------------------------
 
@@ -367,7 +408,13 @@ class Recorder:
             "error": self.error,
             "recording_offset_ms": offset,
             "processing_notice": self.processing_notice,
+            "origin": self.origin,
         }
+
+    @property
+    def origin(self) -> Optional[str]:
+        """Who began the active recording: 'manual' or 'auto'. None when no recording is active."""
+        return self.session.origin if self.session is not None else None
 
     def state(self) -> dict[str, Any]:
         with self.lock:
@@ -378,6 +425,33 @@ class Recorder:
         state = self._state_locked()
         self.emit("recording_state", state)
         return state
+
+    def add_listener(self, listener: RecorderListener) -> None:
+        with self.lock:
+            if listener not in self.listeners:
+                self.listeners.append(listener)
+
+    def remove_listener(self, listener: RecorderListener) -> None:
+        with self.lock:
+            if listener in self.listeners:
+                self.listeners.remove(listener)
+
+    def _queue(self, kind: str, meeting_id: Optional[str], origin: str, reason: Optional[str]) -> None:
+        """Records an event. Called under self.lock, after the change's database commit."""
+        self._pending.append((kind, meeting_id, origin, reason))
+
+    def _deliver(self) -> None:
+        """Hands queued events to the listeners, in order. Called only when self.lock is not held."""
+        with self._deliver_lock:  # keeps delivery in queue order across threads
+            with self.lock:
+                events, self._pending = self._pending, []
+                listeners = list(self.listeners)
+            for event in events:
+                for listener in listeners:
+                    try:
+                        listener.recorder_event(*event)
+                    except Exception:
+                        log.exception("recorder listener failed on %s", event[0])
 
     def busy_for(self, meeting_id: str) -> bool:
         return self.meeting_id == meeting_id and (
@@ -414,7 +488,9 @@ class Recorder:
 
     # Start, pause, resume, stop --------------------------------------------
 
-    def start(self, title: str, microphone_id: str, output_id: str) -> dict[str, Any]:
+    @_notifies
+    def start(self, title: str, microphone_id: str, output_id: str, origin: str = "manual") -> dict[str, Any]:
+        origin = _checked_origin(origin)
         with self.lock:
             if self.session is not None or self.status in ("recording", "paused"):
                 raise AppError("already_recording", "Stop the active recording before starting another.")
@@ -432,6 +508,7 @@ class Recorder:
             except BaseException:
                 self._abandon_live(live_session)
                 raise
+            session.origin = origin
             try:
                 with self.store.lock:
                     with transaction(self.store.db) as db:
@@ -475,6 +552,7 @@ class Recorder:
             self._start_meter(session)
             if plan is not None:
                 self.processing.started(meeting_id, plan["id"])
+            self._queue("started", meeting_id, origin, None)
             return self._publish()
 
     def _open_live(self, meeting_id: str, mic: DeviceInfo, out: DeviceInfo) -> Any:
@@ -542,7 +620,9 @@ class Recorder:
         except OSError:
             pass
 
-    def pause(self) -> dict[str, Any]:
+    @_notifies
+    def pause(self, origin: str = "manual") -> dict[str, Any]:
+        origin = _checked_origin(origin)
         with self.lock:
             if self.status != "recording" or self.session is None:
                 raise AppError("invalid_state", "Recording is not active.")
@@ -553,9 +633,14 @@ class Recorder:
                 self.error = session.fault_text()
             self._store_status("paused", session)
             self._capture_event("paused", session)
+            self._queue("paused", session.meeting_id, origin, None)
+            if session.fault:
+                self._queue("fault", session.meeting_id, session.origin, CAPTURE_ERROR_CODE)
             return self._publish()
 
-    def resume(self) -> dict[str, Any]:
+    @_notifies
+    def resume(self, origin: str = "manual") -> dict[str, Any]:
+        origin = _checked_origin(origin)
         with self.lock:
             session = self.session
             if session is None or self.status != "paused":
@@ -589,9 +674,12 @@ class Recorder:
             self.status = "recording"
             self.error = None
             self._capture_event("resumed", session)
+            self._queue("resumed", session.meeting_id, origin, None)
             return self._publish()
 
-    def stop(self) -> dict[str, Any]:
+    @_notifies
+    def stop(self, origin: str = "manual") -> dict[str, Any]:
+        origin = _checked_origin(origin)
         with self.lock:
             session = self.session
             if session is None:
@@ -603,6 +691,7 @@ class Recorder:
                 self.error = session.fault_text()
                 self._store_status("paused", session)
                 self._publish()
+                self._queue("stop_failed", session.meeting_id, origin, "audio_worker_busy")
                 raise AppError(
                     "audio_worker_busy",
                     "Audio capture: Capture worker did not respond (stop timed out; retry Stop after "
@@ -616,12 +705,14 @@ class Recorder:
                 self.status = "paused"
                 self.error = error
                 self._publish()
+                self._queue("stop_failed", session.meeting_id, origin, "database")
                 raise
             self.session = None
             self._capture_event("stopped" if error is None else "error", session)
             self._finish_live(session)
             self.status = "stopped"
             self.error = error
+            self._queue("stopped", session.meeting_id, origin, CAPTURE_ERROR_CODE if error else None)
             return self._publish()
 
     def _finish_live(self, session: Session) -> None:
@@ -629,24 +720,22 @@ class Recorder:
         if session.live is not None and self.live is not None:
             self.live.finish(session.live)
 
-    def toggle_pause(self) -> dict[str, Any]:
+    def toggle_pause(self, origin: str = "manual") -> dict[str, Any]:
         """The global pause/resume shortcut: the same calls the buttons make."""
-        with self.lock:
-            if self.status == "recording":
-                return self.pause()
-            if self.status == "paused":
-                return self.resume()
-            raise AppError("invalid_state", "Recording is not active.")
+        with self.lock:  # read only: pause and resume take the lock themselves and deliver events
+            status = self.status
+        if status == "recording":
+            return self.pause(origin=origin)
+        if status == "paused":
+            return self.resume(origin=origin)
+        raise AppError("invalid_state", "Recording is not active.")
 
     def shutdown(self) -> None:
         """Window or server closing: finalize an active recording so its files are complete."""
-        with self.lock:
-            if self.session is None:
-                return
-            try:
-                self.stop()
-            except Exception:
-                log.warning("the active recording could not be finalized at shutdown")
+        try:
+            self.stop(origin="shutdown")  # a no-op when nothing is recording
+        except Exception:
+            log.warning("the active recording could not be finalized at shutdown")
 
     # Meter -------------------------------------------------------------------
 
@@ -673,6 +762,7 @@ class Recorder:
                     if session.fault:
                         self._pause_on_fault(session)
                 health = session.health(self.status == "recording")
+            self._deliver()
             last = tick
             self.emit("audio_health", health)
 
@@ -680,6 +770,7 @@ class Recorder:
         session.halt_streams()
         self.status = "paused"
         self.error = session.fault_text()
+        self._queue("fault", session.meeting_id, session.origin, CAPTURE_ERROR_CODE)
         try:
             self._store_status("paused", session, capture_error=self.error)
             self._capture_event("error", session)

@@ -60,19 +60,19 @@ def _devices_from(devices: Any) -> tuple[str, str]:
 def start_recording(ctx: Context, title: str, devices: Any) -> dict[str, Any]:
     title = text_arg(title, "title")
     mic, out = _devices_from(devices)
-    return ctx.recorder.start(title, mic, out)
+    return ctx.recorder.start(title, mic, out, origin="manual")
 
 
 def pause_recording(ctx: Context) -> dict[str, Any]:
-    return ctx.recorder.pause()
+    return ctx.recorder.pause(origin="manual")
 
 
 def resume_recording(ctx: Context) -> dict[str, Any]:
-    return ctx.recorder.resume()
+    return ctx.recorder.resume(origin="manual")
 
 
 def stop_recording(ctx: Context) -> dict[str, Any]:
-    state = ctx.recorder.stop()
+    state = ctx.recorder.stop(origin="manual")
     ctx.emit("meeting_updated", None)
     return state
 
