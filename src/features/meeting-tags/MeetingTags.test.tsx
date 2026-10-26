@@ -66,7 +66,6 @@ it("filters meetings and full-text hits by tag", async () => {
       onSearch={vi.fn()}
       onNewRecording={vi.fn()}
       onSettings={vi.fn()}
-      onAsk={vi.fn()}
       onOpenMeeting={vi.fn()}
       onNewNote={vi.fn()}
       hits={hits}

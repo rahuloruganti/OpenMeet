@@ -229,7 +229,7 @@ it("offers no local server for AI notes, even when one is detected", async () =>
   expect(screen.getByRole("radio", { name: /API service/ })).toBeTruthy();
 });
 
-it("finishes with default devices and recording only, then starts a meeting", async () => {
+it("finishes with default devices, then starts a meeting", async () => {
   vi.mocked(api.saveDefaultDevices).mockResolvedValue(settings);
   vi.mocked(api.saveProcessingDefault).mockResolvedValue(settings);
   const props = show();
@@ -237,12 +237,8 @@ it("finishes with default devices and recording only, then starts a meeting", as
   await next();
   await next();
   expect(
-    (
-      screen.getByRole("checkbox", {
-        name: /Transcribe every recording/,
-      }) as HTMLInputElement
-    ).checked,
-  ).toBe(false);
+    screen.queryByRole("checkbox", { name: /Transcribe every recording/ }),
+  ).toBeNull();
   await next();
   expect(screen.getByRole("heading", { name: "You're set" })).toBeTruthy();
   await userEvent.click(
@@ -251,7 +247,8 @@ it("finishes with default devices and recording only, then starts a meeting", as
   await waitFor(() => expect(api.saveSetupDone).toHaveBeenCalledWith(true));
   expect(api.saveDefaultDevices).toHaveBeenCalledWith("mic", "app-audio");
   expect(props.onDevices).toHaveBeenCalledWith("mic", "app-audio");
-  expect(api.saveProcessingDefault).toHaveBeenCalledWith("recording", null);
+  // Processing is always on, so setup saves no processing choice.
+  expect(api.saveProcessingDefault).not.toHaveBeenCalled();
   expect(props.onStartMeeting).toHaveBeenCalled();
 });
 
@@ -309,22 +306,21 @@ it("recommends Parakeet for English or auto, and Whisper small for other languag
   ).not.toContain("Parakeet");
 });
 
-it("saves automatic transcription only when the box is ticked", async () => {
+it("has no automatic transcription box: processing is always on", async () => {
   vi.mocked(api.saveDefaultDevices).mockResolvedValue(settings);
-  vi.mocked(api.saveProcessingDefault).mockResolvedValue(settings);
   show();
   await screen.findByRole("heading", { name: "How should we transcribe?" });
   await next();
   await next();
-  await userEvent.click(
-    screen.getByRole("checkbox", { name: /Transcribe every recording/ }),
-  );
+  expect(
+    screen.queryByRole("checkbox", { name: /Transcribe every recording/ }),
+  ).toBeNull();
   await next();
   await userEvent.click(
     screen.getByRole("button", { name: "Start a meeting" }),
   );
   await waitFor(() => expect(api.saveSetupDone).toHaveBeenCalledWith(true));
-  expect(api.saveProcessingDefault).toHaveBeenCalledWith("final", null);
+  expect(api.saveProcessingDefault).not.toHaveBeenCalled();
 });
 
 it("offers the major providers for AI notes and connects the default one", async () => {

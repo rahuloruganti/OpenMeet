@@ -5,7 +5,7 @@ import { RecordingControls } from "../../../widgets/recording-controls";
 import { FeedbackStack, type FeedbackProps } from "./FeedbackStack";
 import { ProcessingStatus } from "./ProcessingStatus";
 
-export type Panel = "setup" | "settings" | "library" | null;
+export type Panel = "setup" | "settings" | null;
 
 export type MeetingPageProps = {
   sidebarOpen: boolean;

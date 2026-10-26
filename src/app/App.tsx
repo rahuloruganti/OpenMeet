@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   errorMessage,
@@ -26,11 +26,10 @@ import {
 } from "../features/calendar";
 import { MeetingPage, useMeetingPage } from "../pages/meeting";
 import { SettingsPage, useSettingsPage } from "../pages/settings";
-import { AskPage } from "../pages/ask";
 import { FirstRunPage, SetupPage, useSetupPage } from "../pages/setup";
 import { CommandPalette, type PaletteAction } from "../widgets/command-palette";
 
-type Panel = "setup" | "settings" | "library" | null;
+type Panel = "setup" | "settings" | null;
 
 /** A key event belongs to a text field, so bare-letter shortcuts must not fire. */
 function isTyping(target: EventTarget | null) {
@@ -83,7 +82,6 @@ export function App() {
   // Meeting detection: apps holding the microphone, and ones already answered this session.
   const [micApps, setMicApps] = useState<MicApp[]>([]);
   const [dismissedApps, setDismissedApps] = useState<string[]>([]);
-  const [detectionSupported, setDetectionSupported] = useState(false);
   const [devices, setDevices] = useState<AudioDevices | null>(null);
   const [microphone, setMicrophone] = useState("");
   const [output, setOutput] = useState("");
@@ -187,9 +185,6 @@ export function App() {
     },
     onError: report,
   });
-  /** The Ask page from a shortcut, the sidebar or the palette: one opener, optional trigger. */
-  const openAsk = (trigger?: HTMLButtonElement) =>
-    openPanel("library", trigger);
   // Shown until finished or skipped, on its own: no sidebar, no recording bar.
   const firstRun =
     desktop && !!settings && !settings.setup_done && panel === null;
@@ -231,7 +226,7 @@ export function App() {
     setDismissedApps((ids) => (ids.includes(id) ? ids : [...ids, id]));
   // Never while OpenMeet itself records; a prompt only opens setup, it never starts capture.
   const detectedApp =
-    settings?.detection_enabled && !active
+    settings && !active
       ? micApps.find(
           (app) =>
             !settings.detection_ignored.some((item) => item.id === app.id) &&
@@ -245,6 +240,8 @@ export function App() {
     disabled,
     run,
     report,
+    error,
+    setError,
     setNotice,
     updateStt,
     openPanel,
@@ -257,7 +254,6 @@ export function App() {
     setMicrophone,
     setOutput,
     audioBytes,
-    detectionSupported,
     updateKeyStatus,
     stt,
     sttProgress,
@@ -292,9 +288,7 @@ export function App() {
     panel,
     openPanel,
     closePanel,
-    openAsk,
     openSettings: settingsPage.openSettings,
-    panelRef,
     workspaceRef: workspace,
     focusWorkspace,
     title,
@@ -364,7 +358,6 @@ export function App() {
           );
         }),
       );
-      void api.detectionSupported().then(setDetectionSupported, () => {});
       await register(
         api.onSessionProcessingChanged((notification) => {
           void meeting.refreshProcessing(notification.meeting_id).catch(report);
@@ -532,7 +525,7 @@ export function App() {
       void api.getSettings().then(setSettings, () => undefined);
     });
   };
-  // A full page (Settings, Ask) replaces the meetings page, so its triggers are gone.
+  // A full page (Settings) replaces the meetings page, so its triggers are gone.
   const hadPanel = useRef(false);
   useEffect(() => {
     if (panel) {
@@ -601,9 +594,6 @@ export function App() {
       case "new-note":
         meeting.pageProps.onNewNote();
         break;
-      case "ask":
-        openAsk();
-        break;
       case "settings":
         openSettingsPage();
         break;
@@ -662,9 +652,6 @@ export function App() {
         // Never starts capture: the New recording dialog does that.
         event.preventDefault();
         openPanel("setup");
-      } else if (mod && event.shiftKey && key === "a") {
-        event.preventDefault();
-        openAsk();
       } else if (mod && key === "e" && meetingOpen) {
         event.preventDefault();
         meeting.pageProps.workspace.onExport();
@@ -687,11 +674,11 @@ export function App() {
         return;
       }
       if (!panel) return;
-      // Escape inside a field of a full page belongs to that field: the Settings forms and the
-      // Ask question box must not close the page under the caret.
+      // Escape inside a field of a full page belongs to that field: the Settings forms
+      // must not close the page under the caret.
       const target = event.target;
       if (
-        (panel === "settings" || panel === "library") &&
+        panel === "settings" &&
         target instanceof HTMLElement &&
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) &&
         panelRef.current?.contains(target)
@@ -707,19 +694,6 @@ export function App() {
 
   const inspectorOpen = settings?.inspector_open ?? true;
 
-  // The Ask page needs the AI notes connection's name and whether it is remote.
-  const askConnection = useMemo(() => {
-    if (!settings?.llm) return null;
-    const assigned = settings.provider_assignments.llm;
-    const saved = settings.saved_connections.find(
-      (item) => item.id === assigned?.connection_id,
-    );
-    return {
-      name: saved?.name ?? settings.llm.model ?? settings.llm.base_url,
-      remote: !isLocalBase(settings.llm.base_url),
-    };
-  }, [settings]);
-
   const paletteMeetings = meeting.pageProps.sidebar.meetings;
 
   const page =
@@ -727,12 +701,6 @@ export function App() {
       <FirstRunPage {...setupPage.firstRunProps} />
     ) : panel === "settings" ? (
       <SettingsPage {...settingsPage.pageProps} />
-    ) : panel === "library" ? (
-      <AskPage
-        {...meeting.ask}
-        connection={askConnection}
-        onBack={() => setPanel(null)}
-      />
     ) : (
       <>
         <MeetingPage {...meeting.pageProps} />

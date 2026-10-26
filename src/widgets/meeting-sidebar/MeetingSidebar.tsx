@@ -35,8 +35,6 @@ type Props = {
   onSearch: (value: string) => void;
   onNewRecording: (trigger: HTMLButtonElement) => void;
   onSettings: (trigger: HTMLButtonElement) => void;
-  /** Opens the Ask view: a page when the shell provides one, else the library panel. */
-  onAsk: (trigger: HTMLButtonElement) => void;
   onOpenMeeting: (id: string) => void;
   onNewNote: () => void;
   /** Full-text matches in notes, transcripts and summaries for the current search. */
@@ -301,28 +299,6 @@ export function MeetingSidebar(props: Props) {
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           </svg>
           Folders
-        </button>
-        {/* Visible "Ask"; the full name stays the accessible one. */}
-        <button
-          className="sb-navrow"
-          aria-label="Ask across meetings"
-          disabled={disabled || meetings.length === 0}
-          onClick={(event) => props.onAsk(event.currentTarget)}
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <path d="M21 12a8 8 0 1 1-3.2-6.4" />
-            <path d="M21 4v5h-5" />
-          </svg>
-          Ask
         </button>
         <button
           className="sb-navrow"

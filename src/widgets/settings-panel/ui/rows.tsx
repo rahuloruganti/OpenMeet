@@ -77,8 +77,6 @@ export type Segment<T extends string> = {
   title: string;
   /** Micro-note under the title, at most a few words. */
   note?: string;
-  /** Renders the cloud warning tag instead of a note. */
-  leaves?: boolean;
 };
 
 /** A segmented choice: the picked option is pressed, the rest are not. */
@@ -100,11 +98,7 @@ export function Segmented<T extends string>(props: {
           onClick={() => props.onChange(option.id)}
         >
           <span className="om-seg-t">{option.title}</span>
-          {option.leaves ? (
-            <span className="om-leaves">Leaves this device</span>
-          ) : (
-            option.note && <span className="om-seg-s">{option.note}</span>
-          )}
+          {option.note && <span className="om-seg-s">{option.note}</span>}
         </button>
       ))}
     </div>

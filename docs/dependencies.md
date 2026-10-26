@@ -138,7 +138,7 @@ Download size is not a performance guarantee: extraction space, inference memory
 
 ## External services
 
-Speech and AI are OpenAI-compatible endpoints you configure; no provider SDK is bundled. Credentials live in the Windows Credential Manager, and each connection is labelled **This device** or **Leaves this device**. Meeting text and cloud audio are sent only when you trigger an action or choose automatic processing in Settings. Provider costs, limits, model support and retention are outside OpenMeet. Local Whisper and sherpa-onnx stay on the device and remain the default. See [privacy](privacy.md#network-actions).
+Speech and AI are OpenAI-compatible endpoints you configure; no provider SDK is bundled. Credentials live in the Windows Credential Manager. Meeting text and cloud audio go to a connection once you assign it, both for actions you trigger and for the always-on processing after every recording. Provider costs, limits, model support and retention are outside OpenMeet. Local Whisper and sherpa-onnx stay on the device and remain the default. See [privacy](privacy.md#network-actions).
 
 Local servers (Ollama, LM Studio, Unsloth Studio, speaches, LocalAI) are detected over loopback only; OpenMeet installs and starts none of them. Diarization, bots, SharePoint, telemetry, auto-updaters and compression libraries are not integrated.
 

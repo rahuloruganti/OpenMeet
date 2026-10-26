@@ -355,21 +355,44 @@ export type LocalAiHardware = {
 /** `gpu`: runs entirely in GPU memory; `ram`: part runs from system RAM (slower);
  * `too_big`: will not run here. */
 export type LocalAiFit = "gpu" | "ram" | "too_big";
+/** A .gguf file on this PC: downloaded from Hugging Face, or found where it is. */
 export type LocalAiModel = {
-  /** Catalog id, or `file:<absolute path>` for a .gguf file found on this PC. */
+  /** `file:<absolute path>`. */
   id: string;
   name: string;
   description: string;
   size_bytes: number;
   license: string | null;
   fit: LocalAiFit;
-  recommended: boolean;
   downloaded: boolean;
-  source: "catalog" | "file";
+  source: "file";
+  /** True for a download this app made. A file used in place is never deleted. */
+  removable: boolean;
+};
+/** One Hugging Face repository from a search. */
+export type LocalAiHfHit = {
+  id: string;
+  downloads: number;
+  likes: number;
+  /** The day the repository last changed, YYYY-MM-DD, or null. */
+  updated: string | null;
+};
+/** One single-file GGUF in a repository, pinned to the commit it was listed at. */
+export type LocalAiHfFile = {
+  filename: string;
+  size_bytes: number;
+  sha256: string;
+  fit: LocalAiFit;
+  downloaded: boolean;
+};
+export type LocalAiHfListing = {
+  repo_id: string;
+  revision: string;
+  files: LocalAiHfFile[];
 };
 export type LocalAiJob = {
-  kind: "engine" | "model" | "quickstart";
-  /** The model id for a model download; the backend name for the engine. */
+  kind: "engine" | "model";
+  /** `repo/file` for a model download; the backend name for the engine. */
   target: string;
   phase: "download" | "verify" | "extract" | "start";
   downloaded: number;
@@ -398,31 +421,6 @@ export type LocalAiStatus = {
 export type MicApp = { id: string; name: string };
 /** A saved question prompt; `id` is `recipe-<uuid>`. */
 export type Recipe = { id: string; name: string; prompt: string };
-/** A saved answer over several meetings; `meeting_ids` are in the order sent (M1 first). */
-export type LibraryAnswer = {
-  id: number;
-  question: string;
-  answer: string;
-  provider: string;
-  model: string;
-  meeting_ids: string[];
-  /** What the question was asked over; null for answers made from an explicit list. */
-  scope: LibraryAnswerScope | null;
-};
-export type LibraryAnswerScope = {
-  kind: LibraryScope["kind"];
-  id: string | null;
-  label: string;
-};
-/**
- * The scope an Ask covers, resolved by the backend: `folder` and `tag` take `id`,
- * `meetings` takes `meeting_ids` (1 to 20), `all` takes neither.
- */
-export type LibraryScope = {
-  kind: "all" | "folder" | "tag" | "meetings";
-  id?: string;
-  meeting_ids?: string[];
-};
 /** `original_text` holds the engine's text once the user edited a segment. */
 export type SegmentMeta = { id: number; original_text: string | null };
 export type TranscriptVersion = {
@@ -753,8 +751,6 @@ export const api = {
   /** Apps holding the microphone, reported when the stable list changes while detection is on. */
   onMicrophoneApps: (callback: (apps: MicApp[]) => void) =>
     listen<MicApp[]>("microphone_apps", (event) => callback(event.payload)),
-  saveDetection: (enabled: boolean) =>
-    invoke<Settings>("save_detection", { enabled }),
   /** Stores the automatic capture switch. Saving it starts nothing by itself. */
   saveAutoCapture: (enabled: boolean) =>
     invoke<Settings>("save_auto_capture", { enabled }),
@@ -790,7 +786,6 @@ export const api = {
     ),
   setDetectionIgnored: (appId: string, name: string, ignored: boolean) =>
     invoke<Settings>("set_detection_ignored", { appId, name, ignored }),
-  detectionSupported: () => invoke<boolean>("detection_supported"),
   /** Flashes the taskbar entry; never shows or focuses the window. */
   requestAttention: () => invoke<void>("request_attention"),
   onModelLibraryProgress: (
@@ -803,16 +798,25 @@ export const api = {
    * checked against a pinned SHA-256. Long calls report through `onLocalAiProgress`. */
   localAiStatus: () => invoke<LocalAiStatus>("local_ai_status"),
   localAiInstallEngine: () => invoke<LocalAiStatus>("local_ai_install_engine"),
-  localAiDownloadModel: (modelId: string) =>
-    invoke<LocalAiStatus>("local_ai_download_model", { modelId }),
+  /** Searches Hugging Face for GGUF models. Only the search text is sent there. */
+  localAiSearchHf: (query: string) =>
+    invoke<LocalAiHfHit[]>("local_ai_search_hf", { query }),
+  localAiHfFiles: (repoId: string) =>
+    invoke<LocalAiHfListing>("local_ai_hf_files", { repoId }),
+  /** Downloads one file, pinned to the listed commit and checked against its SHA-256. */
+  localAiDownloadHf: (file: {
+    repoId: string;
+    revision: string;
+    filename: string;
+    sizeBytes: number;
+    sha256: string;
+  }) => invoke<LocalAiStatus>("local_ai_download_hf", file),
   localAiRemoveModel: (modelId: string) =>
     invoke<LocalAiStatus>("local_ai_remove_model", { modelId }),
   localAiCancel: () => invoke<void>("local_ai_cancel"),
   /** Makes the model the local server's model and assigns AI notes to the local server. */
   localAiUse: (modelId: string) =>
     invoke<Settings>("local_ai_use", { modelId }),
-  /** Engine + recommended model + use, in one call ("Set up for me"). */
-  localAiQuickstart: () => invoke<Settings>("local_ai_quickstart"),
   localAiStart: () => invoke<LocalAiStatus>("local_ai_start"),
   localAiStop: () => invoke<LocalAiStatus>("local_ai_stop"),
   onLocalAiProgress: (callback: (job: LocalAiJob) => void) =>
@@ -820,8 +824,8 @@ export const api = {
   /** Saved finals plus the current partials and state for one meeting. */
   liveTranscript: (meetingId: string) =>
     invoke<LiveTranscript>("live_transcript", { meetingId }),
-  saveLiveSettings: (enabled: boolean, model: string) =>
-    invoke<Settings>("save_live_settings", { enabled, model }),
+  saveLiveSettings: (model: string) =>
+    invoke<Settings>("save_live_settings", { model }),
   liveModels: () => invoke<LiveModels>("live_models"),
   /** Downloads a pinned streaming model; only ever called from a click. */
   liveModelInstall: (modelId: string) =>
@@ -946,32 +950,9 @@ export const api = {
       expectedLatestId,
       markdown,
     }),
-  /** Saves and returns the thread the answer joined. `threadId` continues a saved
-   * thread, sending its earlier turns; null starts a new one. */
-  askMeeting: (id: string, question: string, threadId: number | null) =>
-    invoke<QuestionThread>("ask_meeting", { id, question, threadId }),
-  /** One request over 1 to 20 meetings, in this order, or over a scope the backend resolves.
-   * Pass meetingIds null with a scope. The answer is saved and returned. */
-  askLibrary: (
-    meetingIds: string[] | null,
-    question: string,
-    scope?: LibraryScope,
-  ) => invoke<LibraryAnswer>("ask_library", { meetingIds, question, scope }),
-  /** Saved library answers, newest first. */
-  listLibraryAnswers: () => invoke<LibraryAnswer[]>("list_library_answers"),
-  /** Returns the remaining answers. */
-  deleteLibraryAnswer: (id: number) =>
-    invoke<LibraryAnswer[]>("delete_library_answer", { id }),
   /** Sends only the selected text and request; the result is returned, never stored. */
   rewriteText: (text: string, request: string) =>
     invoke<string>("rewrite_text", { text, request }),
-  /** Creates a recipe when `id` is null; otherwise edits it. */
-  saveRecipe: (id: string | null, name: string, prompt: string) =>
-    invoke<Settings>("save_recipe", { id, name, prompt }),
-  deleteRecipe: (id: string) => invoke<Settings>("delete_recipe", { id }),
-  /** Returns the remaining threads. */
-  deleteQuestionThread: (meetingId: string, threadId: number) =>
-    invoke<QuestionThread[]>("delete_question_thread", { meetingId, threadId }),
   renameMeeting: (id: string, title: string) =>
     invoke<string>("rename_meeting", { id, title }),
   setMeetingTags: (meetingId: string, tags: string[]) =>
@@ -1006,8 +987,6 @@ export const api = {
   importPrevious: () => invoke<ImportResult>("import_previous"),
   saveProcessingDefault: (mode: string, summary: string | null) =>
     invoke<Settings>("save_processing_default", { mode, summary }),
-  saveProcessingEnhance: (enabled: boolean) =>
-    invoke<Settings>("save_processing_enhance", { enabled }),
   saveSummaryDefault: (template: string) =>
     invoke<Settings>("save_summary_default", { template }),
   saveDefaultDevices: (microphoneId: string, outputId: string) =>

@@ -3,9 +3,7 @@ import { api, type Settings } from "../../shared/api/api";
 import { builtinTemplates } from "../../entities/processing";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
 
-type Kind = "summary" | "recipe";
-
-type Item = { id: string; name: string; body: string; kind: Kind };
+type Item = { id: string; name: string; body: string };
 
 type Props = {
   settings: Settings | null;
@@ -15,50 +13,29 @@ type Props = {
   onDefaultTemplate: (template: string) => void;
 };
 
-const kindLabel: Record<Kind, string> = {
-  summary: "Summary",
-  recipe: "Recipe",
-};
-
-/** The word for one saved item: a summary template, or a recipe. */
-const nounFor = (kind: Kind) => (kind === "summary" ? "template" : "recipe");
-
 /**
- * Summary templates and recipes as ONE list, tagged by kind. Storage stays as it was:
- * templates are sent with a summary request, recipes only fill the question box.
+ * Saved summary templates. Recipes (saved questions) stay in storage but are not offered:
+ * Ask was removed, so nothing would use them.
  */
 export function SummaryTemplates(props: Props) {
   const { settings } = props;
   const { shown, mark } = useSaved();
-  // `creating` edits a new item of that kind; `editing` is the saved item, by kind.
-  const [creating, setCreating] = useState<Kind | null>(null);
-  const [editing, setEditing] = useState<{ id: string; kind: Kind } | null>(
-    null,
-  );
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [instructions, setInstructions] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const items: Item[] = [
-    ...(settings?.summary_templates ?? []).map((item) => ({
-      id: item.id,
-      name: item.name,
-      body: item.instructions,
-      kind: "summary" as const,
-    })),
-    ...(settings?.recipes ?? []).map((item) => ({
-      id: item.id,
-      name: item.name,
-      body: item.prompt,
-      kind: "recipe" as const,
-    })),
-  ];
-  const kind: Kind = editing?.kind ?? creating ?? "summary";
+  const items: Item[] = (settings?.summary_templates ?? []).map((item) => ({
+    id: item.id,
+    name: item.name,
+    body: item.instructions,
+  }));
   const locked = props.disabled || busy || !settings;
   const reset = () => {
-    setCreating(null);
+    setCreating(false);
     setEditing(null);
     setName("");
     setBody("");
@@ -78,18 +55,16 @@ export function SummaryTemplates(props: Props) {
       setBusy(false);
     }
   };
-  const start = (id: string | null, next: Kind) => {
-    const item = items.find(
-      (saved) => saved.kind === next && saved.id === (id ?? ""),
-    );
+  const start = (id: string | null) => {
+    const item = items.find((saved) => saved.id === (id ?? ""));
     setEditing(null);
-    setCreating(null);
+    setCreating(false);
     if (item) {
-      setEditing({ id: item.id, kind: item.kind });
+      setEditing(item.id);
       setName(item.name);
       setBody(item.body);
     } else {
-      setCreating(next);
+      setCreating(true);
       setName("");
       setBody("");
     }
@@ -98,32 +73,21 @@ export function SummaryTemplates(props: Props) {
   };
   const save = () =>
     run(async () => {
-      const saved = editing
-        ? kind === "summary"
-          ? await api.saveSummaryTemplate(editing.id, name.trim(), body.trim())
-          : await api.saveRecipe(editing.id, name.trim(), body.trim())
-        : kind === "summary"
-          ? await api.saveSummaryTemplate(null, name.trim(), body.trim())
-          : await api.saveRecipe(null, name.trim(), body.trim());
+      const saved = await api.saveSummaryTemplate(
+        editing,
+        name.trim(),
+        body.trim(),
+      );
       props.onSettings(saved);
-      const noun = nounFor(kind);
-      setNotice(editing ? `${noun} updated.` : `${noun} added.`);
+      setNotice(editing ? "template updated." : "template added.");
       mark();
       reset();
     });
   const remove = () =>
     run(async () => {
       if (!editing) return;
-      const saved =
-        editing.kind === "summary"
-          ? await api.deleteSummaryTemplate(editing.id)
-          : await api.deleteRecipe(editing.id);
-      props.onSettings(saved);
-      setNotice(
-        editing.kind === "summary"
-          ? "Template deleted; earlier summaries keep their text."
-          : "Recipe deleted.",
-      );
+      props.onSettings(await api.deleteSummaryTemplate(editing));
+      setNotice("Template deleted; earlier summaries keep their text.");
       reset();
     });
   const saveInstructions = () =>
@@ -167,18 +131,17 @@ export function SummaryTemplates(props: Props) {
           </div>
         </div>
         {items.map((item) => (
-          <div className="om-row" key={`${item.kind}-${item.id}`}>
+          <div className="om-row" key={item.id}>
             <div className="om-what">
               <strong>{item.name}</strong>
             </div>
             <div className="om-side">
-              <span className="om-tag">{kindLabel[item.kind]}</span>
               <button
                 type="button"
                 className="om-ghost om-sm"
                 aria-label={`Edit ${item.name}`}
                 disabled={locked}
-                onClick={() => start(item.id, item.kind)}
+                onClick={() => start(item.id)}
               >
                 Edit
               </button>
@@ -199,7 +162,7 @@ export function SummaryTemplates(props: Props) {
           type="button"
           className="om-ghost om-sm"
           disabled={locked}
-          onClick={() => start(null, "summary")}
+          onClick={() => start(null)}
         >
           New template
         </button>
@@ -216,27 +179,6 @@ export function SummaryTemplates(props: Props) {
 
       {(creating || editing) && (
         <div className="om-card om-form">
-          <div className="om-seg" role="group" aria-label="Template kind">
-            {(["summary", "recipe"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={kind === option}
-                disabled={locked}
-                onClick={() => {
-                  if (editing) return;
-                  setCreating(option);
-                }}
-              >
-                <span className="om-seg-t">{kindLabel[option]}</span>
-                <span className="om-seg-s">
-                  {option === "summary"
-                    ? "Writes notes for the whole meeting."
-                    : "Fills the question box. Nothing is sent until you ask."}
-                </span>
-              </button>
-            ))}
-          </div>
           <label>
             Template name
             <input
@@ -248,20 +190,14 @@ export function SummaryTemplates(props: Props) {
             />
           </label>
           <label>
-            {kind === "recipe" ? "Question" : "Structure"}
+            Structure
             <textarea
-              aria-label={
-                kind === "recipe" ? "Template question" : "Template structure"
-              }
+              aria-label="Template structure"
               value={body}
-              maxLength={kind === "recipe" ? 1000 : 4000}
+              maxLength={4000}
               rows={3}
               disabled={locked}
-              placeholder={
-                kind === "recipe"
-                  ? "What risks were raised, and who owns each one?"
-                  : "## Summary\n## Risks\n## Action items"
-              }
+              placeholder={"## Summary\n## Risks\n## Action items"}
               onChange={(event) => setBody(event.target.value)}
             />
           </label>
@@ -269,7 +205,7 @@ export function SummaryTemplates(props: Props) {
             <button
               type="button"
               className="om-sm"
-              aria-label={`${editing ? "Save" : "Add"} ${nounFor(kind)}`}
+              aria-label={`${editing ? "Save" : "Add"} template`}
               disabled={locked || !name.trim() || !body.trim()}
               onClick={() => void save()}
             >
@@ -279,7 +215,7 @@ export function SummaryTemplates(props: Props) {
               <button
                 type="button"
                 className="om-ghost om-sm om-danger"
-                aria-label={`Delete ${nounFor(kind)}`}
+                aria-label="Delete template"
                 disabled={locked}
                 onClick={() => void remove()}
               >

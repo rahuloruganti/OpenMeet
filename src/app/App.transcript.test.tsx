@@ -373,101 +373,12 @@ describe("transcript and audio", () => {
       expect(document.activeElement).toBe(segment);
     });
 
-    it("opens a cited library-answer time in its meeting on the transcript", async () => {
-      const other = {
-        ...recorded,
-        meeting: { ...recorded.meeting, id: "rec", title: "Recorded sync" },
-      };
-      const withMeta = {
-        ...other,
-        segment_meta: [{ id: 31, original_text: null }],
-      };
-      vi.mocked(api.listMeetings).mockResolvedValue([
-        sample.meeting,
-        other.meeting,
-      ]);
-      vi.mocked(api.getMeeting).mockImplementation(async (id) =>
-        id === "rec" ? withMeta : sample,
-      );
-      vi.mocked(api.askLibrary).mockResolvedValue({
-        id: 1,
-        question: "What moved?",
-        answer: "Moved [M1 0:08] and [M2 0:08].",
-        provider: "https://provider.example/v1",
-        model: "test-chat",
-        meeting_ids: ["rec"],
-        scope: null,
-      });
-      vi.mocked(api.audioPosition).mockResolvedValue(2250);
-      vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
-      vi.mocked(api.getSettings).mockResolvedValue({
-        ...initialSettings,
-        llm: {
-          base_url: "https://provider.example/v1",
-          model: "test-chat",
-          revision: 1,
-        },
-      });
+    it("has no Ask entry, so no saved answer can open a transcript time", async () => {
       await ready();
-      await userEvent.click(
-        screen.getByRole("button", { name: "Ask across meetings" }),
-      );
-      // The Ask page scopes with a picker: choose the meetings this question covers.
-      await userEvent.selectOptions(
-        await screen.findByRole("combobox", { name: "Scope" }),
-        "pick",
-      );
-      await userEvent.click(screen.getByLabelText(/Recorded sync/));
-      await userEvent.type(screen.getByLabelText("Question"), "What moved?");
-      await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-      expect(api.askLibrary).toHaveBeenCalledWith(null, "What moved?", {
-        kind: "meetings",
-        meeting_ids: ["rec"],
-      });
-      expect(await screen.findByText("(unverified)")).toBeTruthy();
-      await userEvent.click(
-        await screen.findByRole("button", {
-          name: "Open Recorded sync at 0:08",
-        }),
-      );
-      await waitFor(() =>
-        expect(
-          screen
-            .getByRole("tab", { name: "Transcript" })
-            .getAttribute("aria-selected"),
-        ).toBe("true"),
-      );
-      expect(api.getMeeting).toHaveBeenLastCalledWith("rec");
-      await waitFor(() =>
-        expect(api.audioPosition).toHaveBeenCalledWith("rec", "system", 8250),
-      );
-      const segment = document.getElementById("segment-31");
-      expect(segment?.className).toContain("highlighted-segment");
-      expect(document.activeElement).toBe(segment);
-      // The answer is saved, so the Ask page still offers it after leaving and returning.
-      vi.mocked(api.listLibraryAnswers).mockResolvedValue([
-        {
-          id: 1,
-          question: "What moved?",
-          answer: "Moved [M1 0:08] and [M2 0:08].",
-          provider: "https://provider.example/v1",
-          model: "test-chat",
-          meeting_ids: ["rec"],
-          scope: null,
-        },
-      ]);
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Ask across meetings" }),
-        ).toHaveProperty("disabled", false),
-      );
-      await userEvent.click(
-        screen.getByRole("button", { name: "Ask across meetings" }),
-      );
-      await userEvent.click(
-        await screen.findByRole("button", { name: /What moved\?/ }),
-      );
-      expect(await screen.findByLabelText("Answer")).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: "Ask across meetings" }),
+      ).toBeNull();
+      expect(screen.queryByRole("combobox", { name: "Scope" })).toBeNull();
     });
 
     it("seeks the speaker's track to the backend-mapped file time", async () => {

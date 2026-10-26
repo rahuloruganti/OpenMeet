@@ -210,6 +210,6 @@ def test_a_populated_database_reads_auto_capture_as_off_after_upgrade(tmp_path: 
 
         settings = read_settings(store.db)
         assert settings["auto_capture"] is False
-        assert settings["detection_enabled"] is False
+        assert settings["detection_enabled"] is True  # on by default after migration 037
     finally:
         store.close()

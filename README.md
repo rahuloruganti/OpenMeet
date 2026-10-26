@@ -53,8 +53,8 @@ just dev
 
 On first launch, **Set up OpenMeet** walks through importing an earlier data folder when one is found, transcription (a speech model on this computer, a local speech server, or an online API), AI notes (an online API service), and default devices. It finds speech models and local speech servers already installed. Setup does not offer a model on this PC for AI notes; the **Local AI** group in **Settings → AI notes** does that. Skip setup or run it again from **Settings → Privacy & about**.
 
-- **Meetings** is the home page, with the library in the sidebar. **Settings** and **Ask** open as full pages; **← Meetings** or **Escape** goes back. Settings shows all six sections on one scrolling page, with an **On this page** index and a **Search settings** field that hides groups which do not match; a dot in the index marks a section that needs you.
-- **Ctrl+K** opens a command palette for actions and meeting titles. Other shortcuts: **Ctrl+N** new recording, **Ctrl+Shift+N** new note, **Ctrl+Shift+A** Ask, **Ctrl+,** Settings, **Ctrl+E** export, **F2** rename, **Ctrl+I** inspector.
+- **Meetings** is the home page, with the library in the sidebar. **Settings** opens as a full page; **← Meetings** or **Escape** goes back. Settings shows all six sections on one scrolling page, with an **On this page** index and a **Search settings** field that hides groups which do not match; a dot in the index marks a section that needs you.
+- **Ctrl+K** opens a command palette for actions and meeting titles. Other shortcuts: **Ctrl+N** new recording, **Ctrl+Shift+N** new note, **Ctrl+,** Settings, **Ctrl+E** export, **F2** rename, **Ctrl+I** inspector.
 - The meeting inspector holds details, tasks and device names; tasks live only there.
 - **Settings → General → Theme** switches **System**, **Dark** or **Light**; settings save as you change them.
 
@@ -67,9 +67,9 @@ On first launch, **Set up OpenMeet** walks through importing an earlier data fol
 
 Exported files appear in the chosen folder's `Meetings` directory. Export creates a new snapshot when a differing file exists, preserving external edits. Export options are in **Settings**.
 
-### Folders and scoped Ask
+### Folders
 
-Each meeting sits in one folder or none. The sidebar groups meetings under their folder headings, with unfiled meetings last, and filters across the groups. **Folders** in the sidebar creates, renames, reorders and deletes folders; deleting one keeps its meetings. A meeting's **⋯** menu has **Move to folder**. **Ask** covers all meetings, one folder, one tag, or meetings you pick, and each saved answer shows the scope it was asked over. Retrieval uses the local full-text index, so deleted meetings are never included. OpenMeet does not use embeddings for this.
+Each meeting sits in one folder or none. The sidebar groups meetings under their folder headings, with unfiled meetings last, and filters across the groups. **Folders** in the sidebar creates, renames, reorders and deletes folders; deleting one keeps its meetings. A meeting's **⋯** menu has **Move to folder**.
 
 ### Calendar context (optional)
 
@@ -84,7 +84,7 @@ Add a calendar under **Settings → Recording → Calendar** with its secret iCa
 5. Open **Settings → Transcription** and click **Download** on the **Speech model** row, or pick another under **Other models**.
 6. Open the meeting's **Transcript** tab and click **Transcribe audio**.
 
-While you record, the **Transcript** tab shows live text. **Settings → Recording → Live transcript** turns it on (it is on by default) and picks the model: **Same as Transcription**, **Streaming English (Zipformer)** (57 MB), **Streaming English (NeMo)** (103 MB) or **Cloud connection**. **Same as Transcription** never uploads: when Transcription is **Cloud**, it is unavailable, and live audio leaves this device only when you pick **Cloud connection**. A streaming model downloads only when you click **Download**. Live text runs only when its model is ready. Finished lines are kept with the meeting and labelled **Provisional** until a final transcript exists.
+While you record, the **Transcript** tab shows live text, always on. **Settings → Recording → Live transcript** picks the model: **Same as Transcription**, **Streaming English (Zipformer)** (57 MB), **Streaming English (NeMo)** (103 MB) or **Cloud connection**. **Same as Transcription** never uploads: when Transcription is **Cloud**, it is unavailable, and live audio leaves this device only when you pick **Cloud connection**. A streaming model downloads only when you click **Download**. Live text runs only when its model is ready. Finished lines are kept with the meeting and labelled **Provisional** until a final transcript exists.
 
 On-this-computer transcription (Whisper or the sherpa-onnx models) keeps audio and transcription on your computer. Downloads are verified against pinned checksums. **You** labels the microphone track; **Others** labels system audio. These labels do not identify individual speakers. Review names and numbers in the transcript.
 
@@ -92,26 +92,26 @@ For cloud transcription, choose **Cloud** under **Settings → Transcription** a
 
 ### Set up optional AI summaries
 
-Notes, recording, and local transcription work without a cloud key. Summaries and **Ask this meeting** use the OpenAI-compatible chat API of the connection you assign, remote or on this PC.
+Notes, recording, and local transcription work without a cloud key. Summaries use the OpenAI-compatible chat API of the connection you assign, remote or on this PC.
 
-1. Open **Settings → AI notes** and use the **Connection** group, then pick a provider: OpenAI, Claude (Anthropic), Gemini (Google), Mistral, Groq, Grok (xAI), DeepSeek, OpenRouter, or **Custom** for any other OpenAI-compatible API. The listed providers are remote, so the connection is tagged **Leaves this device**.
+1. Open **Settings → AI notes** and use the **Connection** group, then pick a provider: OpenAI, Claude (Anthropic), Gemini (Google), Mistral, Groq, Grok (xAI), DeepSeek, OpenRouter, or **Custom** for any other OpenAI-compatible API. The listed providers are remote. With one chosen for AI notes, each recording sends its final transcript and notes to that provider automatically.
 2. The provider fills in its base URL and a name; paste its key into the masked field and **Save**. **Custom** asks for the base URL instead, and loopback HTTP keeps the key optional.
 3. **Test** beside the key lists that provider's models, which proves the URL answers and the key is accepted without a billable request. A key you type is used for that one check and not stored; otherwise the saved key is used, and only for the URL it was saved with.
 4. The **Model** list fills from that check, or by itself when you save a new connection without a model. Pick one and **Save**; **Other…** takes a model ID the provider does not list.
 
 Keys pass briefly through the password field into the backend and are stored in Windows Credential Manager. They are never read back into Settings, the database, logs or exports. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; **Test** sends only the key, to list models. Opening Settings contacts no provider.
 
-Open **Summary**, choose General, Stand-up or One-to-one, and click **Create summary**. It sends notes and transcript text only. **Enhance notes** writes enhanced notes next to the summary from your notes and the final transcript; each claim links to the transcript segment it came from, and your typed notes are never changed. **Enhance my notes after recording** in AI notes runs it with automatic processing; it is off by default (opt-in) and, once turned on, sends one more request per recording when a summary is chosen. A failed enhancement keeps the saved summary; retrying it does not summarize again. Questions send directly too, and earlier summaries remain available in the version picker.
+Open **Summary**, choose General, Stand-up or One-to-one, and click **Create summary**. It sends notes and transcript text only. **Enhance notes** writes enhanced notes next to the summary from your notes and the final transcript; each claim links to the transcript segment it came from, and your typed notes are never changed. Automatic processing always enhances the notes after the summary, so each recording with a summary chosen sends one more request. A failed enhancement keeps the saved summary; retrying it does not summarize again. Questions send directly too, and earlier summaries remain available in the version picker.
 
 Every provider is reached through its OpenAI-compatible API: Claude uses `https://api.anthropic.com/v1`, Gemini uses `https://generativelanguage.googleapis.com/v1beta/openai`, and each preset fills in its own base URL. For Claude, the model list sends the key in Anthropic's `x-api-key` header; chat requests use the Bearer header like every other provider. Compatible endpoints must implement the operation you select; a model list does not prove chat or transcription support. No automatic model or provider fallback occurs. The provider list is covered by mocked HTTP tests only, not tested against the live services.
 
 ### Run AI notes on this PC (Local AI)
 
-**Settings → AI notes → Local AI** runs a model on this PC instead of a remote provider. **Set up for me** downloads the pinned llama.cpp build for your graphics and one model from a seven-model catalog, then assigns AI notes to it. You can also install the engine and download a model one step at a time; **Use** saves a connection named **Local AI** and assigns AI notes to it.
+**Settings → AI notes → Local AI** runs a model on this PC instead of a remote provider. Install the pinned llama.cpp engine for your graphics, then choose a model. **On this PC** lists the `.gguf` files on this PC, and **Use** saves a connection named **Local AI** and assigns AI notes to it. **Search Hugging Face** finds GGUF models online: pick a repository to see its files, then **Download** one into the Local AI models folder; it appears under **On this PC** when it is done.
 
-The group reads this PC's GPU, VRAM and RAM, labels each model **Fits your GPU**, **Uses system RAM** or **Too big**, and marks the best model that fits as **Recommended**. The catalog is Qwen3 30B A3B, Qwen3 14B, Gemma 3 12B, Qwen3 8B, Qwen3 4B, Gemma 3 4B and Llama 3.2 3B, from 17.28 GB down to 1.88 GB. `.gguf` files found on this PC are listed under **On this PC** and used where they are.
+Each file is labelled **Fits your GPU**, **Uses system RAM** or **Too big**, from this PC's GPU, VRAM and RAM. Searching sends only the text you type to huggingface.co, and opening a repository sends its name there.
 
-The engine is a pinned llama.cpp build b11671: CUDA on NVIDIA (about 540 MB, including its CUDA runtime), Vulkan on AMD or Intel (32 MB), CPU otherwise (20 MB). The server listens on `127.0.0.1` on port 39281 or a free port, starts by itself before a summary, a question, a rewrite or an automatic summary, and is stopped when the app closes; a Windows Job object also kills it if the app crashes. Nothing leaves this device, and files go to `%APPDATA%\OpenMeetPy\local-ai\`.
+The engine is a pinned llama.cpp build b11671: CUDA on NVIDIA (about 540 MB, including its CUDA runtime), Vulkan on AMD or Intel (32 MB), CPU otherwise (20 MB). The server listens on `127.0.0.1` on port 39281 or a free port, starts by itself before a summary, a rewrite or an automatic summary, and is stopped when the app closes; a Windows Job object also kills it if the app crashes. Chat text never leaves this device, and files go to `%APPDATA%\OpenMeetPy\local-ai\`.
 
 No engine or model has been downloaded or run in this build: real llama-server behaviour, GPU offload, the Job-object kill and model quality are untested, and only fakes exercise them in the test suite.
 
@@ -172,7 +172,7 @@ The data folder is `%APPDATA%\OpenMeetPy\`:
 
 Files are **unencrypted**. OS backups and cloud-synced folders may copy them elsewhere.
 
-There is no telemetry and no automatic cloud processing. Downloads and model discovery require explicit actions. Text and cloud audio are sent only when you trigger a transcription, summary, question or rewrite, choose automatic processing in Settings, or set **Cloud connection** as the live transcript model. **Local AI** keeps summaries and questions on this PC; its engine and model downloads contact github.com and huggingface.co only when you click, and nothing is uploaded. API keys live only in Windows Credential Manager. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm; exported snapshots are never touched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
+There is no telemetry and no automatic cloud processing. Downloads and model discovery require explicit actions. Text and cloud audio are sent only when you trigger a transcription, summary or rewrite, when a recording finishes with an AI notes connection and a summary chosen (automatic processing is always on), or when you set **Cloud connection** as the live transcript model. **Local AI** keeps summaries and questions on this PC; its engine and model downloads contact github.com and huggingface.co only when you click, and nothing is uploaded. API keys live only in Windows Credential Manager. **Delete audio** and **Delete meeting** are under the meeting's **•••** menu and require the title to confirm; exported snapshots are never touched. **Recover audio** writes repaired copies of unfinished recordings and keeps the originals.
 
 See [privacy](docs/privacy.md) for the full boundary and the [Phase 7 checklist](docs/phase-7-hardware-qualification.md) for open qualification work.
 

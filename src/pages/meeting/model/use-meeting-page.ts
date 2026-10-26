@@ -3,7 +3,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type ComponentProps,
   type RefObject,
 } from "react";
 import {
@@ -24,7 +23,6 @@ import {
   type SummaryVersion,
 } from "../../../shared/api/api";
 import { createNoteWriter } from "../../../features/note-writer";
-import { LibraryQuestion } from "../../../widgets/library-question";
 import type {
   ContentTab,
   SegmentDraft,
@@ -83,10 +81,7 @@ export type MeetingPageEnv = {
   panel: Panel;
   openPanel: (next: Exclude<Panel, null>, trigger: HTMLButtonElement) => void;
   closePanel: () => void;
-  /** Ask across meetings: the full page (or the library panel in the preview). */
-  openAsk: (trigger: HTMLButtonElement) => void;
   openSettings: OpenSettings;
-  panelRef: RefObject<HTMLElement | null>;
   workspaceRef: RefObject<HTMLElement | null>;
   focusWorkspace: () => void;
   title: string;
@@ -174,11 +169,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
     Record<string, SummaryDraft>
   >({});
   const [segmentDraft, setSegmentDraft] = useState<SegmentDraft | null>(null);
-  // A library-answer citation waiting for its meeting to be shown.
-  const [pendingJump, setPendingJump] = useState<{
-    meetingId: string;
-    ms: number | null;
-  } | null>(null);
   const listRequest = useRef(0);
   const detailRequest = useRef(0);
   const selectionRequest = useRef(0);
@@ -442,7 +432,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
   const hasSummaryInput =
     // A regex stops at the first non-space character instead of copying the whole note.
     /\S/.test(notes) || (selected?.segments.length ?? 0) > 0;
-  // Why the summary/question provider cannot be used; rewrites need nothing more.
+  // Why the summary provider cannot be used; rewrites need nothing more.
   const llmBlocked = !settings?.llm
     ? {
         message:
@@ -533,25 +523,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
     if (processing) void acknowledgeNotes(processing, retry);
   };
 
-  /** Ask across meetings is a full page now; the shell renders it from these props. */
-  const ask: ComponentProps<typeof LibraryQuestion> = {
-    panelRef: panel === "library" ? env.panelRef : null,
-    meetings,
-    recipes: settings?.recipes ?? [],
-    connectionRevision: `${settings?.llm?.revision ?? 0}`,
-    llmBlocked,
-    onOpenSettings: openSettings,
-    disabled,
-    onClose: closePanel,
-    onOpen: (id, ms) =>
-      void run(async () => {
-        await openMeeting(id);
-        if (selectedIdRef.current !== id) return;
-        closePanel();
-        setPendingJump({ meetingId: id, ms });
-      }),
-  };
-
   const pageProps: MeetingPageProps = {
     sidebarOpen,
     panel,
@@ -570,7 +541,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
       onSearch: setSearch,
       onNewRecording: (trigger) => openPanel("setup", trigger),
       onSettings: (trigger) => openSettings("general", trigger),
-      onAsk: env.openAsk,
       onOpenMeeting: (id) =>
         void run(async () => {
           await openMeeting(id);
@@ -672,9 +642,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
       },
     },
     workspace: {
-      pendingJump,
-      onJumpDone: () => setPendingJump(null),
-      hidden: panel === "settings" || panel === "library" || env.firstRun,
+      hidden: panel === "settings" || env.firstRun,
       selected,
       firstRun: ready && meetings.length === 0,
       onStartRecording: (trigger) => openPanel("setup", trigger),
@@ -777,7 +745,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
       versions: summaryVersions,
       customTemplates: settings?.summary_templates ?? [],
       defaultTemplate: settings?.summary_default ?? "general-v1",
-      recipes: settings?.recipes ?? [],
       summaryDraft: selected ? summaryDrafts[selected.meeting.id] : undefined,
       onSummaryDraft: (draft) => {
         if (selected) setSummaryDraft(selected.meeting.id, draft);
@@ -851,39 +818,6 @@ export function useMeetingPage(env: MeetingPageEnv) {
         patchSelected(id, () => ({ speaker_names: names })),
       onActionItems: (id, items) =>
         patchSelected(id, () => ({ action_items: items })),
-      onAsk: (question, threadId) => {
-        const id = selected?.meeting.id;
-        if (!id) return;
-        void runJob("ask", async () => {
-          await writer.current?.flush();
-          let thread;
-          try {
-            thread = await api.askMeeting(id, question, threadId);
-          } catch (failure) {
-            // Nothing matched: nothing is sent, which is an answer, not a failure.
-            if (errorCode(failure) !== "insufficient_evidence") throw failure;
-            setNotice(errorMessage(failure));
-            return;
-          }
-          patchSelected(id, (current) => ({
-            question_threads: current.question_threads.some(
-              (item) => item.id === thread.id,
-            )
-              ? current.question_threads.map((item) =>
-                  item.id === thread.id ? thread : item,
-                )
-              : [thread, ...current.question_threads],
-          }));
-        });
-      },
-      onDeleteThread: (threadId) => {
-        const id = selected?.meeting.id;
-        if (!id) return;
-        void run(async () => {
-          const threads = await api.deleteQuestionThread(id, threadId);
-          patchSelected(id, () => ({ question_threads: threads }));
-        });
-      },
       notes,
       notesStatus,
       tab,
@@ -1121,6 +1055,5 @@ export function useMeetingPage(env: MeetingPageEnv) {
     unsavedEdits,
     notesStatus,
     pageProps,
-    ask,
   };
 }

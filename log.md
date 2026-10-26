@@ -957,3 +957,13 @@ Known limitation: per-block live timing metadata still grows with recording leng
 **Checks that ran:** backend pytest 838 passed (696 before), vitest 578 passed (510 before), tsc, ESLint, Prettier on code, Vite production build, `openmeet_py.app --smoke`. No real calendar, model, provider, device or recording was used.
 
 **Unverified or deferred:** no live calendar feed, model or desktop walkthrough; Google/Microsoft OAuth calendars (needs client registrations); command-palette entries for folders; per-note regenerate; local embeddings (evaluated, not built); compact companion window; Windows hardware trials.
+
+## Owner UI round: Hugging Face Local AI, always-on defaults, removals, shortcut fix (2026-10-26)
+
+**Prompt:** remove the Local AI catalog, keep On this PC and add Hugging Face model search like Hermes (study it with REA); enhanced notes, meeting detection, automatic processing and the live transcript always on and out of Settings; fix shortcut change; remove the theme preview, the "Leaves this device" tags, the Transcript files chips, and Ask (Summary tab and the whole page).
+
+**Implemented:** Local AI lists only models on this PC (downloaded catalog files stay listed and selectable) plus a Hugging Face GGUF search with per-file size and fit, verified download (LFS SHA-256 when published), progress and Cancel; Hermes' behaviour was studied with REA on its shipped bundle and its source (report in scratch), no code copied. Migration 037 turns on detection (prompt-only), automatic processing, enhanced notes and the live transcript; their switches are gone; automatic capture stays a separate opt-in. With no notes model the transcript still runs and the summary is skipped quietly. Shortcut root cause: the capture accepted keys the backend cannot register and the save error only showed on the Meetings page; the field now refuses such keys, the Windows key maps to Win, and Settings shows any failed save. Removed the theme preview, Transcript files chips, every "Leaves this device" tag, Ask (UI only; backend commands and saved threads remain) and recipes in Templates.
+
+**Checks that ran:** backend pytest 866 passed, vitest 563 passed, tsc, ESLint, Prettier, Vite build, PyInstaller build, exe `--smoke` (fresh DB at version 37 with the always-on values and auto_capture 0). An independent review (interrupted before its final report) found four issues, fixed with tests.
+
+**Unverified:** no real Hugging Face download, llama-server run or packaged-app shortcut test; model-download total deadline and stall cancel are inherited from the speech downloader and not added.

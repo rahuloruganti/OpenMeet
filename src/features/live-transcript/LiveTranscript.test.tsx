@@ -188,14 +188,14 @@ it("says why live text is off and opens the Recording section", async () => {
   expect(onOpenSettings).toHaveBeenCalledWith("recording", link);
 });
 
-it("tags a cloud engine that leaves the device, and a paused recording", async () => {
+it("shows a paused cloud engine with no 'Leaves this device' tag", async () => {
   vi.mocked(api.liveTranscript).mockResolvedValue(
     data({ state: "running", leaves_device: true, engine: "Cloud speech" }),
   );
   render(view({ paused: true }));
 
-  expect(await screen.findByText("Leaves this device")).toBeTruthy();
-  expect(screen.getByText("Paused")).toBeTruthy();
+  expect(await screen.findByText("Paused")).toBeTruthy();
+  expect(screen.queryByText("Leaves this device")).toBeNull();
   expect(screen.getByText("Cloud speech")).toBeTruthy();
 });
 

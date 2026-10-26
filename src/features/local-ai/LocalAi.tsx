@@ -10,21 +10,17 @@ import {
   type Settings,
 } from "../../shared/api/api";
 import { formatBytes } from "../../entities/meeting";
+import { FIT } from "./labels";
+import { ProgressJob } from "./LocalAiProgress";
+import { LocalAiSearch } from "./LocalAiSearch";
 import "./local-ai.css";
 
 type Props = {
   /** The AI notes section is open. Nothing is read or listened to while it is hidden. */
   active: boolean;
   disabled: boolean;
-  /** Hands the settings a saved Use or Set up for me returned to the page. */
+  /** Hands the settings a saved Use returned to the page. */
   onSettings: (settings: Settings) => void;
-};
-
-/** The fit as three words, matching the estimate the backend makes. */
-const FIT: Record<LocalAiFit, string> = {
-  gpu: "Fits your GPU",
-  ram: "Uses system RAM",
-  too_big: "Too big",
 };
 
 /** What the fit label means for the person choosing, in one plain sentence. */
@@ -41,17 +37,11 @@ const SERVER: Record<LocalAiStatus["server"], string> = {
   failed: "Failed",
 };
 
-/** "Qwen3 14B · 9.00 GB · Fits your GPU · Recommended · Downloaded" */
+/** "tiny-Q8_0.gguf · 8.00 GB · Fits your GPU" */
 function optionLabel(model: LocalAiModel): string {
-  return [
-    model.name,
-    formatBytes(model.size_bytes),
-    FIT[model.fit],
-    model.recommended ? "Recommended" : "",
-    model.downloaded && model.source === "catalog" ? "Downloaded" : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  return [model.name, formatBytes(model.size_bytes), FIT[model.fit]].join(
+    " · ",
+  );
 }
 
 /** "NVIDIA GeForce RTX 4090 · 24.00 GB VRAM · 32.00 GB RAM", or "No GPU found · 32.00 GB RAM". */
@@ -76,37 +66,10 @@ function serversLine(servers: LocalServer[]): string {
   return `${list} are running · use them with New connection above`;
 }
 
-/** A download in flight: how far it is, and the way to stop it. */
-function Job(props: {
-  job: LocalAiJob;
-  label: string;
-  cancelLabel: string;
-  onCancel: () => void;
-}) {
-  return (
-    <span className="lai-job">
-      <progress
-        className="lai-bar"
-        aria-label={props.label}
-        value={props.job.downloaded}
-        max={props.job.total > 0 ? props.job.total : undefined}
-      />
-      <button
-        type="button"
-        className="om-ghost om-sm"
-        aria-label={props.cancelLabel}
-        onClick={props.onCancel}
-      >
-        Cancel
-      </button>
-    </span>
-  );
-}
-
 /**
- * Local AI: OpenMeet's own llama.cpp server on this PC. Models are chosen from one dropdown,
- * downloaded only on an explicit click, and never sent anywhere. Text stays to labels of a
- * few words; the backend holds the detail.
+ * Local AI: OpenMeet's own llama.cpp server on this PC. Models are the GGUF files on this PC,
+ * chosen from one dropdown. Hugging Face is searched only when asked, and nothing downloads
+ * without a click. Text stays to labels of a few words; the backend holds the detail.
  */
 export function LocalAi({ active, disabled, onSettings }: Props) {
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
@@ -208,19 +171,8 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
     );
   };
 
-  const quickstart = () =>
-    run("quickstart", async () => {
-      onSettings(await api.localAiQuickstart());
-      await refresh();
-    });
-
   const installEngine = () =>
     run("engine", async () => apply(await api.localAiInstallEngine()));
-
-  const downloadModel = (model: LocalAiModel) =>
-    run(`model:${model.id}`, async () =>
-      apply(await api.localAiDownloadModel(model.id)),
-    );
 
   const useModel = (model: LocalAiModel) =>
     run("use", async () => {
@@ -253,35 +205,17 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
     );
   }
 
-  const catalog = status.models.filter(
-    (model) => model.source === "catalog" && model.fit !== "too_big",
-  );
-  const files = status.models.filter(
-    (model) => model.source === "file" && model.fit !== "too_big",
-  );
-  const available = [...catalog, ...files];
+  const available = status.models.filter((model) => model.fit !== "too_big");
   const tooBig = status.models.filter(
     (model) => model.fit === "too_big",
   ).length;
-  // The active model first, then the recommended one, then whatever is left to offer.
+  // The active model first, then whatever is left to offer.
   const preferred =
-    available.find((model) => model.id === status.active_model) ??
-    available.find((model) => model.recommended) ??
-    available[0];
+    available.find((model) => model.id === status.active_model) ?? available[0];
   const selected =
     available.find((model) => model.id === picked) ?? preferred ?? null;
-  // Nothing downloaded yet and no engine: the one-click setup earns its place.
-  const unsetUp =
-    !status.engine_installed &&
-    !status.models.some(
-      (model) => model.source === "catalog" && model.downloaded,
-    );
-  const downloadJob =
-    job && job.kind === "model" && job.target === selected?.id ? job : null;
-  const setupJob =
-    job && (job.kind === "quickstart" || busy === "quickstart") ? job : null;
   const engineJob = job && job.kind === "engine" ? job : null;
-  const removable = selected?.source === "catalog" && selected.downloaded;
+  const removable = selected?.removable === true;
   const inUse = status.in_use && status.active_model === selected?.id;
   const detected = serversLine(servers);
   // One sentence, and the failed server's own sentence is the one that has the fix.
@@ -297,36 +231,6 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
         </span>
         <span className="om-tag">Stays on this device</span>
       </div>
-
-      {unsetUp && (
-        <div className="om-card lai-start">
-          <span className="lai-what">
-            <strong>Not set up yet</strong>
-            <span className="om-muted">
-              OpenMeet downloads the engine and the best model for this PC, then
-              uses it. Nothing downloads until you click.
-            </span>
-          </span>
-          {setupJob ? (
-            <Job
-              job={setupJob}
-              label="Setup progress"
-              cancelLabel="Cancel setup"
-              onCancel={cancel}
-            />
-          ) : (
-            <button
-              type="button"
-              className="om-sm lai-primary"
-              aria-busy={busy === "quickstart"}
-              disabled={disabled || busy !== null}
-              onClick={quickstart}
-            >
-              Set up for me
-            </button>
-          )}
-        </div>
-      )}
 
       <div className="om-card lai-rows">
         <div className="om-row">
@@ -374,7 +278,7 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
         </div>
         {engineJob && (
           <div className="lai-inline">
-            <Job
+            <ProgressJob
               job={engineJob}
               label="Engine download progress"
               cancelLabel="Cancel engine download"
@@ -397,20 +301,11 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
               onChange={(event) => setPicked(event.target.value)}
             >
               {available.length === 0 && (
-                <option value="">No model fits this PC</option>
+                <option value="">No model on this PC yet</option>
               )}
-              {catalog.length > 0 && (
-                <optgroup label="Catalog">
-                  {catalog.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {optionLabel(model)}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {files.length > 0 && (
+              {available.length > 0 && (
                 <optgroup label="On this PC">
-                  {files.map((model) => (
+                  {available.map((model) => (
                     <option key={model.id} value={model.id}>
                       {optionLabel(model)}
                     </option>
@@ -420,18 +315,11 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
             </select>
             {selected && <span className="om-tag">{FIT[selected.fit]}</span>}
             {selected &&
-              (downloadJob ? (
-                <Job
-                  job={downloadJob}
-                  label="Download progress"
-                  cancelLabel="Cancel download"
-                  onCancel={cancel}
-                />
-              ) : inUse ? (
+              (inUse ? (
                 <button type="button" className="om-sm" disabled>
                   In use
                 </button>
-              ) : selected.downloaded || selected.source === "file" ? (
+              ) : (
                 <button
                   type="button"
                   className="om-sm"
@@ -442,19 +330,8 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
                 >
                   Use
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  className="om-sm"
-                  aria-label={`Download ${selected.name}`}
-                  aria-busy={busy === `model:${selected.id}`}
-                  disabled={disabled || busy !== null}
-                  onClick={() => downloadModel(selected)}
-                >
-                  {`Download · ${formatBytes(selected.size_bytes)}`}
-                </button>
               ))}
-            {removable && !downloadJob && (
+            {removable && (
               <button
                 type="button"
                 className="om-ghost om-sm"
@@ -472,10 +349,19 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
             ? [selected.description, selected.license]
                 .filter(Boolean)
                 .join(" · ")
-            : "No model fits this PC."}
+            : "No model on this PC yet."}
         </p>
         {selected && <p className="lai-note">{FIT_NOTE[selected.fit]}</p>}
       </div>
+
+      <LocalAiSearch
+        disabled={disabled}
+        busy={busy}
+        job={job}
+        run={run}
+        apply={apply}
+        onCancel={cancel}
+      />
 
       {tooBig > 0 && (
         <p className="lai-line">

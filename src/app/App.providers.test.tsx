@@ -301,8 +301,8 @@ describe("saved connections and provider workflows", () => {
     const remove = editor.getByRole("button", { name: "Remove key" });
     expect(remove).toHaveProperty("disabled", true);
     expect(remove.getAttribute("title")).toBe("No saved key to remove.");
-    // A remote connection still says so up front, and the key is never shown.
-    expect(editor.getByText("Leaves this device")).toBeTruthy();
+    // The key is never shown, and no badge says where a remote connection sends data.
+    expect(editor.queryByText("Leaves this device")).toBeNull();
     await userEvent.click(
       editor.getByText("More options", { selector: "summary" }),
     );

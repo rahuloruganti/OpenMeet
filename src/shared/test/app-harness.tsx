@@ -1,5 +1,4 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { expect, vi } from "vitest";
 import { App } from "../../app/App";
 import { idleLifecycle } from "../../features/auto-capture";
@@ -133,10 +132,10 @@ export const initialSettings: Settings = {
   summary_instructions: "",
   summary_templates: [],
   recipes: [],
-  processing_mode: "recording",
-  processing_summary: null,
+  processing_mode: "final",
+  processing_summary: "general-v1",
   summary_default: "general-v1",
-  detection_enabled: false,
+  detection_enabled: true,
   detection_ignored: [],
   auto_capture: false,
   processing_enhance: true,
@@ -206,7 +205,7 @@ export const liveModels: LiveModels = {
   installing: null,
 };
 
-/** Local AI on a PC with no engine and nothing downloaded yet: the quickstart's place. */
+/** Local AI on a PC with no engine and no model yet. */
 export const localAiIdle: LocalAiStatus = {
   hardware: {
     gpu_name: "NVIDIA GeForce RTX 3060",
@@ -223,19 +222,7 @@ export const localAiIdle: LocalAiStatus = {
   server_error: null,
   active_model: null,
   in_use: false,
-  models: [
-    {
-      id: "qwen3-14b",
-      name: "Qwen3 14B",
-      description: "General notes and answers.",
-      size_bytes: 9 * 1024 ** 3,
-      license: "Apache-2.0",
-      fit: "gpu",
-      recommended: true,
-      downloaded: false,
-      source: "catalog",
-    },
-  ],
+  models: [],
   job: null,
 };
 
@@ -253,32 +240,6 @@ export function settingsIndex(name: string) {
   });
 }
 
-export async function chooseProcessing(mode: string, summary?: string) {
-  await userEvent.click(screen.getByRole("button", { name: "Settings" }));
-  await userEvent.click(settingsIndex("Recording"));
-  // Automatic processing is a switch now; its mode and summary appear once it is on.
-  const automation = screen.getByRole("switch", {
-    name: "Automatic processing",
-  });
-  if (
-    mode !== "recording" &&
-    automation.getAttribute("aria-checked") === "false"
-  )
-    await userEvent.click(automation);
-  if (mode !== "recording")
-    await userEvent.selectOptions(
-      screen.getByLabelText("When a recording stops"),
-      mode,
-    );
-  if (summary)
-    await userEvent.selectOptions(
-      screen.getByLabelText("Automatic summary"),
-      summary,
-    );
-  // Leaves focus out of a field, so Escape can close Settings.
-  await userEvent.click(settingsIndex("Recording"));
-}
-
 export function installDefaultMocks() {
   localStorage.removeItem("openmeet.automaticProcessing");
   vi.resetAllMocks();
@@ -286,7 +247,6 @@ export function installDefaultMocks() {
   vi.mocked(api.isDesktop).mockReturnValue(true);
   vi.mocked(api.getSessionProcessing).mockResolvedValue(null);
   vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting]);
-  vi.mocked(api.listLibraryAnswers).mockResolvedValue([]);
   vi.mocked(api.listFolders).mockResolvedValue([]);
   vi.mocked(api.saveProcessingDefault).mockImplementation(
     async (mode, summary) => ({
@@ -352,20 +312,16 @@ export function installDefaultMocks() {
     notice: null,
   });
   vi.mocked(api.liveModels).mockResolvedValue(liveModels);
-  vi.mocked(api.saveLiveSettings).mockImplementation(
-    async (enabled, model) => ({
-      ...initialSettings,
-      live_transcript: enabled,
-      live_model: model,
-    }),
-  );
+  vi.mocked(api.saveLiveSettings).mockImplementation(async (model) => ({
+    ...initialSettings,
+    live_model: model,
+  }));
   vi.mocked(api.liveModelInstall).mockResolvedValue(liveModels);
   vi.mocked(api.liveModelCancel).mockResolvedValue(liveModels);
   vi.mocked(api.detectLocalServers).mockResolvedValue([]);
   vi.mocked(api.providerKeyStatus).mockResolvedValue("missing");
   vi.mocked(api.sttStatus).mockResolvedValue(notInstalled);
   vi.mocked(api.audioUsage).mockResolvedValue(0);
-  vi.mocked(api.detectionSupported).mockResolvedValue(true);
   // No calendar is configured by default; the app works without one.
   vi.mocked(api.listCalendarFeeds).mockResolvedValue([]);
   vi.mocked(api.listCalendarEvents).mockResolvedValue([]);

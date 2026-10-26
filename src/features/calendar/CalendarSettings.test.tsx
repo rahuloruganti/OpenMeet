@@ -48,7 +48,7 @@ it("says a calendar is optional when none is added", async () => {
   expect(
     await screen.findByText("No calendar added. OpenMeet works without one."),
   ).toBeTruthy();
-  expect(screen.getByText("Leaves this device")).toBeTruthy();
+  expect(screen.queryByText("Leaves this device")).toBeNull();
   expect(
     screen.getByText("The calendar address is fetched over HTTPS."),
   ).toBeTruthy();

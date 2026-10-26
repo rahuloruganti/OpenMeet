@@ -54,23 +54,6 @@ it("sends cloud actions directly, with no review fingerprint", async () => {
     id: "m",
     template: "standup-v1",
   });
-  await api.askMeeting("m", "What changed?", 7);
-  expect(invoke).toHaveBeenLastCalledWith("ask_meeting", {
-    id: "m",
-    question: "What changed?",
-    threadId: 7,
-  });
-  await api.askLibrary(["a", "b"], "What changed?");
-  expect(invoke).toHaveBeenLastCalledWith("ask_library", {
-    meetingIds: ["a", "b"],
-    question: "What changed?",
-  });
-  await api.askLibrary(null, "What changed?", { kind: "folder", id: "f1" });
-  expect(invoke).toHaveBeenLastCalledWith("ask_library", {
-    meetingIds: null,
-    question: "What changed?",
-    scope: { kind: "folder", id: "f1" },
-  });
   await api.listFolders();
   expect(invoke).toHaveBeenLastCalledWith("list_folders");
   await api.createFolder("Client");
@@ -91,11 +74,6 @@ it("sends cloud actions directly, with no review fingerprint", async () => {
   expect(invoke).toHaveBeenLastCalledWith("reorder_folders", {
     ids: ["f2", "f1"],
   });
-  await api.deleteQuestionThread("m", 7);
-  expect(invoke).toHaveBeenLastCalledWith("delete_question_thread", {
-    meetingId: "m",
-    threadId: 7,
-  });
   await api.transcribeMeeting("m");
   expect(invoke).toHaveBeenLastCalledWith("transcribe_meeting", { id: "m" });
 });
@@ -109,6 +87,16 @@ it("starts real recordings with no consent or review argument", async () => {
   expect(Object.keys(api)).not.toContain("start");
   expect(Object.keys(api)).not.toContain("createFixture");
   expect(Object.keys(api)).not.toContain("prepareSessionProcessing");
+  // The Ask bindings are gone: no screen calls them any more.
+  for (const name of [
+    "askMeeting",
+    "askLibrary",
+    "listLibraryAnswers",
+    "deleteLibraryAnswer",
+    "deleteQuestionThread",
+  ]) {
+    expect(Object.keys(api)).not.toContain(name);
+  }
 });
 
 it("routes audio and events through the transport", async () => {

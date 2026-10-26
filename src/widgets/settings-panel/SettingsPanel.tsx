@@ -25,7 +25,6 @@ import type {
 import { displayPath, formatBytes } from "../../entities/meeting";
 import {
   builtinTemplates,
-  modeLabels,
   type ProcessingChoice,
 } from "../../entities/processing";
 import { shortcutLabel } from "../../shared/lib/shortcut-label";
@@ -80,11 +79,14 @@ type Props = {
   onRefreshDevices: () => void;
   /** Saves both global shortcuts; an empty stop shortcut clears it. */
   onSaveShortcuts: (pause: string, stop: string) => void;
+  /** A shortcut save the backend refused; shown in the Shortcuts group. */
+  shortcutError?: string;
+  /** The last failed save; the shell's error line is not on this page. */
+  error?: string;
+  onDismissError?: () => void;
   processing: ProcessingChoice;
   onProcessing: (choice: ProcessingChoice) => void;
-  detectionSupported: boolean;
-  onDetection: (enabled: boolean) => void;
-  /** Saves the automatic capture switch; only reachable while meeting detection is on. */
+  /** Saves the automatic capture switch. */
   onAutoCapture: (enabled: boolean) => void;
   onDetectionIgnored: (app: MicApp, ignored: boolean) => void;
   stt: SttStatus | null;
@@ -118,18 +120,30 @@ type Props = {
 
 const modifierKeys = ["Control", "Shift", "Alt", "Meta"];
 
-/** A keyboard chord as a shortcut accelerator, or null for a lone modifier or a key without
- * one (a global shortcut on a bare key would capture it system-wide). F-keys may stand alone. */
-function accelerator(event: KeyboardEvent): string | null {
-  if (modifierKeys.includes(event.key)) return null;
-  const key =
+/** Key names the backend registers (platform/hotkeys.py): letters, digits, F1-F24 and these keys. */
+const registrableKey =
+  /^(?:[a-z0-9]|F(?:[1-9]|1\d|2[0-4])|Space|Enter|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Up|Down|Left|Right)$/i;
+
+/** A key's name in a chord, or null for one the backend cannot register (punctuation, numpad, locks). */
+function keyName(event: KeyboardEvent): string | null {
+  const name =
     event.code === "Space"
       ? "Space"
       : event.code.replace(/^(Key|Digit|Arrow)/, "") || event.key;
+  return registrableKey.test(name) ? name : null;
+}
+
+/** A keyboard chord as a shortcut accelerator, or null for a lone modifier, a key without one (a
+ * global shortcut on a bare key would capture it system-wide) or a key the backend cannot
+ * register. F-keys may stand alone. */
+function accelerator(event: KeyboardEvent): string | null {
+  if (modifierKeys.includes(event.key)) return null;
+  const key = keyName(event);
   const modified = event.ctrlKey || event.metaKey || event.altKey;
-  if (!modified && !/^F\d{1,2}$/.test(key)) return null;
+  if (!key || (!modified && !/^F\d{1,2}$/.test(key))) return null;
   return [
-    (event.ctrlKey || event.metaKey) && "CommandOrControl",
+    event.ctrlKey && "CommandOrControl",
+    event.metaKey && "Win",
     event.altKey && "Alt",
     event.shiftKey && "Shift",
     key,
@@ -147,11 +161,11 @@ function ShortcutCapture(props: {
   onCapture: (chord: string) => void;
 }) {
   const [capturing, setCapturing] = useState(false);
-  // Set when a key press was refused for lacking a modifier, so the refusal is not silent.
-  const [refused, setRefused] = useState(false);
+  // Set when a key press was refused, so the refusal is not silent.
+  const [refusal, setRefusal] = useState("");
   const stopCapturing = () => {
     setCapturing(false);
-    setRefused(false);
+    setRefusal("");
   };
   const keys = props.value ? shortcutLabel(props.value).split("+") : [];
   return (
@@ -181,7 +195,11 @@ function ShortcutCapture(props: {
             props.onCapture(chord);
             stopCapturing();
           } else if (!modifierKeys.includes(event.key)) {
-            setRefused(true);
+            setRefusal(
+              keyName(event)
+                ? "Add Ctrl or Alt, or use an F-key."
+                : "Use a letter, number, arrow or Space with Ctrl or Alt, or an F-key.",
+            );
           }
         }}
       >
@@ -198,9 +216,9 @@ function ShortcutCapture(props: {
           Clear
         </button>
       )}
-      {refused && (
+      {refusal && (
         <span role="status" className="om-muted">
-          Add Ctrl or Alt, or use an F-key.
+          {refusal}
         </span>
       )}
     </>
@@ -234,32 +252,6 @@ function DeviceSelect(props: {
   );
 }
 
-/** A miniature window drawn with the live tokens, so the theme choice is visible. */
-function ThemePreview() {
-  return (
-    <div className="om-card om-pv" aria-hidden="true">
-      <div className="om-pv-side">
-        <span className="om-pv-mark" />
-        <span className="om-pv-bar om-w80" />
-        <span className="om-pv-bar om-w60" />
-        <span className="om-pv-bar om-w70" />
-      </div>
-      <div className="om-pv-main">
-        <div className="om-pv-top">
-          <span className="om-pv-bar om-w40" />
-          <span className="om-pv-pill" />
-        </div>
-        <div className="om-pv-body">
-          <span className="om-pv-bar om-w90" />
-          <span className="om-pv-bar om-w75" />
-          <span className="om-pv-bar om-w60" />
-          <span className="om-pv-cta" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function GeneralSection(props: Props) {
   const { shown, mark } = useSaved();
   const theme = props.settings?.theme ?? "system";
@@ -287,9 +279,6 @@ function GeneralSection(props: Props) {
           </Row>
         </Rows>
       </Group>
-      <Group label="Preview">
-        <ThemePreview />
-      </Group>
     </div>
   );
 }
@@ -303,7 +292,6 @@ function RecordingSection(props: Props) {
   const sameShortcuts =
     stop.trim() !== "" &&
     stop.trim().toLowerCase() === pause.trim().toLowerCase();
-  const automatic = props.processing.mode !== "recording";
   // Set when a captured chord was refused as the pause shortcut, so the refusal is not silent.
   const [clash, setClash] = useState(false);
   const saveShortcuts = (nextPause: string, nextStop: string) => {
@@ -387,97 +375,36 @@ function RecordingSection(props: Props) {
             Pause and stop can&apos;t use the same shortcut.
           </p>
         ) : null}
+        {props.shortcutError ? (
+          <p role="alert" className="om-error">
+            {props.shortcutError}
+          </p>
+        ) : null}
       </Group>
 
       <Group label="Automation" saved={automation.shown}>
         <Rows>
-          <Row label="Automatic processing">
-            <Switch
-              label="Automatic processing"
-              checked={automatic}
+          <Row label="Summary">
+            <select
+              aria-label="Automatic summary"
+              value={props.processing.summary ?? "general-v1"}
               disabled={disabled}
-              onChange={(on) => {
+              onChange={(event) => {
                 props.onProcessing({
-                  mode: on ? "final" : "recording",
-                  summary: on
-                    ? (props.processing.summary ?? "general-v1")
-                    : null,
+                  mode: "final",
+                  summary:
+                    builtinTemplates.find(({ id }) => id === event.target.value)
+                      ?.id ?? "general-v1",
                 });
                 automation.mark();
               }}
-            />
-          </Row>
-          {automatic && (
-            <div className="om-preview">
-              <span className="om-group-label">When on</span>
-              <div className="om-frow">
-                <span>After stop</span>
-                <select
-                  aria-label="When a recording stops"
-                  value={props.processing.mode}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    props.onProcessing({
-                      mode: event.target.value as ProcessingChoice["mode"],
-                      summary:
-                        event.target.value === "final"
-                          ? (props.processing.summary ?? "general-v1")
-                          : null,
-                    })
-                  }
-                >
-                  {Object.entries(modeLabels).map(([mode, label]) => (
-                    <option key={mode} value={mode}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {props.processing.mode === "final" && (
-                <div className="om-frow">
-                  <span>Summary</span>
-                  <select
-                    aria-label="Automatic summary"
-                    value={props.processing.summary ?? ""}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      props.onProcessing({
-                        ...props.processing,
-                        summary:
-                          builtinTemplates.find(
-                            ({ id }) => id === event.target.value,
-                          )?.id ?? null,
-                      })
-                    }
-                  >
-                    <option value="">No automatic summary</option>
-                    {builtinTemplates.map(({ id, label }) => (
-                      <option key={id} value={id}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-          )}
-          <Row
-            label="Meeting detection"
-            detail={
-              props.detectionSupported
-                ? "Offer to record when an app uses the microphone"
-                : "Not available on this platform yet"
-            }
-          >
-            <Switch
-              label="Meeting detection"
-              checked={settings?.detection_enabled ?? false}
-              disabled={disabled || !settings || !props.detectionSupported}
-              onChange={(on) => {
-                props.onDetection(on);
-                automation.mark();
-              }}
-            />
+            >
+              {builtinTemplates.map(({ id, label }) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </Row>
           <Row
             label="Automatic capture"
@@ -489,15 +416,13 @@ function RecordingSection(props: Props) {
                 stop or pause at any time. A manual stop or pause blocks
                 automatic restart for that call. Audio is stored on this PC, as
                 for any recording.
-                {!settings?.detection_enabled &&
-                  " Turn on meeting detection first."}
               </span>
             }
           >
             <Switch
               label="Automatic capture"
               checked={settings?.auto_capture ?? false}
-              disabled={disabled || !settings || !settings.detection_enabled}
+              disabled={disabled || !settings}
               onChange={(on) => {
                 props.onAutoCapture(on);
                 automation.mark();
@@ -505,7 +430,7 @@ function RecordingSection(props: Props) {
             />
           </Row>
         </Rows>
-        {settings?.detection_enabled && ignored.length > 0 && (
+        {ignored.length > 0 && (
           <More summary="Never prompt for">
             <div className="om-frow">
               <span>Never prompt for</span>
@@ -571,19 +496,9 @@ function ExportSection(props: Props) {
     );
   };
   const choices = settings?.export;
-  const formats = choices?.transcript_formats ?? [];
   const save = (options: ExportOptions) => {
     props.onExportOptions(options);
     mark();
-  };
-  const toggleFormat = (format: "txt" | "srt" | "vtt") => {
-    if (!choices) return;
-    save({
-      ...choices,
-      transcript_formats: formats.includes(format)
-        ? formats.filter((chosen) => chosen !== format)
-        : [...formats, format],
-    });
   };
   return (
     <div className="om-pane">
@@ -672,26 +587,6 @@ function ExportSection(props: Props) {
             </select>
           </Row>
         </Rows>
-      </Group>
-
-      <Group label="Transcript files">
-        <div className="om-card">
-          <div className="om-chips" role="group" aria-label="Transcript files">
-            {(["txt", "srt", "vtt"] as const).map((format) => (
-              <button
-                key={format}
-                type="button"
-                className="om-chip"
-                aria-pressed={formats.includes(format)}
-                aria-label={format.toUpperCase()}
-                disabled={disabled || !choices}
-                onClick={() => toggleFormat(format)}
-              >
-                {format.toUpperCase()}
-              </button>
-            ))}
-          </div>
-        </div>
       </Group>
 
       <div className="om-foot-note">
@@ -859,7 +754,7 @@ function aiBranchOf(settings: Settings | null): AiBranch {
 
 const aiChoices: Segment<AiBranch>[] = [
   { id: "local", title: "On this PC", note: "Stays on this device" },
-  { id: "connection", title: "With a connection", leaves: true },
+  { id: "connection", title: "With a connection" },
 ];
 
 /** The destination AI notes really use, so the view choice never implies a saved change. */
@@ -936,53 +831,7 @@ function AiSection(
           onDefaultTemplate={props.onSummaryDefault}
         />
       </Group>
-      <EnhanceSwitch
-        settings={props.settings}
-        disabled={props.disabled}
-        onSettings={props.onSettings}
-      />
     </div>
-  );
-}
-
-/** Automatic processing also writes enhanced notes; the switch saves at once and starts nothing itself. */
-function EnhanceSwitch(props: {
-  settings: Settings | null;
-  disabled: boolean;
-  onSettings: (settings: Settings) => void;
-}) {
-  const saved = useSaved();
-  const [failure, setFailure] = useState("");
-  return (
-    <Group label="Enhanced notes" saved={saved.shown}>
-      <Rows>
-        <Row
-          label="Enhance my notes after recording"
-          detail="Off unless you turn it on. Runs after a recording, with the summary, when Automatic processing is on. Your notes and the final transcript go to the AI notes destination above. Your typed notes stay as they are."
-        >
-          <Switch
-            label="Enhance my notes after recording"
-            checked={props.settings?.processing_enhance ?? false}
-            disabled={props.disabled || !props.settings}
-            onChange={(enabled) => {
-              setFailure("");
-              api.saveProcessingEnhance(enabled).then(
-                (settings) => {
-                  props.onSettings(settings);
-                  saved.mark();
-                },
-                () => setFailure("The switch could not be saved. Try again."),
-              );
-            }}
-          />
-        </Row>
-        {failure && (
-          <p className="om-muted" role="alert">
-            {failure}
-          </p>
-        )}
-      </Rows>
-    </Group>
   );
 }
 
@@ -1310,6 +1159,18 @@ export function SettingsPanel(props: Props) {
       </header>
       <div className="om-body">
         <div className="om-main" ref={main}>
+          {props.error ? (
+            <p role="alert" className="om-error">
+              {props.error}{" "}
+              <button
+                type="button"
+                className="om-ghost om-sm"
+                onClick={props.onDismissError}
+              >
+                Dismiss
+              </button>
+            </p>
+          ) : null}
           <div className="om-search">
             <label className="om-search-field">
               <SearchIcon />

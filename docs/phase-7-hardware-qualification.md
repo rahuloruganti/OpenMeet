@@ -471,8 +471,7 @@ Keep the PC plugged in. Do not use the PC for other work during the run.
   `uv run --project backend python backend\tools\make_test_audio.py C:\OpenMeetQual\audio\marker-60min.wav --duration 3600 --freq 440 --marker-every 60`.
   Expected: `Wrote ... 3600 s, ... 59 marker bursts every 60 s`. The file is about 1.4 GB for 48 kHz stereo float32.
   Record the size.
-- [ ] **H2 Start** (2 min). `--data-dir C:\OpenMeetQual\data-H`. Settings > Recording > Automatic processing: **When a recording stops**
-  = **Recording only**. Click **+ New recording**, title `QUAL-H1 60min`, choose the microphone and the system audio you use.
+- [ ] **H2 Start** (2 min). `--data-dir C:\OpenMeetQual\data-H`. Automatic processing is always on, so a transcript and summary run after the stop; that does not affect this capture check. Click **+ New recording**, title `QUAL-H1 60min`, choose the microphone and the system audio you use.
   Click **Start recording**. Record the start clock time (and the stopwatch start).
 - [ ] **H3 Play the 60-minute file** (60 min). Open `marker-60min.wav` in the media player with **repeat off**. Play it fully from
   the start to the end without pausing, seeking or changing the volume. Keep the microphone open in the room (silent is fine).

@@ -1,8 +1,7 @@
 /* Local AI rows inside Settings > AI notes. Tokens only; every class is namespaced `lai-`.
    The card, row and tag look comes from the settings page (om-card, om-row, om-tag). */
 
-.lai-machine,
-.lai-start {
+.lai-machine {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -14,8 +13,7 @@
   gap: 2px;
   min-width: 0;
 }
-.lai-what strong,
-.lai-start strong {
+.lai-what strong {
   font-size: 13.5px;
   font-weight: 500;
 }
@@ -61,17 +59,6 @@
   accent-color: var(--accent);
 }
 
-/* The one primary action: the setup that does the three steps at once. */
-.om-settings button.lai-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-.om-settings button.lai-primary:hover:not(:disabled) {
-  border-color: var(--accent-hover);
-  background: var(--accent-hover);
-}
-
 .lai-pill-starting {
   border-color: var(--warning-border);
   background: var(--warning-bg);
@@ -86,4 +73,60 @@
   border-color: var(--danger-border);
   background: var(--danger-bg);
   color: var(--danger);
+}
+
+/* Hugging Face search: one card with a search row, then the results or one repository's files. */
+.lai-hub {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.lai-search {
+  display: flex;
+  gap: 8px;
+}
+.lai-search input {
+  flex: 1;
+  min-width: 0;
+}
+.lai-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lai-hit {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.lai-hit strong {
+  overflow-wrap: anywhere;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.lai-hit .om-muted {
+  font-size: 12.5px;
+}
+.lai-repo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lai-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.lai-file .lai-what {
+  flex: 1;
 }

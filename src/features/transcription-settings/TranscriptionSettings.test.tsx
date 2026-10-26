@@ -257,8 +257,8 @@ it("shows the cloud connection card and no local options on cloud", () => {
     />,
   );
   expect(screen.getByText("cloud form")).toBeTruthy();
-  // The engine option and the connection header both carry the disclosure.
-  expect(screen.getAllByText("Leaves this device")).toHaveLength(2);
+  // Neither the engine option nor the connection header carries a leaving-the-device tag.
+  expect(screen.queryByText("Leaves this device")).toBeNull();
   expect(screen.getByRole("region", { name: "Connection" })).toBeTruthy();
   expect(screen.queryByText("Cloud speech")).toBeNull();
   expect(screen.queryByLabelText("Spoken language")).toBeNull();

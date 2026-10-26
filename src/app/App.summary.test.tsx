@@ -448,63 +448,7 @@ describe("summaries and questions", () => {
       ).toBe("2 · m1 · General · edited");
     });
 
-    it("asks a question and shows the saved thread", async () => {
-      providerReady();
-      vi.mocked(api.askMeeting).mockResolvedValue({
-        id: 4,
-        turns: [
-          turn(1, "What is the budget?", "The **budget** is 40k [1:05]."),
-        ],
-      });
-      await ready();
-      await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
-      await userEvent.type(
-        screen.getByRole("textbox", { name: "Ask this meeting" }),
-        "What is the budget?",
-      );
-      await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-      expect(api.askMeeting).toHaveBeenCalledWith(
-        "sample",
-        "What is the budget?",
-        null,
-      );
-      expect((await screen.findByText("budget")).tagName).toBe("STRONG");
-      expect(screen.getByText("Q: What is the budget?")).toBeTruthy();
-      expect(
-        screen.getByRole("combobox", { name: "Question threads" }),
-      ).toBeTruthy();
-      expect(
-        (
-          screen.getByRole("textbox", {
-            name: "Ask a follow-up",
-          }) as HTMLTextAreaElement
-        ).value,
-      ).toBe("");
-      expect(api.generateSummary).not.toHaveBeenCalled();
-      expect(api.saveNotes).not.toHaveBeenCalled();
-    });
-
-    it("shows a question with no matching passages as a status message", async () => {
-      providerReady();
-      const message =
-        "No passages in the selected content matched your question. Nothing was sent.";
-      vi.mocked(api.askMeeting).mockRejectedValue({
-        code: "insufficient_evidence",
-        message,
-      });
-      await ready();
-      await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
-      await userEvent.type(
-        screen.getByRole("textbox", { name: "Ask this meeting" }),
-        "What about zucchini?",
-      );
-      await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-      const shown = await screen.findByText(message);
-      expect(shown.closest("[role=status]")).toBeTruthy();
-      expect(screen.queryByRole("alert")).toBeNull();
-    });
-
-    it("sends a follow-up within the active thread", async () => {
+    it("has no question box or saved threads on the Summary tab", async () => {
       providerReady();
       vi.mocked(api.getMeeting).mockResolvedValue({
         ...sample,
@@ -512,101 +456,14 @@ describe("summaries and questions", () => {
           { id: 4, turns: [turn(1, "What is the budget?", "It is 40k.")] },
         ],
       });
-      vi.mocked(api.askMeeting).mockResolvedValue({
-        id: 4,
-        turns: [
-          turn(1, "What is the budget?", "It is 40k."),
-          turn(2, "Who approved it?", "Not stated."),
-        ],
-      });
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
-      expect(screen.getByText("It is 40k.")).toBeTruthy();
-      await userEvent.type(
-        screen.getByRole("textbox", { name: "Ask a follow-up" }),
-        "Who approved it?",
-      );
-      await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-      expect(api.askMeeting).toHaveBeenCalledWith(
-        "sample",
-        "Who approved it?",
-        4,
-      );
-      expect(await screen.findByText("Not stated.")).toBeTruthy();
-      expect(screen.getByText("It is 40k.")).toBeTruthy();
-    });
-
-    it("switches between threads, starts a new question, and confirms before deleting", async () => {
-      providerReady();
-      vi.mocked(api.getMeeting).mockResolvedValue({
-        ...sample,
-        question_threads: [
-          { id: 9, turns: [turn(3, "Who owns launch?", "Dana.")] },
-          { id: 4, turns: [turn(1, "What is the budget?", "It is 40k.")] },
-        ],
-      });
-      vi.mocked(api.askMeeting).mockResolvedValue({
-        id: 4,
-        turns: [turn(1, "What is the budget?", "It is 40k.")],
-      });
-      vi.mocked(api.deleteQuestionThread).mockResolvedValue([
-        { id: 4, turns: [turn(1, "What is the budget?", "It is 40k.")] },
-      ]);
-      await ready();
-      await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
-      expect(screen.getByText("Dana.")).toBeTruthy();
-      await userEvent.selectOptions(
-        screen.getByRole("combobox", { name: "Question threads" }),
-        "4",
-      );
-      expect(screen.getByText("It is 40k.")).toBeTruthy();
-      expect(screen.queryByText("Dana.")).toBeNull();
-      await userEvent.click(
-        screen.getByRole("button", { name: "New question" }),
-      );
-      expect(screen.queryByText("It is 40k.")).toBeNull();
-      await userEvent.type(
-        screen.getByRole("textbox", { name: "Ask this meeting" }),
-        "Anything else?",
-      );
-      await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-      expect(api.askMeeting).toHaveBeenLastCalledWith(
-        "sample",
-        "Anything else?",
-        null,
-      );
-      await userEvent.selectOptions(
-        screen.getByRole("combobox", { name: "Question threads" }),
-        "9",
-      );
-      await userEvent.click(
-        screen.getByRole("button", { name: "Delete thread" }),
-      );
-      expect(api.deleteQuestionThread).not.toHaveBeenCalled();
-      let confirm = screen.getByRole("group", {
-        name: "Confirm deleting question thread",
-      });
-      await userEvent.click(
-        within(confirm).getByRole("button", { name: "Keep" }),
-      );
-      expect(api.deleteQuestionThread).not.toHaveBeenCalled();
+      expect(screen.getByRole("tabpanel", { name: "Summary" })).toBeTruthy();
+      expect(screen.queryByRole("textbox", { name: /Ask/ })).toBeNull();
       expect(
-        screen.queryByRole("group", {
-          name: "Confirm deleting question thread",
-        }),
+        screen.queryByRole("combobox", { name: "Question threads" }),
       ).toBeNull();
-      await userEvent.click(
-        screen.getByRole("button", { name: "Delete thread" }),
-      );
-      confirm = screen.getByRole("group", {
-        name: "Confirm deleting question thread",
-      });
-      await userEvent.click(
-        within(confirm).getByRole("button", { name: "Delete thread" }),
-      );
-      expect(api.deleteQuestionThread).toHaveBeenCalledWith("sample", 9);
-      expect(await screen.findByText("It is 40k.")).toBeTruthy();
-      expect(screen.queryByText("Dana.")).toBeNull();
+      expect(screen.queryByText("It is 40k.")).toBeNull();
     });
   });
 });

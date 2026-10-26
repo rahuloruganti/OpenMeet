@@ -12,7 +12,6 @@ import { foldText, formatShortDate } from "../../entities/meeting";
 export type PaletteAction =
   | "new-recording"
   | "new-note"
-  | "ask"
   | "settings"
   | "export"
   | "rename"
@@ -63,13 +62,6 @@ const ACTIONS: ActionRow[] = [
     label: "New note",
     glyph: "＋",
     keys: ["Ctrl", "⇧", "N"],
-  },
-  {
-    key: "ask",
-    action: "ask",
-    label: "Ask across meetings",
-    glyph: "↗",
-    keys: ["Ctrl", "⇧", "A"],
   },
   {
     key: "settings",

@@ -116,7 +116,8 @@ def seed_old_meeting(db: sqlite3.Connection, mode: str) -> str:
     return "old-meeting"
 
 
-@pytest.mark.parametrize("old, new", [("live", "recording"), ("both", "final")])
+# 032 maps the old modes; 037 then switches automatic processing on, so both read as final.
+@pytest.mark.parametrize("old, new", [("live", "final"), ("both", "final")])
 def test_migration_032_maps_preview_modes_and_adds_the_live_columns(
     tmp_path: Path, old: str, new: str
 ) -> None:
@@ -155,16 +156,16 @@ def test_migration_032_maps_preview_modes_and_adds_the_live_columns(
 
 
 def test_live_settings_round_trip_and_an_unknown_model_is_refused(client: TestClient) -> None:
-    settings = invoke(client, "save_live_settings", enabled=True, model="cloud")
+    settings = invoke(client, "save_live_settings", model="cloud")
     assert (settings["live_transcript"], settings["live_model"]) == (True, "cloud")
     assert invoke(client, "get_settings")["live_model"] == "cloud"
 
-    status, body = invoke_error(client, "save_live_settings", enabled=True, model="nonsense")
+    status, body = invoke_error(client, "save_live_settings", model="nonsense")
     assert (status, body["code"]) == (400, "live_model")
     assert invoke(client, "get_settings")["live_model"] == "cloud"
 
-    stored = invoke(client, "save_live_settings", enabled=False, model="")
-    assert (stored["live_transcript"], stored["live_model"]) == (False, "")
+    stored = invoke(client, "save_live_settings", model="")
+    assert (stored["live_transcript"], stored["live_model"]) == (True, "")  # always on: only the model changes
 
 
 def test_a_legacy_processing_mode_is_mapped_not_refused(client: TestClient) -> None:
@@ -197,7 +198,9 @@ def test_a_meeting_that_never_recorded_reads_as_off(client: TestClient) -> None:
 def test_recording_with_live_off_creates_no_session(tmp_path: Path) -> None:
     client = build(tmp_path)
     try:
-        invoke(client, "save_live_settings", enabled=False, model="")
+        ctx = ctx_of(client)
+        with ctx.store.lock:
+            ctx.store.db.execute("UPDATE settings SET live_transcript = 0 WHERE id = 1")
         started = start(client)
         meeting = started["meeting_id"]
         assert started["status"] == "recording"
@@ -215,7 +218,7 @@ def test_a_model_that_cannot_run_leaves_live_off_with_a_notice_and_still_records
     monkeypatch.delenv("OPENMEET_PY_FAKE_STT", raising=False)
     client = build(tmp_path)
     try:
-        saved = invoke(client, "save_live_settings", enabled=True, model="stream:kroko-en")
+        saved = invoke(client, "save_live_settings", model="stream:kroko-en")
         assert saved["live_model"] == "stream:kroko-en"
         started = start(client)
         meeting = started["meeting_id"]
@@ -547,7 +550,7 @@ def test_same_as_transcription_with_cloud_transcription_never_uploads_from_a_rec
         ctx = ctx_of(client)
         with ctx.store.lock:
             ctx.store.db.execute("UPDATE settings SET stt_mode = 'cloud' WHERE id = 1")
-        invoke(client, "save_live_settings", enabled=True, model="")
+        invoke(client, "save_live_settings", model="")
         uploads: list[int] = []
         monkeypatch.setattr(
             live_commands.LiveService, "_cloud_upload", lambda self, settings: uploads.append(1) or None
@@ -586,13 +589,13 @@ def test_a_saved_cloud_change_stops_the_upload_before_any_request(tmp_path: Path
             selection={"kind": "assigned", "connection_id": connection_id, "model": "whisper-1"},
             expectedRevision=None,
         )
-        invoke(client, "save_live_settings", enabled=True, model="cloud")
+        invoke(client, "save_live_settings", model="cloud")
         upload = ctx.live._cloud_upload(invoke(client, "get_settings"))
         assert upload is not None
         assert upload(np.zeros(1600, dtype=np.float32)) == "hello"
         assert len(requests) == 1
 
-        invoke(client, "save_live_settings", enabled=True, model="")  # the saved live choice changed
+        invoke(client, "save_live_settings", model="")  # the saved live choice changed
         with pytest.raises(AppError) as info:
             upload(np.zeros(1600, dtype=np.float32))
         assert info.value.code == "live_model"
@@ -601,8 +604,8 @@ def test_a_saved_cloud_change_stops_the_upload_before_any_request(tmp_path: Path
         client.__exit__(None, None, None)
 
 
-def test_disabling_live_transcript_stops_a_cloud_upload_before_any_request(tmp_path: Path) -> None:
-    """Turning Live off, with the cloud model still saved, invalidates the recording's captured cloud config."""
+def test_choosing_another_live_model_stops_a_cloud_upload_before_any_request(tmp_path: Path) -> None:
+    """Choosing another live model, with the cloud connection still saved, invalidates the captured cloud config."""
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -623,17 +626,17 @@ def test_disabling_live_transcript_stops_a_cloud_upload_before_any_request(tmp_p
             selection={"kind": "assigned", "connection_id": connection_id, "model": "whisper-1"},
             expectedRevision=None,
         )
-        invoke(client, "save_live_settings", enabled=True, model="cloud")
+        invoke(client, "save_live_settings", model="cloud")
         upload = ctx.live._cloud_upload(invoke(client, "get_settings"))
         assert upload is not None
         assert upload(np.zeros(1600, dtype=np.float32)) == "hello"
         assert len(requests) == 1
 
-        invoke(client, "save_live_settings", enabled=False, model="cloud")  # only the on/off switch changed
+        invoke(client, "save_live_settings", model="")  # the saved live choice changed
         with pytest.raises(AppError) as info:
             upload(np.zeros(1600, dtype=np.float32))
         assert info.value.code == "live_model"
-        assert len(requests) == 1  # nothing was sent after Live was turned off
+        assert len(requests) == 1  # nothing was sent after the live choice changed
     finally:
         client.__exit__(None, None, None)
 

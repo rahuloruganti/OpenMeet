@@ -85,7 +85,6 @@ const base = {
   versions: [],
   customTemplates: [],
   defaultTemplate: "general-v1",
-  recipes: [],
   summaryDraft: undefined,
   onSummaryDraft: vi.fn(),
   onSaveSummaryEdit: vi.fn(),
@@ -94,8 +93,6 @@ const base = {
   onSegmentDraft: vi.fn(),
   onSaveSegment: vi.fn(),
   onActionItems: vi.fn(),
-  onAsk: vi.fn(),
-  onDeleteThread: vi.fn(),
   recordingThis: false,
   onDeleteMeeting: vi.fn(),
   onDeleteAudio: vi.fn(),
@@ -107,8 +104,6 @@ const base = {
   onCancelTranscribe: vi.fn(),
   getRecordingOffset: async () => null,
   onSeek: async () => null,
-  pendingJump: null,
-  onJumpDone: vi.fn(),
 };
 
 it("keeps tasks in the inspector and off the Summary tab", () => {

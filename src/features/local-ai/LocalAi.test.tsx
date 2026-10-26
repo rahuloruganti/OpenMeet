@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import type {
   LocalAiHardware,
+  LocalAiHfFile,
+  LocalAiHfHit,
+  LocalAiHfListing,
   LocalAiJob,
   LocalAiModel,
   LocalAiStatus,
@@ -19,11 +22,12 @@ vi.mock("../../shared/api/api", async (original) => {
     api: {
       localAiStatus: vi.fn(),
       localAiInstallEngine: vi.fn(),
-      localAiDownloadModel: vi.fn(),
+      localAiSearchHf: vi.fn(),
+      localAiHfFiles: vi.fn(),
+      localAiDownloadHf: vi.fn(),
       localAiRemoveModel: vi.fn(),
       localAiCancel: vi.fn(),
       localAiUse: vi.fn(),
-      localAiQuickstart: vi.fn(),
       localAiStart: vi.fn(),
       localAiStop: vi.fn(),
       onLocalAiProgress: vi.fn(),
@@ -43,30 +47,63 @@ const hardware: LocalAiHardware = {
   backend: "cuda",
 };
 
-function model(
+/** A .gguf file on this PC: downloaded here, or found where it is. */
+function onPc(
   patch: Partial<LocalAiModel> & { id: string; name: string },
 ): LocalAiModel {
   return {
-    description: "General notes and answers.",
-    size_bytes: 9 * GB,
-    license: "Apache-2.0",
-    fit: "gpu",
-    recommended: false,
-    downloaded: false,
-    source: "catalog",
+    description: "Downloaded from Hugging Face.",
+    size_bytes: 3 * GB,
+    license: null,
+    fit: "ram",
+    downloaded: true,
+    source: "file",
+    removable: true,
     ...patch,
   };
 }
 
-/** Qwen3 14B (recommended, not downloaded) beside Qwen3 4B (downloaded, runs from RAM). */
-const qwen14 = model({ id: "qwen3-14b", name: "Qwen3 14B", recommended: true });
-const qwen4 = model({
-  id: "qwen3-4b",
-  name: "Qwen3 4B",
-  size_bytes: 3 * GB,
-  fit: "ram",
-  downloaded: true,
+/** Qwen3 4B, downloaded here and run from system RAM. */
+const qwen4 = onPc({
+  id: "file:C:\\Models\\qwen3-4b.gguf",
+  name: "qwen3-4b.gguf",
 });
+
+/** A file found on this PC: used where it is, never deleted by the app. */
+const found = onPc({
+  id: "file:C:\\Models\\local.gguf",
+  name: "local.gguf",
+  description: "A .gguf file on this PC, used where it is.",
+  fit: "gpu",
+  removable: false,
+});
+
+/** A repository from a search, and its single-file GGUFs as Hugging Face lists them. */
+const hit: LocalAiHfHit = {
+  id: "owner/tiny-GGUF",
+  downloads: 1234,
+  likes: 5,
+  updated: "2025-01-05",
+};
+const q8: LocalAiHfFile = {
+  filename: "tiny-Q8_0.gguf",
+  size_bytes: 8 * GB,
+  sha256: "a".repeat(64),
+  fit: "gpu",
+  downloaded: false,
+};
+const huge: LocalAiHfFile = {
+  filename: "tiny-F16.gguf",
+  size_bytes: 40 * GB,
+  sha256: "b".repeat(64),
+  fit: "too_big",
+  downloaded: false,
+};
+const listing: LocalAiHfListing = {
+  repo_id: "owner/tiny-GGUF",
+  revision: "c".repeat(40),
+  files: [huge, q8],
+};
 
 function status(patch: Partial<LocalAiStatus> = {}): LocalAiStatus {
   return {
@@ -78,7 +115,7 @@ function status(patch: Partial<LocalAiStatus> = {}): LocalAiStatus {
     server_error: null,
     active_model: null,
     in_use: false,
-    models: [qwen14, qwen4],
+    models: [qwen4],
     job: null,
     ...patch,
   };
@@ -108,32 +145,32 @@ async function open(patch: Partial<LocalAiStatus> = {}, onSettings = vi.fn()) {
   return onSettings;
 }
 
-it("sets a model up with one click, shows its progress and can cancel", async () => {
-  const onSettings = await open({
-    engine_installed: false,
-    engine_download_bytes: 578 * 1024 ** 2,
-    models: [qwen14],
-  });
-  vi.mocked(api.localAiQuickstart).mockResolvedValue(savedSettings);
-  await userEvent.click(screen.getByRole("button", { name: "Set up for me" }));
-  expect(api.localAiQuickstart).toHaveBeenCalledTimes(1);
-  expect(onSettings).toHaveBeenCalledWith(savedSettings);
-
-  act(() =>
-    progress({
-      kind: "quickstart",
-      target: "b11671",
-      phase: "download",
-      downloaded: 512,
-      total: 2048,
-    }),
+/** Searches for the stand-in repository and opens its file list. */
+async function openRepository() {
+  vi.mocked(api.localAiSearchHf).mockResolvedValue([hit]);
+  vi.mocked(api.localAiHfFiles).mockResolvedValue(listing);
+  await userEvent.type(
+    screen.getByRole("searchbox", { name: "Search Hugging Face" }),
+    "tiny",
   );
-  const bar = await screen.findByRole("progressbar", {
-    name: "Setup progress",
-  });
-  expect(bar).toHaveProperty("value", 512);
-  await userEvent.click(screen.getByRole("button", { name: "Cancel setup" }));
-  expect(api.localAiCancel).toHaveBeenCalledTimes(1);
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: /owner\/tiny-GGUF/ }),
+  );
+  expect(api.localAiHfFiles).toHaveBeenCalledWith("owner/tiny-GGUF");
+}
+
+it("offers only the GGUF files on this PC, with no catalog and no set-up card", async () => {
+  await open({ models: [qwen4, found] });
+  const select = screen.getByLabelText("Local model");
+  expect(screen.getByRole("group", { name: "On this PC" })).toBeTruthy();
+  expect(screen.queryByRole("group", { name: "Catalog" })).toBeNull();
+  expect(within(select).getAllByRole("option")).toHaveLength(2);
+  expect(screen.queryByText("Not set up yet")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Set up for me" })).toBeNull();
+  // Nothing is offered to download until a Hugging Face search is made.
+  expect(screen.queryByRole("button", { name: /^Download/ })).toBeNull();
+  expect(api.localAiDownloadHf).not.toHaveBeenCalled();
 });
 
 it("installs the engine from its row and then shows the pinned build", async () => {
@@ -152,46 +189,84 @@ it("installs the engine from its row and then shows the pinned build", async () 
   expect(await screen.findByText("Installed · b11671 · CUDA")).toBeTruthy();
 });
 
-it("downloads the picked model and then offers it for use", async () => {
-  await open();
-  // The recommended model is picked until you choose another.
-  expect(screen.getByLabelText("Local model")).toHaveProperty(
-    "value",
-    "qwen3-14b",
+it("searches Hugging Face for GGUF models and lists them with downloads and the update day", async () => {
+  await open({ models: [] });
+  const search = screen.getByRole("button", { name: "Search" });
+  expect(search).toHaveProperty("disabled", true);
+  vi.mocked(api.localAiSearchHf).mockResolvedValue([hit]);
+  await userEvent.type(
+    screen.getByRole("searchbox", { name: "Search Hugging Face" }),
+    "tiny",
   );
-  vi.mocked(api.localAiDownloadModel).mockResolvedValue(
-    status({ models: [{ ...qwen14, downloaded: true }, qwen4] }),
-  );
-  await userEvent.click(
-    screen.getByRole("button", { name: "Download Qwen3 14B" }),
-  );
-  expect(api.localAiDownloadModel).toHaveBeenCalledWith("qwen3-14b");
+  await userEvent.click(search);
+  expect(api.localAiSearchHf).toHaveBeenCalledWith("tiny");
+  const results = await screen.findByRole("list", { name: "Search results" });
+  expect(within(results).getByText("owner/tiny-GGUF")).toBeTruthy();
   expect(
-    await screen.findByRole("button", { name: "Use Qwen3 14B" }),
+    within(results).getByText("1.2K downloads · updated 2025-01-05"),
   ).toBeTruthy();
 });
 
-it("shows a download's progress, marks the button busy and cancels it", async () => {
-  await open();
+it("says when a search finds no GGUF model", async () => {
+  await open({ models: [] });
+  vi.mocked(api.localAiSearchHf).mockResolvedValue([]);
+  await userEvent.type(
+    screen.getByRole("searchbox", { name: "Search Hugging Face" }),
+    "nothing",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(await screen.findByText("No GGUF models found.")).toBeTruthy();
+});
+
+it("lists a picked repository's GGUF files with size and a fit label for this PC", async () => {
+  await open({ models: [] });
+  await openRepository();
+  const files = await screen.findByRole("list", { name: "GGUF files" });
+  expect(within(files).getByText("tiny-Q8_0.gguf")).toBeTruthy();
+  expect(within(files).getByText(formatBytes(8 * GB))).toBeTruthy();
+  expect(within(files).getByText("Fits your GPU")).toBeTruthy();
+  expect(within(files).getByText("Too big")).toBeTruthy();
+});
+
+it("does not offer a download for a file too big for this PC", async () => {
+  await open({ models: [] });
+  await openRepository();
+  const download = await screen.findByRole("button", {
+    name: "Download tiny-F16.gguf",
+  });
+  expect(download).toHaveProperty("disabled", true);
+});
+
+it("downloads a file with progress, cancels it, and then lists it on this PC", async () => {
+  await open({ models: [] });
+  await openRepository();
   let finish: (value: LocalAiStatus) => void = () => {};
-  vi.mocked(api.localAiDownloadModel).mockImplementation(
+  vi.mocked(api.localAiDownloadHf).mockImplementation(
     () =>
       new Promise<LocalAiStatus>((resolve) => {
         finish = resolve;
       }),
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Download Qwen3 14B" }),
+    await screen.findByRole("button", { name: "Download tiny-Q8_0.gguf" }),
   );
-  expect(api.localAiDownloadModel).toHaveBeenCalledWith("qwen3-14b");
-  const pending = screen.getByRole("button", { name: "Download Qwen3 14B" });
+  expect(api.localAiDownloadHf).toHaveBeenCalledWith({
+    repoId: "owner/tiny-GGUF",
+    revision: listing.revision,
+    filename: "tiny-Q8_0.gguf",
+    sizeBytes: 8 * GB,
+    sha256: "a".repeat(64),
+  });
+  const pending = screen.getByRole("button", {
+    name: "Download tiny-Q8_0.gguf",
+  });
   expect(pending.getAttribute("aria-busy")).toBe("true");
   expect(pending).toHaveProperty("disabled", true);
 
   act(() =>
     progress({
       kind: "model",
-      target: "qwen3-14b",
+      target: "owner/tiny-GGUF/tiny-Q8_0.gguf",
       phase: "download",
       downloaded: 100,
       total: 400,
@@ -205,70 +280,103 @@ it("shows a download's progress, marks the button busy and cancels it", async ()
     screen.getByRole("button", { name: "Cancel download" }),
   );
   expect(api.localAiCancel).toHaveBeenCalledTimes(1);
-  await act(async () => finish(status()));
+
+  await act(async () =>
+    finish(
+      status({
+        models: [
+          qwen4,
+          onPc({
+            id: "file:C:\\Models\\tiny-Q8_0.gguf",
+            name: "tiny-Q8_0.gguf",
+            size_bytes: 8 * GB,
+            fit: "gpu",
+          }),
+        ],
+      }),
+    ),
+  );
+  expect(await screen.findByText("On this PC")).toBeTruthy();
+  expect(
+    within(screen.getByLabelText("Local model")).getByRole("option", {
+      name: /tiny-Q8_0\.gguf/,
+    }),
+  ).toBeTruthy();
 });
 
-it("uses a downloaded model and hands the saved settings back", async () => {
-  const onSettings = await open();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Local model"),
-    "qwen3-4b",
+it("shows why a download failed, in one sentence", async () => {
+  await open({ models: [] });
+  await openRepository();
+  vi.mocked(api.localAiDownloadHf).mockRejectedValue(
+    new Error("The download did not match its checksum."),
   );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Download tiny-Q8_0.gguf" }),
+  );
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "The download did not match its checksum.",
+  );
+});
+
+it("uses a file on this PC and hands the saved settings back", async () => {
+  const onSettings = await open({ models: [qwen4] });
   vi.mocked(api.localAiUse).mockResolvedValue(savedSettings);
   vi.mocked(api.localAiStatus).mockResolvedValue(
-    status({ active_model: "qwen3-4b", in_use: true }),
+    status({ models: [qwen4], active_model: qwen4.id, in_use: true }),
   );
-  await userEvent.click(screen.getByRole("button", { name: "Use Qwen3 4B" }));
-  expect(api.localAiUse).toHaveBeenCalledWith("qwen3-4b");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Use qwen3-4b.gguf" }),
+  );
+  expect(api.localAiUse).toHaveBeenCalledWith(qwen4.id);
   expect(onSettings).toHaveBeenCalledWith(savedSettings);
   const inUse = await screen.findByRole("button", { name: "In use" });
   expect(inUse).toHaveProperty("disabled", true);
 });
 
-it("removes a downloaded catalog model", async () => {
-  await open();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Local model"),
-    "qwen3-4b",
-  );
+it("removes a model this app downloaded, and never a file used in place", async () => {
+  await open({ models: [qwen4, found] });
+  await userEvent.selectOptions(screen.getByLabelText("Local model"), qwen4.id);
   vi.mocked(api.localAiRemoveModel).mockResolvedValue(
-    status({ models: [qwen14] }),
+    status({ models: [found] }),
   );
   await userEvent.click(
-    screen.getByRole("button", { name: "Remove Qwen3 4B" }),
+    screen.getByRole("button", { name: "Remove qwen3-4b.gguf" }),
   );
-  expect(api.localAiRemoveModel).toHaveBeenCalledWith("qwen3-4b");
+  expect(api.localAiRemoveModel).toHaveBeenCalledWith(qwen4.id);
   await waitFor(() =>
     expect(
       within(screen.getByLabelText("Local model")).queryByRole("option", {
-        name: /Qwen3 4B/,
+        name: /qwen3-4b/,
       }),
     ).toBeNull(),
   );
+
+  await userEvent.selectOptions(screen.getByLabelText("Local model"), found.id);
+  expect(
+    screen.queryByRole("button", { name: "Remove local.gguf" }),
+  ).toBeNull();
 });
 
-it("leaves models that are too big out of the list and says how many", async () => {
+it("leaves files too big for this PC out of the list and says how many", async () => {
   await open({
     models: [
-      model({
-        id: "llama-70b",
-        name: "Llama 70B",
+      onPc({
+        id: "file:C:\\Models\\big-a.gguf",
+        name: "big-a.gguf",
         size_bytes: 40 * GB,
         fit: "too_big",
       }),
-      model({
-        id: "llama-120b",
-        name: "Llama 120B",
+      onPc({
+        id: "file:C:\\Models\\big-b.gguf",
+        name: "big-b.gguf",
         size_bytes: 70 * GB,
         fit: "too_big",
       }),
-      qwen14,
+      qwen4,
     ],
   });
   const select = screen.getByLabelText("Local model");
-  expect(
-    within(select).queryByRole("option", { name: /Llama 70B/ }),
-  ).toBeNull();
+  expect(within(select).queryByRole("option", { name: /big-a/ })).toBeNull();
   expect(
     screen.getByText(
       "2 more models are too big for this PC, so they are not listed.",
@@ -278,33 +386,10 @@ it("leaves models that are too big out of the list and says how many", async () 
   expect(within(select).getAllByRole("option")).toHaveLength(1);
 });
 
-it("offers .gguf files found on this PC with Use only", async () => {
-  const found = model({
-    id: "file:C:\\Models\\local.gguf",
-    name: "local.gguf",
-    fit: "ram",
-    source: "file",
-  });
-  await open({ models: [qwen14, found] });
-  expect(screen.getByRole("group", { name: "Catalog" })).toBeTruthy();
-  expect(screen.getByRole("group", { name: "On this PC" })).toBeTruthy();
-  await userEvent.selectOptions(screen.getByLabelText("Local model"), found.id);
-  vi.mocked(api.localAiUse).mockResolvedValue(savedSettings);
-  const use = screen.getByRole("button", { name: "Use local.gguf" });
-  expect(
-    screen.queryByRole("button", { name: "Remove local.gguf" }),
-  ).toBeNull();
-  expect(
-    screen.queryByRole("button", { name: /Download local\.gguf/ }),
-  ).toBeNull();
-  await userEvent.click(use);
-  expect(api.localAiUse).toHaveBeenCalledWith(found.id);
-});
-
 it("turns the local server on and off", async () => {
   await open();
   vi.mocked(api.localAiStart).mockResolvedValue(
-    status({ server: "running", active_model: "qwen3-4b" }),
+    status({ server: "running", active_model: qwen4.id }),
   );
   await userEvent.click(screen.getByRole("button", { name: "Turn on" }));
   expect(api.localAiStart).toHaveBeenCalledTimes(1);
@@ -371,43 +456,20 @@ it("names other local chat servers in one line", async () => {
   expect(screen.queryByText(/Whisper server/)).toBeNull();
 });
 
-it("uses plain words for the PC, the first step and each fit", async () => {
-  await open({ models: [qwen14, qwen4] });
+it("uses plain words for the PC and for each fit, with a sentence per fit", async () => {
+  await open({ models: [qwen4, found] });
   expect(screen.getByText("Your PC")).toBeTruthy();
   expect(screen.queryByText("This machine")).toBeNull();
   expect(screen.getByText("Stays on this device")).toBeTruthy();
-  // The engine and model are installed here, so there is no first-step card to show.
-  expect(screen.queryByRole("button", { name: "Set up for me" })).toBeNull();
-  // Each fit has a sentence of its own, not only a badge.
-  await userEvent.selectOptions(
-    screen.getByLabelText("Local model"),
-    "qwen3-4b",
-  );
+  // The first file on this PC is picked; its fit has a sentence of its own.
   expect(screen.getByText("Uses system RAM")).toBeTruthy();
   expect(
     screen.getByText(
       "Runs from system memory, which is slower than a graphics card.",
     ),
   ).toBeTruthy();
-  await userEvent.selectOptions(
-    screen.getByLabelText("Local model"),
-    "qwen3-14b",
-  );
+  await userEvent.selectOptions(screen.getByLabelText("Local model"), found.id);
   expect(
     screen.getByText("Fits your graphics card, so it runs fastest on this PC."),
   ).toBeTruthy();
-});
-
-it("makes Set up for me the first step, and says what it downloads", async () => {
-  await open({ engine_installed: false, models: [qwen14] });
-  expect(screen.getByText("Not set up yet")).toBeTruthy();
-  expect(
-    screen.getByText(
-      "OpenMeet downloads the engine and the best model for this PC, then uses it. Nothing downloads until you click.",
-    ),
-  ).toBeTruthy();
-  // Nothing has been fetched before the click.
-  expect(api.localAiQuickstart).not.toHaveBeenCalled();
-  expect(api.localAiDownloadModel).not.toHaveBeenCalled();
-  expect(api.localAiInstallEngine).not.toHaveBeenCalled();
 });

@@ -14,7 +14,7 @@ from typing import Any, Callable, Optional
 
 from openmeet_py.api import reads
 from openmeet_py.api.context import (
-    Context, ai_slot, bool_arg, byte_len, has_control, optional_int_arg, optional_text_arg, text_arg,
+    Context, ai_slot, byte_len, has_control, optional_int_arg, optional_text_arg, text_arg,
 )
 from openmeet_py.api.errors import AppError
 from openmeet_py.api.reads import transcript_hash
@@ -371,15 +371,6 @@ def save_processing_default(ctx: Context, mode: Any, summary: Any) -> dict[str, 
             "UPDATE settings SET processing_mode = ?1, processing_summary = ?2 WHERE id = 1",
             (mode, summary),
         )
-        return reads.read_settings(db)
-
-
-def save_processing_enhance(ctx: Context, enabled: Any) -> dict[str, Any]:
-    """Whether automatic processing also writes enhanced notes after its summary."""
-    enabled = bool_arg(enabled, "enabled")
-    with ctx.store.lock:
-        db = ctx.store.db
-        db.execute("UPDATE settings SET processing_enhance = ?1 WHERE id = 1", (int(enabled),))
         return reads.read_settings(db)
 
 

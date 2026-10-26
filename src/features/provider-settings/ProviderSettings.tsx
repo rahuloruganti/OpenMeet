@@ -19,11 +19,7 @@ import {
   presetForUrl,
   presetsFor,
 } from "../../shared/lib/providers";
-import {
-  destination,
-  hostOf,
-  type Publish,
-} from "../../shared/ui/provider-connection";
+import { hostOf, type Publish } from "../../shared/ui/provider-connection";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
 
 // One sentence each, and each says the action that fixes it (TEXT RULES).
@@ -515,9 +511,6 @@ export function ConnectionEditor(props: Props) {
         <div className="om-row">
           <div className="om-what">
             <strong>Connection</strong>
-            {props.role === "llm" && (
-              <span className="om-leaves">Leaves this device</span>
-            )}
           </div>
           <div className="om-side">
             <select
@@ -529,7 +522,7 @@ export function ConnectionEditor(props: Props) {
               <option value="">New connection</option>
               {props.settings.saved_connections.map((item) => (
                 <option key={item.id} value={item.id}>
-                  {item.name} · {destination(item.base_url)}
+                  {item.name}
                 </option>
               ))}
               <option value={NONE}>No connection</option>

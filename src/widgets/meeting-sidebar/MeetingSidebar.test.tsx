@@ -58,7 +58,6 @@ function sidebar(meetings: Meeting[], search = "") {
       onSearch={vi.fn()}
       onNewRecording={vi.fn()}
       onSettings={vi.fn()}
-      onAsk={vi.fn()}
       onOpenMeeting={vi.fn()}
       onNewNote={vi.fn()}
       hits={[]}

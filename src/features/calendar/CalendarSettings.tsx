@@ -179,7 +179,6 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
               Reads each address every 15 minutes. Never writes to your
               calendar.
             </span>
-            <span className="om-leaves">Leaves this device</span>
             <span className="om-muted">
               The calendar address is fetched over HTTPS.
             </span>

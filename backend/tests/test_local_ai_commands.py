@@ -172,10 +172,24 @@ def models_dir(client: TestClient) -> Path:
     return client.app.state.ctx.store.data_dir / "local-ai" / "models"  # type: ignore[attr-defined]
 
 
+def download_tiny(client: TestClient) -> str:
+    """Downloads the stand-in GGUF through the Hugging Face command; returns the id it is listed under."""
+    status = invoke(
+        client,
+        "local_ai_download_hf",
+        repoId="owner/tiny",
+        revision="a" * 40,
+        filename="tiny.gguf",
+        sizeBytes=len(PAYLOAD),
+        sha256=hashlib.sha256(PAYLOAD).hexdigest(),
+    )
+    return str(status["models"][0]["id"])
+
+
 # ---- status --------------------------------------------------------------------------
 
 
-def test_status_reports_this_pc_the_pinned_engine_and_the_catalog(
+def test_status_reports_the_pinned_engine_and_offers_no_catalog_model(
     client: TestClient, pinned: catalog.Catalog
 ) -> None:
     status = invoke(client, "local_ai_status")
@@ -186,11 +200,7 @@ def test_status_reports_this_pc_the_pinned_engine_and_the_catalog(
     assert status["engine_download_bytes"] == 1024
     assert (status["server"], status["server_error"]) == ("stopped", None)
     assert (status["active_model"], status["in_use"], status["job"]) == (None, False, None)
-    listed = status["models"][0]
-    assert listed["id"] == "tiny-model" and listed["source"] == "catalog"
-    assert listed["size_bytes"] == len(PAYLOAD) and listed["license"] == "apache-2.0"
-    assert listed["fit"] == "ram" and listed["recommended"] is True
-    assert listed["downloaded"] is False
+    assert status["models"] == []
 
 
 def test_a_gguf_file_on_this_pc_is_listed_and_used_in_place(
@@ -207,7 +217,7 @@ def test_a_gguf_file_on_this_pc_is_listed_and_used_in_place(
     found = next(item for item in status["models"] if item["source"] == "file")
     assert found["id"] == f"file:{local_file}"
     assert found["name"] == "my model.gguf"
-    assert found["license"] is None and found["recommended"] is False and found["downloaded"] is True
+    assert found["license"] is None and found["removable"] is False and found["downloaded"] is True
     assert found["fit"] == "ram" and found["size_bytes"] == len(PAYLOAD)
 
     settings = invoke(client, "local_ai_use", modelId=found["id"])
@@ -261,65 +271,10 @@ def test_install_engine_does_nothing_when_the_build_is_already_there(
 # ---- downloads -----------------------------------------------------------------------
 
 
-def test_a_download_streams_verifies_and_reports_progress(
-    client: TestClient, pinned: catalog.Catalog
-) -> None:
-    requests: list[httpx.Request] = []
-    use_transport(client, requests)
-    events = record_events(client)
-
-    status = invoke(client, "local_ai_download_model", modelId="tiny-model")
-
-    assert status["models"][0]["downloaded"] is True
-    assert status["job"] is None
-    written = models_dir(client) / "tiny.gguf"
-    assert written.read_bytes() == PAYLOAD
-    assert len(requests) == 1 and requests[0].url.host == "huggingface.co"
-    assert "resolve/" + "a" * 40 in str(requests[0].url)
-    assert {name for name, _ in events} == {"local_ai_progress"}
-    last = events[-1][1]
-    assert (last["kind"], last["target"]) == ("model", "tiny-model")
-    assert last["phase"] == "download"
-    assert (last["downloaded"], last["total"]) == (len(PAYLOAD), len(PAYLOAD))
-
-
-def test_a_checksum_mismatch_leaves_nothing_behind(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(catalog, "load", lambda: tiny_catalog(sha256="e" * 64))
-    monkeypatch.setattr(hardware, "detect", lambda: dict(CPU_ONLY))
-    monkeypatch.setattr(service, "_local_files", lambda _ctx: [])
-    use_transport(client, [])
-    status, body = invoke_error(client, "local_ai_download_model", modelId="tiny-model")
-    assert body["code"] == "model_library"
-    assert not list(models_dir(client).glob("*.gguf"))
-    assert not list(models_dir(client).glob(".model-*"))
-
-
-def test_downloading_twice_is_harmless(client: TestClient, pinned: catalog.Catalog) -> None:
-    requests: list[httpx.Request] = []
-    use_transport(client, requests)
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
-    assert len(requests) == 1
-
-
-def test_a_second_job_is_refused_with_a_clear_error(client: TestClient, pinned: catalog.Catalog) -> None:
-    with service._JOB.operation("model", "something-else"):
-        status, body = invoke_error(client, "local_ai_download_model", modelId="tiny-model")
-    assert (status, body["code"]) == (400, "local_ai_busy")
-    assert "cancel" in body["message"]
-
-
 def test_cancel_sets_the_running_jobs_flag(client: TestClient, pinned: catalog.Catalog) -> None:
     with service._JOB.operation("model", "tiny-model") as cancel:
         assert invoke(client, "local_ai_cancel") is None
         assert cancel.is_set()
-
-
-def test_a_file_model_needs_no_download(client: TestClient, pinned: catalog.Catalog) -> None:
-    status, body = invoke_error(client, "local_ai_download_model", modelId="file:C:/models/a.gguf")
-    assert (status, body["code"]) == (400, "local_ai_model")
 
 
 # ---- using a model -------------------------------------------------------------------
@@ -329,20 +284,21 @@ def test_use_saves_one_connection_assigns_llm_and_starts_the_server(
     client: TestClient, pinned: catalog.Catalog, spawns: list[Any], memory_keyring: MemoryKeyring
 ) -> None:
     use_transport(client, [])
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
+    model_id = download_tiny(client)
 
-    settings = invoke(client, "local_ai_use", modelId="tiny-model")
+    settings = invoke(client, "local_ai_use", modelId=model_id)
 
     assert [item["name"] for item in settings["saved_connections"]] == ["Local AI"]
     connection = settings["saved_connections"][0]
     assert connection["base_url"].startswith("http://127.0.0.1:")
     assert connection["base_url"].endswith("/v1")
     assert settings["provider_assignments"]["llm"]["connection_id"] == connection["id"]
-    assert settings["provider_assignments"]["llm"]["model"] == "tiny-model"
-    assert settings["llm"]["model"] == "tiny-model"
+    alias = service._alias(model_id)
+    assert settings["provider_assignments"]["llm"]["model"] == alias
+    assert settings["llm"]["model"] == alias
 
     status = invoke(client, "local_ai_status")
-    assert status["in_use"] is True and status["active_model"] == "tiny-model"
+    assert status["in_use"] is True and status["active_model"] == model_id
     assert status["server"] in ("starting", "running")
 
     # The key lives in the credential store only; the Settings payload never carries it.
@@ -351,11 +307,11 @@ def test_use_saves_one_connection_assigns_llm_and_starts_the_server(
     assert key not in json.dumps(settings)
 
     spec, _process = spawns[-1]
-    assert spec.api_key == key and spec.model == "tiny-model"
-    assert spec.model_path == models_dir(client) / "tiny.gguf"
+    assert spec.api_key == key and spec.model == alias
+    assert spec.model_path == models_dir(client) / "owner" / "tiny" / "tiny.gguf"
     assert spec.context == 16384 and spec.layers == 0  # no GPU: nothing is offloaded
 
-    again = invoke(client, "local_ai_use", modelId="tiny-model")
+    again = invoke(client, "local_ai_use", modelId=model_id)
     assert [item["id"] for item in again["saved_connections"]] == [connection["id"]]
     assert len(memory_keyring.items) == 1
 
@@ -364,11 +320,11 @@ def test_a_lost_key_is_stored_again_on_the_next_use(
     client: TestClient, pinned: catalog.Catalog, spawns: list[Any], memory_keyring: MemoryKeyring
 ) -> None:
     use_transport(client, [])
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
-    first = invoke(client, "local_ai_use", modelId="tiny-model")
+    model_id = download_tiny(client)
+    first = invoke(client, "local_ai_use", modelId=model_id)
     memory_keyring.items.clear()
 
-    second = invoke(client, "local_ai_use", modelId="tiny-model")
+    second = invoke(client, "local_ai_use", modelId=model_id)
 
     assert [item["id"] for item in second["saved_connections"]] == [
         item["id"] for item in first["saved_connections"]
@@ -394,8 +350,8 @@ def test_start_needs_a_chosen_model(client: TestClient, pinned: catalog.Catalog)
 
 def test_stop_reports_a_stopped_server(client: TestClient, pinned: catalog.Catalog, spawns: list[Any]) -> None:
     use_transport(client, [])
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
-    invoke(client, "local_ai_use", modelId="tiny-model")
+    model_id = download_tiny(client)
+    invoke(client, "local_ai_use", modelId=model_id)
     stopped = invoke(client, "local_ai_stop")
     assert stopped["server"] == "stopped"
     assert spawns[-1][1].terminated is True
@@ -405,18 +361,18 @@ def test_removing_a_model_is_refused_while_the_server_runs_then_allowed(
     client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
 ) -> None:
     use_transport(client, [])
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
-    invoke(client, "local_ai_use", modelId="tiny-model")
+    model_id = download_tiny(client)
+    invoke(client, "local_ai_use", modelId=model_id)
 
-    status, body = invoke_error(client, "local_ai_remove_model", modelId="tiny-model")
+    status, body = invoke_error(client, "local_ai_remove_model", modelId=model_id)
     assert (status, body["code"]) == (400, "local_ai_active")
     assert body["message"] == "Turn off Local AI first."
 
     invoke(client, "local_ai_stop")
-    after = invoke(client, "local_ai_remove_model", modelId="tiny-model")
-    assert after["models"][0]["downloaded"] is False
+    after = invoke(client, "local_ai_remove_model", modelId=model_id)
+    assert after["models"] == []
     assert after["active_model"] is None
-    assert not (models_dir(client) / "tiny.gguf").exists()
+    assert not (models_dir(client) / "owner").exists()
 
 
 def test_removing_a_local_file_is_refused(client: TestClient, pinned: catalog.Catalog) -> None:
@@ -424,63 +380,21 @@ def test_removing_a_local_file_is_refused(client: TestClient, pinned: catalog.Ca
     assert (status, body["code"]) == (400, "local_ai_file")
 
 
-# ---- quickstart ----------------------------------------------------------------------
+def test_only_a_gguf_file_can_be_run_by_path(client: TestClient, pinned: catalog.Catalog) -> None:
+    notes = client.app.state.ctx.store.data_dir / "notes.txt"  # type: ignore[attr-defined]
+    notes.write_bytes(PAYLOAD)
+    status, body = invoke_error(client, "local_ai_use", modelId=f"file:{notes}")
+    assert (status, body["code"]) == (400, "local_ai_model")
 
 
-def test_quickstart_installs_the_engine_the_recommended_model_and_the_default(
-    client: TestClient,
-    pinned: catalog.Catalog,
-    spawns: list[Any],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    use_transport(client, [])
-    installed: list[str] = []
-    executable = tmp_path / "llama-server.exe"
-    executable.write_bytes(b"MZ fake engine")
-    monkeypatch.setattr(engine, "installed", lambda base, tag, backend: False)
-    monkeypatch.setattr(
-        engine,
-        "install",
-        lambda base, backend, pinned_catalog, progress, cancel, transport=None, fetch=None: (
-            installed.append(backend) or executable
-        ),
-    )
-    events = record_events(client)
-
-    settings = invoke(client, "local_ai_quickstart")
-
-    assert installed == ["cpu"]
-    assert settings["llm"]["model"] == "tiny-model"
-    assert [item["name"] for item in settings["saved_connections"]] == ["Local AI"]
-    assert (models_dir(client) / "tiny.gguf").read_bytes() == PAYLOAD
-    kinds = {payload["kind"] for _, payload in events}
-    assert kinds == {"quickstart"}
-    assert {payload["target"] for _, payload in events} == {"cpu"}
-    assert {payload["phase"] for _, payload in events} == {"download"}
-    assert spawns and spawns[-1][0].model == "tiny-model"
-
-
-def test_quickstart_reports_when_no_model_fits(
-    client: TestClient, pinned: catalog.Catalog, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        hardware,
-        "detect",
-        lambda: {**CPU_ONLY, "ram_available_bytes": 1, "ram_bytes": 1},
-    )
-    status, body = invoke_error(client, "local_ai_quickstart")
-    assert (status, body["code"]) == (400, "local_ai_fit")
-
-
-# ---- the LLM readiness hook ----------------------------------------------------------
+# ---- the local server behind a summary ----------------------------------------------
 
 
 def prepare_local_model(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> str:
     """Downloads and chooses the model, turns the server off, and leaves a meeting with notes."""
     use_transport(client, [])
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
-    invoke(client, "local_ai_use", modelId="tiny-model")
+    model_id = download_tiny(client)
+    invoke(client, "local_ai_use", modelId=model_id)
     invoke(client, "local_ai_stop")
     ctx = client.app.state.ctx  # type: ignore[attr-defined]
     meeting = add_meeting(ctx)
@@ -610,11 +524,12 @@ def another_program_on(port: int) -> Iterator[None]:
         listener.close()
 
 
-def start_local_model(client: TestClient) -> None:
-    """Downloads the tiny model and makes it the default; the fake server is running."""
+def start_local_model(client: TestClient) -> str:
+    """Downloads the tiny model and makes it the default; the fake server is running. Returns its id."""
     use_transport(client, [])
-    invoke(client, "local_ai_download_model", modelId="tiny-model")
-    invoke(client, "local_ai_use", modelId="tiny-model")
+    model_id = download_tiny(client)
+    invoke(client, "local_ai_use", modelId=model_id)
+    return model_id
 
 
 def saved_port(client: TestClient) -> int:
@@ -699,10 +614,10 @@ def test_a_local_connection_edited_to_a_remote_address_is_never_started_with_its
 def test_use_after_a_remote_edit_gives_the_server_a_new_key_not_the_cloud_one(
     client: TestClient, pinned: catalog.Catalog, spawns: list[Any], memory_keyring: MemoryKeyring
 ) -> None:
-    start_local_model(client)
+    model_id = start_local_model(client)
     point_connection_at_remote(client, CLOUD_KEY)
 
-    invoke(client, "local_ai_use", modelId="tiny-model")
+    invoke(client, "local_ai_use", modelId=model_id)
 
     spec, _process = spawns[-1]
     assert spec.api_key != CLOUD_KEY
@@ -728,9 +643,9 @@ def test_a_summary_never_starts_the_server_with_a_remote_connections_key(
 def test_a_removed_assigned_model_is_reported_before_a_request_reaches_a_dead_server(
     client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
 ) -> None:
-    start_local_model(client)
+    model_id = start_local_model(client)
     invoke(client, "local_ai_stop")
-    invoke(client, "local_ai_remove_model", modelId="tiny-model")
+    invoke(client, "local_ai_remove_model", modelId=model_id)
     spawned = len(spawns)
     config = {"base_url": saved_connection(client)["base_url"]}
 
@@ -740,3 +655,36 @@ def test_a_removed_assigned_model_is_reported_before_a_request_reaches_a_dead_se
     assert raised.value.code == "local_ai_model"
     assert "removed" in raised.value.message and "Local AI" in raised.value.message
     assert len(spawns) == spawned
+
+
+def test_an_earlier_catalog_model_is_listed_once_and_becomes_the_active_file(
+    client: TestClient, pinned: catalog.Catalog
+) -> None:
+    folder = models_dir(client)
+    folder.mkdir(parents=True)
+    (folder / "tiny.gguf").write_bytes(PAYLOAD)
+    client.app.state.ctx.store.db.execute(  # type: ignore[attr-defined]
+        "UPDATE local_ai SET active_model = 'tiny-model'"
+    )
+    status = invoke(client, "local_ai_status")
+    assert len(status["models"]) == 1
+    listed = status["models"][0]
+    assert listed["id"] == f"file:{folder / 'tiny.gguf'}"
+    assert status["active_model"] == listed["id"]
+
+
+def test_removing_an_earlier_catalog_model_is_refused_while_the_server_runs(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
+) -> None:
+    use_transport(client, [])
+    folder = models_dir(client)
+    folder.mkdir(parents=True)
+    (folder / "tiny.gguf").write_bytes(PAYLOAD)
+
+    invoke(client, "local_ai_use", modelId="tiny-model")
+    status = invoke(client, "local_ai_status")
+    listed_id = status["models"][0]["id"]
+
+    result_status, body = invoke_error(client, "local_ai_remove_model", modelId=listed_id)
+    assert (result_status, body["code"]) == (400, "local_ai_active")
+    assert body["message"] == "Turn off Local AI first."

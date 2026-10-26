@@ -4,9 +4,9 @@ The state row (`local_ai`, migration 031) keeps the engine backend, the port, th
 the id of the one saved connection named "Local AI". The API key lives only in the OS credential
 store, under that connection's account, and is never returned to the page.
 
-Commands return the `LocalAiStatus` shape the page reads, except `local_ai_use` and
-`local_ai_quickstart`, which return the saved Settings like every other settings command. Downloads
-run only on an explicit call, emit `local_ai_progress`, and honour `local_ai_cancel`.
+Commands return the `LocalAiStatus` shape the page reads, except `local_ai_use`, which returns the
+saved Settings like every other settings command. Downloads run only on an explicit call from the
+Hugging Face search, emit `local_ai_progress`, and honour `local_ai_cancel`.
 
 `ensure_ready` is the one hook the LLM path uses: when the assigned connection is this managed
 server, a summary, question or rewrite first makes sure the server is running with the chosen model.
@@ -22,14 +22,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Optional
-from urllib.parse import quote
 
+from openmeet_py import model_hub
 from openmeet_py.api import reads
 from openmeet_py.api.context import Context, text_arg
 from openmeet_py.api.errors import AppError
 from openmeet_py.domain import connections, providers
 from openmeet_py.local_ai import catalog as catalog_module
-from openmeet_py.local_ai import engine, hardware, server
+from openmeet_py.local_ai import engine, hardware, hub, server
 from openmeet_py.platform import keys
 from openmeet_py.speech import model_library
 
@@ -201,11 +201,6 @@ def _present(directory: Path, pin: catalog_module.Model) -> bool:
         return False
 
 
-def _model_url(pin: catalog_module.Model) -> str:
-    repo = "/".join(quote(part) for part in pin.repo.split("/"))
-    return f"{model_library.HUB}/{repo}/resolve/{pin.revision}/{quote(pin.file)}"
-
-
 def _local_files(ctx: Context) -> list[dict[str, Any]]:
     """GGUF files the existing local model scan finds on this PC. They are used where they are."""
     from openmeet_py.speech.stt import stt_root
@@ -239,43 +234,62 @@ def _alias(model_id: str) -> str:
     return model_id
 
 
+def _managed_files(ctx: Context) -> list[tuple[Path, int]]:
+    """GGUF files this app downloaded: one folder per owner and repository, and flat files from an earlier catalog."""
+    found: list[tuple[Path, int]] = []
+    for pattern in ("*.gguf", "*/*/*.gguf"):
+        for path in models_dir(ctx).glob(pattern):
+            try:
+                if path.is_file():
+                    found.append((path, path.stat().st_size))
+            except OSError:
+                continue
+    return found
+
+
+def _file_entry(
+    catalog: catalog_module.Catalog,
+    hardware_now: dict[str, Any],
+    path: str,
+    size: int,
+    removable: bool,
+    description: str,
+) -> dict[str, Any]:
+    return {
+        "id": f"{FILE_PREFIX}{path}",
+        "name": Path(path).name,
+        "description": description,
+        "size_bytes": size,
+        "license": None,
+        "fit": _fit_of(catalog, hardware_now, None, size),
+        "downloaded": True,
+        "source": "file",
+        "removable": removable,
+    }
+
+
 def list_models(
     ctx: Context, catalog: catalog_module.Catalog, hardware_now: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    fits = {
-        pin.id: _fit_of(catalog, hardware_now, pin, pin.size_bytes) for pin in catalog.models
-    }
-    best = catalog_module.recommended(catalog, fits)
-    folder = models_dir(ctx)
-    models: list[dict[str, Any]] = [
-        {
-            "id": pin.id,
-            "name": pin.name,
-            "description": pin.description,
-            "size_bytes": pin.size_bytes,
-            "license": pin.license,
-            "fit": fits[pin.id],
-            "recommended": pin.id == best,
-            "downloaded": _present(folder, pin),
-            "source": "catalog",
-        }
-        for pin in catalog.models
+    """The model choice: GGUF files on this PC, downloaded here or found in place. Catalog models are not offered."""
+    downloaded = _managed_files(ctx)
+    downloaded_keys = {str(path.resolve()) for path, _size in downloaded}
+    models = [
+        _file_entry(catalog, hardware_now, str(path), size, True, "Downloaded from Hugging Face.")
+        for path, size in downloaded
     ]
     for item in _local_files(ctx):
-        path = item["path"]
-        size = int(item["size"])
+        if str(Path(item["path"]).resolve()) in downloaded_keys:
+            continue
         models.append(
-            {
-                "id": f"{FILE_PREFIX}{path}",
-                "name": Path(path).name,
-                "description": "A .gguf file on this PC, used where it is.",
-                "size_bytes": size,
-                "license": None,
-                "fit": _fit_of(catalog, hardware_now, None, size),
-                "recommended": False,
-                "downloaded": True,
-                "source": "file",
-            }
+            _file_entry(
+                catalog,
+                hardware_now,
+                str(item["path"]),
+                int(item["size"]),
+                False,
+                "A .gguf file on this PC, used where it is.",
+            )
         )
     return models
 
@@ -297,11 +311,14 @@ def _model_path(
     if model_id.startswith(FILE_PREFIX):
         path = Path(model_id[len(FILE_PREFIX) :])
         try:
-            usable = path.is_absolute() and path.is_file()
+            usable = path.is_absolute() and path.suffix.lower() == ".gguf" and path.is_file()
         except OSError:
             usable = False
         if not usable:
-            raise AppError("local_ai_model", "That model file is gone. Scan local models again.")
+            raise AppError(
+                "local_ai_model",
+                "That model file is gone or is not a .gguf file. Scan local models again.",
+            )
         return path, None
     raise AppError("local_ai_model", "Choose a listed Local AI model.")
 
@@ -363,7 +380,7 @@ def status(ctx: Context) -> dict[str, Any]:
         "engine_download_bytes": engine.missing_bytes(catalog, backend, root(ctx)),
         "server": supervisor.state if supervisor is not None else "stopped",
         "server_error": supervisor.error_message if supervisor is not None else None,
-        "active_model": row.active_model,
+        "active_model": _normalize_model_id(ctx, catalog, row.active_model),
         "in_use": in_use,
         "models": list_models(ctx, catalog, hardware_now),
         "job": _JOB.snapshot(),
@@ -500,36 +517,98 @@ def local_ai_install_engine(ctx: Context) -> dict[str, Any]:
     return status(ctx)
 
 
-def local_ai_download_model(ctx: Context, model_id: Any) -> dict[str, Any]:
-    model_id = text_arg(model_id, "model_id")
+def local_ai_search_hf(ctx: Context, query: Any) -> list[dict[str, Any]]:
+    """Searches Hugging Face for GGUF models. Only the search text is sent there."""
+    return hub.search(text_arg(query, "query"), ctx.transport)
+
+
+def local_ai_hf_files(ctx: Context, repo_id: Any) -> dict[str, Any]:
+    """One repository's GGUF files, each with its fit for this PC and whether it is already here."""
+    repo = text_arg(repo_id, "repo_id")
+    listing = hub.files(repo, ctx.transport)
     catalog = catalog_module.load()
-    pin = catalog.model(model_id)
-    if pin is None:
-        raise AppError(
-            "local_ai_model",
-            "Choose a catalog model to download. A .gguf on this PC needs no download.",
-        )
-    folder = models_dir(ctx)
-    folder.mkdir(parents=True, exist_ok=True)
-    if _present(folder, pin):
+    hardware_now = hardware.detect()
+    for entry in listing["files"]:
+        entry["fit"] = _fit_of(catalog, hardware_now, None, entry["size_bytes"])
+        entry["downloaded"] = hub.managed_path(models_dir(ctx), repo, entry["filename"]).is_file()
+    return listing
+
+
+def local_ai_download_hf(
+    ctx: Context,
+    repo_id: Any,
+    revision: Any,
+    filename: Any,
+    size_bytes: Any,
+    sha256: Any,
+) -> dict[str, Any]:
+    """Downloads one GGUF pinned to the listed commit. It must match its SHA-256, or nothing is kept."""
+    repo = text_arg(repo_id, "repo_id")
+    name = text_arg(filename, "filename")
+    hub.check_pick(repo, revision, name, size_bytes, sha256)
+    catalog = catalog_module.load()
+    hardware_now = hardware.detect()
+    if _fit_of(catalog, hardware_now, None, size_bytes) == "too_big":
+        raise AppError("local_ai_fit", "This model needs more memory than this PC has.")
+    destination = hub.managed_path(models_dir(ctx), repo, name)
+    if destination.is_file():
         return status(ctx)
-    with _JOB.operation("model", pin.id) as cancel:
-        model_library.fetch_verified(
-            _model_url(pin),
-            folder,
-            pin.file,
-            pin.size_bytes,
-            pin.sha256,
-            progress=lambda done: _JOB.progress(ctx.emit, "download", done, pin.size_bytes),
+    owner, _repo_name = repo.split("/", 1)
+    model_hub.managed_folder(models_dir(ctx), [owner, _repo_name])
+    with _JOB.operation("model", f"{repo}/{name}") as cancel:
+        model_hub.fetch_verified(
+            hub.resolve_url(repo, revision, name),
+            destination.parent,
+            name,
+            size_bytes,
+            sha256,
+            progress=lambda done: _JOB.progress(ctx.emit, "download", done, size_bytes),
             cancel=cancel,
             transport=ctx.transport,
         )
     return status(ctx)
 
 
+def _prune_empty_folders(folder: Path, stop: Path) -> None:
+    """Removes the folders a removed download left empty, up to but never including the models folder."""
+    current = folder
+    while current != stop and stop in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def _normalize_model_id(ctx: Context, catalog: catalog_module.Catalog, model_id: Optional[str]) -> Optional[str]:
+    """A catalog id saved by an earlier version names the same flat file the new UI lists."""
+    if model_id is None or model_id.startswith(FILE_PREFIX):
+        return model_id
+    pin = catalog.model(model_id)
+    if pin is None:
+        return model_id
+    path = models_dir(ctx) / pin.file
+    try:
+        if path.is_file() and path.stat().st_size == pin.size_bytes:
+            return f"{FILE_PREFIX}{path}"
+    except OSError:
+        pass
+    return model_id
+
+
 def local_ai_remove_model(ctx: Context, model_id: Any) -> dict[str, Any]:
+    """Deletes a GGUF this app downloaded. A file used in place on this PC is never deleted."""
     model_id = text_arg(model_id, "model_id")
+    catalog = catalog_module.load()
     if model_id.startswith(FILE_PREFIX):
+        wanted = Path(model_id[len(FILE_PREFIX) :]).resolve()
+    else:
+        pin = catalog.model(model_id)
+        if pin is None:
+            raise AppError("local_ai_model", "Choose a listed Local AI model.")
+        wanted = (models_dir(ctx) / pin.file).resolve()
+    managed = next((item for item in _managed_files(ctx) if item[0].resolve() == wanted), None)
+    if managed is None:
         raise AppError(
             "local_ai_file",
             "This model is a file on this PC. Delete it in its own folder instead.",
@@ -539,26 +618,25 @@ def local_ai_remove_model(ctx: Context, model_id: Any) -> dict[str, Any]:
             "local_ai_busy",
             "A Local AI download is running. Wait for it or cancel it first.",
         )
-    catalog = catalog_module.load()
-    pin = catalog.model(model_id)
-    if pin is None:
-        raise AppError("local_ai_model", "Choose a listed Local AI model.")
-    path = models_dir(ctx) / pin.file
+    path = managed[0]
     with ctx.store.lock:
         db = ctx.store.db
         row = _row(db)
         supervisor = _supervisor(ctx)
         busy = supervisor is not None and supervisor.state in ("starting", "running")
-        if row.active_model == model_id and busy:
+        normalized_active = _normalize_model_id(ctx, catalog, row.active_model)
+        normalized_model = _normalize_model_id(ctx, catalog, model_id)
+        if normalized_active is not None and normalized_active == normalized_model and busy:
             raise AppError("local_ai_active", "Turn off Local AI first.")
         try:
-            if path.is_file():
-                path.unlink()
+            path.unlink(missing_ok=True)
         except OSError as cause:
             raise AppError(
-                "local_ai_files", "The model file could not be removed. Close other apps and try again."
+                "local_ai_files",
+                "The model file could not be removed. Close other apps and try again.",
             ) from cause
-        if row.active_model == model_id:
+        _prune_empty_folders(path.parent, models_dir(ctx))
+        if normalized_active is not None and normalized_active == normalized_model:
             _save_row(db, Row(row.backend, row.port, None, row.connection_id))
     return status(ctx)
 
@@ -586,50 +664,6 @@ def local_ai_use(ctx: Context, model_id: Any) -> dict[str, Any]:
         settings = reads.read_settings(db)
     _start(ctx, model_id, path, pin, port, key, layers, hardware_now, background=True)
     return settings
-
-
-def local_ai_quickstart(ctx: Context) -> dict[str, Any]:
-    """Engine, recommended model and the default, in one explicit action."""
-    catalog = catalog_module.load()
-    hardware_now = hardware.detect()
-    backend = hardware_now["backend"]
-    model_id = _quickstart_model(catalog, hardware_now)
-    if model_id is None:
-        raise AppError(
-            "local_ai_fit", "No listed model fits this PC. Free some memory and try again."
-        )
-    pin = catalog.model(model_id)
-    with _JOB.operation("quickstart", backend) as cancel:
-        root(ctx).mkdir(parents=True, exist_ok=True)
-        progress = lambda phase, done, total: _JOB.progress(ctx.emit, phase, done, total)  # noqa: E731
-        if not engine.installed(root(ctx), catalog.engine.tag, backend):
-            engine.install(root(ctx), backend, catalog, progress, cancel, ctx.transport)
-        if pin is not None and not _present(models_dir(ctx), pin):
-            models_dir(ctx).mkdir(parents=True, exist_ok=True)
-            model_library.fetch_verified(
-                _model_url(pin),
-                models_dir(ctx),
-                pin.file,
-                pin.size_bytes,
-                pin.sha256,
-                progress=lambda done: _JOB.progress(ctx.emit, "download", done, pin.size_bytes),
-                cancel=cancel,
-                transport=ctx.transport,
-            )
-    return local_ai_use(ctx, model_id)
-
-
-def _quickstart_model(
-    catalog: catalog_module.Catalog, hardware_now: dict[str, Any]
-) -> Optional[str]:
-    fits = {
-        pin.id: _fit_of(catalog, hardware_now, pin, pin.size_bytes) for pin in catalog.models
-    }
-    best = catalog_module.recommended(catalog, fits)
-    if best is not None:
-        return best
-    usable = [pin for pin in catalog.models if fits.get(pin.id) != "too_big"]
-    return max(usable, key=lambda pin: pin.quality).id if usable else None
 
 
 def local_ai_start(ctx: Context) -> dict[str, Any]:

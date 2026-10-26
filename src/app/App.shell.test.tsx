@@ -88,48 +88,21 @@ describe("full pages", () => {
     expect(document.activeElement).toBe(screen.getByRole("main"));
   });
 
-  it("renders Ask as a page with a Meetings back button and no sidebar", async () => {
+  it("has no Ask page: Ctrl+Shift+A opens nothing and Meetings stays", async () => {
     await ready();
     press("a", { ctrlKey: true, shiftKey: true });
-    const back = await screen.findByRole("button", {
-      name: "Back to meetings",
-    });
-    expect(sidebar()).toBeNull();
-    expect(screen.getByRole("heading", { level: 1, name: "Ask" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "Question" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Ask" })).toBeTruthy();
-    await userEvent.click(back);
-    expect(await screen.findByRole("main")).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Ask" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Question" })).toBeNull();
+    expect(screen.getByRole("main")).toBeTruthy();
     expect(sidebar()).toBeTruthy();
   });
 
-  it("keeps the Ask page open when Escape is pressed inside the question box", async () => {
+  it("has no Ask in the command palette", async () => {
     await ready();
-    press("a", { ctrlKey: true, shiftKey: true });
-    const box = await screen.findByRole("textbox", { name: "Question" });
-    await userEvent.type(box, "What was decided?");
-    // The caret's Escape belongs to the field, as in Settings; the page stays.
-    fireEvent.keyDown(box, { key: "Escape" });
-    expect(screen.getByRole("heading", { level: 1, name: "Ask" })).toBeTruthy();
-    // Escape anywhere else on the page still goes back to Meetings.
-    await userEvent.keyboard("{Escape}");
-    expect(await screen.findByRole("main")).toBeTruthy();
-  });
-
-  it("opens Ask again after leaving it and keeps the sidebar out of the way", async () => {
-    await ready();
-    press("a", { ctrlKey: true, shiftKey: true });
-    await screen.findByRole("heading", { level: 1, name: "Ask" });
-    await userEvent.keyboard("{Escape}");
-    await screen.findByRole("main");
-    press("a", { ctrlKey: true, shiftKey: true });
-    expect(
-      await screen.findByRole("heading", { level: 1, name: "Ask" }),
-    ).toBeTruthy();
-    // Only one question box: the answer panel is not left mounted in the workspace.
-    expect(screen.getAllByRole("textbox", { name: "Question" })).toHaveLength(
-      1,
-    );
+    press("k", { ctrlKey: true });
+    await userEvent.type(search(), "ask");
+    expect(palette()).toBeTruthy();
+    expect(screen.queryByText("Ask across meetings")).toBeNull();
   });
 });
 

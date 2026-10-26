@@ -190,46 +190,16 @@ describe("export", () => {
     });
   });
 
-  it("saves transcript file formats and reports them after an export", async () => {
-    vi.mocked(api.saveExportOptions).mockImplementation(async (options) => ({
-      ...initialSettings,
-      export: options,
-    }));
+  it("has no transcript file chips: exports keep the formats already saved", async () => {
     await ready();
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(settingsIndex("Export & storage"));
     const exporting = settingsSection("Export & storage");
-    await userEvent.click(exporting.getByRole("button", { name: "SRT" }));
-    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
-      transcript: true,
-      summary: true,
-      filename: "title",
-      transcript_formats: ["srt"],
-    });
-    await userEvent.click(exporting.getByRole("button", { name: "TXT" }));
-    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
-      transcript: true,
-      summary: true,
-      filename: "title",
-      transcript_formats: ["srt", "txt"],
-    });
-    await userEvent.click(exporting.getByRole("button", { name: "SRT" }));
-    expect(api.saveExportOptions).toHaveBeenLastCalledWith({
-      transcript: true,
-      summary: true,
-      filename: "title",
-      transcript_formats: ["txt"],
-    });
-    // The chosen formats stay pressed, so the state is visible after saving.
     expect(
-      exporting
-        .getByRole("button", { name: "TXT" })
-        .getAttribute("aria-pressed"),
-    ).toBe("true");
-    expect(
-      exporting
-        .getByRole("button", { name: "SRT" })
-        .getAttribute("aria-pressed"),
-    ).toBe("false");
+      exporting.queryByRole("group", { name: "Transcript files" }),
+    ).toBeNull();
+    expect(exporting.queryByRole("button", { name: "SRT" })).toBeNull();
+    expect(exporting.queryByRole("button", { name: "TXT" })).toBeNull();
+    expect(api.saveExportOptions).not.toHaveBeenCalled();
   });
 });

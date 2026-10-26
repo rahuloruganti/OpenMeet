@@ -477,16 +477,6 @@
   font-size: 11px;
   white-space: nowrap;
 }
-.om-leaves {
-  padding: 1px 6px;
-  border: 1px solid var(--warning-border);
-  border-radius: 4px;
-  background: var(--warning-bg);
-  color: var(--warning);
-  font-family: var(--mono);
-  font-size: 11px;
-  white-space: nowrap;
-}
 .om-saved {
   color: var(--success);
   font-family: var(--mono);
@@ -740,89 +730,6 @@
 }
 .om-foot-note .om-mono {
   font-family: var(--mono);
-}
-
-/* Theme preview: a miniature window using the live tokens */
-.om-pv {
-  display: grid;
-  grid-template-columns: 92px 1fr;
-  height: 128px;
-  overflow: hidden;
-  padding: 0;
-}
-.om-pv-side {
-  display: grid;
-  gap: 8px;
-  align-content: start;
-  padding: 12px 10px;
-  border-right: 1px solid var(--divider);
-  background: var(--sidebar);
-}
-.om-pv-mark {
-  width: 16px;
-  height: 16px;
-  border-radius: 5px;
-  background: var(--accent);
-}
-.om-pv-bar {
-  display: block;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--active);
-}
-.om-w90 {
-  width: 90%;
-}
-.om-w80 {
-  width: 80%;
-}
-.om-w75 {
-  width: 75%;
-}
-.om-w70 {
-  width: 70%;
-}
-.om-w60 {
-  width: 60%;
-}
-.om-w40 {
-  width: 40%;
-}
-.om-pv-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  background: var(--workspace);
-}
-.om-pv-top {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 30px;
-  padding: 0 10px;
-  border-bottom: 1px solid var(--divider);
-  background: var(--chrome);
-}
-.om-pv-pill {
-  width: 38px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--control-border);
-  opacity: 0.45;
-}
-.om-pv-body {
-  display: grid;
-  gap: 8px;
-  align-content: start;
-  padding: 12px;
-}
-.om-pv-cta {
-  width: 58px;
-  height: 18px;
-  margin-top: 2px;
-  border-radius: 4px;
-  background: var(--accent);
 }
 
 /* Model library panel inside the Models group */

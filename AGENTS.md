@@ -16,9 +16,9 @@ Read `docs/README.md` and `docs/development.md` before substantial work. The pro
 | Path | Responsibility |
 | --- | --- |
 | `src/app/` | App shell: providers, layout, page routing, global styles. |
-| `src/pages/meeting/`, `pages/settings/`, `pages/setup/`, `pages/ask/` | One page per route: meetings home, settings, first-run setup, Ask across meetings. |
-| `src/widgets/` | Composite UI blocks (`meeting-sidebar`, `meeting-workspace`, `settings-panel`, `setup-panel`, `recording-controls`, `library-question`, `first-run-setup`, `command-palette`). |
-| `src/features/` | User actions with their own state (`note-writer`, `transcription-settings`, `provider-settings`, `recipes`, `rewrite-selection`, `action-items`, `meeting-tags`, `model-library`, `local-ai`, `speaker-names`, `summary-templates`, `transcript-versions`, `live-transcript`, `live-settings`). |
+| `src/pages/meeting/`, `pages/settings/`, `pages/setup/` | One page per route: meetings home, settings, first-run setup. Ask was removed from the UI (owner decision); its backend commands and saved data remain. |
+| `src/widgets/` | Composite UI blocks (`meeting-sidebar`, `meeting-workspace`, `settings-panel`, `setup-panel`, `recording-controls`, `first-run-setup`, `command-palette`). |
+| `src/features/` | User actions with their own state (`note-writer`, `transcription-settings`, `provider-settings`, `rewrite-selection`, `action-items`, `meeting-tags`, `model-library`, `local-ai`, `speaker-names`, `summary-templates`, `transcript-versions`, `live-transcript`, `live-settings`). |
 | `src/entities/` | Domain models and their read/update logic (`meeting`, `processing`). |
 | `src/shared/` | Framework-free code: `api/` (command bindings, `transport.ts`), `lib/` (Markdown, timestamps), `ui/` (small shared components), `test/`. |
 | `backend/openmeet_py/app.py` | Desktop entry point: free loopback port, server thread, `pywebview` window, `--smoke`, `--import-from`. |
@@ -26,7 +26,7 @@ Read `docs/README.md` and `docs/development.md` before substantial work. The pro
 | `backend/openmeet_py/domain/` | Summaries, questions, tasks, export, transcript edits, processing runs, provider connections and LLM calls. |
 | `backend/openmeet_py/audio/` | WASAPI capture backend, WAV writing and repair, timing indexes, recorder lifecycle. |
 | `backend/openmeet_py/speech/` | Local engines (whisper.cpp, sherpa-onnx), model catalogues and library, downloads, safe archive install, cloud STT, transcription pipeline, and `live/` (live transcript while recording: streaming ONNX, VAD plus offline model, or cloud per utterance). |
-| `backend/openmeet_py/local_ai/` | Local AI: hardware probe, pinned llama.cpp engine and GGUF catalogue (`catalog.json`), the managed `llama-server` supervisor, and `ensure_ready` before any AI request. |
+| `backend/openmeet_py/local_ai/` | Local AI: hardware probe, pinned llama.cpp engine, Hugging Face GGUF search and download (`hub.py`), the managed `llama-server` supervisor, and `ensure_ready` before any AI request. |
 | `backend/openmeet_py/platform/` | Windows integration: global shortcuts, keyring credentials, meeting detection, Win32 helpers. |
 | `backend/openmeet_py/infra/` | SQLite store and migrations runner, and the one-time importer for an old data folder. |
 | `backend/openmeet_py/paths.py` | Data folder (`%APPDATA%\OpenMeetPy`) and bundled UI paths. |
@@ -67,17 +67,17 @@ just smoke     # OpenMeet.exe --smoke
 4. The backend is authoritative for recording state. Commands return authoritative state; events only notify. Preserve revision ordering and handle partially applied failures.
 5. Keep SQLite, inference, HTTP and file writes off the event loop and out of audio callbacks. Callbacks enqueue samples; no blocking locks, allocations in a tight loop, or unbounded queues.
 6. Never silently change the selected device or sample format, fall back to one-track capture, or substitute fake output for failed capture. Fail visibly and preserve recoverable data.
-7. SQLite migrations are append-only: add the next number (currently `037`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
+7. SQLite migrations are append-only: add the next number (currently `038`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
 8. Fake backends exist for tests only: `OPENMEET_PY_FAKE_AUDIO=1` and `OPENMEET_PY_FAKE_STT=1`. Never ship a path that enables them implicitly, and never present their output as real capture or a real transcript.
 9. Add a small regression test for nontrivial behavior. Routine audio tests use synthetic samples; real-device tests are separate and opt-in.
-10. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization or speculative integrations before their planned phase. Meeting detection is opt-in and only offers a prompt that opens recording setup. Automatic capture is a second, separate opt-in (`auto_capture`, off by default): when the user has enabled it, the backend lifecycle may start capture for a supported desktop call app using the devices saved in Settings, with a visible recording indicator and the same stop, pause and cancel controls as a manual recording. Detection itself never starts capture, checks consent or picks devices; uncertain signals (browsers, unknown apps) prompt instead of starting; silence or a calendar end time alone never ends a capture; manual stop or pause suppresses automatic restart for that call. Nothing listens or records while both settings are off.
+10. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization or speculative integrations before their planned phase. Meeting detection is always on (owner decision) and only offers a prompt that opens recording setup. Automatic capture is a second, separate opt-in (`auto_capture`, off by default): when the user has enabled it, the backend lifecycle may start capture for a supported desktop call app using the devices saved in Settings, with a visible recording indicator and the same stop, pause and cancel controls as a manual recording. Detection itself never starts capture, checks consent or picks devices; uncertain signals (browsers, unknown apps) prompt instead of starting; silence or a calendar end time alone never ends a capture; manual stop or pause suppresses automatic restart for that call. Detection reads only which apps use the microphone; nothing records unless the user starts it or has enabled `auto_capture`.
 
 ## Data, consent and privacy
 
-- No telemetry, no updater, and no cloud processing by default. Audio and transcripts stay on this PC unless the user assigns a cloud connection and triggers the action.
+- No telemetry and no updater. Audio and transcripts stay on this PC unless the user chooses a cloud connection; once chosen, automatic processing sends each finished recording's transcript and notes to it.
 - Consent is the user's responsibility; the app does not check it and there is no consent checkbox. Keep active, paused, failed and simulated states visibly distinct.
 - Paused audio must not be persisted or transcribed. Test queued and in-flight callbacks and the resume boundary, not only the UI label.
-- Cloud destinations require a "Leaves this device" disclosure. There are no per-request confirmation cards; automatic processing is off (recording only) by default and runs only from the saved Settings default.
+- The owner removed the "Leaves this device" tags from the UI; docs/privacy.md is where cloud destinations are disclosed. There are no per-request confirmation cards. Automatic processing (transcript, summary, enhanced notes) and the live transcript are always on and not in Settings (owner decision).
 - API keys live only in Windows Credential Manager through `keyring`, under a per-connection account. Never write a key to SQLite, Markdown, logs, environment files, frontend state or a report. Read responses carry key status only. Changing a destination requires a new key.
 - Keep hard request and byte limits. Never retry a billable request, fall back to another model automatically, or publish a result whose configuration changed mid-request.
 - Preserve user notes and external Markdown edits. A failed save must not discard text or allow an unsafe close.

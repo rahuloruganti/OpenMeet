@@ -326,17 +326,18 @@ def test_the_export_keeps_the_plain_summary_and_never_shows_enhanced_notes(clien
     assert "enhanced" not in text.lower()
 
 
-def test_the_processing_switch_round_trips_and_refuses_a_non_boolean(client: TestClient) -> None:
-    assert invoke(client, "get_settings")["processing_enhance"] is False
-    assert invoke(client, "save_processing_enhance", enabled=True)["processing_enhance"] is True
+def test_enhanced_notes_are_on_by_default(client: TestClient) -> None:
     assert invoke(client, "get_settings")["processing_enhance"] is True
-    assert invoke(client, "save_processing_enhance", enabled=False)["processing_enhance"] is False
-    assert invoke(client, "get_settings")["processing_enhance"] is False
-    status, body = invoke_error(client, "save_processing_enhance", enabled="yes")
-    assert body["code"] == "invalid_args"
 
 
 # ---- automatic processing ----------------------------------------------------
+
+
+def enhance_stored_off(client: TestClient) -> None:
+    """Simulates a stored row with enhancement off; the Settings switch no longer exists to write it."""
+    ctx = client.app.state.ctx  # type: ignore[attr-defined]
+    with ctx.store.lock:
+        ctx.store.db.execute("UPDATE settings SET processing_enhance = 0 WHERE id = 1")
 
 
 def cited_for_processing(request: httpx.Request) -> httpx.Response:
@@ -356,11 +357,10 @@ def finish_run(client: TestClient, meeting: str, run: str) -> None:
     assert drive(client, meeting, run) == DONE
 
 
-def test_automatic_run_saves_the_summary_and_an_enhanced_row_when_enabled(manual: TestClient) -> None:
+def test_automatic_run_saves_the_summary_and_an_enhanced_row_by_default(manual: TestClient) -> None:
     stub = Stub(lambda r: reply(SUMMARY), cited_for_processing)
     configure(manual, stub)
     set_default(manual, "final", "general-v1")
-    invoke(manual, "save_processing_enhance", enabled=True)
     started = start(manual)
     meeting = started["meeting_id"]
     run = snap(manual, meeting)["workflow"]["run_id"]
@@ -378,11 +378,11 @@ def test_automatic_run_saves_the_summary_and_an_enhanced_row_when_enabled(manual
     assert invoke(manual, "get_meeting", id=meeting)["summary"] == SUMMARY.strip()
 
 
-def test_automatic_run_skips_the_enhanced_row_when_the_switch_is_off(manual: TestClient) -> None:
+def test_automatic_run_skips_the_enhanced_row_when_enhancement_is_stored_off(manual: TestClient) -> None:
     stub = Stub(lambda r: reply(SUMMARY), cited_for_processing)
     configure(manual, stub)
     set_default(manual, "final", "general-v1")
-    invoke(manual, "save_processing_enhance", enabled=False)
+    enhance_stored_off(manual)
     started = start(manual)
     meeting = started["meeting_id"]
     run = snap(manual, meeting)["workflow"]["run_id"]
@@ -393,18 +393,21 @@ def test_automatic_run_skips_the_enhanced_row_when_the_switch_is_off(manual: Tes
     assert len(stub.requests) == 1
 
 
-def test_automatic_run_skips_the_enhanced_row_when_the_notes_are_empty(manual: TestClient) -> None:
+def test_automatic_run_with_empty_notes_skips_the_enhanced_row_without_a_failure(manual: TestClient) -> None:
     stub = Stub(lambda r: reply(SUMMARY), cited_for_processing)
     configure(manual, stub)
     set_default(manual, "final", "general-v1")
-    invoke(manual, "save_processing_enhance", enabled=True)
     started = start(manual)
     meeting = started["meeting_id"]
-    run = snap(manual, meeting)["workflow"]["run_id"]
+    state = snap(manual, meeting)
+    assert state["plan"]["scope"]["enhance"] is True  # on by default; only the empty notes skip it
+    run = state["workflow"]["run_id"]
     record(manual)
     finish_run(manual, meeting, run)
     assert [row["kind"] for row in invoke(manual, "list_summaries", id=meeting)] == ["summary"]
     assert len(stub.requests) == 1
+    done = snap(manual, meeting)["workflow"]
+    assert (done["stage"], done["error"]) == ("completed", None)
 
 
 def system_of(request: httpx.Request) -> str:
@@ -430,7 +433,6 @@ def test_a_failed_enhancement_keeps_the_saved_summary_and_retry_does_not_resumma
     stub = Stub(*[respond] * 12)
     configure(manual, stub)
     set_default(manual, "final", "general-v1")
-    invoke(manual, "save_processing_enhance", enabled=True)
     started = start(manual)
     meeting = started["meeting_id"]
     run = snap(manual, meeting)["workflow"]["run_id"]
@@ -498,10 +500,11 @@ def test_migration_036_upgrades_populated_summaries_and_foreign_keys(tmp_path: P
         "SELECT kind, notes_revision, sources_json, markdown FROM summaries WHERE meeting_id = 'm1'"
     ).fetchone()
     assert row == ("summary", None, "[]", "Old summary.")
-    assert db.execute("SELECT processing_enhance FROM settings WHERE id = 1").fetchone() == (0,)
+    # Migration 037 turns enhanced notes on for every database, including this upgraded one.
+    assert db.execute("SELECT processing_enhance FROM settings WHERE id = 1").fetchone() == (1,)
     assert db.execute("SELECT user_markdown FROM notes WHERE meeting_id = 'm1'").fetchone() == ("Raw notes",)
     assert db.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert db.execute("PRAGMA user_version").fetchone()[0] == max(files) == 36
+    assert db.execute("PRAGMA user_version").fetchone()[0] == max(files) == 37
     with pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO summaries(meeting_id, template_hash, model, provider, markdown, kind) "

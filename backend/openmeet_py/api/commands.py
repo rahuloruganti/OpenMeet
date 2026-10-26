@@ -355,7 +355,6 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "get_startup_warning": hotkeys.get_startup_warning,
     "save_settings": hotkeys.save_settings,
     "detection_supported": detection.detection_supported,
-    "save_detection": detection.save_detection,
     "set_detection_ignored": detection.set_detection_ignored,
     "save_auto_capture": auto_capture.save_auto_capture,
     # Calendar context: read-only ICS feeds, meeting-to-event links, preparation and reminders
@@ -397,11 +396,12 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     # Local AI: the managed llama.cpp server running a downloaded model on this PC
     "local_ai_status": local_ai.local_ai_status,
     "local_ai_install_engine": local_ai.local_ai_install_engine,
-    "local_ai_download_model": local_ai.local_ai_download_model,
+    "local_ai_search_hf": local_ai.local_ai_search_hf,
+    "local_ai_hf_files": local_ai.local_ai_hf_files,
+    "local_ai_download_hf": local_ai.local_ai_download_hf,
     "local_ai_remove_model": local_ai.local_ai_remove_model,
     "local_ai_cancel": local_ai.local_ai_cancel,
     "local_ai_use": local_ai.local_ai_use,
-    "local_ai_quickstart": local_ai.local_ai_quickstart,
     "local_ai_start": local_ai.local_ai_start,
     "local_ai_stop": local_ai.local_ai_stop,
     "get_settings": get_settings,
@@ -429,8 +429,7 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "delete_summary_template": summaries.delete_summary_template,
     "save_summary_default": summaries.save_summary_default,
     "save_processing_default": summaries.save_processing_default,
-    "save_processing_enhance": summaries.save_processing_enhance,
-    # Live transcript: its switch, its engine and its one explicit streaming model download
+    # Live transcript: its engine and its one explicit streaming model download
     "live_transcript": live_commands.live_transcript,
     "save_live_settings": live_commands.save_live_settings,
     "live_models": live_commands.live_models,

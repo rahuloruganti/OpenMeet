@@ -117,6 +117,15 @@ def _api_destination(settings: dict[str, Any], role: str) -> dict[str, Any]:
     }
 
 
+def _notes_destination(settings: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The AI notes model, or None while no model is chosen. Without one the transcript still runs and
+    the summary is skipped quietly; Settings already says where notes are written."""
+    assignment = settings["provider_assignments"]["llm"]
+    if assignment is None or not assignment["model"]:
+        return None
+    return _api_destination(settings, "llm")
+
+
 def build_plan(db: sqlite3.Connection, request: dict[str, Any], revision: int) -> dict[str, Any]:
     """The plan the saved settings describe now. Holds no credentials: only ids, revisions and base URLs."""
     settings = read_settings(db)
@@ -125,8 +134,9 @@ def build_plan(db: sqlite3.Connection, request: dict[str, Any], revision: int) -
     else:
         speech = {"kind": "local_whisper", "model": settings["stt_model"]}
     summary = None
-    if request["summary"] is not None:
-        summary = {"destination": _api_destination(settings, "llm"), "template": request["summary"]}
+    destination = _notes_destination(settings) if request["summary"] is not None else None
+    if destination is not None:
+        summary = {"destination": destination, "template": request["summary"]}
         if settings["summary_instructions"]:
             summary["instructions"] = settings["summary_instructions"]
     scope = {
@@ -725,7 +735,15 @@ class Processing:
             ).fetchone()[0]
         self._stage(meeting_id, run_id, "awaiting_notes", "summarizing")
         if not saved:
-            self._write_summary(meeting_id, run_id, summary)
+            try:
+                self._write_summary(meeting_id, run_id, summary)
+            except AppError as error:
+                if error.code != "local_ai_model":
+                    raise
+                # The Local AI model was removed or never downloaded: the transcript stands and the
+                # summary is skipped quietly, the same as a plan without a notes model.
+                self._complete(meeting_id, run_id)
+                return
         self._after_summary(meeting_id, run_id)
 
     def _write_summary(self, meeting_id: str, run_id: str, summary: dict[str, Any]) -> None:

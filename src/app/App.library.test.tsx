@@ -250,45 +250,14 @@ describe("meeting library", () => {
       ).toBeNull();
     });
 
-    it("disables Ask on its page with one sentence while AI notes is not set up", async () => {
+    it("offers no Ask: no sidebar entry and no Ask copy while AI notes is not set up", async () => {
       await ready();
-      await userEvent.click(
-        screen.getByRole("button", { name: "Ask across meetings" }),
-      );
-      await userEvent.type(
-        await screen.findByLabelText("Question"),
-        "What moved?",
-      );
       expect(
-        (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(true);
+        screen.queryByRole("button", { name: "Ask across meetings" }),
+      ).toBeNull();
       expect(
-        screen.getByText("Connect an AI service to ask questions."),
-      ).toBeTruthy();
-      await userEvent.click(
-        screen.getByRole("button", { name: "Open Settings for AI notes" }),
-      );
-      expect(settingsIndex("AI notes").getAttribute("aria-current")).toBe(
-        "location",
-      );
-      // The section it opens says what it is missing, and offers the place to fix it.
-      expect(
-        within(screen.getByRole("region", { name: "AI notes" })).getByText(
-          "Choose where notes are written",
-        ),
-      ).toBeTruthy();
-      await userEvent.click(
-        within(screen.getByRole("group", { name: "Notes written" })).getByRole(
-          "button",
-          { name: /^With a connection/ },
-        ),
-      );
-      expect(
-        within(
-          screen.getByRole("region", { name: "AI notes connection" }),
-        ).getByLabelText("API key"),
-      ).toBeTruthy();
+        screen.queryByText("Connect an AI service to ask questions."),
+      ).toBeNull();
     });
 
     it("renames on Enter and restores the title on Escape", async () => {

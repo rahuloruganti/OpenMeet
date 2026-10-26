@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from conftest import TOKEN, invoke, invoke_error
 from openmeet_py.api.server import create_app
+from openmeet_py.api.errors import AppError
 from openmeet_py.audio.audio_backend import FakeBackend
 from openmeet_py.domain import processing
 from openmeet_py.domain.processing import DONE, WAIT, CONTINUE
@@ -100,20 +101,62 @@ def llm_stub(client: TestClient) -> Stub:
 
 
 def test_recording_only_attaches_nothing_and_shows_no_notice(manual: TestClient) -> None:
+    set_default(manual, "recording")
     started = start(manual)
     assert started["processing_notice"] is None
     assert invoke(manual, "get_session_processing", id=started["meeting_id"]) is None
     invoke(manual, "stop_recording")
 
 
-def test_summary_without_a_model_skips_processing_but_the_recording_starts(manual: TestClient) -> None:
+def test_without_a_notes_model_the_transcript_still_runs_and_the_summary_is_skipped(manual: TestClient) -> None:
+    # Automatic processing is always on, so a fresh database plans it with no AI notes connection saved.
+    started = start(manual)
+    meeting = started["meeting_id"]
+    assert started["status"] == "recording"
+    assert started["processing_notice"] is None  # no failure notice on every recording
+    state = snap(manual, meeting)
+    assert state["state"] == "prepared"
+    assert state["plan"]["scope"].get("summary") is None
+    run = state["workflow"]["run_id"]
+    record(manual)
+    invoke(manual, "stop_recording")
+    assert drive(manual, meeting, run) == DONE
+    done = snap(manual, meeting)
+    assert (done["workflow"]["stage"], done["workflow"]["error"]) == ("completed", None)
+    detail = invoke(manual, "get_meeting", id=meeting)
+    assert detail["segments"], "the transcript is produced without a notes model"
+    assert detail["summary"] is None
+
+
+def test_a_local_model_that_is_missing_skips_the_summary_quietly(
+    manual: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openmeet_py.local_ai import service as local_ai
+
+    def model_missing(_ctx: Any, _config: Any) -> None:
+        raise AppError("local_ai_model", "Download this model first, then choose it.")
+
+    monkeypatch.setattr(local_ai, "ensure_ready", model_missing)
+    stub = llm_stub(manual)
     set_default(manual, "final", "general-v1")
     started = start(manual)
-    assert started["status"] == "recording"
-    assert started["processing_notice"].startswith("Automatic processing is off for this recording:")
-    assert "Choose and save a model" in started["processing_notice"]
-    assert invoke(manual, "get_session_processing", id=started["meeting_id"]) is None
+    meeting = started["meeting_id"]
+    run = snap(manual, meeting)["workflow"]["run_id"]
+    record(manual)
     invoke(manual, "stop_recording")
+    assert drive(manual, meeting, run) == WAIT
+    waiting = snap(manual, meeting)["workflow"]
+    notes_revision = invoke(manual, "get_meeting", id=meeting)["notes_revision"]
+    invoke(
+        manual, "acknowledge_processing_notes", id=meeting, runId=run,
+        notesBarrier=waiting["notes_barrier"], expectedNotesRevision=notes_revision,
+    )
+    assert drive(manual, meeting, run) == DONE
+    done = snap(manual, meeting)["workflow"]
+    assert (done["stage"], done["error"]) == ("completed", None)
+    assert stub.requests == []  # the summary was never requested
+    detail = invoke(manual, "get_meeting", id=meeting)
+    assert detail["segments"] and detail["summary"] is None
 
 
 def test_local_engine_that_is_not_installed_skips_with_a_notice(

@@ -79,13 +79,10 @@ let progress: (value: {
 
 beforeEach(() => {
   vi.mocked(api.liveModels).mockResolvedValue(listing());
-  vi.mocked(api.saveLiveSettings).mockImplementation(
-    async (enabled, model) => ({
-      ...settings,
-      live_transcript: enabled,
-      live_model: model,
-    }),
-  );
+  vi.mocked(api.saveLiveSettings).mockImplementation(async (model) => ({
+    ...settings,
+    live_model: model,
+  }));
   vi.mocked(api.liveModelInstall).mockResolvedValue(listing());
   vi.mocked(api.liveModelCancel).mockResolvedValue(listing());
   vi.mocked(api.onLiveModelProgress).mockImplementation(async (callback) => {
@@ -94,13 +91,12 @@ beforeEach(() => {
   });
 });
 
-it("saves the switch as it is turned off", async () => {
+it("has no Show text switch: the live transcript is always on", () => {
   render(<LiveSettings settings={settings} disabled={false} />);
-  const toggle = screen.getByRole("switch", {
-    name: "Show text while recording",
-  });
-  await userEvent.click(toggle);
-  expect(api.saveLiveSettings).toHaveBeenCalledWith(false, "");
+  expect(
+    screen.queryByRole("switch", { name: "Show text while recording" }),
+  ).toBeNull();
+  expect(screen.queryByText("Show text while recording")).toBeNull();
 });
 
 it("lists the models with their download size and saves a new one", async () => {
@@ -115,7 +111,7 @@ it("lists the models with their download size and saves a new one", async () => 
   ).toBeTruthy();
 
   await userEvent.selectOptions(select, "stream:kroko-en");
-  expect(api.saveLiveSettings).toHaveBeenCalledWith(true, "stream:kroko-en");
+  expect(api.saveLiveSettings).toHaveBeenCalledWith("stream:kroko-en");
 });
 
 it("downloads only when Download is clicked", async () => {
@@ -167,7 +163,7 @@ it("shows the download progress and cancels it", async () => {
   expect(api.liveModelCancel).toHaveBeenCalled();
 });
 
-it("tags a cloud model that leaves the device", async () => {
+it("shows no 'Leaves this device' tag on a cloud model", async () => {
   vi.mocked(api.liveModels).mockResolvedValue(listing({ selected: "cloud" }));
   render(
     <LiveSettings
@@ -176,7 +172,10 @@ it("tags a cloud model that leaves the device", async () => {
     />,
   );
 
-  expect(await screen.findByText("Leaves this device")).toBeTruthy();
+  expect(
+    await screen.findByRole("option", { name: "Cloud speech" }),
+  ).toBeTruthy();
+  expect(screen.queryByText("Leaves this device")).toBeNull();
   expect(screen.queryByRole("button", { name: "Download" })).toBeNull();
 });
 
@@ -190,19 +189,16 @@ it("says why the chosen model cannot run yet", async () => {
   ).toBeTruthy();
 });
 
-it("names the live switch and row the same, and says what Same as Transcription uses", async () => {
+it("names the live model row, and says what Same as Transcription uses", async () => {
   render(<LiveSettings settings={settings} disabled={false} />);
   expect(screen.getByRole("region", { name: "Live transcript" })).toBeTruthy();
-  expect(screen.getByText("Show text while recording")).toBeTruthy();
-  expect(
-    screen.getByRole("switch", { name: "Show text while recording" }),
-  ).toBeTruthy();
+  expect(screen.getByLabelText("Live model")).toBeTruthy();
   expect(
     screen.getByText("Same as Transcription uses the Speech model above."),
   ).toBeTruthy();
 });
 
-it("shows Leaves this device from the chosen row's metadata before any Same wording", async () => {
+it("shows no 'Leaves this device' tag, even when the Same row is marked as leaving", async () => {
   vi.mocked(api.liveModels).mockResolvedValue(
     listing({
       models: listing().models.map((model) =>
@@ -211,10 +207,13 @@ it("shows Leaves this device from the chosen row's metadata before any Same word
     }),
   );
   render(<LiveSettings settings={settings} disabled={false} />);
-  expect(await screen.findByText("Leaves this device")).toBeTruthy();
   expect(
-    screen.queryByText("Same as Transcription uses the Speech model above."),
-  ).toBeNull();
+    await screen.findByRole("option", { name: "Same as Transcription" }),
+  ).toBeTruthy();
+  expect(screen.queryByText("Leaves this device")).toBeNull();
+  expect(
+    screen.getByText("Same as Transcription uses the Speech model above."),
+  ).toBeTruthy();
 });
 
 it("makes Same as Transcription unavailable in cloud speech mode and says why, once", async () => {

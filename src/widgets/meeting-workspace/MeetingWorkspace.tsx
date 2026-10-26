@@ -8,7 +8,6 @@ import {
 import {
   type ActionItem,
   type CustomTemplate,
-  type Recipe,
   type SessionProcessingSnapshot,
   type SpeakerNames,
   type MeetingDetail,
@@ -25,7 +24,6 @@ import {
   isSourceMarker,
   sourceChip,
 } from "../../features/enhanced-notes";
-import { RecipePicker } from "../../features/recipes";
 import { RewriteSelection } from "../../features/rewrite-selection";
 import {
   OpenSettingsButton,
@@ -180,7 +178,7 @@ type Props = {
   speechReady: boolean;
   /** Why summary generation is unavailable, or null when it can run. */
   enhanceBlocked: string | null;
-  /** Why the summary/question provider cannot be used at all, with the Settings section that fixes it; null when it can. */
+  /** Why the summary provider cannot be used at all, with the Settings section that fixes it; null when it can. */
   llmBlocked: AiBlock | null;
   onOpenSettings: OpenSettings;
   sttMode: Settings["stt_mode"];
@@ -198,8 +196,6 @@ type Props = {
   customTemplates: CustomTemplate[];
   /** The template the picker starts at, from Settings. */
   defaultTemplate: string;
-  /** Saved question prompts; built-in recipes are added by the picker. */
-  recipes: Recipe[];
   /** Unsaved edit of this meeting's summary; App keeps it across meeting switches. */
   summaryDraft: SummaryDraft | undefined;
   onSummaryDraft: (draft: SummaryDraft | null) => void;
@@ -213,9 +209,6 @@ type Props = {
   onSaveSegment: (draft: SegmentDraft) => Promise<boolean>;
   /** Replaces the selected meeting's tasks after a backend change. */
   onActionItems: (meetingId: string, items: ActionItem[]) => void;
-  /** `threadId` continues a saved thread; null starts a new one. */
-  onAsk: (question: string, threadId: number | null) => void;
-  onDeleteThread: (threadId: number) => void;
   /** The selected meeting is being recorded right now, so it cannot be deleted. */
   recordingThis: boolean;
   onDeleteMeeting: () => void;
@@ -232,9 +225,6 @@ type Props = {
   getRecordingOffset: () => Promise<number | null>;
   /** Maps a transcript time to the track's file time in ms, or null on failure. */
   onSeek: (kind: string, sessionMs: number) => Promise<number | null>;
-  /** A library-answer citation to open once its meeting is selected. */
-  pendingJump: { meetingId: string; ms: number | null } | null;
-  onJumpDone: () => void;
   /** Banners rendered under the toolbar (errors, notices, detection). */
   banners?: ReactNode;
   /** One-line processing status rendered above the editor. */
@@ -264,21 +254,6 @@ export function MeetingWorkspace(props: Props) {
       : "general-v1";
   const [versionId, setVersionId] = useState<number | null>(null);
   const [copyStatus, setCopyStatus] = useState("");
-  const [question, setQuestion] = useState("");
-  // A thread id, "new" for the empty form, or null to show the newest thread.
-  const [chosenThread, setChosenThread] = useState<number | "new" | null>(null);
-  const [deletingThread, setDeletingThread] = useState(false);
-  const threads = selected?.question_threads ?? [];
-  const activeThread =
-    chosenThread === "new"
-      ? null
-      : (threads.find((thread) => thread.id === chosenThread) ??
-        threads[0] ??
-        null);
-  const turnTotal = threads.reduce(
-    (sum, thread) => sum + thread.turns.length,
-    0,
-  );
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   // Set while the title input is open; Enter, Escape and the blur they can trigger settle it once.
   const titleEditing = useRef(false);
@@ -294,7 +269,7 @@ export function MeetingWorkspace(props: Props) {
   const actions = useRef<HTMLDetailsElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const players = useRef<Record<string, HTMLAudioElement | null>>({});
-  // A page (Settings, Ask, setup) replaces the workspace, so leaving it must stop playback too.
+  // A page (Settings, setup) replaces the workspace, so leaving it must stop playback too.
   // A layout effect, so it runs before React detaches the media elements' refs.
   useLayoutEffect(() => {
     const elements = players.current;
@@ -344,9 +319,6 @@ export function MeetingWorkspace(props: Props) {
     props.onToggleInspector?.();
   };
   useEffect(() => {
-    setQuestion("");
-    setChosenThread(null);
-    setDeletingThread(false);
     setDeleting(null);
     setTyped("");
     setTitleDraft(null);
@@ -356,16 +328,6 @@ export function MeetingWorkspace(props: Props) {
     setTasksOpen(false);
     if (actions.current) actions.current.open = false;
   }, [meetingId]);
-  // A saved answer clears the box and shows its thread; a deleted thread closes the prompt.
-  const newestThread = threads[0]?.id;
-  useEffect(() => {
-    setChosenThread(null);
-    setQuestion("");
-  }, [newestThread]);
-  useEffect(() => {
-    setQuestion("");
-  }, [turnTotal]);
-  useEffect(() => setDeletingThread(false), [activeThread?.id]);
   // The blur that also ends a rename does not set focusTitle, so clicking elsewhere keeps that focus.
   useEffect(() => {
     if (titleDraft === null && focusTitle.current) {
@@ -391,21 +353,6 @@ export function MeetingWorkspace(props: Props) {
     setCopyStatus("");
   }, [versions]);
   useEffect(() => setHighlighted([]), [meetingId]);
-  // Runs after the effects above, so their resets cannot undo the jump.
-  const jump = props.pendingJump;
-  useEffect(() => {
-    if (!jump || selected?.meeting.id !== jump.meetingId) return;
-    props.onJumpDone();
-    const target =
-      jump.ms === null
-        ? null
-        : citationTarget(selected, segmentsAt(selected.segments, jump.ms));
-    if (!target) return;
-    revealSegment(target.index);
-    setHighlighted(target.highlighted);
-    setPendingReference(target.pending);
-    props.onTab("transcript");
-  });
   const play = (kind: string, fileMs: number) => {
     const player = players.current[kind];
     if (!player) return;
@@ -1403,116 +1350,6 @@ export function MeetingWorkspace(props: Props) {
                     </>
                   ) : null}
                 </section>
-                {threads.length > 0 && (
-                  <div className="mw-card-row">
-                    <select
-                      aria-label="Question threads"
-                      value={activeThread?.id ?? ""}
-                      onChange={(event) =>
-                        setChosenThread(Number(event.target.value))
-                      }
-                    >
-                      {!activeThread && <option value="">New question</option>}
-                      {threads.map((thread) => (
-                        <option key={thread.id} value={thread.id}>
-                          {thread.turns[0]?.question.slice(0, 60)}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      disabled={!activeThread}
-                      onClick={() => setChosenThread("new")}
-                    >
-                      New question
-                    </button>
-                    {activeThread && (
-                      <button
-                        disabled={disabled || job !== null}
-                        className="danger"
-                        onClick={() => setDeletingThread(true)}
-                      >
-                        Delete thread
-                      </button>
-                    )}
-                  </div>
-                )}
-                {deletingThread && activeThread && (
-                  <div
-                    className="mw-card"
-                    role="group"
-                    aria-label="Confirm deleting question thread"
-                  >
-                    <p>
-                      <strong>Delete this question thread?</strong> Its{" "}
-                      {activeThread.turns.length} saved question
-                      {activeThread.turns.length === 1 ? "" : "s"} and answers
-                      are removed.
-                    </p>
-                    <div className="mw-card-row">
-                      <button
-                        className="danger danger-filled"
-                        onClick={() => {
-                          setDeletingThread(false);
-                          props.onDeleteThread(activeThread.id);
-                        }}
-                      >
-                        Delete thread
-                      </button>
-                      <button onClick={() => setDeletingThread(false)}>
-                        Keep
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <form
-                  className="ask-meeting"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (question.trim())
-                      props.onAsk(question.trim(), activeThread?.id ?? null);
-                  }}
-                >
-                  <label htmlFor="ask-question">
-                    {activeThread ? "Ask a follow-up" : "Ask this meeting"}
-                  </label>
-                  <RecipePicker
-                    recipes={props.recipes}
-                    disabled={blocked}
-                    onPick={setQuestion}
-                  />
-                  <textarea
-                    id="ask-question"
-                    rows={2}
-                    maxLength={1000}
-                    value={question}
-                    placeholder="What did we decide about the launch date?"
-                    onChange={(event) => setQuestion(event.target.value)}
-                  />
-                  <div className="mw-card-row">
-                    <button
-                      type="submit"
-                      disabled={blocked || !question.trim()}
-                    >
-                      {job === "ask" ? "Asking…" : "Ask"}
-                    </button>
-                  </div>
-                </form>
-                {activeThread?.turns.map((turn) => (
-                  <div
-                    className="ask-answer"
-                    role="group"
-                    aria-label="Answer"
-                    key={turn.id}
-                  >
-                    <p>
-                      <strong>Q: {turn.question}</strong>
-                    </p>
-                    {renderMarkdown(turn.answer, reference)}
-                    <p className="mw-hint">
-                      AI answer. Check it before relying on it.
-                    </p>
-                  </div>
-                ))}
               </section>
               <section
                 className="reading-panel"

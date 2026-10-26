@@ -28,7 +28,6 @@ import {
 import { BrandMark } from "../../shared/ui/brand-mark";
 import {
   baseUrlError,
-  destination,
   hostOf,
   publishSettings,
 } from "../../features/provider-settings";
@@ -269,16 +268,7 @@ function ConnectAndPick(props: {
           </button>
         </>
       )}
-      {assigned && (
-        <p className="muted">
-          Current: {assigned.model} ·{" "}
-          {destination(
-            settings.saved_connections.find(
-              (item) => item.id === assigned.connection_id,
-            )?.base_url ?? "",
-          )}
-        </p>
-      )}
+      {assigned && <p className="muted">Current: {assigned.model}</p>}
       {busy && <p role="status">Connecting…</p>}
       {notice && <p role="status">{notice}</p>}
       {error && (
@@ -305,7 +295,6 @@ export function FirstRunSetup(props: Props) {
   const [found, setFound] = useState<LocalModel[] | null>(null);
   const [servers, setServers] = useState<LocalServer[] | null>(null);
   const [notesChoice, setNotesChoice] = useState<string>("");
-  const [auto, setAuto] = useState(false);
   const [microphone, setMicrophone] = useState(settings.microphone_id ?? "");
   const [output, setOutput] = useState(settings.output_id ?? "");
   const [importing, setImporting] = useState(false);
@@ -391,10 +380,6 @@ export function FirstRunSetup(props: Props) {
           await api.saveDefaultDevices(microphone, output);
           props.onDevices(microphone, output);
         }
-        await api.saveProcessingDefault(
-          auto ? "final" : "recording",
-          auto && settings.provider_assignments.llm ? "general-v1" : null,
-        );
       }
       await publish(await api.saveSetupDone(true));
       saved = true;
@@ -536,7 +521,6 @@ export function FirstRunSetup(props: Props) {
                   <span>
                     <span className="head">
                       <strong>Cloud service</strong>
-                      <span className="leaves">Leaves this device</span>
                     </span>
                     <span className="sub">Your own API</span>
                   </span>
@@ -743,7 +727,6 @@ export function FirstRunSetup(props: Props) {
                   <span>
                     <span className="head">
                       <strong>API service</strong>
-                      <span className="leaves">Leaves this device</span>
                     </span>
                     <span className="sub">Your own API</span>
                   </span>
@@ -833,14 +816,6 @@ export function FirstRunSetup(props: Props) {
                     Refresh
                   </button>
                 </div>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={auto}
-                    onChange={(event) => setAuto(event.target.checked)}
-                  />
-                  <span>Transcribe every recording when it stops</span>
-                </label>
               </div>
             </section>
           )}

@@ -31,7 +31,6 @@ FIT_KINDS = ("gpu", "ram", "too_big")
 OVERHEAD_BYTES = 600 * MIB
 GPU_SHARE = 0.9
 RAM_SHARE = 0.7
-SMALL_MODEL_BYTES = 6 * 1024**3
 FULL_OFFLOAD_LAYERS = 999
 # A .gguf found on this PC carries no per-model KV figure, so this generic one is used instead.
 FILE_KV_BYTES_PER_TOKEN = 131072
@@ -217,24 +216,6 @@ def fit(need: int, hardware: dict[str, Any]) -> str:
 
 def fit_of(model: Model, context_tokens: int, hardware: dict[str, Any]) -> str:
     return fit(needs_bytes(model.size_bytes, model.kv_bytes_per_token, context_tokens), hardware)
-
-
-def recommended(catalog: Catalog, fits: dict[str, str]) -> Optional[str]:
-    """Best quality that fits the GPU; else best under 6 GB that fits RAM; else nothing."""
-    def best(candidates: list[Model]) -> Optional[Model]:
-        return max(candidates, key=lambda entry: entry.quality) if candidates else None
-
-    on_gpu = best([entry for entry in catalog.models if fits.get(entry.id) == "gpu"])
-    if on_gpu is not None:
-        return on_gpu.id
-    in_ram = best(
-        [
-            entry
-            for entry in catalog.models
-            if fits.get(entry.id) == "ram" and entry.size_bytes <= SMALL_MODEL_BYTES
-        ]
-    )
-    return in_ram.id if in_ram is not None else None
 
 
 def offload_layers(model: Model, fit_kind: str, vram_bytes: Optional[int]) -> int:

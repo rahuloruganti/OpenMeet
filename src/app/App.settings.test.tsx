@@ -164,6 +164,12 @@ describe("settings and meeting detection", () => {
   });
 
   it("saves the automatic-processing default and imports the old browser value once", async () => {
+    // A database still on the recording-only default takes the old browser value once.
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      processing_mode: "recording",
+      processing_summary: null,
+    });
     localStorage.setItem(
       "openmeet.automaticProcessing",
       JSON.stringify({ mode: "final", summary: "standup-v1" }),
@@ -178,16 +184,12 @@ describe("settings and meeting detection", () => {
     await waitFor(() =>
       expect(localStorage.getItem("openmeet.automaticProcessing")).toBeNull(),
     );
-    // Turning automatic processing off saves the recording-only default.
+    // Automatic processing has no Settings switch any more: the Recording page never offers one.
     await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     await userEvent.click(settingsIndex("Recording"));
-    await userEvent.click(
-      screen.getByRole("switch", { name: "Automatic processing" }),
-    );
-    expect(api.saveProcessingDefault).toHaveBeenLastCalledWith(
-      "recording",
-      null,
-    );
+    expect(
+      screen.queryByRole("switch", { name: "Automatic processing" }),
+    ).toBeNull();
   });
 
   it("saves default devices only when both are chosen and keeps a missing one visible", async () => {
@@ -341,6 +343,11 @@ describe("settings and meeting detection", () => {
       "openmeet.automaticProcessing",
       JSON.stringify({ mode: "both", summary: null }),
     );
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...initialSettings,
+      processing_mode: "recording",
+      processing_summary: null,
+    });
     vi.mocked(api.saveProcessingDefault).mockRejectedValue(
       new Error("Database busy"),
     );
@@ -451,7 +458,7 @@ describe("settings and meeting detection", () => {
       ).toBeNull();
     });
 
-    it("saves automatic capture only while detection is on", async () => {
+    it("offers automatic capture at once, because detection is always on", async () => {
       vi.mocked(api.getSettings).mockResolvedValue(detecting);
       vi.mocked(api.saveAutoCapture).mockResolvedValue({
         ...detecting,
@@ -473,21 +480,16 @@ describe("settings and meeting detection", () => {
       );
     });
 
-    it("does not prompt while detection is off or OpenMeet is recording", async () => {
+    it("prompts with no detection switch to turn on, and not while OpenMeet is recording", async () => {
       await ready();
       deliver([zoom]);
-      expect(
-        screen.queryByRole("status", { name: "Meeting detected" }),
-      ).toBeNull();
-      vi.mocked(api.saveDetection).mockResolvedValue(detecting);
+      await screen.findByRole("status", { name: "Meeting detected" });
+      // Detection is always on: Settings has no switch for it.
       await userEvent.click(screen.getByRole("button", { name: "Settings" }));
       await userEvent.click(settingsIndex("Recording"));
-      const detection = screen.getByRole("switch", {
-        name: "Meeting detection",
-      });
-      expect(detection.getAttribute("aria-checked")).toBe("false");
-      await userEvent.click(detection);
-      expect(api.saveDetection).toHaveBeenCalledWith(true);
+      expect(
+        screen.queryByRole("switch", { name: "Meeting detection" }),
+      ).toBeNull();
       // Settings is its own full page, so the prompt shows on the meeting page.
       await userEvent.click(
         screen.getByRole("button", { name: "Back to Meetings" }),

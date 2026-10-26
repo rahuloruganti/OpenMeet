@@ -99,15 +99,11 @@ beforeEach(() => {
   vi.mocked(api.testApiConnection).mockResolvedValue([]);
 });
 
-it("lists saved connections by destination and loads models only when Test is clicked", async () => {
+it("lists saved connections by name and loads models only when Test is clicked", async () => {
   vi.mocked(api.testApiConnection).mockResolvedValue([{ id: "local-model" }]);
   render(<ConnectionEditor {...props()} />);
-  expect(
-    screen.getByRole("option", { name: "Local · This device" }),
-  ).toBeTruthy();
-  expect(
-    screen.getByRole("option", { name: "Remote · Leaves this device" }),
-  ).toBeTruthy();
+  expect(screen.getByRole("option", { name: "Local" })).toBeTruthy();
+  expect(screen.getByRole("option", { name: "Remote" })).toBeTruthy();
   // Nothing is listed until the user asks: no request on render, no models offered.
   expect(api.testApiConnection).not.toHaveBeenCalled();
   expect(screen.queryByRole("option", { name: "local-model" })).toBeNull();
@@ -338,11 +334,11 @@ it("offers tested model IDs for the task it serves", async () => {
   ).toBeTruthy();
 });
 
-it("offers no local server choice for AI notes and marks it as leaving the device", () => {
+it("offers no local server choice for AI notes and shows no leaving-the-device tag", () => {
   render(<ConnectionEditor {...props()} />);
   expect(screen.queryByRole("group", { name: "AI connection" })).toBeNull();
   expect(screen.queryByText(/Local server/)).toBeNull();
-  expect(screen.getByText("Leaves this device")).toBeTruthy();
+  expect(screen.queryByText("Leaves this device")).toBeNull();
   expect(screen.getByLabelText("Base URL")).toHaveProperty(
     "placeholder",
     "https://api.example.com/v1",
@@ -411,9 +407,9 @@ it("puts the provider first for a new connection and hides the preset URL", () =
   expect(screen.getByLabelText("API key").getAttribute("placeholder")).toBe(
     "Key from platform.openai.com",
   );
-  // The hint names the host, and only the badge talks about leaving the device.
+  // The hint names the host; no badge says where the data goes.
   expect(screen.getByText("api.openai.com")).toBeTruthy();
-  expect(screen.getAllByText("Leaves this device")).toHaveLength(1);
+  expect(screen.queryByText("Leaves this device")).toBeNull();
 });
 
 it("offers only the speech providers for cloud transcription", () => {
@@ -852,9 +848,7 @@ it("keeps the saved connection when the automatic model listing fails", async ()
   );
   expect(api.saveApiConnection).toHaveBeenCalledTimes(1);
   expect(api.saveProviderAssignment).not.toHaveBeenCalled();
-  expect(
-    screen.getByRole("option", { name: "OpenAI · Leaves this device" }),
-  ).toBeTruthy();
+  expect(screen.getByRole("option", { name: "OpenAI" })).toBeTruthy();
 });
 
 it("saves a remote connection without a key but does not list its models", async () => {

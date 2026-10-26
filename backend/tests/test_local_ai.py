@@ -115,25 +115,6 @@ def test_fit_uses_vram_first_then_available_ram() -> None:
     assert catalog.fit(need, {"vram_bytes": None, "ram_available_bytes": math.ceil(need / 0.7)}) == "ram"
 
 
-def test_recommended_is_the_best_model_that_fits_the_gpu() -> None:
-    pinned = catalog.load()
-    big = {"vram_bytes": 16 * 1024**3, "ram_available_bytes": 32 * 1024**3}
-    fits = {entry.id: catalog.fit_of(entry, pinned.context_tokens, big) for entry in pinned.models}
-    assert fits["qwen3-30b-a3b-instruct"] == "ram"
-    assert fits["qwen3-14b"] == "gpu"
-    assert catalog.recommended(pinned, fits) == "qwen3-14b"
-
-
-def test_without_a_gpu_the_best_small_model_that_fits_ram_is_recommended() -> None:
-    pinned = catalog.load()
-    cpu = {"vram_bytes": None, "ram_available_bytes": 32 * 1024**3}
-    fits = {entry.id: catalog.fit_of(entry, pinned.context_tokens, cpu) for entry in pinned.models}
-    assert "gpu" not in fits.values()
-    assert catalog.recommended(pinned, fits) == "qwen3-8b"
-    none = {entry.id: "too_big" for entry in pinned.models}
-    assert catalog.recommended(pinned, none) is None
-
-
 def test_offload_layers_pours_everything_on_the_gpu_or_only_what_fits() -> None:
     pinned = catalog.load()
     model = pinned.model("qwen3-8b")

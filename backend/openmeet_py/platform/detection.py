@@ -1,4 +1,4 @@
-"""Opt-in meeting detection: which other apps are using the microphone.
+"""Meeting detection (always on): which other apps are using the microphone.
 
 Covers the Windows part of meeting detection and its commands. The poll thread
 reads a ConsentRegistry every 3 seconds. It emits `microphone_apps` for the prompt only after two polls in a row,
@@ -273,23 +273,20 @@ class DetectionService:
         """One poll. Returns the emitted list, or None when nothing changed (also used by tests)."""
         with self.ctx.store.lock:
             settings = read_settings(self.ctx.store.db)
-        signals: tuple[Signal, ...] = ()
-        if not settings["detection_enabled"]:
-            current: dict[str, str] = {}
-        else:
-            ignored = {item["id"] for item in settings["detection_ignored"]}
-            entries = self.registry.entries()
-            current = {
-                key: name
-                for key, name in active_apps(entries, self.own).items()
-                if key not in ignored
-            }
-            now = time.monotonic()
-            signals = tuple(
-                Signal(key, name, active, now)
-                for key, (name, active) in observed_apps(entries, self.own).items()
-                if key not in ignored
-            )
+        # Always on: no stored flag gates the poll. The ignored list is the only filter.
+        ignored = {item["id"] for item in settings["detection_ignored"]}
+        entries = self.registry.entries()
+        current = {
+            key: name
+            for key, name in active_apps(entries, self.own).items()
+            if key not in ignored
+        }
+        now = time.monotonic()
+        signals = tuple(
+            Signal(key, name, active, now)
+            for key, (name, active) in observed_apps(entries, self.own).items()
+            if key not in ignored
+        )
         self._notify(signals)
         stable = self.debounce.update(set(current))
         if stable is None:
@@ -301,14 +298,6 @@ class DetectionService:
 
 def detection_supported(ctx: Context) -> bool:
     return supported()
-
-
-def save_detection(ctx: Context, enabled: Any) -> dict[str, Any]:
-    enabled = bool_arg(enabled, "enabled")
-    with ctx.store.lock:
-        db = ctx.store.db
-        db.execute("UPDATE settings SET detection_enabled = ?1 WHERE id = 1", (enabled,))
-        return read_settings(db)
 
 
 def set_detection_ignored(ctx: Context, app_id: Any, name: Any, ignored: Any) -> dict[str, Any]:

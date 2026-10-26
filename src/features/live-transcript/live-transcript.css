@@ -34,10 +34,6 @@
   text-transform: uppercase;
 }
 
-.lt-leaves {
-  color: var(--warn, #a4600a);
-}
-
 .lt-notice,
 .lt-hint {
   margin: 0 0 8px;

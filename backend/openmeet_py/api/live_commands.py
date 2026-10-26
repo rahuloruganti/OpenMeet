@@ -30,7 +30,7 @@ import httpx
 import numpy as np
 
 from openmeet_py.api import reads
-from openmeet_py.api.context import Context, bool_arg, text_arg
+from openmeet_py.api.context import Context, text_arg
 from openmeet_py.api.errors import AppError
 from openmeet_py.domain import providers
 from openmeet_py.platform import keys
@@ -586,17 +586,14 @@ def live_transcript(ctx: Context, meeting_id: Any) -> dict[str, Any]:
     return ctx.live.transcript(meeting_id)
 
 
-def save_live_settings(ctx: Context, enabled: Any, model: Any) -> dict[str, Any]:
-    enabled = bool_arg(enabled, "enabled")
+def save_live_settings(ctx: Context, model: Any) -> dict[str, Any]:
+    """The live engine choice. The live transcript itself is always on (migration 037); only the model is saved."""
     model = text_arg(model, "model")
     if not _valid_model(ctx, model):
         raise AppError("live_model", MODEL_CHOICE)
     with ctx.store.lock:
         db = ctx.store.db
-        db.execute(
-            "UPDATE settings SET live_transcript = ?1, live_model = ?2 WHERE id = 1",
-            (int(enabled), model),
-        )
+        db.execute("UPDATE settings SET live_model = ?1 WHERE id = 1", (model,))
         return reads.read_settings(db)
 
 

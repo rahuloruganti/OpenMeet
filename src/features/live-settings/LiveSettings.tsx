@@ -34,24 +34,22 @@ const running = (progress: LiveModelProgress | null) =>
   (progress.stage === "downloading" || progress.stage === "verifying");
 
 /**
- * Settings > Recording > Live transcript: the switch, the engine to run, and the one explicit
- * download of a pinned streaming model. Model status is read when this panel mounts, which is when
- * Settings opens; nothing is downloaded until Download is clicked.
+ * Settings > Recording > Live transcript: the engine to run and the one explicit download of a
+ * pinned streaming model. The live text itself is always on. Model status is read when this panel
+ * mounts, which is when Settings opens; nothing is downloaded until Download is clicked.
  */
 export function LiveSettings({ settings, disabled, onSaved }: Props) {
   const [models, setModels] = useState<LiveModels | null>(null);
   const [progress, setProgress] = useState<LiveModelProgress | null>(null);
   const [error, setError] = useState("");
-  const [enabled, setEnabled] = useState(settings?.live_transcript ?? true);
   const [chosen, setChosen] = useState(settings?.live_model ?? "");
   const { shown, mark } = useSaved();
   const mounted = useRef(true);
 
   // Settings can arrive after the first render, and other panels can change them.
   useEffect(() => {
-    setEnabled(settings?.live_transcript ?? true);
     setChosen(settings?.live_model ?? "");
-  }, [settings?.live_transcript, settings?.live_model]);
+  }, [settings?.live_model]);
 
   const refresh = useCallback(
     () =>
@@ -87,13 +85,12 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
     };
   }, [refresh]);
 
-  const save = (nextEnabled: boolean, nextModel: string) => {
-    const before = { enabled, chosen };
-    setEnabled(nextEnabled);
+  const save = (nextModel: string) => {
+    const before = chosen;
     setChosen(nextModel);
     setError("");
     void Promise.resolve()
-      .then(() => api.saveLiveSettings(nextEnabled, nextModel))
+      .then(() => api.saveLiveSettings(nextModel))
       .then((saved) => {
         if (saved) onSaved?.(saved);
         mark();
@@ -101,8 +98,7 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
       })
       .catch((failure) => {
         setError(errorMessage(failure));
-        setEnabled(before.enabled);
-        setChosen(before.chosen);
+        setChosen(before);
       });
   };
 
@@ -157,29 +153,8 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
       <div className="om-card om-rows">
         <div className="om-row">
           <div className="om-what">
-            <strong>Show text while recording</strong>
-            <span>Text appears as you speak.</span>
-          </div>
-          <div className="om-side">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={enabled}
-              aria-label="Show text while recording"
-              className="om-switch"
-              disabled={disabled || !settings}
-              onClick={() => save(!enabled, chosen)}
-            />
-          </div>
-        </div>
-
-        <div className="om-row">
-          <div className="om-what">
             <strong>Model</strong>
-            {/* The chosen row's leaves-device metadata comes first, so wording never hides it. */}
-            {selected?.leaves_device ? (
-              <span className="om-leaves">Leaves this device</span>
-            ) : chosen === "" ? (
+            {chosen === "" ? (
               <span>
                 {helperReason ??
                   "Same as Transcription uses the Speech model above."}
@@ -193,7 +168,7 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
               aria-label="Live model"
               value={chosen}
               disabled={disabled || !settings || !models}
-              onChange={(event) => save(enabled, event.target.value)}
+              onChange={(event) => save(event.target.value)}
             >
               {!sameListed && (
                 <option value="" disabled={sameBlocked}>

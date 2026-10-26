@@ -56,7 +56,6 @@ def setup(tmp_path: Path) -> Any:
     events: list[tuple[str, Any]] = []
     ctx.emit = lambda event, payload: events.append((event, payload))
     service = DetectionService(ctx, registry, own=OWN, poll=0)
-    invoke(client, "save_detection", enabled=True)
     yield client, registry, service, events
     client.__exit__(None, None, None)
 
@@ -151,14 +150,20 @@ def test_ignored_apps_are_never_offered_and_prompt_again_restores_them(setup: An
     assert apps_emitted(events)[-1] == [{"id": ZOOM, "name": "Zoom"}]
 
 
-def test_nothing_is_offered_while_detection_is_off(setup: Any) -> None:
+def stored_flag_off(client: Any) -> None:
+    """Simulates an old row that still says off; the Settings switch no longer exists to write it."""
+    ctx = client.app.state.ctx  # type: ignore[attr-defined]
+    with ctx.store.lock:
+        ctx.store.db.execute("UPDATE settings SET detection_enabled = 0 WHERE id = 1")
+
+
+def test_detection_polls_and_prompts_even_when_a_stored_flag_says_off(setup: Any) -> None:
     client, registry, service, events = setup
-    invoke(client, "save_detection", enabled=False)
+    stored_flag_off(client)
     registry.set(ZOOM)
     service.tick()
     service.tick()
-    assert apps_emitted(events) == [[]] or apps_emitted(events) == []
-    assert not any(apps for apps in apps_emitted(events))
+    assert apps_emitted(events)[-1] == [{"id": ZOOM, "name": "Zoom"}]
 
 
 def test_setting_commands_validate_their_input(setup: Any) -> None:
@@ -168,8 +173,6 @@ def test_setting_commands_validate_their_input(setup: Any) -> None:
     assert (status, body["code"]) == (400, "detection_app")
     status, body = invoke_error(client, "set_detection_ignored", appId="x", name="y" * 201, ignored=True)
     assert body["code"] == "detection_app"
-    status, body = invoke_error(client, "save_detection", enabled="yes")
-    assert body["code"] == "invalid_args"
 
 
 def test_detection_support_follows_the_platform_or_the_fake(setup: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -262,20 +265,14 @@ def test_a_listener_sees_a_release_on_the_poll_it_happens_even_after_a_prompt(se
     assert signals_of(seen[-1]) == [(ZOOM, "Zoom", False)]
 
 
-def test_listeners_get_an_empty_tuple_while_detection_is_off_and_the_store_is_not_read(
-    setup: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_listeners_still_hear_signals_when_a_stored_flag_says_off(setup: Any) -> None:
     client, registry, service, events = setup
     seen: list[tuple[Signal, ...]] = []
     service.subscribe(seen.append)
-    invoke(client, "save_detection", enabled=False)
-
-    def no_store_read() -> list[ConsentEntry]:
-        raise AssertionError("the consent store must not be read while detection is off")
-
-    monkeypatch.setattr(registry, "entries", no_store_read)
+    stored_flag_off(client)
+    registry.replace(ConsentEntry(ZOOM, 5, 0))
     service.tick()
-    assert seen == [()]
+    assert signals_of(seen[-1]) == [(ZOOM, "Zoom", True)]
 
 
 def test_ignored_apps_are_excluded_from_listener_signals(setup: Any) -> None:

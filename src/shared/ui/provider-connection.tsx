@@ -1,6 +1,5 @@
 import {
   api,
-  isLocalBase,
   type KeyStatus,
   type ProviderRole,
   type Settings,
@@ -31,7 +30,3 @@ export const hostOf = (baseUrl: string) => {
     return baseUrl.trim();
   }
 };
-
-/** Badge text for a connection: loopback stays on this device. */
-export const destination = (baseUrl: string) =>
-  isLocalBase(baseUrl) ? "This device" : "Leaves this device";

@@ -6,6 +6,7 @@ import {
 } from "react";
 import {
   api,
+  errorMessage,
   type AudioDevices,
   type KeyStatus,
   type MicApp,
@@ -32,12 +33,11 @@ export type SettingsPageEnv = {
   disabled: boolean;
   run: (task: () => Promise<void>) => void;
   report: (failure: unknown) => void;
+  error: string;
+  setError: (error: string) => void;
   setNotice: (notice: string) => void;
   updateStt: (status: SttStatus | null) => void;
-  openPanel: (
-    next: "setup" | "settings" | "library",
-    trigger: HTMLButtonElement,
-  ) => void;
+  openPanel: (next: "setup" | "settings", trigger: HTMLButtonElement) => void;
   /** Shows the panel without taking a trigger to hand focus back to. */
   showPanel: () => void;
   closePanel: () => void;
@@ -48,7 +48,6 @@ export type SettingsPageEnv = {
   setMicrophone: (id: string) => void;
   setOutput: (id: string) => void;
   audioBytes: number | null;
-  detectionSupported: boolean;
   updateKeyStatus: (role: ProviderRole, status: KeyStatus) => void;
   stt: SttStatus | null;
   sttProgress: SttDownloadProgress | null;
@@ -65,7 +64,8 @@ export type SettingsPageEnv = {
  *
  * The theme is written in one place only: App's effect sets `data-theme` from
  * `settings.theme`. This hook saves the choice and publishes the settings it gets back, so a
- * failed save leaves the old selection on screen and the shell's error line explains why.
+ * failed save leaves the old selection on screen. A refused shortcut is explained in its group;
+ * other failures go to the shell's error line.
  */
 export function useSettingsPage(env: SettingsPageEnv) {
   const {
@@ -84,7 +84,6 @@ export function useSettingsPage(env: SettingsPageEnv) {
     setMicrophone,
     setOutput,
     audioBytes,
-    detectionSupported,
     updateKeyStatus,
     stt,
     sttProgress,
@@ -95,6 +94,8 @@ export function useSettingsPage(env: SettingsPageEnv) {
     chooseAutoProcessing,
   } = env;
   const [section, setSection] = useState<SettingsSection>("general");
+  // A refused shortcut save, explained in the Shortcuts group: the shell's error line is on Meetings only.
+  const [shortcutError, setShortcutError] = useState("");
 
   const openSettings: OpenSettings = (next, trigger) => {
     setSection(next);
@@ -164,9 +165,6 @@ export function useSettingsPage(env: SettingsPageEnv) {
         setOutput(out);
       }),
     audioBytes,
-    detectionSupported,
-    onDetection: (enabled) =>
-      void run(async () => setSettings(await api.saveDetection(enabled))),
     onAutoCapture: (enabled) =>
       void run(async () => setSettings(await api.saveAutoCapture(enabled))),
     onDetectionIgnored: (app: MicApp, ignored: boolean) =>
@@ -193,11 +191,19 @@ export function useSettingsPage(env: SettingsPageEnv) {
     onInstallStt: installStt,
     onSaveStt: saveStt,
     onDownloadStt: downloadStt,
+    shortcutError,
+    error: env.error,
+    onDismissError: () => env.setError(""),
     onSaveShortcuts: (pause, stop) =>
       void run(async () => {
-        const saved = await api.saveSettings(pause, stop.trim() || null);
-        setSettings(saved);
-        setNotice("Shortcuts saved.");
+        setShortcutError("");
+        try {
+          const saved = await api.saveSettings(pause, stop.trim() || null);
+          setSettings(saved);
+          setNotice("Shortcuts saved.");
+        } catch (failure) {
+          setShortcutError(errorMessage(failure));
+        }
       }),
     onRunSetup: () =>
       void run(async () => {

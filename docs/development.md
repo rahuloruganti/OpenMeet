@@ -82,7 +82,7 @@ Before a backup, wait for **Saved** and close the app normally. Copy the whole d
 ## Make a contribution
 
 1. Inspect affected callers, command bindings, tests, fixtures, settings and exports.
-2. Make the smallest complete change. Preserve note errors, source distinctions, recording-consent wording and the "Leaves this device" disclosures.
+2. Make the smallest complete change. Preserve note errors, source distinctions, recording-consent wording and the privacy disclosures in docs/privacy.md.
 3. Add a small behavior test for nontrivial logic. Use synthetic samples instead of devices and fake engines instead of real models.
 4. Add the next numbered migration for schema changes (append-only; next is `033`). Test an upgrade with populated notes and relationships.
 5. Run `just check`, plus `just smoke` for packaging changes.

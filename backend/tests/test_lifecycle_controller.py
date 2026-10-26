@@ -153,7 +153,6 @@ def rig(tmp_path: Path) -> Iterator[Rig]:
     ctx.emit = lambda event, payload: events.append((event, payload))
     spy = Spy()
     ctx.recorder.add_listener(spy)
-    invoke(client, "save_detection", enabled=True)
     invoke(client, "save_default_devices", microphone_id=MIC, output_id=OUT)
     yield Rig(client, ctx, backend, registry, clock, events, spy)
     _shutdown(ctx)
@@ -529,7 +528,6 @@ def test_restart_seeds_the_epoch_from_stored_calls_and_clears_stale_active_rows(
     client = TestClient(app, base_url="http://127.0.0.1")
     try:
         assert ctx.store.db.execute("SELECT COUNT(*) FROM call_sessions WHERE active = 1").fetchone()[0] == 0
-        invoke(client, "save_detection", enabled=True)
         invoke(client, "save_default_devices", microphone_id=MIC, output_id=OUT)
         invoke(client, "save_auto_capture", enabled=True)
         registry.replace(ConsentEntry(ZOOM, 5, 0))

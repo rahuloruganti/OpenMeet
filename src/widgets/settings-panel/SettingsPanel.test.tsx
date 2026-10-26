@@ -11,17 +11,17 @@ vi.mock("../../shared/api/api", async (original) => ({
     apiConnectionKeyStatus: vi.fn(),
     providerKeyStatus: vi.fn(),
     getSettings: vi.fn(),
-    saveProcessingEnhance: vi.fn(),
     listApiConnectionModels: vi.fn(),
     scanLocalModels: vi.fn(),
     detectLocalServers: vi.fn(),
     localAiStatus: vi.fn(),
     localAiInstallEngine: vi.fn(),
-    localAiDownloadModel: vi.fn(),
+    localAiSearchHf: vi.fn(),
+    localAiHfFiles: vi.fn(),
+    localAiDownloadHf: vi.fn(),
     localAiRemoveModel: vi.fn(),
     localAiCancel: vi.fn(),
     localAiUse: vi.fn(),
-    localAiQuickstart: vi.fn(),
     localAiStart: vi.fn(),
     localAiStop: vi.fn(),
     onLocalAiProgress: vi.fn(),
@@ -59,10 +59,10 @@ const settings: Settings = {
   summary_instructions: "",
   summary_templates: [],
   recipes: [],
-  processing_mode: "recording",
-  processing_summary: null,
+  processing_mode: "final",
+  processing_summary: "general-v1",
   summary_default: "general-v1",
-  detection_enabled: false,
+  detection_enabled: true,
   detection_ignored: [],
   auto_capture: false,
   calendar_reminders: true,
@@ -88,10 +88,8 @@ const props = () => ({
   onDefaultDevices: vi.fn(),
   onRefreshDevices: vi.fn(),
   onSaveShortcuts: vi.fn(),
-  processing: { mode: "recording" as const, summary: null },
+  processing: { mode: "final" as const, summary: "general-v1" as const },
   onProcessing: vi.fn(),
-  detectionSupported: true,
-  onDetection: vi.fn(),
   onDetectionIgnored: vi.fn(),
   onAutoCapture: vi.fn(),
   stt: {
@@ -283,11 +281,9 @@ it("saves export changes as they are made", async () => {
     ...settings.export,
     transcript: false,
   });
-  await userEvent.click(screen.getByRole("button", { name: "SRT" }));
-  expect(input.onExportOptions).toHaveBeenLastCalledWith({
-    ...settings.export,
-    transcript_formats: ["txt", "srt"],
-  });
+  // Transcript formats are not a Settings choice: exports keep the formats already saved.
+  expect(screen.queryByRole("group", { name: "Transcript files" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "SRT" })).toBeNull();
   await userEvent.selectOptions(
     screen.getByLabelText("File name"),
     "date_title",
@@ -320,6 +316,25 @@ it("records a shortcut from a key press and saves it", async () => {
   );
 });
 
+it("records a Windows-key shortcut as Win instead of Ctrl", async () => {
+  const input = props();
+  render(<SettingsPanel {...input} initialSection="recording" />);
+  const capture = screen.getByRole("button", {
+    name: "Change stop recording shortcut",
+  });
+  await userEvent.click(capture);
+  fireEvent.keyDown(capture, {
+    key: "F9",
+    code: "F9",
+    metaKey: true,
+    shiftKey: true,
+  });
+  expect(input.onSaveShortcuts).toHaveBeenCalledWith(
+    "CommandOrControl+Shift+Space",
+    "Win+Shift+F9",
+  );
+});
+
 it("refuses a key press without a modifier and says why", async () => {
   const input = props();
   render(<SettingsPanel {...input} initialSection="recording" />);
@@ -332,54 +347,80 @@ it("refuses a key press without a modifier and says why", async () => {
   expect(input.onSaveShortcuts).not.toHaveBeenCalled();
 });
 
-it("explains the automation switches and hides their details until they are on", async () => {
+it("refuses a key the backend cannot register and says which keys work", async () => {
   const input = props();
   render(<SettingsPanel {...input} initialSection="recording" />);
-  expect(screen.queryByLabelText("When a recording stops")).toBeNull();
-  await userEvent.click(
-    screen.getByRole("switch", { name: "Automatic processing" }),
-  );
-  expect(input.onProcessing).toHaveBeenCalledWith({
-    mode: "final",
-    summary: "general-v1",
+  const capture = screen.getByRole("button", {
+    name: "Change pause / resume shortcut",
   });
-  const detecting = screen.getByRole("switch", { name: "Meeting detection" });
-  expect(detecting.getAttribute("aria-checked")).toBe("false");
-  await userEvent.click(detecting);
-  expect(input.onDetection).toHaveBeenCalledWith(true);
+  await userEvent.click(capture);
+  // Period has no name the backend registers, so it is refused here, not after a save.
+  fireEvent.keyDown(capture, { key: ".", code: "Period", ctrlKey: true });
+  expect(
+    screen.getByText(
+      "Use a letter, number, arrow or Space with Ctrl or Alt, or an F-key.",
+    ),
+  ).toBeTruthy();
+  expect(input.onSaveShortcuts).not.toHaveBeenCalled();
 });
 
-it("offers automatic capture only while meeting detection is on", async () => {
+it("shows a shortcut the backend refused inside the Shortcuts group", () => {
+  render(
+    <SettingsPanel
+      {...props()}
+      initialSection="recording"
+      shortcutError="Use a shortcut such as Control+Shift+F9."
+    />,
+  );
+  const shortcuts = within(screen.getByRole("region", { name: "Shortcuts" }));
+  expect(shortcuts.getByRole("alert").textContent).toBe(
+    "Use a shortcut such as Control+Shift+F9.",
+  );
+});
+
+it("has no processing or meeting detection switch: both are always on", () => {
+  render(<SettingsPanel {...props()} initialSection="recording" />);
+  expect(
+    screen.queryByRole("switch", { name: "Automatic processing" }),
+  ).toBeNull();
+  expect(
+    screen.queryByRole("switch", { name: "Meeting detection" }),
+  ).toBeNull();
+  expect(screen.queryByLabelText("When a recording stops")).toBeNull();
+});
+
+it("saves the automatic summary as final processing, with no 'no summary' choice", async () => {
   const input = props();
-  const view = render(<SettingsPanel {...input} initialSection="recording" />);
+  render(<SettingsPanel {...input} initialSection="recording" />);
+  const summary = screen.getByRole("combobox", { name: "Automatic summary" });
+  expect(
+    within(summary).queryByRole("option", { name: "No automatic summary" }),
+  ).toBeNull();
+  await userEvent.selectOptions(summary, "standup-v1");
+  expect(input.onProcessing).toHaveBeenCalledWith({
+    mode: "final",
+    summary: "standup-v1",
+  });
+});
+
+it("offers automatic capture at once: opt-in and off until the user turns it on", async () => {
+  const input = props();
+  render(<SettingsPanel {...input} initialSection="recording" />);
   const auto = screen.getByRole<HTMLButtonElement>("switch", {
     name: "Automatic capture",
   });
-  expect(auto.disabled).toBe(true);
-  expect(screen.getByText(/Turn on meeting detection first/)).toBeTruthy();
-  view.unmount();
-
-  render(
-    <SettingsPanel
-      {...input}
-      settings={{ ...settings, detection_enabled: true }}
-      initialSection="recording"
-    />,
-  );
-  const enabled = screen.getByRole<HTMLButtonElement>("switch", {
-    name: "Automatic capture",
-  });
-  expect(enabled.disabled).toBe(false);
+  expect(auto.disabled).toBe(false);
+  expect(auto.getAttribute("aria-checked")).toBe("false");
   expect(screen.queryByText(/Turn on meeting detection first/)).toBeNull();
-  await userEvent.click(enabled);
+  await userEvent.click(auto);
   expect(input.onAutoCapture).toHaveBeenCalledWith(true);
 });
 
-it("tags cloud transcription as leaving this device", () => {
+it("shows no 'Leaves this device' tag on the transcription engine", () => {
   render(<SettingsPanel {...props()} initialSection="transcription" />);
   const pane = within(region("Transcription"));
   const engine = pane.getByRole("group", { name: "Process audio" });
-  expect(within(engine).getByText("Leaves this device")).toBeTruthy();
+  expect(within(engine).queryByText("Leaves this device")).toBeNull();
   expect(within(engine).getByText("Audio stays here")).toBeTruthy();
   // The cloud connection card is not shown while the engine runs here.
   expect(pane.queryByLabelText("Base URL")).toBeNull();
@@ -828,27 +869,32 @@ it("words each needs-you reason as the action to take", () => {
   ).toBeTruthy();
 });
 
-it("turns enhanced notes after recording on in AI notes and saves it", async () => {
-  // Opt-in: a fresh install starts with the switch off.
-  const input = {
-    ...props(),
-    settings: { ...settings, processing_enhance: false },
-  };
-  vi.mocked(api.saveProcessingEnhance).mockResolvedValue({
-    ...settings,
-    processing_enhance: true,
-  });
-  render(<SettingsPanel {...input} initialSection="ai" />);
-  const enhance = screen.getByRole("switch", {
-    name: "Enhance my notes after recording",
-  });
-  expect(enhance.getAttribute("aria-checked")).toBe("false");
-  await userEvent.click(enhance);
-  expect(api.saveProcessingEnhance).toHaveBeenCalledWith(true);
-  await vi.waitFor(() =>
-    expect(input.onSettings).toHaveBeenCalledWith({
-      ...settings,
-      processing_enhance: true,
-    }),
+it("has no enhanced-notes switch: the feature is always on", () => {
+  render(<SettingsPanel {...props()} initialSection="ai" />);
+  expect(
+    screen.queryByRole("switch", { name: "Enhance my notes after recording" }),
+  ).toBeNull();
+  expect(screen.queryByRole("group", { name: "Enhanced notes" })).toBeNull();
+});
+
+it("has no theme preview under General; the theme choice stays", () => {
+  render(<SettingsPanel {...props()} initialSection="general" />);
+  expect(screen.queryByRole("group", { name: "Preview" })).toBeNull();
+  expect(screen.getByRole("group", { name: "Theme" })).toBeTruthy();
+});
+
+it("shows a failed save on the Settings page and lets it be dismissed", async () => {
+  const onDismissError = vi.fn();
+  render(
+    <SettingsPanel
+      {...props()}
+      error="The export folder could not be saved."
+      onDismissError={onDismissError}
+    />,
   );
+  expect(screen.getByRole("alert").textContent).toContain(
+    "The export folder could not be saved.",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(onDismissError).toHaveBeenCalled();
 });

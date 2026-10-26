@@ -203,9 +203,7 @@ export function TranscriptionSettings(props: Props) {
                     onClick={() => props.onMode(option.id)}
                   >
                     <span className="om-seg-t">{option.title}</span>
-                    {option.id === "cloud" ? (
-                      <span className="om-leaves">Leaves this device</span>
-                    ) : (
+                    {option.id !== "cloud" && (
                       <span className="om-seg-s">{option.note}</span>
                     )}
                   </button>
@@ -219,10 +217,7 @@ export function TranscriptionSettings(props: Props) {
 
       {cloud ? (
         <section className="om-group" aria-label="Connection">
-          <h3 className="om-group-label">
-            Connection
-            <span className="om-leaves">Leaves this device</span>
-          </h3>
+          <h3 className="om-group-label">Connection</h3>
           {props.cloudForm ?? (
             <p className="om-empty">Add a speech connection first.</p>
           )}

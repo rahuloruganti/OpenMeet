@@ -11,7 +11,6 @@ const slices = {
   pages: ["meeting", "settings", "setup"],
   widgets: [
     "first-run-setup",
-    "library-question",
     "meeting-sidebar",
     "meeting-workspace",
     "recording-controls",
@@ -28,7 +27,6 @@ const slices = {
     "model-library",
     "note-writer",
     "provider-settings",
-    "recipes",
     "rewrite-selection",
     "speaker-names",
     "summary-templates",

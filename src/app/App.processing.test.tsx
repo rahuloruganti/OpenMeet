@@ -20,7 +20,6 @@ import {
   sessionSnapshot,
   initialSettings,
   installed,
-  chooseProcessing,
   settingsIndex,
   ready,
   installDefaultMocks,
@@ -253,14 +252,7 @@ describe("speech engine and automatic processing", () => {
       await userEvent.click(within(dialog).getByText("More options"));
       return dialog;
     };
-    let dialog = await openRecording();
-    expect(
-      within(dialog).queryByText(/speech engine is not downloaded/),
-    ).toBeNull();
-    await userEvent.keyboard("{Escape}");
-    await chooseProcessing("final");
-    await userEvent.keyboard("{Escape}");
-    dialog = await openRecording();
+    const dialog = await openRecording();
     expect(
       (await within(dialog).findByText(/speech engine is not downloaded/))
         .textContent,
@@ -466,24 +458,9 @@ describe("speech engine and automatic processing", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "New recording" }),
     );
-    let dialog = screen.getByRole("dialog", { name: "New recording" });
+    const dialog = screen.getByRole("dialog", { name: "New recording" });
     await userEvent.click(within(dialog).getByText("More options"));
-    expect(within(dialog).getByText(/Recording only/)).toBeTruthy();
-    // The mode is changed in Settings, which opens on Recording.
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Open Settings" }),
-    );
-    expect(settingsIndex("Recording").getAttribute("aria-current")).toBe(
-      "location",
-    );
-    await userEvent.keyboard("{Escape}");
-    await chooseProcessing("final", "general-v1");
-    await userEvent.keyboard("{Escape}");
-    await userEvent.click(
-      screen.getByRole("button", { name: "New recording" }),
-    );
-    dialog = screen.getByRole("dialog", { name: "New recording" });
-    await userEvent.click(within(dialog).getByText("More options"));
+    // The saved default is the fullest mode: transcribe after stop, then summarize.
     expect(within(dialog).getByText(/Transcribe after stop/)).toBeTruthy();
     expect(
       screen.queryByRole("button", { name: "Review processing" }),

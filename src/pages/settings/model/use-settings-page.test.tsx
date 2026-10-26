@@ -5,7 +5,7 @@ import { useSettingsPage, type SettingsPageEnv } from "./use-settings-page";
 
 vi.mock("../../../shared/api/api", async (original) => ({
   ...(await original<typeof import("../../../shared/api/api")>()),
-  api: { saveUiPrefs: vi.fn() },
+  api: { saveUiPrefs: vi.fn(), saveSettings: vi.fn() },
 }));
 
 const settings = {
@@ -46,7 +46,6 @@ const env = () => {
     setMicrophone: vi.fn(),
     setOutput: vi.fn(),
     audioBytes: null,
-    detectionSupported: true,
     updateKeyStatus: vi.fn(),
     stt: null,
     sttProgress: null,
@@ -55,6 +54,8 @@ const env = () => {
     refreshDevices: vi.fn(),
     autoProcessing: { mode: "recording", summary: null },
     chooseAutoProcessing: vi.fn(),
+    error: "",
+    setError: vi.fn(),
   } satisfies SettingsPageEnv;
 };
 
@@ -106,4 +107,38 @@ it("owns the section the panel shows and accepts a pick back from it", () => {
 
   act(() => result.current.showSection("about"));
   expect(result.current.pageProps.section).toBe("about");
+});
+
+it("explains a refused shortcut on the page, not in the shell's error line", async () => {
+  vi.mocked(api.saveSettings).mockRejectedValue({
+    code: "invalid_shortcut",
+    message: "Use a shortcut such as Control+Shift+F9.",
+  });
+  const input = env();
+  const { result } = renderHook(() => useSettingsPage(input));
+
+  act(() =>
+    result.current.pageProps.onSaveShortcuts("CommandOrControl+Period", ""),
+  );
+
+  await waitFor(() =>
+    expect(result.current.pageProps.shortcutError).toBe(
+      "Use a shortcut such as Control+Shift+F9.",
+    ),
+  );
+  expect(input.report).not.toHaveBeenCalled();
+  expect(input.setSettings).not.toHaveBeenCalled();
+
+  // A later save the backend accepts clears the refusal and publishes the new settings.
+  const saved = {
+    ...settings,
+    pause_shortcut: "CommandOrControl+Alt+F9",
+  } as Settings;
+  vi.mocked(api.saveSettings).mockResolvedValue(saved);
+  act(() =>
+    result.current.pageProps.onSaveShortcuts("CommandOrControl+Alt+F9", ""),
+  );
+
+  await waitFor(() => expect(input.setSettings).toHaveBeenCalledWith(saved));
+  expect(result.current.pageProps.shortcutError).toBe("");
 });

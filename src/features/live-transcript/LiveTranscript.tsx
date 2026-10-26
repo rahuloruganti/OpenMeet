@@ -225,7 +225,6 @@ export function LiveTranscript(props: Props) {
         ) : (
           <span>{statusOf(state)}</span>
         )}
-        {transcript?.leaves_device && <span>Leaves this device</span>}
         {props.provisional && <span>Provisional</span>}
       </p>
 
