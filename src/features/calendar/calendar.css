@@ -1,0 +1,93 @@
+/* Calendar context. Settings rows reuse the page's om-* classes; these cover the extra pieces. */
+.cal-form {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  width: 100%;
+}
+
+.cal-form input {
+  min-width: 0;
+}
+
+.cal-helper,
+.cal-form .cal-actions,
+.cal-form > label + input + .cal-helper {
+  grid-column: 1 / -1;
+}
+
+.cal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cal-error {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cal-minutes-label {
+  margin-right: 8px;
+}
+
+.cal-prompt {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, #d9d9d9);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+}
+
+.cal-prompt-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.cal-event {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cal-linked,
+.cal-earlier {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cal-picker {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.cal-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+}

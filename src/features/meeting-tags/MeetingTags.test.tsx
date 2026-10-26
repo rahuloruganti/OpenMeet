@@ -44,7 +44,9 @@ const make = (id: string, tags: string[]): Meeting => ({
   status: "stopped",
   source: "fixture",
   capture_error: null,
+  calendar_event_id: null,
   tags,
+  folder_id: null,
 });
 
 it("filters meetings and full-text hits by tag", async () => {

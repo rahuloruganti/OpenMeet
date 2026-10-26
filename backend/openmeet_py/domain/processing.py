@@ -30,7 +30,7 @@ from openmeet_py.api import reads
 from openmeet_py.api.context import Context, int_arg, text_arg
 from openmeet_py.api.errors import AppError
 from openmeet_py.api.reads import read_settings
-from openmeet_py.domain import llm, providers
+from openmeet_py.domain import enhancement, llm, providers
 from openmeet_py.domain.connections import plan_changed
 from openmeet_py.domain.transcript_edits import replace_transcript
 from openmeet_py.infra.store import transaction
@@ -129,7 +129,13 @@ def build_plan(db: sqlite3.Connection, request: dict[str, Any], revision: int) -
         summary = {"destination": _api_destination(settings, "llm"), "template": request["summary"]}
         if settings["summary_instructions"]:
             summary["instructions"] = settings["summary_instructions"]
-    scope = {"kind": "final", "speech": speech, "summary": summary}
+    scope = {
+        "kind": "final",
+        "speech": speech,
+        "summary": summary,
+        # Enhanced notes ride on the summary step, so they need a summary; the switch is frozen with the plan.
+        "enhance": bool(summary is not None and settings["processing_enhance"]),
+    }
     return {
         "id": str(uuid.uuid4()),
         "meeting_id": None,
@@ -597,13 +603,19 @@ class Processing:
                 )
                 _bump(db, meeting_id)
 
-    def _fail(self, meeting_id: str, run_id: str, code: str) -> None:
+    def _fail(self, meeting_id: str, run_id: str, code: str, enhanced: bool = False) -> None:
         if code in PLAN_CHANGED_CODES:
             stage, message = "needs_attention", "Processing settings changed. Retry when ready."
         elif code == "processing_budget":
             stage, message = "failed", "The session processing limit was reached. Retry when ready."
         elif code == "notes_conflict":
             stage, message = "failed", "Notes or transcript changed. Previous output is unchanged; retry when ready."
+        elif enhanced:
+            stage, message = (
+                "failed",
+                "Your summary is saved. Enhanced notes did not finish; retry to create them without "
+                "generating the summary again.",
+            )
         else:
             stage, message = (
                 "failed",
@@ -697,14 +709,28 @@ class Processing:
             guard.release()
 
     def _summary(self, meeting_id: str, run_id: str) -> None:
+        """The summary, committed on its own. Enhanced notes follow as a separate stage.
+
+        A saved summary (summary_saved) is never requested again: a retry after a failed enhancement
+        only runs the enhancement.
+        """
+        with self.ctx.store.lock:
+            snap = self._check(self.ctx.store.db, meeting_id, run_id, "awaiting_notes")
+            summary = snap["plan"]["scope"].get("summary")
+            if snap["plan"]["scope"]["kind"] != "final" or summary is None:
+                raise stale()
+            saved = self.ctx.store.db.execute(
+                "SELECT summary_saved FROM processing_runs WHERE meeting_id=?1 AND run_id=?2",
+                (meeting_id, run_id),
+            ).fetchone()[0]
+        self._stage(meeting_id, run_id, "awaiting_notes", "summarizing")
+        if not saved:
+            self._write_summary(meeting_id, run_id, summary)
+        self._after_summary(meeting_id, run_id)
+
+    def _write_summary(self, meeting_id: str, run_id: str, summary: dict[str, Any]) -> None:
         guard = self._begin(meeting_id, run_id, "summarizing")
         try:
-            with self.ctx.store.lock:
-                snap = self._check(self.ctx.store.db, meeting_id, run_id, "awaiting_notes")
-                summary = snap["plan"]["scope"].get("summary")
-                if snap["plan"]["scope"]["kind"] != "final" or summary is None:
-                    raise stale()
-            self._stage(meeting_id, run_id, "awaiting_notes", "summarizing")
             with self.ctx.store.lock:
                 db = self.ctx.store.db
                 frozen = db.execute(
@@ -724,9 +750,7 @@ class Processing:
                 system = llm.summary_system(llm.TEMPLATE_IDS[summary["template"]], summary.get("instructions", ""))
             self._notify(meeting_id)
             if not self.ctx.ai_busy.acquire(blocking=False):
-                raise AppError(
-                    "processing_busy", "Another AI request is still running. Wait for it to finish."
-                )
+                raise AppError("processing_busy", "Another AI request is still running. Wait for it to finish.")
             try:
                 # Automatic summaries may use Local AI too: start its server first if it is off.
                 local_ai.ensure_ready(self.ctx, config)
@@ -762,6 +786,111 @@ class Processing:
                                 markdown,
                                 reads.transcript_hash(segments, names),
                             ),
+                        )
+                        db.execute(
+                            "UPDATE processing_runs SET summary_saved=1 WHERE meeting_id=?1 AND run_id=?2",
+                            (meeting_id, run_id),
+                        )
+                        _bump(db, meeting_id)
+
+            guard.finish(publish)
+            self.ctx.emit("meeting_updated", None)
+        finally:
+            guard.release()
+
+    def _after_summary(self, meeting_id: str, run_id: str) -> None:
+        """Enhanced notes when the plan asks for them, otherwise completion. An enhancement error keeps the summary."""
+        with self.ctx.store.lock:
+            db = self.ctx.store.db
+            snap = self._check(db, meeting_id, run_id, "summarizing")
+            scope = snap["plan"]["scope"]
+            frozen = db.execute(
+                "SELECT notes_snapshot FROM processing_runs WHERE meeting_id=?1 AND run_id=?2",
+                (meeting_id, run_id),
+            ).fetchone()
+            due = bool(
+                scope.get("enhance")
+                and frozen is not None
+                and frozen[0]
+                and frozen[0].strip()
+                and enhancement.items_of(reads.meeting_detail(db, meeting_id))
+            )
+        if not due:
+            self._complete(meeting_id, run_id)
+            return
+        try:
+            self._enhance(meeting_id, run_id)
+        except AppError as error:
+            self._fail(meeting_id, run_id, error.code, enhanced=True)
+        except Exception as error:  # the type only: messages can echo transcript text
+            log.error("enhanced notes failed: %s", type(error).__name__)
+            self._fail(meeting_id, run_id, "internal", enhanced=True)
+
+    def _complete(self, meeting_id: str, run_id: str) -> None:
+        with self.ctx.store.lock:
+            with transaction(self.ctx.store.db) as db:
+                self._check(db, meeting_id, run_id, "summarizing")
+                db.execute(
+                    "UPDATE processing_runs SET stage='completed', error=NULL WHERE meeting_id=?1 AND run_id=?2",
+                    (meeting_id, run_id),
+                )
+                _bump(db, meeting_id)
+        self.ctx.emit("meeting_updated", None)
+
+    def _enhance(self, meeting_id: str, run_id: str) -> None:
+        """Enhanced notes from the notes frozen for this run. Its own request, revision check and publish."""
+        guard = self._begin(meeting_id, run_id, "summarizing")
+        try:
+            with self.ctx.store.lock:
+                db = self.ctx.store.db
+                snap = self._check(db, meeting_id, run_id, "summarizing")
+                summary = snap["plan"]["scope"]["summary"]
+                frozen = db.execute(
+                    "SELECT notes_snapshot, notes_revision FROM processing_runs WHERE meeting_id=?1 AND run_id=?2",
+                    (meeting_id, run_id),
+                ).fetchone()
+                if frozen is None or frozen[0] is None or frozen[1] is None:
+                    raise stale()
+                notes, revision = frozen
+                detail = reads.meeting_detail(db, meeting_id)
+                config = reads.provider_config(db, "llm")
+                if config is None:
+                    raise AppError("provider_missing", "Save a provider connection in Settings first.")
+                segments = detail["segments"]
+                names = detail["speaker_names"]
+                template = summary["template"]
+                system = enhancement.system_prompt(llm.TEMPLATE_IDS[template], summary.get("instructions", ""))
+                planned = enhancement.plan(notes, enhancement.items_of(detail), system)
+            self._notify(meeting_id)
+            if not self.ctx.ai_busy.acquire(blocking=False):
+                raise AppError("processing_busy", "Another AI request is still running. Wait for it to finish.")
+            try:
+                local_ai.ensure_ready(self.ctx, config)
+                connection = providers.load_connection(config, self.ctx.transport)
+
+                def before(body: bytes) -> None:
+                    fingerprint = hashlib.sha256(body).hexdigest()
+                    self._reserve(meeting_id, run_id, "summarizing", fingerprint, 0, len(body))
+
+                markdown = enhancement.request(connection, planned, before)
+            finally:
+                self.ctx.ai_busy.release()
+
+            def publish() -> None:
+                with self.ctx.store.lock:
+                    with transaction(self.ctx.store.db) as db:
+                        self._check(db, meeting_id, run_id, "summarizing")
+                        current = reads.meeting_detail(db, meeting_id)
+                        if current["notes_revision"] != revision or current["segments"] != segments:
+                            raise AppError(
+                                "notes_conflict",
+                                "Meeting content changed during enhanced notes generation. The summary is "
+                                "kept; retry when ready.",
+                            )
+                        text, sources, _dropped = enhancement.link_sources(markdown, planned.targets)
+                        enhancement.store(
+                            db, meeting_id, template, config, text.strip(), sources, revision,
+                            reads.transcript_hash(segments, names),
                         )
                         db.execute(
                             "UPDATE processing_runs SET stage='completed', error=NULL WHERE meeting_id=?1 AND run_id=?2",

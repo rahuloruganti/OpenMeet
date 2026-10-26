@@ -6,6 +6,7 @@ Covers read_settings, get_meeting and transcript_lines. Nothing here returns a c
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 from typing import Any, Optional
@@ -14,7 +15,8 @@ from openmeet_py.api.errors import AppError
 from openmeet_py.domain import transcript_edits
 
 MEETING_COLUMNS = (
-    "SELECT id, title, started_at, ended_at, status, source, capture_error FROM meetings"
+    "SELECT id, title, started_at, ended_at, status, source, capture_error, folder_id, calendar_event_id "
+    "FROM meetings"
 )
 PROVIDER_ROLES = ("llm", "cloud_stt")
 EXPORT_FORMATS = ("txt", "srt", "vtt")
@@ -67,6 +69,8 @@ def meeting_dict(row: tuple, tags: list[str]) -> dict[str, Any]:
         "status": row[4],
         "source": row[5],
         "capture_error": row[6],
+        "folder_id": row[7],
+        "calendar_event_id": row[8],
         "tags": tags,
     }
 
@@ -166,8 +170,12 @@ def read_settings(db: sqlite3.Connection) -> Settings:
         "export_transcript, export_summary, export_filename, stt_language, stt_prompt, "
         "stt_model, stop_shortcut, summary_instructions, export_transcript_formats, "
         "processing_mode, processing_summary, summary_default, detection_enabled, setup_done, "
-        "theme, inspector_open, live_transcript, live_model, auto_capture "
+        "theme, inspector_open, live_transcript, live_model, auto_capture, processing_enhance "
         "FROM settings WHERE id = 1"
+    ).fetchone()
+    # Read apart from the row above so new settings columns never shift these indexes.
+    calendar_row = db.execute(
+        "SELECT calendar_reminders, calendar_reminder_minutes FROM settings WHERE id = 1"
     ).fetchone()
     return {
         "vault_folder": row[0],
@@ -203,6 +211,9 @@ def read_settings(db: sqlite3.Connection) -> Settings:
         "live_transcript": bool(row[21]),
         "live_model": row[22] or "",
         "auto_capture": bool(row[23]),
+        "processing_enhance": bool(row[24]),
+        "calendar_reminders": bool(calendar_row[0]),
+        "calendar_reminder_minutes": calendar_row[1],
     }
 
 
@@ -306,7 +317,7 @@ def question_threads(db: sqlite3.Connection, meeting_id: str) -> list[dict[str, 
 def latest_summary(db: sqlite3.Connection, meeting_id: str) -> Optional[tuple]:
     return db.execute(
         "SELECT markdown, provider, model, template_hash, edited_from IS NOT NULL, transcript_hash "
-        "FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC LIMIT 1",
+        "FROM summaries WHERE meeting_id = ?1 AND kind = 'summary' ORDER BY id DESC LIMIT 1",
         (meeting_id,),
     ).fetchone()
 
@@ -355,14 +366,19 @@ def meeting_detail(db: sqlite3.Connection, meeting_id: str) -> dict[str, Any]:
 
 
 def list_summaries(db: sqlite3.Connection, meeting_id: str) -> list[dict[str, Any]]:
-    """Every summary version, newest first. Stale means the transcript changed after it was made."""
+    """Every summary and enhanced-notes version, newest first.
+
+    Stale: a summary is stale when the transcript changed after it was made. Enhanced notes are also
+    stale when the notes changed after they were made (notes_revision).
+    """
     if not db.execute("SELECT EXISTS(SELECT 1 FROM meetings WHERE id=?1)", (meeting_id,)).fetchone()[0]:
         return []
     segments, _ = segments_of(db, meeting_id)
     current = transcript_hash(segments, speaker_names(db, meeting_id))
+    notes_revision = db.execute("SELECT revision FROM notes WHERE meeting_id = ?1", (meeting_id,)).fetchone()[0]
     rows = db.execute(
-        "SELECT id, provider, model, template_hash, markdown, edited_from, transcript_hash "
-        "FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC",
+        "SELECT id, provider, model, template_hash, markdown, edited_from, transcript_hash, kind, "
+        "notes_revision, sources_json FROM summaries WHERE meeting_id = ?1 ORDER BY id DESC",
         (meeting_id,),
     ).fetchall()
     return [
@@ -373,14 +389,18 @@ def list_summaries(db: sqlite3.Connection, meeting_id: str) -> list[dict[str, An
             "template": row[3],
             "markdown": row[4],
             "edited_from": row[5],
-            "stale": row[6] is not None and row[6] != current,
+            "stale": (row[6] is not None and row[6] != current)
+            or (row[7] == "enhanced" and row[8] != notes_revision),
+            "kind": row[7],
+            "notes_revision": row[8],
+            "sources": json.loads(row[9]),
         }
         for row in rows
     ]
 
 
 def library_answers(db: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Newest first; meeting_ids in the order they were sent (M1 first)."""
+    """Newest first; meeting_ids in the order they were sent (M1 first); scope null when none was stored."""
     answers = [
         {
             "id": row[0],
@@ -389,9 +409,11 @@ def library_answers(db: sqlite3.Connection) -> list[dict[str, Any]]:
             "provider": row[3],
             "model": row[4],
             "meeting_ids": [],
+            "scope": None if row[5] is None else json.loads(row[5]),
         }
         for row in db.execute(
-            "SELECT id, question, answer, provider, model FROM library_answers ORDER BY id DESC"
+            "SELECT id, question, answer, provider, model, scope_json FROM library_answers "
+            "ORDER BY id DESC"
         ).fetchall()
     ]
     by_id = {answer["id"]: answer for answer in answers}

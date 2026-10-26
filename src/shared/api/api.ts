@@ -124,6 +124,17 @@ export type Meeting = {
   source: "simulation" | "fixture" | "desktop" | "note";
   capture_error: string | null;
   tags: string[];
+  /** The one folder this meeting is in, or null. */
+  folder_id: string | null;
+  /** The calendar event this meeting is linked to, or null. */
+  calendar_event_id: string | null;
+};
+/** A folder groups meetings; names are unique ignoring case. */
+export type Folder = {
+  id: string;
+  name: string;
+  position: number;
+  meeting_count: number;
 };
 export type Segment = {
   speaker: "You" | "Others";
@@ -220,6 +231,12 @@ export type Settings = {
   detection_ignored: MicApp[];
   /** Opt-in: start capture for a supported call app automatically with the saved devices. Off by default. */
   auto_capture: boolean;
+  /** Calendar reminders: a prompt before a timed calendar event starts. */
+  calendar_reminders: boolean;
+  /** How many minutes before the start the reminder appears (0 to 30). */
+  calendar_reminder_minutes: number;
+  /** Automatic processing also writes enhanced notes after its summary. Uses the notes and the transcript. */
+  processing_enhance: boolean;
   /** First-run setup was finished or skipped. */
   setup_done: boolean;
   /** Colour theme; "system" follows Windows. */
@@ -389,6 +406,22 @@ export type LibraryAnswer = {
   provider: string;
   model: string;
   meeting_ids: string[];
+  /** What the question was asked over; null for answers made from an explicit list. */
+  scope: LibraryAnswerScope | null;
+};
+export type LibraryAnswerScope = {
+  kind: LibraryScope["kind"];
+  id: string | null;
+  label: string;
+};
+/**
+ * The scope an Ask covers, resolved by the backend: `folder` and `tag` take `id`,
+ * `meetings` takes `meeting_ids` (1 to 20), `all` takes neither.
+ */
+export type LibraryScope = {
+  kind: "all" | "folder" | "tag" | "meetings";
+  id?: string;
+  meeting_ids?: string[];
 };
 /** `original_text` holds the engine's text once the user edited a segment. */
 export type SegmentMeta = { id: number; original_text: string | null };
@@ -549,6 +582,74 @@ export type SummaryVersion = {
   edited_from: number | null;
   /** The transcript or speaker names changed after this version was made. */
   stale: boolean;
+  /** "summary" is the usual summary; "enhanced" is enhanced notes made from the notes and transcript. */
+  kind: "summary" | "enhanced";
+  /** Enhanced notes only: the notes revision they were made from. */
+  notes_revision: number | null;
+  /** Enhanced notes only: the transcript segments their [sNNN] markers cite; empty otherwise. */
+  sources: SourceRef[];
+};
+/** A transcript segment an enhanced-notes marker cites. Times are null for untimed segments. */
+export type SourceRef = {
+  marker: string;
+  segment_id: number;
+  start_ms: number | null;
+  end_ms: number | null;
+};
+/** Enhanced notes as saved, with what the request had to leave out or drop. */
+export type EnhanceResult = SummaryVersion & {
+  /** Set when the transcript was trimmed to fit the request; null otherwise. */
+  notice: string | null;
+  /** Citations that named no transcript segment; they were removed from the text. */
+  dropped_markers: number;
+  /** Transcript lines left out of the request to fit its size limit. */
+  trimmed_segments: number;
+};
+
+/** A read-only calendar feed (a secret iCal address). The address is never returned, only `has_url`. */
+export type CalendarFeed = {
+  id: string;
+  label: string;
+  kind: "ics";
+  last_sync_at: string | null;
+  last_status: "never" | "ok" | "error";
+  last_error: string | null;
+  has_url: boolean;
+};
+/** Attendees come only from the feed; a missing name stays null. */
+export type CalendarAttendee = { name: string | null; email: string };
+/** One calendar occurrence inside the sync window. Times are UTC ISO text. */
+export type CalendarEvent = {
+  id: string;
+  feed_id: string;
+  title: string;
+  start_utc: string;
+  end_utc: string;
+  all_day: boolean;
+  location: string | null;
+  status: "confirmed" | "tentative" | "cancelled";
+  attendees: CalendarAttendee[];
+  /** The event has a known meeting link. The link itself is not returned. */
+  has_link: boolean;
+};
+/** A past meeting related to an event (same series or same title). Excerpt: at most 300 characters. */
+export type RelatedMeeting = {
+  meeting_id: string;
+  title: string;
+  started_at: string;
+  summary_excerpt: string | null;
+};
+export type MeetingPreparation = {
+  event: CalendarEvent;
+  related: RelatedMeeting[];
+};
+/** Emitted once per event while the reminder switch is on. */
+export type CalendarReminder = {
+  event_id: string;
+  title: string;
+  start_utc: string;
+  has_link: boolean;
+  related_count: number;
 };
 
 export const api = {
@@ -657,6 +758,23 @@ export const api = {
   /** Stores the automatic capture switch. Saving it starts nothing by itself. */
   saveAutoCapture: (enabled: boolean) =>
     invoke<Settings>("save_auto_capture", { enabled }),
+  /** Calendar feeds: read-only iCal subscriptions. The address goes to Windows Credential Manager. */
+  listCalendarFeeds: () => invoke<CalendarFeed[]>("list_calendar_feeds"),
+  addCalendarFeed: (label: string, url: string) =>
+    invoke<CalendarFeed>("add_calendar_feed", { label, url }),
+  removeCalendarFeed: (id: string) =>
+    invoke<void>("remove_calendar_feed", { id }),
+  syncCalendars: () => invoke<CalendarFeed[]>("sync_calendars"),
+  /** Events overlapping the range, UTC ISO text. Cancelled events are not returned. */
+  listCalendarEvents: (fromUtc: string, toUtc: string) =>
+    invoke<CalendarEvent[]>("list_calendar_events", { fromUtc, toUtc }),
+  /** Links a meeting to a calendar event, or clears the link with null. Returns the meeting. */
+  linkMeetingEvent: (meetingId: string, eventId: string | null) =>
+    invoke<Meeting>("link_meeting_event", { meetingId, eventId }),
+  meetingPreparation: (eventId: string) =>
+    invoke<MeetingPreparation>("meeting_preparation", { eventId }),
+  saveCalendarReminders: (enabled: boolean, minutes: number) =>
+    invoke<Settings>("save_calendar_reminders", { enabled, minutes }),
   /** Current automatic capture state; the lifecycle events only say it changed. */
   getCallLifecycle: () => invoke<CallLifecycle>("get_call_lifecycle"),
   lifecycleKeepRecording: (sessionId: string, expectedRevision: number) =>
@@ -727,6 +845,9 @@ export const api = {
   /** `template` is a built-in `SummaryTemplate` or a `CustomTemplate` id. */
   generateSummary: (id: string, template: string) =>
     invoke<void>("generate_summary", { id, template }),
+  /** Enhanced notes from the raw notes and the final transcript; the raw notes are never changed. */
+  enhanceNotes: (id: string, template: string | null) =>
+    invoke<EnhanceResult>("enhance_notes", { id, template }),
   saveSummaryInstructions: (instructions: string) =>
     invoke<Settings>("save_summary_instructions", { instructions }),
   saveSummaryTemplate: (
@@ -778,6 +899,12 @@ export const api = {
     listen<SttProgress>("stt_progress", (event) => callback(event.payload)),
   onMeetingUpdated: (callback: () => void) =>
     listen("meeting_updated", callback),
+  onCalendarChanged: (callback: () => void) =>
+    listen("calendar_changed", callback),
+  onCalendarReminder: (callback: (reminder: CalendarReminder) => void) =>
+    listen<CalendarReminder>("calendar_reminder", (event) =>
+      callback(event.payload),
+    ),
   onCloseRequested: (callback: () => void) => listen("request_close", callback),
   onAudioHealth: (callback: (health: AudioHealth) => void) =>
     listen<AudioHealth>("audio_health", (event) => callback(event.payload)),
@@ -823,9 +950,13 @@ export const api = {
    * thread, sending its earlier turns; null starts a new one. */
   askMeeting: (id: string, question: string, threadId: number | null) =>
     invoke<QuestionThread>("ask_meeting", { id, question, threadId }),
-  /** One request over 1 to 20 meetings, in this order; the answer is saved and returned. */
-  askLibrary: (meetingIds: string[], question: string) =>
-    invoke<LibraryAnswer>("ask_library", { meetingIds, question }),
+  /** One request over 1 to 20 meetings, in this order, or over a scope the backend resolves.
+   * Pass meetingIds null with a scope. The answer is saved and returned. */
+  askLibrary: (
+    meetingIds: string[] | null,
+    question: string,
+    scope?: LibraryScope,
+  ) => invoke<LibraryAnswer>("ask_library", { meetingIds, question, scope }),
   /** Saved library answers, newest first. */
   listLibraryAnswers: () => invoke<LibraryAnswer[]>("list_library_answers"),
   /** Returns the remaining answers. */
@@ -845,6 +976,20 @@ export const api = {
     invoke<string>("rename_meeting", { id, title }),
   setMeetingTags: (meetingId: string, tags: string[]) =>
     invoke<string[]>("set_meeting_tags", { meetingId, tags }),
+  /** Folders in saved order, each with its meeting count. */
+  listFolders: () => invoke<Folder[]>("list_folders"),
+  /** Each folder command returns the whole folder list after the change. */
+  createFolder: (name: string) => invoke<Folder[]>("create_folder", { name }),
+  renameFolder: (id: string, name: string) =>
+    invoke<Folder[]>("rename_folder", { id, name }),
+  /** Meetings in the folder are kept; they become unfiled. Refused while one is recording. */
+  deleteFolder: (id: string) => invoke<Folder[]>("delete_folder", { id }),
+  /** Null files the meeting under no folder. Returns the updated meeting. */
+  moveMeetingToFolder: (meetingId: string, folderId: string | null) =>
+    invoke<Meeting>("move_meeting_to_folder", { meetingId, folderId }),
+  /** Every folder id exactly once, in the new order. */
+  reorderFolders: (ids: string[]) =>
+    invoke<Folder[]>("reorder_folders", { ids }),
   saveExportOptions: (options: ExportOptions) =>
     invoke<Settings>("save_export_options", { options }),
   /** Probes known local server ports on 127.0.0.1 only; sends just GET /models. */
@@ -861,6 +1006,8 @@ export const api = {
   importPrevious: () => invoke<ImportResult>("import_previous"),
   saveProcessingDefault: (mode: string, summary: string | null) =>
     invoke<Settings>("save_processing_default", { mode, summary }),
+  saveProcessingEnhance: (enabled: boolean) =>
+    invoke<Settings>("save_processing_enhance", { enabled }),
   saveSummaryDefault: (template: string) =>
     invoke<Settings>("save_summary_default", { template }),
   saveDefaultDevices: (microphoneId: string, outputId: string) =>

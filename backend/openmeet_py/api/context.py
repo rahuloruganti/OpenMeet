@@ -39,6 +39,7 @@ class Context:
     hotkeys: Any = None  # hotkeys.HotkeyService
     detection: Any = None  # detection.DetectionService
     lifecycle: Any = None  # lifecycle.LifecycleController (automatic capture)
+    calendar: Any = None  # calendar.CalendarService (read-only ICS feeds, reminders)
     # Taskbar flash for the detection prompt; None when there is no window (tests, browser).
     attention: Optional[Callable[[], None]] = None
 

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import invoke, invoke_error
+from conftest import invoke, invoke_error, latest_migration
 from openmeet_py.api.errors import AppError
 from openmeet_py.api.import_commands import (
     REOPEN_FAILED,
@@ -25,7 +25,7 @@ from openmeet_py.infra.store import Store
 MIGRATIONS = Path(__file__).resolve().parents[1] / "openmeet_py" / "migrations"
 MEETING = "22222222-2222-2222-2222-222222222222"
 THROUGH = 27  # the previous app's schema: importing it has to migrate the copy to LATEST
-LATEST = 33
+LATEST = latest_migration()
 AUDIO_FILES = ("mic.wav", "system.wav", "mic.timing.jsonl")
 NO_DATA = "No previous OpenMeet data found."
 DESTINATION_USED = "This OpenMeet already has meetings."

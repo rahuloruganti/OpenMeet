@@ -8,9 +8,9 @@ import { Fragment, type ReactNode } from "react";
 // an image shows its alt text, so nothing navigates away or fetches a URL.
 //
 // Groups: 1 code, 2 bold, 3-4 image alt and URL, 5-6 link label and URL,
-// 7 a `[m:ss]` or `[M2]` reference token (rendered only with a renderer).
+// 7 a `[m:ss]`, `[M2]` or `[s123]` reference token (rendered only with a renderer).
 const inlinePattern =
-  /`([^`\n]+)`|\*\*([^*\n]+)\*\*|!\[([^\]\n]*)\]\(([^()\s]+)\)|\[([^\]\n]+)\]\(([^()\s]+)\)|(\[(?:M\d{1,2} )?(?:\d{1,2}:)?\d{1,3}:\d{2}\]|\[M\d{1,2}\])/g;
+  /`([^`\n]+)`|\*\*([^*\n]+)\*\*|!\[([^\]\n]*)\]\(([^()\s]+)\)|\[([^\]\n]+)\]\(([^()\s]+)\)|(\[(?:M\d{1,2} )?(?:\d{1,2}:)?\d{1,3}:\d{2}\]|\[M\d{1,2}\]|\[s\d{1,12}\])/g;
 
 /** Renders a `[m:ss]`, `[M2 m:ss]` or `[M2]` token, e.g. as a validated link; absent, tokens stay text. */
 export type ReferenceRenderer = (token: string) => ReactNode;

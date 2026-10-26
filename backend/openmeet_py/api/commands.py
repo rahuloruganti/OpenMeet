@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from openmeet_py.api import auto_capture, import_commands, lifecycle, live_commands, reads, recording
+from openmeet_py.api import calendar as calendar_feeds
 from openmeet_py.api.context import (
     Context,
     bool_arg,
@@ -28,7 +29,7 @@ from openmeet_py.api.context import (
 )
 from openmeet_py.api.errors import AppError, not_available
 from openmeet_py.api.reads import EXPORT_FORMATS, read_settings
-from openmeet_py.domain import connections, processing, questions, summaries, tasks, transcript_edits
+from openmeet_py.domain import connections, folders, processing, questions, summaries, tasks, transcript_edits
 from openmeet_py.domain.exporter import write_snapshot
 from openmeet_py.infra.store import transaction
 from openmeet_py.local_ai import service as local_ai
@@ -331,6 +332,13 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "export_meeting": export_meeting,
     "list_summaries": list_summaries,
     "list_library_answers": list_library_answers,
+    # Folders: one optional folder per meeting; the sidebar groups by folder
+    "list_folders": folders.list_folders,
+    "create_folder": folders.create_folder,
+    "rename_folder": folders.rename_folder,
+    "delete_folder": folders.delete_folder,
+    "move_meeting_to_folder": folders.move_meeting,
+    "reorder_folders": folders.reorder_folders,
     # Phase 3: devices, recording and audio files
     "get_recording_state": recording.get_recording_state,
     "list_audio_devices": recording.list_audio_devices,
@@ -350,6 +358,15 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "save_detection": detection.save_detection,
     "set_detection_ignored": detection.set_detection_ignored,
     "save_auto_capture": auto_capture.save_auto_capture,
+    # Calendar context: read-only ICS feeds, meeting-to-event links, preparation and reminders
+    "list_calendar_feeds": calendar_feeds.list_calendar_feeds,
+    "add_calendar_feed": calendar_feeds.add_calendar_feed,
+    "remove_calendar_feed": calendar_feeds.remove_calendar_feed,
+    "sync_calendars": calendar_feeds.sync_calendars,
+    "list_calendar_events": calendar_feeds.list_calendar_events,
+    "link_meeting_event": calendar_feeds.link_meeting_event,
+    "meeting_preparation": calendar_feeds.meeting_preparation,
+    "save_calendar_reminders": calendar_feeds.save_calendar_reminders,
     "get_call_lifecycle": lifecycle.get_call_lifecycle,
     "lifecycle_keep_recording": lifecycle.lifecycle_keep_recording,
     "lifecycle_end_now": lifecycle.lifecycle_end_now,
@@ -405,12 +422,14 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "list_api_connection_models": connections.list_api_connection_models,
     "test_api_connection": connections.test_api_connection,
     "generate_summary": summaries.generate_summary,
+    "enhance_notes": summaries.enhance_notes,
     "save_summary_edit": summaries.save_summary_edit,
     "save_summary_instructions": summaries.save_summary_instructions,
     "save_summary_template": summaries.save_summary_template,
     "delete_summary_template": summaries.delete_summary_template,
     "save_summary_default": summaries.save_summary_default,
     "save_processing_default": summaries.save_processing_default,
+    "save_processing_enhance": summaries.save_processing_enhance,
     # Live transcript: its switch, its engine and its one explicit streaming model download
     "live_transcript": live_commands.live_transcript,
     "save_live_settings": live_commands.save_live_settings,

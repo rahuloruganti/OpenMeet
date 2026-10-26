@@ -13,12 +13,18 @@ import {
   type SpeakerNames,
   type MeetingDetail,
   type Settings,
+  type SourceRef,
   type SummaryVersion,
 } from "../../shared/api/api";
 import { builtinTemplates as templates } from "../../entities/processing";
 import { tabTarget } from "../../shared/lib/tabs";
 import { renderMarkdown } from "../../shared/lib/markdown";
 import { ActionItems } from "../../features/action-items";
+import {
+  EnhanceNotesButton,
+  isSourceMarker,
+  sourceChip,
+} from "../../features/enhanced-notes";
 import { RecipePicker } from "../../features/recipes";
 import { RewriteSelection } from "../../features/rewrite-selection";
 import {
@@ -27,7 +33,9 @@ import {
   type OpenSettings,
   type SettingsSection,
 } from "../../shared/ui/settings-link";
+import { CalendarEventRow } from "../../features/calendar";
 import { MeetingTagsForm } from "../../features/meeting-tags";
+import { MoveToFolder } from "../../features/folders";
 import { TranscriptVersions } from "../../features/transcript-versions";
 import {
   formatBytes,
@@ -183,6 +191,8 @@ type Props = {
   onTranscribe: () => void;
   /** `template` is a built-in id or a custom template id. */
   onGenerate: (template: string) => void;
+  /** Enhanced notes from the raw notes and the final transcript; the raw notes are never changed. */
+  onEnhance: (template: string) => void;
   /** Stored summaries, newest first. */
   versions: SummaryVersion[];
   customTemplates: CustomTemplate[];
@@ -234,6 +244,8 @@ type Props = {
   onToggleInspector?: () => void;
   /** Home actions, used when there is no meeting to show. */
   onStartRecording?: (trigger: HTMLButtonElement) => void;
+  /** Opens another meeting, such as an earlier meeting in the same calendar series. */
+  onOpenMeeting?: (meetingId: string) => void;
   onNewNote?: () => void;
   /** Sidebar state for the breadcrumb toggle. */
   sidebarOpen?: boolean;
@@ -550,21 +562,39 @@ export function MeetingWorkspace(props: Props) {
   const focusActions = () => actions.current?.querySelector("summary")?.focus();
   // Viewing an older version is display-only; export keeps using the latest.
   const shown = versions.find((version) => version.id === versionId);
-  const summary = shown?.markdown ?? selected.summary;
-  const provider = shown?.provider ?? selected.summary_provider;
-  const model = shown?.model ?? selected.summary_model;
-  const current = shown ?? versions[0];
+  // The plain summary stream and the enhanced notes are separate blocks, each with its own newest
+  // version, label, freshness line and edit. Export and the meeting detail use the plain summary only.
+  const summaries = versions.filter((version) => version.kind === "summary");
+  const current = shown?.kind === "summary" ? shown : summaries[0];
+  const summary = current?.markdown ?? selected.summary;
+  const provider = current?.provider ?? selected.summary_provider;
+  const model = current?.model ?? selected.summary_model;
   const edited = current
     ? current.edited_from !== null
     : selected.summary_edited;
+  const stale = current ? current.stale : selected.summary_stale;
+  const enhancedCurrent = versions.find(
+    (version) => version.kind === "enhanced",
+  );
+  const enhancedEdited = enhancedCurrent?.edited_from != null;
   const versionName = (id: number | null) => {
-    const index = versions.findIndex((version) => version.id === id);
+    const index = summaries.findIndex((version) => version.id === id);
     return index < 0
       ? "an earlier version"
-      : `version ${versions.length - index}`;
+      : `version ${summaries.length - index}`;
   };
   const draft = props.summaryDraft;
-  const stale = current ? current.stale : selected.summary_stale;
+  // A draft belongs to one block: the kind of the version it edits decides which block shows it.
+  const draftKind = (id: number) =>
+    versions.find((version) => version.id === id)?.kind ?? "summary";
+  const summaryDraft =
+    draft !== undefined && draftKind(draft.baseId) === "summary"
+      ? draft
+      : undefined;
+  const enhancedDraft =
+    draft !== undefined && draftKind(draft.baseId) === "enhanced"
+      ? draft
+      : undefined;
   /** A `[m:ss]` citation becomes a link only when a stored timed segment starts in that second. */
   const reference = (token: string) => {
     const ms = parseTimestamp(token);
@@ -593,6 +623,22 @@ export function MeetingWorkspace(props: Props) {
       </button>
     );
   };
+  // A source chip opens its cited segment the way a timestamp citation does.
+  const openSource = (source: SourceRef) => {
+    const index = selected.segment_meta.findIndex(
+      (meta) => meta.id === source.segment_id,
+    );
+    const target = index < 0 ? null : citationTarget(selected, [index]);
+    if (!target) return;
+    revealSegment(target.index);
+    setHighlighted(target.highlighted);
+    setPendingReference(target.pending);
+    props.onTab("transcript");
+  };
+  const chip = sourceChip(enhancedCurrent?.sources ?? [], openSource);
+  // Enhanced notes cite [sNNN] segments and may still carry a timestamp citation.
+  const noteReference = (token: string) =>
+    isSourceMarker(token) ? chip(token) : reference(token);
   const insertTimestamp = async () => {
     const offset = await props.getRecordingOffset();
     const area = editor.current;
@@ -624,14 +670,18 @@ export function MeetingWorkspace(props: Props) {
     }
     play(playable.some((t) => t.kind === "mic") ? "mic" : playable[0].kind, ms);
   };
+  const origin = edited
+    ? `Edited by you, from ${versionName(current?.edited_from ?? null)}`
+    : `Generated by ${model ?? "a model"} via ${provider ?? "a connection"}`;
   const summaryLabel =
     meeting.source === "fixture" && provider === "fixture"
       ? "Sample summary"
       : summary
-        ? edited
-          ? `Edited by you, from ${versionName(current?.edited_from ?? null)}`
-          : `Generated by ${model ?? "a model"} via ${provider ?? "a connection"}`
+        ? origin
         : "";
+  const enhancedLabel = enhancedCurrent
+    ? `Enhanced notes · ${enhancedEdited ? "edited by you" : `from ${enhancedCurrent.model ?? "a model"} via ${enhancedCurrent.provider ?? "a connection"}`}`
+    : "Enhanced notes";
   const copy = async (text: string, what: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -813,6 +863,11 @@ export function MeetingWorkspace(props: Props) {
             >
               Rename
             </button>
+            <MoveToFolder
+              meetingId={selected.meeting.id}
+              folderId={selected.meeting.folder_id}
+              disabled={disabled}
+            />
             <button
               aria-label="Export Markdown"
               disabled={disabled}
@@ -1176,33 +1231,33 @@ export function MeetingWorkspace(props: Props) {
                     )}
                   </div>
                 )}
-                {versions.length > 1 && (
+                {summaries.length > 1 && (
                   <label className="mw-inline-label">
                     Version
                     <select
-                      value={shown?.id ?? versions[0].id}
+                      value={current?.id}
                       disabled={draft !== undefined}
                       onChange={(event) =>
                         setVersionId(Number(event.target.value))
                       }
                     >
-                      {versions.map((version, index) => (
+                      {summaries.map((version, index) => (
                         <option key={version.id} value={version.id}>
-                          {`${versions.length - index} · ${version.model} · ${templateLabel(version.template, props.customTemplates)}${version.edited_from !== null ? " · edited" : ""}`}
+                          {`${summaries.length - index} · ${version.model} · ${templateLabel(version.template, props.customTemplates)}${version.edited_from !== null ? " · edited" : ""}`}
                         </option>
                       ))}
                     </select>
                   </label>
                 )}
-                {draft ? (
+                {summaryDraft ? (
                   <div className="summary-edit">
                     <textarea
                       aria-label="Edit summary"
-                      value={draft.text}
+                      value={summaryDraft.text}
                       disabled={disabled}
                       onChange={(event) =>
                         props.onSummaryDraft({
-                          ...draft,
+                          ...summaryDraft,
                           text: event.target.value,
                         })
                       }
@@ -1210,10 +1265,10 @@ export function MeetingWorkspace(props: Props) {
                     <div className="mw-card-row">
                       <button
                         className="primary"
-                        disabled={disabled || !draft.text.trim()}
+                        disabled={disabled || !summaryDraft.text.trim()}
                         onClick={() =>
                           void props
-                            .onSaveSummaryEdit(draft)
+                            .onSaveSummaryEdit(summaryDraft)
                             .then((saved) => saved && setVersionId(null))
                         }
                       >
@@ -1244,7 +1299,8 @@ export function MeetingWorkspace(props: Props) {
                         current &&
                         props.onSummaryDraft({
                           baseId: current.id,
-                          latestId: versions[0].id,
+                          // Conflicts are checked per kind: the newest plain summary is the one to match.
+                          latestId: summaries[0]?.id ?? current.id,
                           text: current.markdown,
                         })
                       }
@@ -1264,6 +1320,89 @@ export function MeetingWorkspace(props: Props) {
                     AI-generated. Check it against the transcript.
                   </p>
                 )}
+                <section className="mw-enhanced" aria-label="Enhanced notes">
+                  <div className="mw-summary-head">
+                    <span className="mw-summary-label">{enhancedLabel}</span>
+                    <span className="mw-gap" />
+                    <EnhanceNotesButton
+                      template={template}
+                      label={enhancedCurrent ? "Regenerate" : "Enhance notes"}
+                      hasTranscript={selected.segments.length > 0}
+                      hasNotes={props.notes.trim() !== ""}
+                      modelReady={props.llmBlocked === null}
+                      recording={props.live}
+                      busy={job === "enhance"}
+                      onEnhance={props.onEnhance}
+                    />
+                  </div>
+                  {enhancedCurrent && enhancedCurrent.stale && (
+                    <p className="mw-hint" role="status">
+                      Notes or transcript changed after these enhanced notes.
+                    </p>
+                  )}
+                  {enhancedDraft ? (
+                    <div className="summary-edit">
+                      <textarea
+                        aria-label="Edit enhanced notes"
+                        value={enhancedDraft.text}
+                        disabled={disabled}
+                        onChange={(event) =>
+                          props.onSummaryDraft({
+                            ...enhancedDraft,
+                            text: event.target.value,
+                          })
+                        }
+                      />
+                      <div className="mw-card-row">
+                        <button
+                          className="primary"
+                          disabled={disabled || !enhancedDraft.text.trim()}
+                          onClick={() =>
+                            void props
+                              .onSaveSummaryEdit(enhancedDraft)
+                              .then((saved) => saved && setVersionId(null))
+                          }
+                        >
+                          Save edited enhanced notes
+                        </button>
+                        <button
+                          disabled={disabled}
+                          onClick={() => props.onSummaryDraft(null)}
+                        >
+                          Discard edit
+                        </button>
+                      </div>
+                    </div>
+                  ) : enhancedCurrent ? (
+                    <>
+                      <div className="summary-body">
+                        {renderMarkdown(
+                          enhancedCurrent.markdown,
+                          noteReference,
+                        )}
+                      </div>
+                      {!draft && (
+                        <div className="mw-card-row">
+                          <button
+                            disabled={disabled}
+                            onClick={() =>
+                              props.onSummaryDraft({
+                                baseId: enhancedCurrent.id,
+                                latestId: enhancedCurrent.id,
+                                text: enhancedCurrent.markdown,
+                              })
+                            }
+                          >
+                            Edit enhanced notes
+                          </button>
+                        </div>
+                      )}
+                      <p className="mw-hint">
+                        AI-enhanced from your notes. Check the cited segments.
+                      </p>
+                    </>
+                  ) : null}
+                </section>
                 {threads.length > 0 && (
                   <div className="mw-card-row">
                     <select
@@ -1418,6 +1557,17 @@ export function MeetingWorkspace(props: Props) {
                     tags={meeting.tags}
                     disabled={disabled}
                     onTags={(tags) => props.onTags(meeting.id, tags)}
+                  />
+                </dd>
+                <dt>Calendar event</dt>
+                <dd>
+                  <CalendarEventRow
+                    key={`${meeting.id}:${meeting.calendar_event_id ?? ""}`}
+                    meetingId={meeting.id}
+                    startedAt={meeting.started_at}
+                    eventId={meeting.calendar_event_id}
+                    disabled={disabled}
+                    onOpenMeeting={props.onOpenMeeting}
                   />
                 </dd>
                 <dt>Notes</dt>

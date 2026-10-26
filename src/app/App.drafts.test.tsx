@@ -34,6 +34,9 @@ const summaryVersion = {
   markdown: "## Summary\nGenerated.",
   edited_from: null,
   stale: false,
+  kind: "summary" as const,
+  notes_revision: null,
+  sources: [],
 };
 
 /** Opens the Summary tab and starts an edit of the only version with the given text. */

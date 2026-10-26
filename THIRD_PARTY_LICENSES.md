@@ -48,6 +48,10 @@ Labels for Python packages were read from installed package metadata (`METADATA`
 | `clr_loader` | 0.3.1 | **unverified** — the installed metadata carries no license field | via `pythonnet` |
 | `proxy_tools` | 0.1.0 | MIT | via `pywebview` |
 | `packaging` | 26.3 | Apache-2.0 OR BSD-2-Clause | via `pywhispercpp` |
+| `icalendar` | 6.3.2 | BSD-2-Clause | Calendar feed parsing (ICS) |
+| `python-dateutil` | 2.9.0.post0 | Apache-2.0 OR BSD-3-Clause (metadata: "Dual License") | Recurrence rules (RRULE/RDATE/EXDATE) |
+| `six` | 1.17.0 | MIT | via `python-dateutil` |
+| `tzdata` | 2026.5 | Apache-2.0 (IANA time zone data is public domain) | Time zone data for `zoneinfo` on Windows |
 
 ## Native components inside those wheels
 

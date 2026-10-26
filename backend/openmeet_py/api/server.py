@@ -25,6 +25,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
 from openmeet_py.api import live_commands
+from openmeet_py.api.calendar import CalendarService
 from openmeet_py.api.commands import Context, dispatch
 from openmeet_py.api.errors import AppError
 from openmeet_py.api.lifecycle import LifecycleController
@@ -119,6 +120,8 @@ def create_app(
     ctx.attention = lambda: desktop.flash_window(TITLE)
     # Subscribes to detection and listens to the recorder. Its thread starts in the lifespan below.
     ctx.lifecycle = LifecycleController(ctx)
+    # Read-only calendar feeds: the thread starts in the lifespan below and stops before the database closes.
+    ctx.calendar = CalendarService(ctx)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -130,6 +133,7 @@ def create_app(
             hub.emit("backend_error", warning)  # no client yet; get_startup_warning returns it too
         ctx.detection.start()
         ctx.lifecycle.start()
+        ctx.calendar.start()
         yield
         # Shutdown order: refuse processing work, stop the call lifecycle (it never stops a recording
         # itself), finalize the recording (its stop marks the stage), then stop the poll and hotkey
@@ -138,6 +142,7 @@ def create_app(
         ctx.processing.quit()
         ctx.lifecycle.stop()
         recorder.shutdown()
+        ctx.calendar.stop()
         ctx.detection.stop()
         ctx.hotkeys.stop()
         ctx.processing.join()

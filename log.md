@@ -945,3 +945,15 @@ Known limitation: per-block live timing metadata still grows with recording leng
 **Checks that ran:** backend pytest 696 passed (571 before), vitest 510 passed in 44 files (491 before), tsc, ESLint, Prettier on code, Vite production build, and `openmeet_py.app --smoke` against a scratch data folder. No audio device was opened, no model was downloaded, no provider was called.
 
 **Unverified or deferred:** real call-app detection timing, false positives, back-to-back calls (Split is implemented in the reducer but not exposed in the UI), live-transcript disclosure on the automatic path, compact companion window, calendar, folders, templates and the remaining parity items from the plan. Hardware qualification remains open.
+
+## Stage 3: calendar context, folders and scoped Ask, enhanced notes (2026-10-26)
+
+**Prompt:** "start stage 3" of the approved Granola-informed plan (context and knowledge parity).
+
+**Implemented:** read-only calendar feeds by iCalendar address (Google secret iCal address, Outlook published ICS), address kept in Windows Credential Manager only; recurrence, time zones (tzdata), overrides incl. THISANDFUTURE, cancellations, all-day and floating times; 15-minute sync with a total download deadline and a 5 MB cap; start reminders (queue, 2-minute pending link that expires); meeting-to-event linking in the inspector; related earlier meetings; automatic captures take the running event's title and link to it (migration 034). Folders with sidebar grouping and Move to folder; Ask across meetings scoped to all, a folder, a tag or selected meetings, resolved server-side and retrieved through the FTS5 table with quoted MATCH tokens (migration 035). Enhanced notes: rough notes plus the final transcript go to the chosen model; the result keeps verifiable segment citations rendered as clickable chips, invalid or unseen citations are dropped, raw notes are never modified; the summary is committed before the enhancement runs so a failed enhancement never discards a paid summary; `processing_enhance` is off by default (migration 036). Speaker attribution was researched only (report in scratch): Me/Them from the two tracks first, calendar attendees as manual candidates, UI Automation as a future opt-in experiment.
+
+**Review:** an independent read-only review found four blockers (unreadable feed stalling all syncs and reminders, unbounded RRULE expansion, per-read instead of total HTTP timeout, enhancement failure discarding the summary) and nine should-fix items; all were fixed with tests first.
+
+**Checks that ran:** backend pytest 838 passed (696 before), vitest 578 passed (510 before), tsc, ESLint, Prettier on code, Vite production build, `openmeet_py.app --smoke`. No real calendar, model, provider, device or recording was used.
+
+**Unverified or deferred:** no live calendar feed, model or desktop walkthrough; Google/Microsoft OAuth calendars (needs client registrations); command-palette entries for folders; per-note regenerate; local embeddings (evaluated, not built); compact companion window; Windows hardware trials.

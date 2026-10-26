@@ -10,6 +10,7 @@ import {
   statusWords,
   tagChoices,
 } from "../../entities/meeting";
+import { FolderManager, useFolders } from "../../features/folders";
 import { BrandMark } from "../../shared/ui/brand-mark";
 import "./meeting-sidebar.css";
 
@@ -19,6 +20,10 @@ const hitLabels: Record<SearchHit["kind"], string> = {
   transcript: "Transcript",
   summary: "Summary",
 };
+
+type Section = { key: string; label: string; meetings: Meeting[] };
+
+const UNFILED = "unfiled";
 
 type Props = {
   open: boolean;
@@ -45,6 +50,14 @@ export function MeetingSidebar(props: Props) {
   const { meetings, search, selectedId, disabled } = props;
   const needle = foldText(search.trim());
   const [tag, setTag] = useState("");
+  const [managing, setManaging] = useState(false);
+  // Which folder sections are collapsed. Component state only; nothing is stored.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // Folder names and counts follow the meeting list, which changes whenever a meeting is filed.
+  const folderState = useFolders(
+    meetings.map((m) => `${m.id}:${m.folder_id ?? ""}:${m.title}`).join("|"),
+  );
+  const folders = folderState.folders;
   const tags = tagChoices(meetings);
   // A tag that no meeting has any more stops filtering instead of hiding everything.
   const active =
@@ -69,6 +82,72 @@ export function MeetingSidebar(props: Props) {
     props.audioBytes !== null && props.audioBytes > 0
       ? `On this device · ${formatBytes(props.audioBytes)} audio`
       : "On this device";
+  const filtering = needle !== "" || active !== "";
+  // One section per folder in saved order, then the unfiled meetings last. While the search or
+  // tag filter is on, a section it empties is hidden.
+  const sections: Section[] = folders.map((folder) => ({
+    key: folder.id,
+    label: folder.name,
+    meetings: visible.filter((meeting) => meeting.folder_id === folder.id),
+  }));
+  sections.push({
+    key: UNFILED,
+    label: "No folder",
+    meetings: visible.filter(
+      (meeting) => !folders.some((folder) => folder.id === meeting.folder_id),
+    ),
+  });
+  const shownSections = sections.filter(
+    (section) => !filtering || section.meetings.length > 0,
+  );
+
+  const toggle = (key: string) =>
+    setCollapsed((state) => ({ ...state, [key]: !state[key] }));
+
+  const renderRow = (meeting: Meeting, label: string) => (
+    <li key={meeting.id}>
+      <button
+        className="sb-row"
+        disabled={disabled}
+        title={meeting.title}
+        aria-current={selectedId === meeting.id ? "true" : undefined}
+        onClick={() => props.onOpenMeeting(meeting.id)}
+      >
+        <i>{meeting.title}</i>
+        <time dateTime={meeting.started_at}>
+          {/* Same-day meetings differ by start time; older ones by date. */}
+          {label === "Earlier"
+            ? formatShortDate(meeting.started_at)
+            : formatTime(meeting.started_at)}
+        </time>
+        <em>
+          {sourceWords[meeting.source]}
+          {meeting.status === "stopped"
+            ? ""
+            : ` · ${statusWords[meeting.status]}`}
+          {meeting.tags.length > 0 && (
+            <span className="meeting-tags" title={meeting.tags.join(", ")}>
+              {` · ${meeting.tags.slice(0, 3).join(", ")}${meeting.tags.length > 3 ? ` +${meeting.tags.length - 3}` : ""}`}
+            </span>
+          )}
+        </em>
+      </button>
+    </li>
+  );
+
+  const renderDateGroups = (list: Meeting[], nested: boolean) =>
+    groupMeetings(list).map((group) => (
+      <section key={group.label} aria-label={group.label}>
+        {nested ? (
+          <h4 className="sb-group">{group.label}</h4>
+        ) : (
+          <h3 className="sb-group">{group.label}</h3>
+        )}
+        <ul className="meeting-list">
+          {group.meetings.map((meeting) => renderRow(meeting, group.label))}
+        </ul>
+      </section>
+    ));
 
   return (
     <aside
@@ -133,49 +212,49 @@ export function MeetingSidebar(props: Props) {
         )}
       </div>
       <div className="sb-list">
+        {managing && (
+          <div className="sb-manage">
+            <FolderManager
+              folders={folders}
+              disabled={disabled}
+              onChanged={() => void folderState.reload()}
+            />
+          </div>
+        )}
         {meetings.length === 0 && <p className="sb-none">No meetings yet</p>}
-        {groupMeetings(visible).map((group) => (
-          <section key={group.label} aria-label={group.label}>
-            <h3 className="sb-group">{group.label}</h3>
-            <ul className="meeting-list">
-              {group.meetings.map((meeting) => (
-                <li key={meeting.id}>
-                  <button
-                    className="sb-row"
-                    disabled={disabled}
-                    title={meeting.title}
-                    aria-current={
-                      selectedId === meeting.id ? "true" : undefined
-                    }
-                    onClick={() => props.onOpenMeeting(meeting.id)}
-                  >
-                    <i>{meeting.title}</i>
-                    <time dateTime={meeting.started_at}>
-                      {/* Same-day meetings differ by start time; older ones by date. */}
-                      {group.label === "Earlier"
-                        ? formatShortDate(meeting.started_at)
-                        : formatTime(meeting.started_at)}
-                    </time>
-                    <em>
-                      {sourceWords[meeting.source]}
-                      {meeting.status === "stopped"
-                        ? ""
-                        : ` · ${statusWords[meeting.status]}`}
-                      {meeting.tags.length > 0 && (
-                        <span
-                          className="meeting-tags"
-                          title={meeting.tags.join(", ")}
-                        >
-                          {` · ${meeting.tags.slice(0, 3).join(", ")}${meeting.tags.length > 3 ? ` +${meeting.tags.length - 3}` : ""}`}
-                        </span>
-                      )}
-                    </em>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+        {folders.length === 0
+          ? renderDateGroups(visible, false)
+          : shownSections.map((section) => {
+              const isCollapsed = collapsed[section.key] === true;
+              return (
+                <section
+                  key={section.key}
+                  aria-label={section.label}
+                  className="sb-folder"
+                >
+                  <h3 className="sb-group sb-fold">
+                    <button
+                      type="button"
+                      className="sb-fold-toggle"
+                      aria-expanded={!isCollapsed}
+                      onClick={() => toggle(section.key)}
+                    >
+                      <span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>{" "}
+                      {section.label}{" "}
+                      <span className="sb-count">
+                        {section.meetings.length}
+                      </span>
+                    </button>
+                  </h3>
+                  {!isCollapsed &&
+                    (section.meetings.length === 0 ? (
+                      <p className="sb-none">No meetings</p>
+                    ) : (
+                      renderDateGroups(section.meetings, true)
+                    ))}
+                </section>
+              );
+            })}
         {matches.length > 0 && (
           <section aria-label="Matches in notes and transcripts">
             <h3 className="sb-group">Matches</h3>
@@ -204,6 +283,25 @@ export function MeetingSidebar(props: Props) {
           )}
       </div>
       <div className="sb-foot">
+        <button
+          className="sb-navrow"
+          aria-expanded={managing}
+          onClick={() => setManaging((open) => !open)}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="14"
+            height="14"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          Folders
+        </button>
         {/* Visible "Ask"; the full name stays the accessible one. */}
         <button
           className="sb-navrow"

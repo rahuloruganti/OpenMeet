@@ -23,7 +23,9 @@ export const sample: MeetingDetail = {
     status: "stopped",
     source: "fixture",
     capture_error: null,
+    calendar_event_id: null,
     tags: [],
+    folder_id: null,
   },
   user_markdown: "Original notes",
   notes_revision: 0,
@@ -137,6 +139,9 @@ export const initialSettings: Settings = {
   detection_enabled: false,
   detection_ignored: [],
   auto_capture: false,
+  processing_enhance: true,
+  calendar_reminders: true,
+  calendar_reminder_minutes: 2,
   setup_done: true,
   theme: "system",
   inspector_open: true,
@@ -282,6 +287,7 @@ export function installDefaultMocks() {
   vi.mocked(api.getSessionProcessing).mockResolvedValue(null);
   vi.mocked(api.listMeetings).mockResolvedValue([sample.meeting]);
   vi.mocked(api.listLibraryAnswers).mockResolvedValue([]);
+  vi.mocked(api.listFolders).mockResolvedValue([]);
   vi.mocked(api.saveProcessingDefault).mockImplementation(
     async (mode, summary) => ({
       ...initialSettings,
@@ -360,6 +366,16 @@ export function installDefaultMocks() {
   vi.mocked(api.sttStatus).mockResolvedValue(notInstalled);
   vi.mocked(api.audioUsage).mockResolvedValue(0);
   vi.mocked(api.detectionSupported).mockResolvedValue(true);
+  // No calendar is configured by default; the app works without one.
+  vi.mocked(api.listCalendarFeeds).mockResolvedValue([]);
+  vi.mocked(api.listCalendarEvents).mockResolvedValue([]);
+  vi.mocked(api.saveCalendarReminders).mockImplementation(
+    async (enabled, minutes) => ({
+      ...initialSettings,
+      calendar_reminders: enabled,
+      calendar_reminder_minutes: minutes,
+    }),
+  );
   vi.mocked(api.getCallLifecycle).mockResolvedValue(idleLifecycle);
   vi.mocked(api.requestAttention).mockResolvedValue();
   vi.mocked(api.searchMeetings).mockResolvedValue([]);
@@ -377,6 +393,8 @@ export function installDefaultMocks() {
     api.onLiveTranscript,
     api.onLiveState,
     api.onLiveModelProgress,
+    api.onCalendarChanged,
+    api.onCalendarReminder,
   ]) {
     vi.mocked(method).mockResolvedValue(vi.fn());
   }

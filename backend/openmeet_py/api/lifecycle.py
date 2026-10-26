@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from openmeet_py.api import reads
@@ -185,6 +186,9 @@ class LifecycleController:
             settings = read_settings(self.ctx.store.db)
         # Devices come from the saved Settings only. A missing or invalid one fails the start; nothing retries.
         title = f"{display_name(action.app_id)} call"
+        event = self._current_calendar_event()
+        if event is not None:
+            title = event["title"]
         self._starting = action.session_id
         try:
             self.ctx.recorder.start(
@@ -200,6 +204,22 @@ class LifecycleController:
             self._start_failed(action, "internal", INTERNAL_START)
         finally:
             self._starting = None
+        if event is not None:
+            meeting_id = self.ctx.recorder.state()["meeting_id"]
+            if meeting_id:
+                with self.ctx.store.lock:
+                    self.ctx.store.db.execute(
+                        "UPDATE meetings SET calendar_event_id = ?2 WHERE id = ?1", (meeting_id, event["id"])
+                    )
+                    self.ctx.store.db.commit()
+
+    def _current_calendar_event(self) -> Optional[dict[str, Any]]:
+        """The calendar event running now, if a feed is configured; the title then names the meeting."""
+        calendar = getattr(self.ctx, "calendar", None)
+        if calendar is None:
+            return None
+        moment = datetime.fromtimestamp(self.wall(), timezone.utc)
+        return calendar.current_event(moment)
 
     def _start_failed(self, action: L.StartAuto, code: str, message: str) -> None:
         with self._lock:

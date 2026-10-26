@@ -396,6 +396,7 @@ describe("transcript and audio", () => {
         provider: "https://provider.example/v1",
         model: "test-chat",
         meeting_ids: ["rec"],
+        scope: null,
       });
       vi.mocked(api.audioPosition).mockResolvedValue(2250);
       vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
@@ -419,7 +420,10 @@ describe("transcript and audio", () => {
       await userEvent.click(screen.getByLabelText(/Recorded sync/));
       await userEvent.type(screen.getByLabelText("Question"), "What moved?");
       await userEvent.click(screen.getByRole("button", { name: "Ask" }));
-      expect(api.askLibrary).toHaveBeenCalledWith(["rec"], "What moved?");
+      expect(api.askLibrary).toHaveBeenCalledWith(null, "What moved?", {
+        kind: "meetings",
+        meeting_ids: ["rec"],
+      });
       expect(await screen.findByText("(unverified)")).toBeTruthy();
       await userEvent.click(
         await screen.findByRole("button", {
@@ -449,6 +453,7 @@ describe("transcript and audio", () => {
           provider: "https://provider.example/v1",
           model: "test-chat",
           meeting_ids: ["rec"],
+          scope: null,
         },
       ]);
       await waitFor(() =>

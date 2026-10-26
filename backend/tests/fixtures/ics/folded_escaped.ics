@@ -1,0 +1,18 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//OpenMeet fixtures//EN
+BEGIN:VEVENT
+UID:folded@example.test
+DTSTAMP:20261001T000000Z
+DTSTART:20261021T120000Z
+DTEND:20261021T130000Z
+SUMMARY:Fictional roadmap\, review
+DESCRIPTION:Agenda: budget\nnotes and a long folded line that continues 
+ here on the next line.
+LOCATION:Fictional room 4
+ATTENDEE;CN=Ada Example;ROLE=REQ-PARTICIPANT:mailto:ada@example.test
+ATTENDEE;ROLE=OPT-PARTICIPANT:mailto:unnamed@example.test
+X-GOOGLE-CONFERENCE:https://meet.google.com/fic-tion-al
+STATUS:TENTATIVE
+END:VEVENT
+END:VCALENDAR

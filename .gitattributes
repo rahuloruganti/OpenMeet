@@ -1,2 +1,4 @@
 # Keep LF everywhere so Prettier and the Python tooling agree on every OS (Windows CI checks out CRLF otherwise).
 * text=auto eol=lf
+# ICS fixtures keep their bytes: the format is CRLF and one fixture tests a BOM plus CRLF input.
+backend/tests/fixtures/ics/*.ics -text

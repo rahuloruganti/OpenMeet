@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import invoke, invoke_error
+from conftest import invoke, invoke_error, latest_migration
 from openmeet_py.infra.store import DB_FILE, Store
 from test_live_wiring import database_through
 
@@ -84,7 +84,7 @@ def insert_session(
 def test_migration_033_upgrades_a_populated_database_and_keeps_its_rows(tmp_path: Path) -> None:
     store = upgraded(tmp_path)
     try:
-        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 33
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == latest_migration()
         assert store.db.execute("SELECT auto_capture FROM settings WHERE id = 1").fetchone()[0] == 0
         assert store.db.execute(
             "SELECT user_markdown FROM notes WHERE meeting_id = ?1", (MEETING,)

@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import {
   api,
   type LibraryAnswer,
+  type Folder,
   type Meeting,
   type MeetingDetail,
 } from "../../shared/api/api";
@@ -17,10 +18,16 @@ vi.mock("../../shared/api/api", async (original) => ({
     getMeeting: vi.fn(),
     listLibraryAnswers: vi.fn(),
     deleteLibraryAnswer: vi.fn(),
+    listFolders: vi.fn(),
   },
 }));
 
-const make = (id: string, title: string, tags: string[]): Meeting => ({
+const make = (
+  id: string,
+  title: string,
+  tags: string[],
+  folderId: string | null = null,
+): Meeting => ({
   id,
   title,
   started_at: "2026-10-09T10:00:00Z",
@@ -28,12 +35,18 @@ const make = (id: string, title: string, tags: string[]): Meeting => ({
   status: "stopped",
   source: "desktop",
   capture_error: null,
+  calendar_event_id: null,
   tags,
+  folder_id: folderId,
 });
 const meetings = [
   make("a", "Alpha sync", ["Client"]),
-  make("b", "Beta review", []),
+  make("b", "Beta review", [], "f1"),
   make("c", "Gamma plan", ["client"]),
+];
+const folderRows: Folder[] = [
+  { id: "f1", name: "Client work", position: 0, meeting_count: 1 },
+  { id: "f2", name: "Empty", position: 1, meeting_count: 0 },
 ];
 const detail = (id: string): MeetingDetail =>
   ({
@@ -81,6 +94,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(api.getMeeting).mockImplementation(async (id) => detail(id));
   vi.mocked(api.listLibraryAnswers).mockResolvedValue([]);
+  vi.mocked(api.listFolders).mockResolvedValue(folderRows);
 });
 const saved = (
   id: number,
@@ -94,6 +108,7 @@ const saved = (
   provider: "https://provider.example/v1",
   model: "test-chat",
   meeting_ids: meetingIds,
+  scope: null,
 });
 
 it("asks across every meeting by default and shows the scope count", async () => {
@@ -104,10 +119,9 @@ it("asks across every meeting by default and shows the scope count", async () =>
     (screen.getByRole("button", { name: "Ask" }) as HTMLButtonElement).disabled,
   ).toBe(true);
   await ask();
-  expect(api.askLibrary).toHaveBeenCalledWith(
-    ["a", "b", "c"],
-    "What was decided?",
-  );
+  expect(api.askLibrary).toHaveBeenCalledWith(null, "What was decided?", {
+    kind: "all",
+  });
   expect((await screen.findByLabelText("Answer")).textContent).toContain(
     "Ship it",
   );
@@ -122,7 +136,10 @@ it("resolves a tag to its meetings and sends exactly that scope", async () => {
   await userEvent.selectOptions(screen.getByLabelText("Tag"), "client");
   expect(count()).toBe("2 meetings");
   await ask();
-  expect(api.askLibrary).toHaveBeenCalledWith(["a", "c"], "What was decided?");
+  expect(api.askLibrary).toHaveBeenCalledWith(null, "What was decided?", {
+    kind: "tag",
+    id: "client",
+  });
   expect((await screen.findByLabelText("Answer")).textContent).toContain(
     "Ship it",
   );
@@ -371,7 +388,7 @@ it("refuses every-meeting scope beyond the 20-meeting limit and says how to fix 
   ).toBe(true);
   expect(
     screen.getByText(
-      "One question covers 20 meetings: pick them or use a tag.",
+      "One question covers 20 meetings: narrow the scope with a folder, a tag or picks.",
     ),
   ).toBeTruthy();
   await userEvent.selectOptions(screen.getByLabelText("Scope"), "pick");
@@ -420,4 +437,44 @@ it("selects only the filtered meetings with the same button", async () => {
   await userEvent.clear(screen.getByLabelText("Filter meetings"));
   expect(box(/Weekly 00/).checked).toBe(false);
   expect(box(/Weekly 15/).checked).toBe(true);
+});
+
+it("scopes an ask to a folder, shows the folder on the answer, and says when it is empty", async () => {
+  const scope = {
+    kind: "folder" as const,
+    id: "f1",
+    label: "Folder: Client work",
+  };
+  vi.mocked(api.askLibrary).mockResolvedValue({
+    ...saved(2, ["b"], "Filed notes."),
+    scope,
+  });
+  show();
+  await userEvent.selectOptions(screen.getByLabelText("Scope"), "folder");
+  await userEvent.selectOptions(await screen.findByLabelText("Folder"), "f2");
+  expect(count()).toBe("0 meetings");
+  expect(screen.getByText("No meetings in this folder.")).toBeTruthy();
+  await userEvent.selectOptions(screen.getByLabelText("Folder"), "f1");
+  expect(count()).toBe("1 meeting");
+  await ask();
+  expect(api.askLibrary).toHaveBeenCalledWith(null, "What was decided?", {
+    kind: "folder",
+    id: "f1",
+  });
+  expect((await screen.findByLabelText("Answer")).textContent).toContain(
+    "Folder: Client work",
+  );
+});
+
+it("lists the scope label of each saved answer", async () => {
+  vi.mocked(api.listLibraryAnswers).mockResolvedValue([
+    {
+      ...saved(3, ["b"], "Filed notes."),
+      scope: { kind: "folder", id: "f1", label: "Folder: Client work" },
+    },
+  ]);
+  show();
+  expect(
+    await screen.findByText("Folder: Client work", { selector: ".src" }),
+  ).toBeTruthy();
 });

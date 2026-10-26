@@ -8,6 +8,7 @@ exactly where the thread would.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import sqlite3
 import threading
@@ -549,3 +550,47 @@ def test_the_lifecycle_thread_runs_under_the_lifespan_and_leaves_no_thread_behin
     assert not any(thread.name == THREAD_NAME for thread in threading.enumerate())
     with pytest.raises(sqlite3.ProgrammingError):
         app.state.ctx.store.db.execute("SELECT 1")  # the store closed during shutdown
+
+
+def _calendar_event(rig: Rig, title: str, start_offset_s: float, end_offset_s: float) -> str:
+    from openmeet_py.domain import calendar as cal
+
+    now = dt.datetime.fromtimestamp(rig.clock.wall(), dt.timezone.utc)
+    with rig.ctx.store.lock:
+        db = rig.ctx.store.db
+        db.execute(
+            "INSERT OR IGNORE INTO calendar_feeds (id, label, kind, created_at) VALUES ('feed1', 'Work', 'ics', ?1)",
+            (cal.iso(now),),
+        )
+        db.execute(
+            "INSERT INTO calendar_events (id, feed_id, uid, start_utc, end_utc, all_day, title, status) "
+            "VALUES (?1, 'feed1', ?1, ?2, ?3, 0, ?4, 'confirmed')",
+            (
+                f"ev-{title}",
+                cal.iso(now + dt.timedelta(seconds=start_offset_s)),
+                cal.iso(now + dt.timedelta(seconds=end_offset_s)),
+                title,
+            ),
+        )
+        db.commit()
+    return f"ev-{title}"
+
+
+def test_an_automatic_call_during_a_calendar_event_takes_its_title_and_links_the_event(rig: Rig) -> None:
+    event_id = _calendar_event(rig, "Weekly sync", -120, 1800)
+    enable(rig)
+    start_call(rig)
+    meeting = rig.ctx.recorder.state()["meeting_id"]
+    assert rig.rows("SELECT title, calendar_event_id FROM meetings WHERE id = ?1", (meeting,)) == [
+        ("Weekly sync", event_id)
+    ]
+
+
+def test_an_automatic_call_with_no_matching_event_keeps_the_app_title(rig: Rig) -> None:
+    _calendar_event(rig, "Later today", 3600, 5400)
+    enable(rig)
+    start_call(rig)
+    meeting = rig.ctx.recorder.state()["meeting_id"]
+    assert rig.rows("SELECT title, calendar_event_id FROM meetings WHERE id = ?1", (meeting,)) == [
+        ("Zoom call", None)
+    ]

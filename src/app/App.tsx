@@ -20,6 +20,10 @@ import {
   processingDefault,
   type ProcessingChoice,
 } from "../entities/processing";
+import {
+  CalendarReminderPrompt,
+  useCalendarReminders,
+} from "../features/calendar";
 import { MeetingPage, useMeetingPage } from "../pages/meeting";
 import { SettingsPage, useSettingsPage } from "../pages/settings";
 import { AskPage } from "../pages/ask";
@@ -174,6 +178,15 @@ export function App() {
     setPanel(next);
   };
   const closePanel = useCallback(() => setPanel(null), []);
+  // A calendar reminder: "Start recording" prefills the New recording dialog and links the new meeting.
+  const calendar = useCalendarReminders({
+    meetingId: recording.meeting_id,
+    onStart: (reminder) => {
+      setTitle(reminder.title);
+      openPanel("setup");
+    },
+    onError: report,
+  });
   /** The Ask page from a shortcut, the sidebar or the palette: one opener, optional trigger. */
   const openAsk = (trigger?: HTMLButtonElement) =>
     openPanel("library", trigger);
@@ -723,13 +736,29 @@ export function App() {
     ) : (
       <>
         <MeetingPage {...meeting.pageProps} />
-        {panel === "setup" && <SetupPage {...setupPage.pageProps} />}
+        {panel === "setup" && (
+          // Cancel, Escape and the backdrop all close without a meeting: drop the calendar link.
+          <SetupPage
+            {...setupPage.pageProps}
+            onClose={() => {
+              calendar.clear();
+              closePanel();
+            }}
+          />
+        )}
       </>
     );
 
   return (
     <>
       {page}
+      {panel === null && !firstRun && (
+        <CalendarReminderPrompt
+          reminder={calendar.reminder}
+          onStart={calendar.start}
+          onDismiss={calendar.dismiss}
+        />
+      )}
       {paletteOpen && (
         <CommandPalette
           meetings={paletteMeetings}

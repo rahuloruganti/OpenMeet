@@ -12,11 +12,12 @@ import pytest
 from openmeet_py.app import main
 from openmeet_py.infra import importer
 from openmeet_py.infra.importer import ImportFailed, ImportRefused, import_old_data
+from conftest import latest_migration
 from openmeet_py.infra.store import Store
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "openmeet_py" / "migrations"
 MEETING = "11111111-1111-1111-1111-111111111111"
-LATEST = 33
+LATEST = latest_migration()
 THROUGH = 27
 
 

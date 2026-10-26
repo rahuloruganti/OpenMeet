@@ -678,6 +678,7 @@ export function useMeetingPage(env: MeetingPageEnv) {
       selected,
       firstRun: ready && meetings.length === 0,
       onStartRecording: (trigger) => openPanel("setup", trigger),
+      onOpenMeeting: (id) => void openMeeting(id).catch(report),
       onNewNote: newNote,
       inspectorOpen,
       onToggleInspector: toggleInspector,
@@ -760,6 +761,19 @@ export function useMeetingPage(env: MeetingPageEnv) {
           );
         });
       },
+      onEnhance: (template) => {
+        const id = selected?.meeting.id;
+        if (!id) return;
+        void runJob("enhance", async () => {
+          await writer.current?.flush();
+          const result = await api.enhanceNotes(id, template);
+          await finishJob(id);
+          setNotice(
+            result.notice ??
+              "Enhanced notes saved. Your notes stay as you typed them.",
+          );
+        });
+      },
       versions: summaryVersions,
       customTemplates: settings?.summary_templates ?? [],
       defaultTemplate: settings?.summary_default ?? "general-v1",
@@ -784,7 +798,13 @@ export function useMeetingPage(env: MeetingPageEnv) {
             } catch (failure) {
               // Rebase onto the newer version so saving again is the user's explicit choice.
               if (errorCode(failure) === "summary_conflict") {
-                const newest = (await api.listSummaries(id))[0];
+                // Conflicts are per kind: rebase onto the newest version of the same kind.
+                const kind =
+                  summaryVersions.find((version) => version.id === draft.baseId)
+                    ?.kind ?? "summary";
+                const newest = (await api.listSummaries(id)).find(
+                  (version) => version.kind === kind,
+                );
                 if (newest) rebaseSummaryDraft(id, newest.id);
                 await finishJob(id);
               }

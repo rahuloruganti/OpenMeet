@@ -67,6 +67,14 @@ On first launch, **Set up OpenMeet** walks through importing an earlier data fol
 
 Exported files appear in the chosen folder's `Meetings` directory. Export creates a new snapshot when a differing file exists, preserving external edits. Export options are in **Settings**.
 
+### Folders and scoped Ask
+
+Each meeting sits in one folder or none. The sidebar groups meetings under their folder headings, with unfiled meetings last, and filters across the groups. **Folders** in the sidebar creates, renames, reorders and deletes folders; deleting one keeps its meetings. A meeting's **⋯** menu has **Move to folder**. **Ask** covers all meetings, one folder, one tag, or meetings you pick, and each saved answer shows the scope it was asked over. Retrieval uses the local full-text index, so deleted meetings are never included. OpenMeet does not use embeddings for this.
+
+### Calendar context (optional)
+
+Add a calendar under **Settings → Recording → Calendar** with its secret iCal address: Google Calendar's *Secret address in iCal format*, or an Outlook published ICS link. OpenMeet reads it every 15 minutes, read-only, and keeps the address only in Windows Credential Manager. Before a timed event starts, a prompt offers **Start recording** with the event's title. A meeting's **Details** can link to an event and list earlier meetings in the same series. Without a calendar, nothing changes.
+
 ### Record and transcribe
 
 1. Click **New recording** and enter a title.
@@ -93,7 +101,7 @@ Notes, recording, and local transcription work without a cloud key. Summaries an
 
 Keys pass briefly through the password field into the backend and are stored in Windows Credential Manager. They are never read back into Settings, the database, logs or exports. Changing the URL requires entering a key for that destination. Summary and speech assignments are independent and can share a saved connection with different model IDs. Saving settings makes no content request; **Test** sends only the key, to list models. Opening Settings contacts no provider.
 
-Open **Summary**, choose General, Stand-up or One-to-one, and click **Create summary**. It sends notes and transcript text only. Questions send directly too, and earlier summaries remain available in the version picker.
+Open **Summary**, choose General, Stand-up or One-to-one, and click **Create summary**. It sends notes and transcript text only. **Enhance notes** writes enhanced notes next to the summary from your notes and the final transcript; each claim links to the transcript segment it came from, and your typed notes are never changed. **Enhance my notes after recording** in AI notes runs it with automatic processing; it is off by default (opt-in) and, once turned on, sends one more request per recording when a summary is chosen. A failed enhancement keeps the saved summary; retrying it does not summarize again. Questions send directly too, and earlier summaries remain available in the version picker.
 
 Every provider is reached through its OpenAI-compatible API: Claude uses `https://api.anthropic.com/v1`, Gemini uses `https://generativelanguage.googleapis.com/v1beta/openai`, and each preset fills in its own base URL. For Claude, the model list sends the key in Anthropic's `x-api-key` header; chat requests use the Bearer header like every other provider. Compatible endpoints must implement the operation you select; a model list does not prove chat or transcription support. No automatic model or provider fallback occurs. The provider list is covered by mocked HTTP tests only, not tested against the live services.
 

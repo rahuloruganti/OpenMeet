@@ -4,6 +4,7 @@ import {
   errorCode,
   errorMessage,
   type LibraryAnswer,
+  type LibraryScope,
   type Meeting,
   type MeetingDetail,
   type Recipe,
@@ -12,6 +13,7 @@ import { renderMarkdown } from "../../shared/lib/markdown";
 import { foldText, formatDate, tagChoices } from "../../entities/meeting";
 import { parseTimestamp, segmentsAt } from "../../shared/lib/timestamps";
 import { RecipePicker } from "../../features/recipes";
+import { useFolders } from "../../features/folders";
 import {
   OpenSettingsButton,
   type AiBlock,
@@ -43,7 +45,7 @@ type Answered = {
   details: Map<string, MeetingDetail>;
 };
 
-type Scope = "all" | "pick" | "tag";
+type Scope = "all" | "folder" | "pick" | "tag";
 
 const same = (a: string, b: string) =>
   a.toLocaleLowerCase() === b.toLocaleLowerCase();
@@ -55,6 +57,7 @@ export function LibraryQuestion(props: Props) {
   const { meetings, disabled } = props;
   const [scopeMode, setScopeMode] = useState<Scope>("all");
   const [tag, setTag] = useState("");
+  const [folderId, setFolderId] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [question, setQuestion] = useState("");
@@ -71,12 +74,34 @@ export function LibraryQuestion(props: Props) {
     meetings.find((meeting) => meeting.id === id)?.title ?? id;
 
   const tags = tagChoices(meetings);
+  // Folder names follow the meeting list, so a filed or new meeting is reflected at once.
+  const folders = useFolders(
+    meetings
+      .map((meeting) => `${meeting.id}:${meeting.folder_id ?? ""}`)
+      .join(","),
+  ).folders;
   const scope =
     scopeMode === "all"
       ? meetings
+      : scopeMode === "folder"
+        ? meetings.filter(
+            (meeting) => folderId !== "" && meeting.folder_id === folderId,
+          )
+        : scopeMode === "tag"
+          ? meetings.filter((meeting) => meeting.tags.some((t) => same(t, tag)))
+          : meetings.filter((meeting) => picked.includes(meeting.id));
+  // What the backend resolves: a folder or tag by id, picks by their ids, else all meetings.
+  const scopeRequest = (): LibraryScope =>
+    scopeMode === "folder"
+      ? { kind: "folder", id: folderId }
       : scopeMode === "tag"
-        ? meetings.filter((meeting) => meeting.tags.some((t) => same(t, tag)))
-        : meetings.filter((meeting) => picked.includes(meeting.id));
+        ? { kind: "tag", id: tag }
+        : scopeMode === "pick"
+          ? {
+              kind: "meetings",
+              meeting_ids: scope.map((meeting) => meeting.id),
+            }
+          : { kind: "all" };
   const scopeKey = scope.map((meeting) => meeting.id).join(",");
   const tooMany = scope.length > LIMIT;
   const needle = foldText(filter.trim());
@@ -145,10 +170,7 @@ export function LibraryQuestion(props: Props) {
     setNotice("");
     setWorking(true);
     try {
-      const saved = await api.askLibrary(
-        scope.map((meeting) => meeting.id),
-        question.trim(),
-      );
+      const saved = await api.askLibrary(null, question.trim(), scopeRequest());
       // Saved even if the form changed meanwhile, so it always joins the list.
       setAnswers((list) => [saved, ...list]);
       if (current !== version.current) return;
@@ -243,9 +265,26 @@ export function LibraryQuestion(props: Props) {
             onChange={(event) => setScopeMode(event.target.value as Scope)}
           >
             <option value="all">All meetings</option>
-            <option value="pick">Pick meetings…</option>
-            <option value="tag">Meetings with a tag</option>
+            <option value="folder">Folder</option>
+            <option value="tag">Tag</option>
+            <option value="pick">Selected meetings</option>
           </select>
+          {scopeMode === "folder" && (
+            <select
+              className="tag-select"
+              aria-label="Folder"
+              value={folderId}
+              disabled={working || folders.length === 0}
+              onChange={(event) => setFolderId(event.target.value)}
+            >
+              <option value="">Choose a folder</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.name}
+                </option>
+              ))}
+            </select>
+          )}
           {scopeMode === "tag" && (
             <select
               className="tag-select"
@@ -382,9 +421,13 @@ export function LibraryQuestion(props: Props) {
         </div>
       )}
 
+      {scopeMode === "folder" && folderId !== "" && scope.length === 0 && (
+        <p className="muted">No meetings in this folder.</p>
+      )}
       {tooMany && (
         <p className="muted">
-          One question covers {LIMIT} meetings: pick them or use a tag.
+          One question covers {LIMIT} meetings: narrow the scope with a folder,
+          a tag or picks.
         </p>
       )}
       {error && <p role="alert">{error}</p>}
@@ -407,8 +450,9 @@ export function LibraryQuestion(props: Props) {
                 >
                   <span className="q">{answer.question}</span>
                   <span className="src">
-                    {answer.meeting_ids.length} source
-                    {answer.meeting_ids.length === 1 ? "" : "s"}
+                    {answer.scope
+                      ? answer.scope.label
+                      : `${answer.meeting_ids.length} source${answer.meeting_ids.length === 1 ? "" : "s"}`}
                   </span>
                 </button>
               </li>
@@ -456,6 +500,7 @@ export function LibraryQuestion(props: Props) {
           <div className="asked">
             <h2>{answered.answer.question}</h2>
             <span className="sub">
+              {answered.answer.scope ? `${answered.answer.scope.label} · ` : ""}
               {answered.answer.meeting_ids.length} meeting
               {answered.answer.meeting_ids.length === 1 ? "" : "s"} ·{" "}
               {answered.answer.provider} {answered.answer.model}

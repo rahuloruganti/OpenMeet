@@ -59,6 +59,9 @@ describe("summaries and questions", () => {
           edited_from: null,
 
           stale: false,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
       ]);
     };
@@ -175,6 +178,9 @@ describe("summaries and questions", () => {
           markdown: "## Summary\nNewest.\n## Action items\n- Ship it",
           edited_from: null,
           stale: false,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
         {
           id: 2,
@@ -184,6 +190,9 @@ describe("summaries and questions", () => {
           markdown: "## Summary\nOlder.",
           edited_from: null,
           stale: false,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
         {
           id: 1,
@@ -193,6 +202,9 @@ describe("summaries and questions", () => {
           markdown: "A fictional summary.",
           edited_from: null,
           stale: false,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
       ]);
       await ready();
@@ -252,6 +264,9 @@ describe("summaries and questions", () => {
           markdown: "Newer generated text.",
           edited_from: null,
           stale: false,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
       ]);
       await userEvent.click(
@@ -321,6 +336,9 @@ describe("summaries and questions", () => {
           markdown: "## Summary\nGenerated.",
           edited_from: null,
           stale: true,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
       ]);
       await ready();
@@ -396,6 +414,9 @@ describe("summaries and questions", () => {
           markdown: "## Summary\nMine.",
           edited_from: 4,
           stale: false,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
         {
           id: 4,
@@ -405,6 +426,9 @@ describe("summaries and questions", () => {
           markdown: "## Summary\nGenerated.",
           edited_from: null,
           stale: false,
+          kind: "summary",
+          notes_revision: null,
+          sources: [],
         },
       ]);
       await ready();

@@ -65,6 +65,32 @@ it("sends cloud actions directly, with no review fingerprint", async () => {
     meetingIds: ["a", "b"],
     question: "What changed?",
   });
+  await api.askLibrary(null, "What changed?", { kind: "folder", id: "f1" });
+  expect(invoke).toHaveBeenLastCalledWith("ask_library", {
+    meetingIds: null,
+    question: "What changed?",
+    scope: { kind: "folder", id: "f1" },
+  });
+  await api.listFolders();
+  expect(invoke).toHaveBeenLastCalledWith("list_folders");
+  await api.createFolder("Client");
+  expect(invoke).toHaveBeenLastCalledWith("create_folder", { name: "Client" });
+  await api.renameFolder("f1", "Clients");
+  expect(invoke).toHaveBeenLastCalledWith("rename_folder", {
+    id: "f1",
+    name: "Clients",
+  });
+  await api.deleteFolder("f1");
+  expect(invoke).toHaveBeenLastCalledWith("delete_folder", { id: "f1" });
+  await api.moveMeetingToFolder("m", null);
+  expect(invoke).toHaveBeenLastCalledWith("move_meeting_to_folder", {
+    meetingId: "m",
+    folderId: null,
+  });
+  await api.reorderFolders(["f2", "f1"]);
+  expect(invoke).toHaveBeenLastCalledWith("reorder_folders", {
+    ids: ["f2", "f1"],
+  });
   await api.deleteQuestionThread("m", 7);
   expect(invoke).toHaveBeenLastCalledWith("delete_question_thread", {
     meetingId: "m",

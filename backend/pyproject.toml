@@ -20,6 +20,9 @@ dependencies = [
   "sherpa-onnx==1.13.8",
   "sherpa-onnx-core==1.13.8",
   "websockets==15.0.1",
+  "icalendar==6.3.2",
+  "python-dateutil==2.9.0.post0",
+  "tzdata==2026.5",
 ]
 
 [dependency-groups]

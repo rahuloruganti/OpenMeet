@@ -11,6 +11,7 @@ vi.mock("../../shared/api/api", async (original) => ({
     apiConnectionKeyStatus: vi.fn(),
     providerKeyStatus: vi.fn(),
     getSettings: vi.fn(),
+    saveProcessingEnhance: vi.fn(),
     listApiConnectionModels: vi.fn(),
     scanLocalModels: vi.fn(),
     detectLocalServers: vi.fn(),
@@ -64,6 +65,9 @@ const settings: Settings = {
   detection_enabled: false,
   detection_ignored: [],
   auto_capture: false,
+  calendar_reminders: true,
+  calendar_reminder_minutes: 2,
+  processing_enhance: true,
   setup_done: true,
   theme: "system",
   inspector_open: true,
@@ -822,4 +826,29 @@ it("words each needs-you reason as the action to take", () => {
   expect(
     within(region("Transcription")).getByText("Download a speech model"),
   ).toBeTruthy();
+});
+
+it("turns enhanced notes after recording on in AI notes and saves it", async () => {
+  // Opt-in: a fresh install starts with the switch off.
+  const input = {
+    ...props(),
+    settings: { ...settings, processing_enhance: false },
+  };
+  vi.mocked(api.saveProcessingEnhance).mockResolvedValue({
+    ...settings,
+    processing_enhance: true,
+  });
+  render(<SettingsPanel {...input} initialSection="ai" />);
+  const enhance = screen.getByRole("switch", {
+    name: "Enhance my notes after recording",
+  });
+  expect(enhance.getAttribute("aria-checked")).toBe("false");
+  await userEvent.click(enhance);
+  expect(api.saveProcessingEnhance).toHaveBeenCalledWith(true);
+  await vi.waitFor(() =>
+    expect(input.onSettings).toHaveBeenCalledWith({
+      ...settings,
+      processing_enhance: true,
+    }),
+  );
 });

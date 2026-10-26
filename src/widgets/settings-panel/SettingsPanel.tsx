@@ -31,6 +31,7 @@ import {
 import { shortcutLabel } from "../../shared/lib/shortcut-label";
 import { ModelLibrary } from "../../features/model-library";
 import { LocalAi } from "../../features/local-ai";
+import { CalendarSettings } from "../../features/calendar";
 import { LiveSettings } from "../../features/live-settings";
 import { ConnectionEditor } from "../../features/provider-settings";
 import { SummaryTemplates } from "../../features/summary-templates";
@@ -534,6 +535,12 @@ function RecordingSection(props: Props) {
         disabled={disabled}
         onSaved={props.onSettings}
       />
+
+      <CalendarSettings
+        settings={settings}
+        disabled={disabled}
+        onSaved={props.onSettings}
+      />
     </div>
   );
 }
@@ -929,7 +936,53 @@ function AiSection(
           onDefaultTemplate={props.onSummaryDefault}
         />
       </Group>
+      <EnhanceSwitch
+        settings={props.settings}
+        disabled={props.disabled}
+        onSettings={props.onSettings}
+      />
     </div>
+  );
+}
+
+/** Automatic processing also writes enhanced notes; the switch saves at once and starts nothing itself. */
+function EnhanceSwitch(props: {
+  settings: Settings | null;
+  disabled: boolean;
+  onSettings: (settings: Settings) => void;
+}) {
+  const saved = useSaved();
+  const [failure, setFailure] = useState("");
+  return (
+    <Group label="Enhanced notes" saved={saved.shown}>
+      <Rows>
+        <Row
+          label="Enhance my notes after recording"
+          detail="Off unless you turn it on. Runs after a recording, with the summary, when Automatic processing is on. Your notes and the final transcript go to the AI notes destination above. Your typed notes stay as they are."
+        >
+          <Switch
+            label="Enhance my notes after recording"
+            checked={props.settings?.processing_enhance ?? false}
+            disabled={props.disabled || !props.settings}
+            onChange={(enabled) => {
+              setFailure("");
+              api.saveProcessingEnhance(enabled).then(
+                (settings) => {
+                  props.onSettings(settings);
+                  saved.mark();
+                },
+                () => setFailure("The switch could not be saved. Try again."),
+              );
+            }}
+          />
+        </Row>
+        {failure && (
+          <p className="om-muted" role="alert">
+            {failure}
+          </p>
+        )}
+      </Rows>
+    </Group>
   );
 }
 

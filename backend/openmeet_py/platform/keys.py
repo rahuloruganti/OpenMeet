@@ -83,6 +83,14 @@ def store_key(key: str) -> str:
     return account
 
 
+def store_at(account: str, value: str) -> None:
+    """Stores a secret under a caller-chosen account (calendar feeds use 'calendar:<feed id>')."""
+    try:
+        _backend().set_password(SERVICE, account, value)
+    except Exception:
+        raise _unavailable() from None
+
+
 def delete_key(account: str) -> None:
     try:
         _backend().delete_password(SERVICE, account)

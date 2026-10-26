@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import TOKEN, invoke, invoke_error
+from conftest import TOKEN, invoke, invoke_error, latest_migration
 from openmeet_py.api import live_commands
 from openmeet_py.api.errors import AppError
 from openmeet_py.api.server import create_app
@@ -128,7 +128,7 @@ def test_migration_032_maps_preview_modes_and_adds_the_live_columns(
 
     store = Store(data)
     try:
-        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 33
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == latest_migration()
         settings = store.db.execute(
             "SELECT processing_mode, live_transcript, live_model FROM settings WHERE id = 1"
         ).fetchone()

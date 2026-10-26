@@ -19,6 +19,14 @@ from openmeet_py.platform import keys
 TOKEN = "test-token"
 
 
+MIGRATIONS = Path(__file__).resolve().parents[1] / "openmeet_py" / "migrations"
+
+
+def latest_migration() -> int:
+    """The newest migration number on disk; a fully migrated database reports exactly this."""
+    return max(int(path.name.split("_", 1)[0]) for path in MIGRATIONS.glob("*.sql"))
+
+
 @pytest.fixture
 def make_client(tmp_path: Path) -> Iterator[Callable[..., TestClient]]:
     """Builds a client; `pick_folder` answers the native folder picker for export tests."""

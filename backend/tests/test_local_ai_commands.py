@@ -20,7 +20,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import MemoryKeyring, invoke, invoke_error
+from conftest import MemoryKeyring, invoke, invoke_error, latest_migration
 from openmeet_py.api import reads
 from openmeet_py.api.errors import AppError
 from openmeet_py.infra.store import Store
@@ -553,7 +553,7 @@ def test_a_local_server_that_cannot_start_fails_with_the_fix(
 
 def test_a_fresh_database_has_one_local_ai_row(client: TestClient) -> None:
     db = client.app.state.ctx.store.db  # type: ignore[attr-defined]
-    assert db.execute("PRAGMA user_version").fetchone()[0] == 33
+    assert db.execute("PRAGMA user_version").fetchone()[0] == latest_migration()
     assert db.execute(
         "SELECT backend, port, active_model, connection_id FROM local_ai WHERE id = 1"
     ).fetchone() == (None, None, None, None)
@@ -580,7 +580,7 @@ def test_a_populated_v30_database_gains_the_row_and_keeps_its_notes(tmp_path: Pa
 
     store = Store(data)
     try:
-        assert store.db.execute("PRAGMA user_version").fetchone()[0] == 33
+        assert store.db.execute("PRAGMA user_version").fetchone()[0] == latest_migration()
         assert store.db.execute("SELECT user_markdown FROM notes").fetchone()[0] == "- Fictional note"
         assert store.db.execute("SELECT COUNT(*) FROM local_ai").fetchone()[0] == 1
         assert store.db.execute("SELECT COUNT(*) FROM meetings").fetchone()[0] == 1

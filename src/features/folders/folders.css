@@ -1,0 +1,77 @@
+/* Folders: the picker, the manager and the meeting menu's move entry. */
+
+.folder-pick,
+.folder-move,
+.folder-manager {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.folder-new,
+.folder-manager form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.folder-manager ul {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder-manager li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.folder-manager .folder-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+/* Sidebar: folder sections (collapsible) and the folder manager panel. */
+.sb-folder {
+  display: grid;
+  gap: 2px;
+}
+
+.sb-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.sb-count {
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.sb-manage {
+  padding: 8px 0 12px;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.25);
+  margin-bottom: 8px;
+}

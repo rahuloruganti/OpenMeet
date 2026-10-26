@@ -140,12 +140,11 @@ def custom_task(template: str) -> str:
     )
 
 
-def resolve_summary(settings: dict[str, Any], template: str) -> str:
-    """The full system prompt for a built-in or custom template id."""
-    instructions = settings["summary_instructions"]
+def task_for(settings: dict[str, Any], template: str) -> str:
+    """The task text of a built-in or custom template id; an unknown or deleted one is refused."""
     for custom in settings["summary_templates"]:
         if custom["id"] == template:
-            return summary_system(custom_task(custom["instructions"]), instructions)
+            return custom_task(custom["instructions"])
     if template.startswith(CUSTOM_TEMPLATE_PREFIX):
         raise AppError(
             "summary_template_missing",
@@ -153,7 +152,12 @@ def resolve_summary(settings: dict[str, Any], template: str) -> str:
         )
     if template not in TEMPLATE_IDS:
         raise AppError("summary_template", "Unknown summary template.")
-    return summary_system(TEMPLATE_IDS[template], instructions)
+    return TEMPLATE_IDS[template]
+
+
+def resolve_summary(settings: dict[str, Any], template: str) -> str:
+    """The full system prompt for a built-in or custom template id."""
+    return summary_system(task_for(settings, template), settings["summary_instructions"])
 
 
 def validate_instructions(text: str, maximum: int) -> None:
@@ -465,12 +469,20 @@ def select_lines(meetings: list[list[str]], found: list[str], budget: int) -> li
     Matches are kept in transcript order, not ranked by full-text relevance, and matching is
     substring, not word-token. Add FTS ranking when transcripts exist (phase 4).
     """
+    hits = [
+        (meeting_index, line_index)
+        for meeting_index, lines in enumerate(meetings)
+        for line_index, line in enumerate(lines)
+        if _mentions(line, found)
+    ]
+    return window_lines(meetings, hits, budget)
+
+
+def window_lines(
+    meetings: list[list[str]], hits: list[tuple[int, int]], budget: int
+) -> list[set[int]]:
+    """Each (meeting, line) hit, in the order given, brings its neighbours while the budget lasts."""
     chosen: list[set[int]] = [set() for _ in meetings]
-    hits = []
-    for meeting_index, lines in enumerate(meetings):
-        for line_index, line in enumerate(lines):
-            if _mentions(line, found):
-                hits.append((meeting_index, line_index))
     for meeting_index, line_index in hits[:MAX_HITS]:
         lines = meetings[meeting_index]
         window = range(max(0, line_index - NEIGHBOURS), min(len(lines), line_index + NEIGHBOURS + 1))
