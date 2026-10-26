@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Saved } from "../../../shared/ui/settings-link";
 
-/** A labelled settings group: everything under one small uppercase label. */
+/** A labelled settings group: one quiet sentence-case heading above its card. */
 export function Group(props: {
   label: string;
   /** Shows the brief "Saved" tick after an autosaved change in this group. */

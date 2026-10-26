@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CalendarReminder } from "../../shared/api/api";
+import { IconCalendar } from "../../shared/ui/icons";
 import "./calendar.css";
 
 type Props = {
@@ -32,6 +33,7 @@ export function CalendarReminderPrompt({
   );
   return (
     <div className="cal-prompt" role="status" aria-live="polite">
+      <IconCalendar size={16} className="cal-prompt-icon" />
       <span>
         {minutes >= 1 ? `Starts in ${minutes} min:` : "Starts now:"}{" "}
         <strong>{reminder.title}</strong>

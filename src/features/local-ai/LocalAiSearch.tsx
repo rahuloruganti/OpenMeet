@@ -9,7 +9,8 @@ import {
   type LocalAiStatus,
 } from "../../shared/api/api";
 import { formatBytes } from "../../entities/meeting";
-import { FIT } from "./labels";
+import { IconCheck, IconSearch } from "../../shared/ui/icons";
+import { FitLabel } from "./FitLabel";
 import { ProgressJob } from "./LocalAiProgress";
 
 type Props = {
@@ -107,14 +108,17 @@ export function LocalAiSearch({
   return (
     <div className="om-card lai-hub">
       <form className="lai-search" role="search" onSubmit={search}>
-        <input
-          type="search"
-          aria-label="Search Hugging Face"
-          placeholder="Search models"
-          value={query}
-          disabled={disabled || working}
-          onChange={(event) => setQuery(event.target.value)}
-        />
+        <span className="lai-search-field">
+          <IconSearch size={16} className="lai-search-icon" />
+          <input
+            type="search"
+            aria-label="Search Hugging Face"
+            placeholder="Search models"
+            value={query}
+            disabled={disabled || working}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </span>
         <button
           type="submit"
           className="om-sm"
@@ -123,17 +127,17 @@ export function LocalAiSearch({
           Search
         </button>
       </form>
-      {working && <p className="om-empty">Working…</p>}
+      {working && <p className="om-empty lai-gutter">Working…</p>}
       {error && (
-        <p role="alert" className="om-error">
+        <p role="alert" className="om-error lai-gutter">
           {error}
         </p>
       )}
 
       {listing ? (
-        <>
+        <div className="lai-repo">
           <div className="lai-repo-head">
-            <strong>{listing.repo_id}</strong>
+            <span className="lai-repo-name">{listing.repo_id}</span>
             <button
               type="button"
               className="om-ghost om-sm"
@@ -143,7 +147,9 @@ export function LocalAiSearch({
             </button>
           </div>
           {listing.files.length === 0 ? (
-            <p className="om-empty">No single-file GGUF to download.</p>
+            <p className="om-empty lai-gutter">
+              No single-file GGUF to download.
+            </p>
           ) : (
             <ul className="lai-list" aria-label="GGUF files">
               {listing.files.map((file) => {
@@ -155,12 +161,12 @@ export function LocalAiSearch({
                 return (
                   <li key={file.filename} className="lai-file">
                     <span className="lai-what">
-                      <strong>{file.filename}</strong>
-                      <span className="om-muted">
+                      <span className="lai-file-name">{file.filename}</span>
+                      <span className="lai-size">
                         {formatBytes(file.size_bytes)}
                       </span>
                     </span>
-                    <span className="om-tag">{FIT[file.fit]}</span>
+                    <FitLabel fit={file.fit} />
                     {here ? (
                       <ProgressJob
                         job={here}
@@ -169,11 +175,14 @@ export function LocalAiSearch({
                         onCancel={onCancel}
                       />
                     ) : file.downloaded ? (
-                      <span className="om-muted">On this PC</span>
+                      <span className="lai-done">
+                        <IconCheck size={14} />
+                        <span className="om-muted">On this PC</span>
+                      </span>
                     ) : (
                       <button
                         type="button"
-                        className="om-sm"
+                        className="om-sm lai-download"
                         aria-label={`Download ${file.filename}`}
                         aria-busy={busy === `hf:${target}`}
                         disabled={
@@ -189,10 +198,10 @@ export function LocalAiSearch({
               })}
             </ul>
           )}
-        </>
+        </div>
       ) : hits ? (
         hits.length === 0 ? (
-          <p className="om-empty">No GGUF models found.</p>
+          <p className="om-empty lai-gutter">No GGUF models found.</p>
         ) : (
           <ul className="lai-list" aria-label="Search results">
             {hits.map((hit) => (
@@ -203,8 +212,8 @@ export function LocalAiSearch({
                   disabled={disabled || working}
                   onClick={() => open(hit)}
                 >
-                  <strong>{hit.id}</strong>
-                  <span className="om-muted">{hitLine(hit)}</span>
+                  <span className="lai-hit-name">{hit.id}</span>
+                  <span className="lai-hit-meta">{hitLine(hit)}</span>
                 </button>
               </li>
             ))}

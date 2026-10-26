@@ -7,6 +7,13 @@ import {
 } from "react";
 import type { Meeting, Theme } from "../../shared/api/api";
 import { foldText, formatShortDate } from "../../entities/meeting";
+import {
+  ICONS,
+  IconArrowDown,
+  IconArrowUp,
+  IconSearch,
+  type IconName,
+} from "../../shared/ui/icons";
 import "./command-palette.css";
 
 /** Everything the palette can run. Nothing here starts a recording by itself. */
@@ -24,7 +31,8 @@ type Row = {
   /** Stable DOM id fragment, also the React key. */
   key: string;
   label: string;
-  glyph: string;
+  /** Leading Lucide icon from the shared set; never a glyph. */
+  icon: IconName;
   /** Shortcut hints, drawn as kbd caps after the label. */
   keys?: string[];
   /** Shown right of the label instead of keys (the current theme). */
@@ -54,49 +62,54 @@ const ACTIONS: ActionRow[] = [
     key: "new-recording",
     action: "new-recording",
     label: "New recording",
-    glyph: "＋",
+    icon: "mic",
     keys: ["Ctrl", "N"],
   },
   {
     key: "new-note",
     action: "new-note",
     label: "New note",
-    glyph: "＋",
+    icon: "plus",
     keys: ["Ctrl", "⇧", "N"],
   },
   {
     key: "settings",
     action: "settings",
     label: "Open settings",
-    glyph: "⚙",
+    icon: "settings",
     keys: ["Ctrl", ","],
   },
   {
     key: "export",
     action: "export",
     label: "Export meeting",
-    glyph: "↓",
+    icon: "download",
     keys: ["Ctrl", "E"],
   },
   {
     key: "rename",
     action: "rename",
     label: "Rename",
-    glyph: "✎",
+    icon: "pencil",
     keys: ["F2"],
   },
   {
     key: "theme-system",
     action: "theme-system",
     label: "Theme: System",
-    glyph: "◐",
+    icon: "monitor",
   },
-  { key: "theme-dark", action: "theme-dark", label: "Theme: Dark", glyph: "◐" },
+  {
+    key: "theme-dark",
+    action: "theme-dark",
+    label: "Theme: Dark",
+    icon: "moon",
+  },
   {
     key: "theme-light",
     action: "theme-light",
     label: "Theme: Light",
-    glyph: "◐",
+    icon: "sun",
   },
 ];
 
@@ -133,7 +146,7 @@ export function CommandPalette(props: Props) {
         return {
           key: row.key,
           label: row.label,
-          glyph: row.glyph,
+          icon: row.icon,
           keys: row.keys,
           disabled: needsMeeting && currentMeetingId === null,
           tag: wanted && theme === wanted ? "Current" : undefined,
@@ -151,7 +164,7 @@ export function CommandPalette(props: Props) {
     ).map((meeting) => ({
       key: `meeting-${meeting.id}`,
       label: meeting.title,
-      glyph: "•",
+      icon: "calendar",
       tag: formatShortDate(meeting.started_at),
       run: () => {
         onClose();
@@ -248,19 +261,7 @@ export function CommandPalette(props: Props) {
         onKeyDown={onKeyDown}
       >
         <div className="palette-search">
-          <svg
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <circle cx="11" cy="11" r="7" />
-            <path d="M20 20l-3.5-3.5" />
-          </svg>
+          <IconSearch />
           <input
             ref={input}
             type="text"
@@ -291,6 +292,7 @@ export function CommandPalette(props: Props) {
               </div>
               {group.rows.map((row) => {
                 const selected = row.key === activeKey;
+                const RowIcon = ICONS[row.icon];
                 return (
                   <div
                     key={row.key}
@@ -306,8 +308,8 @@ export function CommandPalette(props: Props) {
                       if (!row.disabled) row.run();
                     }}
                   >
-                    <span className="glyph" aria-hidden="true">
-                      {row.glyph}
+                    <span className="icon" aria-hidden="true">
+                      <RowIcon />
                     </span>
                     <span className="label">{row.label}</span>
                     {row.keys && (
@@ -330,9 +332,19 @@ export function CommandPalette(props: Props) {
           )}
         </div>
         <div className="palette-foot" aria-hidden="true">
-          <span>↑↓ move</span>
-          <span>↵ open</span>
-          <span>esc close</span>
+          <span>
+            <kbd>
+              <IconArrowUp size={11} />
+            </kbd>
+            <kbd>
+              <IconArrowDown size={11} />
+            </kbd>
+            move
+          </span>
+          <span>
+            <kbd>Enter</kbd>
+            open
+          </span>
         </div>
       </div>
     </div>

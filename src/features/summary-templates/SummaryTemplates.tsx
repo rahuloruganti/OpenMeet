@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { api, type Settings } from "../../shared/api/api";
 import { builtinTemplates } from "../../entities/processing";
+import { IconPlus, IconTrash } from "../../shared/ui/icons";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
+import "./summary-templates.css";
 
 type Item = { id: string; name: string; body: string };
 
@@ -131,7 +133,7 @@ export function SummaryTemplates(props: Props) {
           </div>
         </div>
         {items.map((item) => (
-          <div className="om-row" key={item.id}>
+          <div className="om-row tpl-row" key={item.id}>
             <div className="om-what">
               <strong>{item.name}</strong>
             </div>
@@ -160,10 +162,11 @@ export function SummaryTemplates(props: Props) {
       <div className="om-card-foot">
         <button
           type="button"
-          className="om-ghost om-sm"
+          className="om-ghost om-sm tpl-new"
           disabled={locked}
           onClick={() => start(null)}
         >
+          <IconPlus size={14} />
           New template
         </button>
         <span className="om-spacer" />
@@ -178,7 +181,7 @@ export function SummaryTemplates(props: Props) {
       )}
 
       {(creating || editing) && (
-        <div className="om-card om-form">
+        <div className="om-card om-form tpl-form">
           <label>
             Template name
             <input
@@ -219,6 +222,7 @@ export function SummaryTemplates(props: Props) {
                 disabled={locked}
                 onClick={() => void remove()}
               >
+                <IconTrash size={14} />
                 Delete
               </button>
             )}
@@ -247,6 +251,7 @@ export function SummaryTemplates(props: Props) {
             <span>Saved instructions</span>
           </div>
           <textarea
+            className="tpl-instructions"
             aria-label="Saved summary instructions"
             value={instructions ?? settings?.summary_instructions ?? ""}
             maxLength={2000}

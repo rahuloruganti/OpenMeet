@@ -1,5 +1,6 @@
-/* Settings page: full page with a 48px header and a left section list.
-   Tokens only (see src/app/styles.css); every class is namespaced `om-`. */
+/* Settings page: a full-pane page with a 224px section nav and one centred
+   reading column. Tokens only (see src/app/styles.css); every class is
+   namespaced `om-`. F's panels compose these primitives, so names are frozen. */
 
 .om-settings {
   position: fixed;
@@ -9,16 +10,17 @@
   overflow: hidden;
   color: var(--ink);
   background: var(--workspace);
-  font-size: 13px;
-  line-height: 1.5;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
 }
 
-/* Header */
+/* ------------------------------------------------------------------ top strip */
 .om-head {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   height: 48px;
   padding: 0 16px;
   border-bottom: 1px solid var(--divider);
@@ -26,15 +28,17 @@
 }
 .om-head h1 {
   margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--fs-page);
+  line-height: var(--lh-page);
+  font-weight: 400;
 }
 .om-head kbd {
-  margin-left: -4px;
+  margin-left: -2px;
 }
 .om-rule {
   width: 1px;
-  height: 20px;
+  height: 16px;
   margin: 0 2px;
   background: var(--divider);
 }
@@ -42,64 +46,84 @@
   flex: 1;
 }
 .om-version {
-  color: var(--muted);
+  color: var(--ink-3);
   font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
 }
 .om-head .om-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
   min-height: 28px;
-  padding: 0 8px;
+  padding: 0 8px 0 6px;
   border-color: transparent;
   background: transparent;
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
   font-weight: 500;
+}
+.om-head .om-back svg {
+  color: var(--ink-3);
+  transition: color var(--dur-1) var(--ease);
 }
 .om-head .om-back:hover:not(:disabled) {
   border-color: transparent;
   background: var(--hover);
   color: var(--ink);
 }
+.om-head .om-back:hover:not(:disabled) svg {
+  color: var(--ink);
+}
 
-/* Body: an "On this page" index plus every section on one scrolling page */
+/* --------------------------------------------------------------------- body */
 .om-body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: clamp(176px, 18vw, 216px) minmax(0, 1fr);
+  grid-template-columns: 224px minmax(0, 1fr);
 }
-/* The index comes after the content in the DOM, so Tab reaches the search field first. */
+/* The index comes after the content in the DOM, so Tab reaches the search first. */
 .om-sections {
   grid-column: 1;
   grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 18px 10px;
+  padding: 16px 12px;
   overflow: auto;
   border-right: 1px solid var(--divider);
   background: var(--sidebar);
 }
 .om-index-label {
-  padding: 0 10px 8px;
-  color: var(--muted);
-  font-size: 12px;
+  margin: 0 0 8px;
+  padding: 0 12px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  font-weight: 500;
 }
 .om-sections button {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 32px;
-  min-height: 32px;
-  padding: 0 10px;
+  width: 100%;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-8);
   background: transparent;
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   font-weight: 400;
   text-align: left;
   transition:
-    color 140ms ease-out,
-    background-color 140ms ease-out;
+    color var(--dur-1) var(--ease),
+    background-color var(--dur-1) var(--ease);
 }
 .om-sections button:hover:not(:disabled) {
   border-color: transparent;
@@ -107,40 +131,47 @@
   color: var(--ink);
 }
 .om-sections button[aria-current="location"] {
-  border-color: var(--divider);
-  background: var(--raised);
+  border-color: transparent;
+  background: var(--active);
   color: var(--ink);
   font-weight: 500;
 }
 .om-sections button.om-dim {
-  font-style: italic;
+  color: var(--ink-3);
 }
 .om-hit-count {
-  min-width: 18px;
-  color: var(--muted);
-  font-size: 12px;
+  min-width: 16px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
   font-variant-numeric: tabular-nums;
+  font-weight: 400;
   text-align: right;
 }
 .om-sections button:not(.om-dim) .om-hit-count {
-  color: var(--ink);
+  color: var(--ink-2);
 }
 .om-need {
   flex: none;
   display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--warning);
 }
 .om-main {
   grid-column: 2;
   grid-row: 1;
   min-width: 0;
-  overflow: auto;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
   scrollbar-color: var(--control-border) transparent;
+}
+@supports (scrollbar-gutter: stable) {
+  .om-main {
+    scrollbar-gutter: stable;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .om-main {
@@ -148,85 +179,160 @@
   }
 }
 
-/* Search: sticky at the top of the content column */
+/* ------------------------------------------------------------- reading column */
+.om-wrap {
+  width: 100%;
+  max-width: 672px;
+  margin: 0 auto;
+  padding: 40px 24px 96px;
+}
+.om-page-head {
+  margin: 0 0 24px;
+}
+.om-page-head h1 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: var(--fs-page);
+  line-height: var(--lh-page);
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.om-subtitle {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+
+/* The page error: a quiet danger card, icon first, dismiss at the end. */
+.om-error.om-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-12);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+.om-alert-icon {
+  flex: none;
+  margin-top: 0;
+}
+.om-alert > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.om-error.om-alert button {
+  flex: none;
+  margin: -4px -6px -4px 4px;
+  color: var(--danger);
+}
+.om-error.om-alert button:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+/* -------------------------------------------------------------------- search */
+/* Sticky under the top strip; --om-sticky is measured in SettingsPanel.tsx and
+   fed to .om-section's scroll-margin-top so a heading never hides underneath. */
 .om-search {
   position: sticky;
   top: 0;
-  z-index: 2;
-  display: grid;
-  gap: 10px;
-  max-width: 776px;
-  padding: 18px 28px 14px;
+  z-index: 3;
+  margin: 0 -24px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--divider);
   background: var(--workspace);
 }
 .om-search-field {
   display: flex;
-  margin: 0;
   align-items: center;
-  gap: 10px;
-  height: 42px;
-  padding: 0 12px;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0 10px;
   border: 1px solid var(--control-border);
-  border-radius: 8px;
+  border-radius: var(--radius-8);
   background: var(--paper);
-  color: var(--muted);
-  transition: border-color 160ms ease-out;
+  color: var(--ink-3);
+  transition: border-color var(--dur-1) var(--ease);
 }
 .om-search-field:hover {
   border-color: var(--control-border-hover);
 }
-.om-search-field:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+.om-search-field:has(input:focus-visible) {
+  border-color: var(--focus);
+  outline: 2px solid color-mix(in srgb, var(--focus) 60%, transparent);
+  outline-offset: 2px;
 }
 .om-search-icon {
   flex: none;
+  color: var(--ink-3);
 }
 .om-search-field input {
-  caret-color: var(--accent);
-  flex: 1;
-  margin: 0;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
-  height: 100%;
+  height: 34px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
   border: 0;
+  border-radius: 0;
   outline: none;
   background: transparent;
   color: var(--ink);
-  font: inherit;
-  font-size: 15px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+}
+.om-search-field input:focus-visible {
+  outline: none;
 }
 .om-search-field input::placeholder {
-  color: var(--muted);
+  color: var(--ink-3);
 }
 .om-search-field input::-webkit-search-cancel-button {
   display: none;
 }
 .om-search-count {
   flex: none;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
   font-variant-numeric: tabular-nums;
 }
 /* Skip link: hidden until it takes focus; the first stop after the search field */
 .om-skip {
   position: absolute;
-  top: 62px;
-  left: 28px;
-  z-index: 3;
-  padding: 4px 10px;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: var(--raised);
+  top: calc(100% + 4px);
+  left: 24px;
+  z-index: 4;
+  padding: 5px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-pill);
+  background: var(--elevated);
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   text-decoration: none;
   white-space: nowrap;
   clip-path: inset(50%);
+  /* clip-path alone leaves the box painted in some WebViews; the legacy clip
+     keeps it fully hidden until the link takes focus. */
+  clip: rect(0 0 0 0);
 }
 .om-skip:focus {
   clip-path: none;
-  outline: none;
+  clip: auto;
 }
 /* Read by screen readers only */
 .om-sr-only {
@@ -243,41 +349,41 @@
 /* Note on a disclosure that search opened */
 .om-search-tag {
   margin-left: 8px;
-  color: var(--muted);
+  color: var(--ink-3);
   font-size: 11px;
+  line-height: 16px;
   font-weight: 400;
 }
-/* One plain line under a heading: the file-safety note */
-.om-file-note {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12.5px;
-}
+/* Quick searches under the field */
 .om-qchips {
-  margin: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin: 12px 0 0;
 }
 .om-settings button.om-qchip {
-  min-height: 26px;
-  height: 26px;
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  height: 24px;
+  min-height: 24px;
   padding: 0 10px;
-  border: 1px solid var(--divider);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  font-weight: 500;
 }
 .om-settings button.om-qchip:hover:not(:disabled) {
-  border-color: var(--control-border);
-  background: var(--hover);
+  border-color: transparent;
+  background: var(--active);
   color: var(--ink);
 }
 .om-settings button.om-qchip[aria-pressed="true"] {
-  border-color: var(--accent);
+  border-color: transparent;
+  background: var(--accent-tint);
   color: var(--ink);
 }
 .om-settings button.om-qchip-need {
@@ -285,15 +391,23 @@
   background: var(--warning-bg);
   color: var(--warning);
 }
-
-.om-wrap {
-  max-width: 776px;
-  padding: 8px 28px 96px;
+.om-settings button.om-qchip-need:hover:not(:disabled) {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
 }
+
+/* ------------------------------------------------------------------ sections */
 .om-section {
   position: relative;
-  scroll-margin-top: 116px;
-  padding: 30px 0 34px;
+  padding-top: 32px;
+  scroll-margin-top: calc(var(--om-sticky, 72px) + 16px);
+}
+.om-section:first-of-type {
+  padding-top: 8px;
+}
+.om-section:last-of-type {
+  padding-bottom: 64px;
 }
 .om-section + .om-section {
   border-top: 1px solid var(--divider);
@@ -304,141 +418,219 @@
 }
 .om-need-line {
   position: absolute;
-  top: 34px;
+  top: 32px;
   right: 0;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 60%;
   margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-pill);
+  background: var(--warning-bg);
   color: var(--warning);
-  font-size: 12px;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  font-weight: 500;
+}
+.om-section:first-of-type .om-need-line {
+  top: 8px;
 }
 .om-no-match {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 28px 0 0;
-  color: var(--muted);
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
 }
 .om-pane {
-  display: grid;
-  gap: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
 }
-.om-pane h2 {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-/* Groups, cards and rows */
+/* ---------------------------------------------------------- groups and cards */
 .om-group {
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  align-content: start;
   margin: 0;
 }
 .om-group-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-height: 16px;
 }
 .om-group-label {
   margin: 0;
-  font-weight: 400;
-  line-height: 1.5;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 .om-card {
   min-width: 0;
   border: 1px solid var(--divider);
-  border-radius: 8px;
+  border-radius: var(--radius-16);
   background: var(--raised);
+  overflow: hidden;
+}
+/* A card that continues into .om-card-foot is one shape, not two cards. */
+.om-card:has(+ .om-card-foot) {
+  border-bottom-color: transparent;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 .om-rows {
-  padding: 0 14px;
+  padding: 0;
 }
 .om-row {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--divider);
+  padding: 15px 16px;
 }
-.om-rows .om-row:last-child {
-  border-bottom: 0;
+/* Described rows align their control with the first line of text. */
+.om-row:has(.om-what > :nth-child(2)) {
+  align-items: flex-start;
+}
+.om-row:has(.om-what > :nth-child(2)) > .om-side {
+  align-self: flex-start;
+}
+.om-row::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  border-bottom: 1px dashed var(--divider);
+  pointer-events: none;
+}
+.om-row:last-child::after {
+  content: none;
 }
 .om-what {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .om-what strong {
-  font-size: 13.5px;
+  color: var(--ink);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
   font-weight: 500;
 }
 .om-what span {
-  color: var(--muted);
-  font-size: 12.5px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  font-weight: 400;
+}
+.om-what .om-muted {
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
 }
 .om-what .om-path {
-  max-width: 330px;
+  max-width: 100%;
   overflow: hidden;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .om-side {
-  flex: none;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 .om-side select,
 .om-side input {
   width: 228px;
-  min-height: 30px;
+  max-width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--control-border);
-  border-radius: 6px;
+  border-radius: var(--radius-8);
   background: var(--paper);
   color: var(--ink);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  transition: border-color var(--dur-1) var(--ease);
+}
+.om-side select:hover:not(:disabled),
+.om-side input:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+}
+.om-side select:disabled,
+.om-side input:disabled {
+  border-color: var(--divider);
+  background: var(--hover);
+  color: var(--ink-3);
+  cursor: not-allowed;
 }
 .om-side input.om-mono,
 .om-side select.om-mono {
   width: 250px;
-  font-family: var(--mono);
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
 .om-side .om-muted {
-  color: var(--muted);
-  font-size: 12.5px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
 }
+/* The footer is the last row of the same card, separated by the same dash. */
 .om-card-foot {
+  position: relative;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 10px 16px;
   border: 1px solid var(--divider);
   border-top: 0;
-  border-radius: 0 0 8px 8px;
+  border-radius: 0 0 var(--radius-16) var(--radius-16);
   background: var(--raised);
 }
+.om-card-foot::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 16px;
+  right: 16px;
+  border-top: 1px dashed var(--divider);
+}
 .om-card-foot .om-spacer {
-  flex: 1;
+  flex: 1 1 auto;
 }
 .om-card-foot .om-muted {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
 }
 
-/* Buttons inside the page */
+/* ------------------------------------------------------------------- buttons */
 .om-settings button {
   font-weight: 500;
 }
@@ -446,12 +638,12 @@
   height: 28px;
   min-height: 28px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .om-settings button.om-ghost {
   border-color: transparent;
   background: transparent;
-  color: var(--muted);
+  color: var(--ink-2);
 }
 .om-settings button.om-ghost:hover:not(:disabled) {
   border-color: transparent;
@@ -459,155 +651,243 @@
   color: var(--ink);
 }
 .om-settings button.om-danger {
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.om-settings button.om-danger:hover:not(:disabled) {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
   color: var(--danger);
 }
 .om-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   margin: 0;
   color: var(--danger);
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+.om-error > svg {
+  flex: none;
+  margin-top: 1px;
 }
 
-/* Small status pieces */
+/* -------------------------------------------------------------- small pieces */
 .om-tag {
-  padding: 1px 6px;
+  padding: 1px 8px;
   border: 1px solid var(--divider);
-  border-radius: 4px;
-  color: var(--muted);
-  font-family: var(--mono);
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
   font-size: 11px;
+  line-height: 16px;
   white-space: nowrap;
 }
 .om-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--success);
-  font-family: var(--mono);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 500;
   white-space: nowrap;
 }
+.om-num {
+  font-variant-numeric: tabular-nums;
+}
+.om-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
 .om-kbd-row {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
-  color: var(--muted);
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
 }
 .om-kbd-row kbd {
   display: inline-flex;
   align-items: center;
-  height: 22px;
+  height: 20px;
   padding: 0 5px;
   border: 1px solid var(--divider);
-  border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-4);
   background: var(--paper);
-  color: var(--muted);
-  font-family: var(--mono);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 16px;
+}
+/* Shortcut capture: keys and buttons on one line, the refusal under the field. */
+.om-capture {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 0;
+}
+.om-capture-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.om-capture-error {
+  max-width: 320px;
+  color: var(--danger);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  text-align: right;
 }
 
-/* Switch: a 34x24 hit area around the 34x20 track, so the target is at least 24px tall */
+/* ------------------------------------------------------------------- switch */
+/* 32x20 track, 16px thumb; off is --ink-3, on is --accent, 100ms. */
 .om-switch {
   position: relative;
   flex: none;
   box-sizing: border-box;
-  width: 34px;
-  height: 24px;
-  min-height: 24px;
+  width: 32px;
+  height: 20px;
+  min-height: 20px;
   padding: 0;
   border: 0;
-  background: transparent;
-}
-.om-switch::before {
-  content: "";
-  position: absolute;
-  inset: 2px 0;
-  border: 1px solid var(--control-border);
-  border-radius: 999px;
-  background: var(--active);
+  border-radius: var(--radius-pill);
+  background: var(--ink-3);
+  cursor: pointer;
+  transition: background-color 100ms var(--ease);
 }
 .om-switch::after {
   content: "";
   position: absolute;
-  top: 5px;
-  left: 3px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--muted);
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-ink);
+  transition: transform 100ms var(--ease);
 }
-.om-switch[aria-checked="true"]::before {
-  border-color: var(--accent);
+.om-switch[aria-checked="true"] {
   background: var(--accent);
 }
 .om-switch[aria-checked="true"]::after {
-  left: 17px;
-  background: var(--accent-ink);
+  transform: translateX(12px);
 }
-
-/* Segmented choice: title plus a micro-note */
-.om-seg {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--divider);
-  border-radius: 8px;
-  background: var(--paper);
+.om-settings .om-switch:hover:not(:disabled),
+.om-settings .om-switch:active:not(:disabled) {
+  border-color: transparent;
+  background: var(--ink-3);
 }
-.om-seg button {
-  display: grid;
-  justify-items: start;
-  gap: 2px;
-  height: auto;
-  min-height: 0;
-  padding: 5px 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted);
-  text-align: left;
+.om-settings .om-switch[aria-checked="true"]:hover:not(:disabled),
+.om-settings .om-switch[aria-checked="true"]:active:not(:disabled) {
+  background: var(--accent);
 }
-.om-seg button:hover:not(:disabled) {
+.om-settings .om-switch:disabled {
   border-color: transparent;
   background: var(--hover);
+  cursor: not-allowed;
+}
+.om-settings .om-switch:disabled::after {
+  background: var(--ink-3);
+}
+
+/* ---------------------------------------------------------- segmented choice */
+/* One 28px pill track; the selected option is a raised 24px pill. A short note
+   sits inline after the option title rather than on a second line. */
+.om-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+}
+.om-settings .om-seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
+}
+.om-settings .om-seg button:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--active);
   color: var(--ink);
 }
-.om-seg button[aria-pressed="true"] {
+.om-settings .om-seg button[aria-pressed="true"] {
   border-color: var(--divider);
   background: var(--raised);
   color: var(--ink);
 }
+.om-settings .om-seg button:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-3);
+}
 .om-seg .om-seg-t {
-  font-size: 13px;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   font-weight: 500;
 }
 .om-seg .om-seg-s {
-  color: var(--muted);
+  color: var(--ink-3);
   font-size: 11px;
+  line-height: var(--lh-sm);
+  font-weight: 400;
+}
+.om-settings .om-seg button[aria-pressed="true"] .om-seg-s {
+  color: var(--ink-2);
 }
 
-/* "When on" preview under a toggle: muted text, not dimmed controls */
+/* "When on" preview under a toggle: muted text, no side stripe. */
 .om-preview {
   display: grid;
   gap: 4px;
-  padding: 2px 0 2px 12px;
-  border-left: 2px solid var(--divider);
-  color: var(--muted);
+  padding: 0;
+  color: var(--ink-2);
 }
 .om-preview .om-group-label {
-  font-size: 10px;
+  font-size: 11px;
 }
 .om-pline {
-  color: var(--muted);
-  font-size: 12.5px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
 }
 
-/* More options disclosure */
+/* ---------------------------------------------------- More options disclosure */
 .om-more {
-  margin: 6px 0 2px;
+  margin: 0;
 }
 .om-more > summary {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 12.5px;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 8px 0 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  font-weight: 500;
   cursor: pointer;
   list-style: none;
 }
@@ -615,11 +895,16 @@
   display: none;
 }
 .om-more > summary::before {
-  content: "▸";
-  font-size: 10px;
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-1) var(--ease);
 }
 .om-more[open] > summary::before {
-  content: "▾";
+  transform: rotate(45deg);
 }
 .om-more > summary:hover {
   color: var(--ink);
@@ -627,11 +912,12 @@
 .om-more-body {
   display: grid;
   gap: 10px;
-  margin-top: 10px;
-  padding: 12px 14px;
-  border: 1px solid var(--divider);
-  border-radius: 8px;
-  background: var(--paper);
+  margin-top: 8px;
+  padding: 12px 0 0;
+  border: 0;
+  border-top: 1px dashed var(--divider);
+  border-radius: 0;
+  background: transparent;
 }
 .om-frow {
   display: flex;
@@ -640,20 +926,27 @@
   gap: 12px;
 }
 .om-frow > span:first-child {
-  color: var(--muted);
-  font-size: 12.5px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
 }
 .om-frow input:not([type="checkbox"]),
 .om-frow textarea {
   width: 250px;
+  max-width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--control-border);
-  border-radius: 6px;
-  background: var(--raised);
+  border-radius: var(--radius-8);
+  background: var(--paper);
   color: var(--ink);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
 }
 .om-frow textarea {
   width: 100%;
+  height: auto;
   padding: 8px 10px;
   resize: vertical;
 }
@@ -662,81 +955,104 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 13px;
+  min-height: 30px;
+  font-size: var(--fs-sm);
+}
+.om-appline > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Chips (transcript formats) */
+/* Chips (kept for older panels; no glyph marks) */
 .om-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 12px 16px;
 }
 .om-chip {
   height: 28px;
   min-height: 28px;
   padding: 0 12px;
   border: 1px solid var(--control-border);
-  border-radius: 6px;
+  border-radius: var(--radius-pill);
   background: var(--paper);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11.5px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
 }
 .om-chip[aria-pressed="true"] {
   border-color: var(--accent);
-  background: var(--selection);
+  background: var(--accent-tint);
   color: var(--ink);
 }
-.om-chip[aria-pressed="true"]::before {
-  content: "✓ ";
-  color: var(--accent);
-}
 
-/* Privacy table */
+/* --------------------------------------------------------------- privacy table */
 .om-table-card {
-  padding: 0 14px;
+  padding: 0 16px;
 }
 .om-leaves-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
 }
 .om-leaves-table th {
   width: 42%;
-  padding: 10px 12px 10px 0;
-  border-bottom: 1px solid var(--divider);
+  padding: 15px 12px 15px 0;
+  border-bottom: 1px dashed var(--divider);
+  color: var(--ink);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
   font-weight: 500;
   text-align: left;
   vertical-align: top;
 }
 .om-leaves-table td {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--divider);
-  color: var(--muted);
+  padding: 15px 0;
+  border-bottom: 1px dashed var(--divider);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
   vertical-align: top;
 }
 .om-leaves-table tr:last-child th,
 .om-leaves-table tr:last-child td {
   border-bottom: 0;
 }
+/* A one-line note that is still a card of its own (the Files group). */
+.om-file-note {
+  margin: 0;
+  padding: 15px 16px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-16);
+  background: var(--raised);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
 
 .om-foot-note {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
+  gap: 6px;
+  margin-top: -8px;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
 }
-.om-foot-note .om-mono {
-  font-family: var(--mono);
+.om-foot-note .om-mono,
+.om-foot-note .om-num {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Model library panel inside the Models group */
+/* ----------------------------------------------------- model library (F uses) */
 .om-library {
-  padding: 12px 14px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  padding: 14px 16px;
 }
 .om-library form {
   display: flex;
@@ -745,13 +1061,16 @@
   margin: 0;
 }
 .om-library input[type="search"] {
-  flex: 1;
-  min-height: 30px;
+  flex: 1 1 auto;
+  width: auto;
+  height: 36px;
+  min-height: 36px;
   border: 1px solid var(--control-border);
-  border-radius: 6px;
+  border-radius: var(--radius-8);
   background: var(--paper);
   color: var(--ink);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
 }
 .om-library ul {
   margin: 0;
@@ -761,20 +1080,20 @@
 .om-library li {
   display: grid;
   gap: 4px;
-  padding: 8px 0;
-  border-top: 1px solid var(--divider);
+  padding: 10px 0;
+  border-top: 1px dashed var(--divider);
   overflow-wrap: anywhere;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .om-library li:first-child {
   border-top: 0;
 }
 .om-library p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .om-library .om-muted {
-  color: var(--muted);
+  color: var(--ink-2);
 }
 
 /* Installed speech models */
@@ -785,39 +1104,46 @@
   min-width: 0;
 }
 .om-model-name .om-mono {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11.5px;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
 
-/* Templates list */
+/* --------------------------------------------------- templates / empty states */
 .om-empty {
   margin: 0;
-  color: var(--muted);
-  font-size: 12.5px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
 }
 .om-form {
   display: grid;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 12px;
+  padding: 14px 16px;
 }
 .om-form label {
   display: grid;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 12.5px;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
 }
 .om-form input,
 .om-form textarea {
   width: 100%;
-  min-height: 30px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--control-border);
-  border-radius: 6px;
-  background: var(--raised);
+  border-radius: var(--radius-8);
+  background: var(--paper);
   color: var(--ink);
-  font-size: 13px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
 }
 .om-form textarea {
+  height: auto;
   padding: 8px 10px;
   resize: vertical;
 }
@@ -826,23 +1152,57 @@
   gap: 8px;
 }
 
-@media (max-width: 760px) {
-  .om-need-line {
-    position: static;
-    margin-bottom: 8px;
+/* -------------------------------------------------------------- narrow widths */
+@media (max-width: 899px) {
+  .om-body {
+    grid-template-columns: 208px minmax(0, 1fr);
   }
   .om-wrap {
-    padding: 4px 18px 64px;
+    padding: 32px 20px 88px;
   }
   .om-search {
-    padding: 14px 18px 12px;
+    margin: 0 -20px;
+    padding: 12px 20px;
+  }
+  .om-skip {
+    left: 20px;
+  }
+}
+@media (max-width: 760px) {
+  .om-body {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .om-need-line,
+  .om-section:first-of-type .om-need-line {
+    position: static;
+    max-width: none;
+    margin: 0 0 10px;
+  }
+  .om-row {
+    flex-wrap: wrap;
+  }
+  .om-side {
+    width: 100%;
+    justify-content: flex-start;
   }
   .om-side select,
   .om-side input,
   .om-side input.om-mono {
-    width: 200px;
+    width: 100%;
   }
   .om-what .om-path {
-    max-width: 240px;
+    max-width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .om-sections button,
+  .om-search-field,
+  .om-side select,
+  .om-side input,
+  .om-switch,
+  .om-switch::after,
+  .om-settings .om-seg button,
+  .om-more > summary::before {
+    transition: none;
   }
 }

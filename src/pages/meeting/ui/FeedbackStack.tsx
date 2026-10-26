@@ -2,6 +2,7 @@ import type {
   MicApp,
   SessionProcessingSnapshot,
 } from "../../../shared/api/api";
+import { IconAlert, IconInfo, IconMic } from "../../../shared/ui/icons";
 
 export type FeedbackProps = {
   desktop: boolean;
@@ -34,7 +35,8 @@ export type FeedbackProps = {
   onDismissProcessing: () => void;
 };
 
-/** Banners above the document: detection, errors, notices and audio gaps. */
+/** Banners above the document: detection, errors, notices and audio gaps.
+ * Each is one raised row with a leading icon; the tint carries the meaning. */
 export function FeedbackStack(props: FeedbackProps) {
   return (
     <div className="feedback-stack">
@@ -44,7 +46,8 @@ export function FeedbackStack(props: FeedbackProps) {
           role="status"
           aria-label="Meeting detected"
         >
-          <span>
+          <IconMic className="banner-icon" />
+          <span className="banner-text">
             <strong>{props.detectedApp.name}</strong> is using your microphone.
             Record this meeting?
           </span>
@@ -56,35 +59,49 @@ export function FeedbackStack(props: FeedbackProps) {
             >
               Set up recording
             </button>
-            <button onClick={props.onDismissDetected}>Not now</button>
-            <button onClick={props.onIgnoreDetected}>
+            <button className="ghost" onClick={props.onDismissDetected}>
+              Not now
+            </button>
+            <button className="ghost" onClick={props.onIgnoreDetected}>
               Never for {props.detectedApp.name}
             </button>
           </div>
         </div>
       )}
       {!props.desktop && (
-        <p role="alert">
-          The browser preview has no database. Start OpenMeet with{" "}
-          <code>just dev</code> or the OpenMeet.exe build.
-        </p>
+        <div className="error" role="alert">
+          <IconAlert className="banner-icon" />
+          <span className="banner-text">
+            The browser preview has no database. Start OpenMeet with{" "}
+            <code>just dev</code> or the OpenMeet.exe build.
+          </span>
+        </div>
       )}
       {/* Above the action errors, which point at it ("Fix the problem above"). */}
       {props.notesError && (
-        <p className="error" role="alert">
-          Notes not saved: {props.notesErrorReason}. You can't switch meetings
-          until this is fixed. Copy your text or retry.
-        </p>
+        <div className="error" role="alert">
+          <IconAlert className="banner-icon" />
+          <span className="banner-text">
+            Notes not saved: {props.notesErrorReason}. You can't switch meetings
+            until this is fixed. Copy your text or retry.
+          </span>
+        </div>
       )}
       {props.error && (
         <div className="error" role="alert">
-          {props.error} <button onClick={props.onDismissError}>Dismiss</button>
+          <IconAlert className="banner-icon" />
+          <span className="banner-text">{props.error}</span>
+          <button className="ghost" onClick={props.onDismissError}>
+            Dismiss
+          </button>
         </div>
       )}
       {props.captureError && (
         <div className="error" role="alert">
-          <span>Capture: {props.captureError}</span>{" "}
+          <IconAlert className="banner-icon" />
+          <span className="banner-text">Capture: {props.captureError}</span>
           <button
+            className="ghost"
             aria-label="Dismiss capture error"
             onClick={props.onDismissCapture}
           >
@@ -93,14 +110,17 @@ export function FeedbackStack(props: FeedbackProps) {
         </div>
       )}
       {props.processingNotice && (
-        <p className="notice" role="status">
-          {props.processingNotice}
-        </p>
+        <div className="notice" role="status">
+          <IconInfo className="banner-icon" />
+          <span className="banner-text">{props.processingNotice}</span>
+        </div>
       )}
       {props.notice && (
         <div className="notice" role="status">
-          <span>{props.notice}</span>
+          <IconInfo className="banner-icon" />
+          <span className="banner-text">{props.notice}</span>
           <button
+            className="ghost"
             aria-label="Dismiss notification"
             onClick={props.onDismissNotice}
           >
@@ -109,12 +129,16 @@ export function FeedbackStack(props: FeedbackProps) {
         </div>
       )}
       {props.desktop && !props.ready && !props.error && (
-        <p role="status">Opening local database…</p>
+        <p className="banner-quiet" role="status">
+          Opening local database…
+        </p>
       )}
       {props.gapNotice && (
         <div className="notice" role="status">
-          <span>{props.gapNotice}</span>
+          <IconInfo className="banner-icon" />
+          <span className="banner-text">{props.gapNotice}</span>
           <button
+            className="ghost"
             aria-label="Dismiss audio gap notice"
             onClick={props.onDismissGaps}
           >
@@ -123,9 +147,10 @@ export function FeedbackStack(props: FeedbackProps) {
         </div>
       )}
       {props.active && props.healthError && (
-        <p className="error" role="alert">
-          Audio: {props.healthError}
-        </p>
+        <div className="error" role="alert">
+          <IconAlert className="banner-icon" />
+          <span className="banner-text">Audio: {props.healthError}</span>
+        </div>
       )}
     </div>
   );

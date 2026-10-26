@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
@@ -40,6 +41,15 @@ import {
   formatDateTime,
   sourceLabels,
 } from "../../entities/meeting";
+import {
+  IconCalendar,
+  IconChevronLeft,
+  IconClock,
+  IconCopy,
+  IconMic,
+  IconMore,
+  IconPanelLeft,
+} from "../../shared/ui/icons";
 import {
   formatTimestamp,
   parseTimestamp,
@@ -134,7 +144,7 @@ function citationTarget(selected: MeetingDetail, matches: number[]) {
 }
 
 /** The inspector is dropped below this width; a Tasks button opens a sheet instead. */
-const narrowInspectorQuery = "(max-width: 1099px)";
+const narrowInspectorQuery = "(max-width: 900px)";
 
 const useNarrowInspector = () => {
   const [narrow, setNarrow] = useState(
@@ -401,18 +411,11 @@ export function MeetingWorkspace(props: Props) {
     return (
       <div className="mw-hero">
         <span className="mw-hero-mark" aria-hidden="true">
-          <svg
-            viewBox="0 0 24 24"
-            width="22"
-            height="22"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <path d="M5 10v4M10 5v14M15 8v8M20 10v4" />
-          </svg>
+          <IconMic size={20} />
         </span>
+        <p className="mw-hero-copy">
+          Record a meeting or write a note on this PC.
+        </p>
         <div className="mw-hero-row">
           <button
             className="primary mw-hero-go"
@@ -524,6 +527,8 @@ export function MeetingWorkspace(props: Props) {
     (version) => version.kind === "enhanced",
   );
   const enhancedEdited = enhancedCurrent?.edited_from != null;
+  // AI text is the draft until the user saves an edit; a sample summary is not a draft.
+  const summaryIsDraft = summary && !edited && provider !== "fixture";
   const versionName = (id: number | null) => {
     const index = summaries.findIndex((version) => version.id === id);
     return index < 0
@@ -699,59 +704,16 @@ export function MeetingWorkspace(props: Props) {
   return (
     <article className="mw" hidden={props.hidden}>
       <header className="mw-toolbar">
-        <div className="mw-crumb">
-          <button
-            className="mw-up"
-            aria-label="Toggle meetings"
-            aria-controls="meeting-sidebar"
-            aria-expanded={props.sidebarOpen ?? true}
-            onClick={props.onToggleSidebar}
-          >
-            Meetings
-          </button>
-          <span className="mw-sep" aria-hidden="true">
-            /
-          </span>
-          {titleDraft === null ? (
-            <h1 className="mw-title">
-              <button
-                className="mw-title-btn"
-                ref={titleButton}
-                title={
-                  props.sidebarOpen === false
-                    ? `${meeting.title} · Rename (F2) · Ctrl+I toggles the inspector`
-                    : `${meeting.title} · Rename (F2)`
-                }
-                onClick={startRename}
-              >
-                {meeting.title}
-              </button>
-            </h1>
-          ) : (
-            <input
-              className="mw-title mw-title-input"
-              aria-label="Meeting title"
-              autoFocus
-              maxLength={160}
-              ref={titleInput}
-              value={titleDraft}
-              onChange={(event) => setTitleDraft(event.target.value)}
-              onBlur={() => settleTitle(true)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  focusTitle.current = true;
-                  settleTitle(true);
-                } else if (event.key === "Escape") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  focusTitle.current = true;
-                  settleTitle(false);
-                }
-              }}
-            />
-          )}
-        </div>
+        <button
+          className="mw-up"
+          aria-label="Toggle meetings"
+          aria-controls="meeting-sidebar"
+          aria-expanded={props.sidebarOpen ?? true}
+          onClick={props.onToggleSidebar}
+        >
+          <IconChevronLeft size={16} />
+          Meetings
+        </button>
         <span className="mw-gap" />
         {narrow ? (
           <button
@@ -771,18 +733,7 @@ export function MeetingWorkspace(props: Props) {
             title="Inspector · Ctrl+I"
             onClick={toggleInspector}
           >
-            <svg
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              aria-hidden="true"
-            >
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <path d="M15 4v16" />
-            </svg>
+            <IconPanelLeft size={16} />
             <span className="mw-keyhint">Ctrl I</span>
           </button>
         )}
@@ -801,7 +752,7 @@ export function MeetingWorkspace(props: Props) {
             className="mw-tool mw-dots"
             aria-label="More meeting actions"
           >
-            ⋯
+            <IconMore size={16} />
           </summary>
           <div className="mw-menu">
             <button
@@ -810,11 +761,6 @@ export function MeetingWorkspace(props: Props) {
             >
               Rename
             </button>
-            <MoveToFolder
-              meetingId={selected.meeting.id}
-              folderId={selected.meeting.folder_id}
-              disabled={disabled}
-            />
             <button
               aria-label="Export Markdown"
               disabled={disabled}
@@ -887,156 +833,254 @@ export function MeetingWorkspace(props: Props) {
             onSpeakerNames={props.onSpeakerNames}
             onOpenSettings={props.onOpenSettings}
           >
-            {deleting && !props.recordingThis && (
-              <div
-                className="dialog-card delete-card"
-                role="group"
-                aria-label={
-                  deleting === "meeting"
-                    ? "Confirm meeting deletion"
-                    : "Confirm audio deletion"
-                }
-                onKeyDown={(event) => {
-                  if (event.key !== "Escape") return;
-                  event.stopPropagation();
-                  setDeleting(null);
-                  focusActions();
-                }}
-              >
-                <p>
-                  <strong>
-                    {deleting === "meeting"
-                      ? `Permanently delete “${meeting.title}”?`
-                      : `Permanently delete the audio of “${meeting.title}”?`}
-                  </strong>
-                </p>
-                <p>
-                  {deleting === "meeting"
-                    ? "Deletes its notes, transcript, summaries, audio and the saved answers that used it."
-                    : `Removes ${selected.tracks.length} audio track${selected.tracks.length === 1 ? "" : "s"} (${formatBytes(audioBytes)}). Notes, transcript and summaries stay.`}{" "}
-                  This cannot be undone.
-                </p>
-                {needsTitle && (
-                  <label>
-                    Type the meeting title to confirm
-                    <input
-                      ref={deleteTyped}
-                      value={typed}
-                      onChange={(event) => setTyped(event.target.value)}
-                    />
-                  </label>
-                )}
-                <div className="panel-actions">
+            <div className="mw-head">
+              {titleDraft === null ? (
+                <h1 className="mw-title">
                   <button
-                    className="danger danger-filled"
-                    disabled={
-                      deleteDisabled || (needsTitle && typed !== meeting.title)
+                    className="mw-title-btn"
+                    ref={titleButton}
+                    title={
+                      props.sidebarOpen === false
+                        ? `${meeting.title} · Rename (F2) · Ctrl+I toggles the inspector`
+                        : `${meeting.title} · Rename (F2)`
                     }
-                    onClick={() => {
-                      setDeleting(null);
-                      if (deleting === "meeting") props.onDeleteMeeting();
-                      else props.onDeleteAudio();
-                    }}
+                    onClick={startRename}
                   >
-                    {deleting === "meeting" ? "Delete meeting" : "Delete audio"}
+                    {meeting.title}
                   </button>
-                  <button
-                    ref={deleteCancel}
-                    onClick={() => {
-                      setDeleting(null);
-                      focusActions();
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-            {recoverable && (
-              <div
-                className="mw-card"
-                role="group"
-                aria-label="Interrupted recording"
-              >
-                <p>Recording was interrupted before its audio finished.</p>
-                <div className="mw-card-row">
-                  <button
-                    disabled={disabled || job !== null}
-                    onClick={props.onRecover}
-                  >
-                    {job === "recover" ? "Recovering…" : "Recover audio"}
-                  </button>
-                </div>
-              </div>
-            )}
-            {nextSteps && (
-              <div className="mw-card" role="group" aria-label="Next steps">
-                <p>No transcript yet.</p>
-                <div className="mw-card-row">
-                  {props.speechReady ? (
-                    <button
-                      className="primary"
-                      disabled={disabled || job !== null}
-                      // Progress and Cancel live on the Transcript tab, so show it while this runs.
-                      onClick={() => {
-                        props.onTab("transcript");
-                        props.onTranscribe();
-                      }}
-                    >
-                      {job === "transcribe"
-                        ? "Transcribing…"
-                        : "Transcribe audio"}
-                    </button>
-                  ) : (
-                    <>
-                      <span className="muted">{speechReason}</span>
-                      <OpenSettingsButton
-                        section="transcription"
-                        onOpenSettings={props.onOpenSettings}
-                      />
-                    </>
-                  )}
-                  {/\S/.test(props.notes) && (
-                    <button onClick={() => props.onTab("summary")}>
-                      Go to Summary
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-            <div
-              className="mw-tabs"
-              role="tablist"
-              aria-label="Meeting content"
-            >
-              {contentTabs.map((item, index) => (
-                <button
-                  key={item.id}
-                  id={`tab-${item.id}`}
-                  role="tab"
-                  aria-selected={tab === item.id}
-                  aria-controls={`panel-${item.id}`}
-                  tabIndex={tab === item.id ? 0 : -1}
-                  onClick={() => props.onTab(item.id)}
+                </h1>
+              ) : (
+                <input
+                  className="mw-title mw-title-input"
+                  aria-label="Meeting title"
+                  autoFocus
+                  maxLength={160}
+                  placeholder="Untitled note"
+                  ref={titleInput}
+                  value={titleDraft}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onBlur={() => settleTitle(true)}
                   onKeyDown={(event) => {
-                    const next = tabTarget(
-                      event.key,
-                      index,
-                      contentTabs.length,
-                    );
-                    if (next === null) return;
-                    event.preventDefault();
-                    props.onTab(contentTabs[next].id);
-                    document
-                      .getElementById(`tab-${contentTabs[next].id}`)
-                      ?.focus();
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      focusTitle.current = true;
+                      settleTitle(true);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      focusTitle.current = true;
+                      settleTitle(false);
+                    }
+                  }}
+                />
+              )}
+              <div
+                className="mw-meta"
+                role="group"
+                aria-label="Meeting details"
+              >
+                <span className="mw-meta-item">
+                  <IconCalendar size={14} />
+                  {formatDateTime(meeting.started_at)}
+                </span>
+                <span className="mw-meta-item">
+                  {sourceLabels[meeting.source]}
+                </span>
+                <span
+                  className={`mw-meta-item mw-meta-duration${
+                    meeting.ended_at ? "" : " is-empty"
+                  }`}
+                >
+                  <span className="sr-only">Duration </span>
+                  <IconClock size={14} />
+                  {formatDuration(meeting.started_at, meeting.ended_at)}
+                </span>
+                <CalendarEventRow
+                  key={`${meeting.id}:${meeting.calendar_event_id ?? ""}`}
+                  meetingId={meeting.id}
+                  startedAt={meeting.started_at}
+                  eventId={meeting.calendar_event_id}
+                  disabled={disabled}
+                  onOpenMeeting={props.onOpenMeeting}
+                />
+                <MeetingTagsForm
+                  key={`${meeting.id}:${meeting.tags.join(",")}`}
+                  meetingId={meeting.id}
+                  tags={meeting.tags}
+                  disabled={disabled}
+                  onTags={(tags) => props.onTags(meeting.id, tags)}
+                />
+                <MoveToFolder
+                  meetingId={meeting.id}
+                  folderId={meeting.folder_id}
+                  disabled={disabled}
+                />
+              </div>
+              <div
+                className="mw-tabs"
+                role="tablist"
+                aria-label="Meeting content"
+                style={
+                  {
+                    "--mw-tab": Math.max(
+                      0,
+                      contentTabs.findIndex((item) => item.id === tab),
+                    ),
+                  } as CSSProperties
+                }
+              >
+                <span className="mw-tabs-ind" aria-hidden="true" />
+                {contentTabs.map((item, index) => (
+                  <button
+                    key={item.id}
+                    id={`tab-${item.id}`}
+                    role="tab"
+                    aria-selected={tab === item.id}
+                    aria-controls={`panel-${item.id}`}
+                    tabIndex={tab === item.id ? 0 : -1}
+                    onClick={() => props.onTab(item.id)}
+                    onKeyDown={(event) => {
+                      const next = tabTarget(
+                        event.key,
+                        index,
+                        contentTabs.length,
+                      );
+                      if (next === null) return;
+                      event.preventDefault();
+                      props.onTab(contentTabs[next].id);
+                      document
+                        .getElementById(`tab-${contentTabs[next].id}`)
+                        ?.focus();
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              {props.status && <div className="mw-status">{props.status}</div>}
+            </div>
+            <div className="mw-alerts">
+              {deleting && !props.recordingThis && (
+                <div
+                  className="dialog-card delete-card"
+                  role="group"
+                  aria-label={
+                    deleting === "meeting"
+                      ? "Confirm meeting deletion"
+                      : "Confirm audio deletion"
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key !== "Escape") return;
+                    event.stopPropagation();
+                    setDeleting(null);
+                    focusActions();
                   }}
                 >
-                  {item.label}
-                </button>
-              ))}
+                  <p>
+                    <strong>
+                      {deleting === "meeting"
+                        ? `Permanently delete “${meeting.title}”?`
+                        : `Permanently delete the audio of “${meeting.title}”?`}
+                    </strong>
+                  </p>
+                  <p>
+                    {deleting === "meeting"
+                      ? "Deletes its notes, transcript, summaries, audio and the saved answers that used it."
+                      : `Removes ${selected.tracks.length} audio track${selected.tracks.length === 1 ? "" : "s"} (${formatBytes(audioBytes)}). Notes, transcript and summaries stay.`}{" "}
+                    This cannot be undone.
+                  </p>
+                  {needsTitle && (
+                    <label>
+                      Type the meeting title to confirm
+                      <input
+                        ref={deleteTyped}
+                        value={typed}
+                        onChange={(event) => setTyped(event.target.value)}
+                      />
+                    </label>
+                  )}
+                  <div className="panel-actions">
+                    <button
+                      className="danger danger-filled"
+                      disabled={
+                        deleteDisabled ||
+                        (needsTitle && typed !== meeting.title)
+                      }
+                      onClick={() => {
+                        setDeleting(null);
+                        if (deleting === "meeting") props.onDeleteMeeting();
+                        else props.onDeleteAudio();
+                      }}
+                    >
+                      {deleting === "meeting"
+                        ? "Delete meeting"
+                        : "Delete audio"}
+                    </button>
+                    <button
+                      ref={deleteCancel}
+                      onClick={() => {
+                        setDeleting(null);
+                        focusActions();
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+              {recoverable && (
+                <div
+                  className="mw-card"
+                  role="group"
+                  aria-label="Interrupted recording"
+                >
+                  <p>Recording was interrupted before its audio finished.</p>
+                  <div className="mw-card-row">
+                    <button
+                      disabled={disabled || job !== null}
+                      onClick={props.onRecover}
+                    >
+                      {job === "recover" ? "Recovering…" : "Recover audio"}
+                    </button>
+                  </div>
+                </div>
+              )}
+              {nextSteps && (
+                <div className="mw-card" role="group" aria-label="Next steps">
+                  <p>No transcript yet.</p>
+                  <div className="mw-card-row">
+                    {props.speechReady ? (
+                      <button
+                        className="primary"
+                        disabled={disabled || job !== null}
+                        // Progress and Cancel live on the Transcript tab, so show it while this runs.
+                        onClick={() => {
+                          props.onTab("transcript");
+                          props.onTranscribe();
+                        }}
+                      >
+                        {job === "transcribe"
+                          ? "Transcribing…"
+                          : "Transcribe audio"}
+                      </button>
+                    ) : (
+                      <>
+                        <span className="muted">{speechReason}</span>
+                        <OpenSettingsButton
+                          section="transcription"
+                          onOpenSettings={props.onOpenSettings}
+                        />
+                      </>
+                    )}
+                    {/\S/.test(props.notes) && (
+                      <button onClick={() => props.onTab("summary")}>
+                        Go to Summary
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-            {props.status && <div className="mw-status">{props.status}</div>}
             <div className="mw-scroll">
               <section
                 className="notes-panel"
@@ -1230,7 +1274,9 @@ export function MeetingWorkspace(props: Props) {
                     </div>
                   </div>
                 ) : summary ? (
-                  <div className="summary-body">
+                  <div
+                    className={`summary-body${summaryIsDraft ? " is-draft" : ""}`}
+                  >
                     {renderMarkdown(summary, reference)}
                   </div>
                 ) : (
@@ -1322,7 +1368,11 @@ export function MeetingWorkspace(props: Props) {
                     </div>
                   ) : enhancedCurrent ? (
                     <>
-                      <div className="summary-body">
+                      <div
+                        className={`summary-body${
+                          enhancedEdited ? "" : " is-draft"
+                        }`}
+                      >
                         {renderMarkdown(
                           enhancedCurrent.markdown,
                           noteReference,
@@ -1372,45 +1422,6 @@ export function MeetingWorkspace(props: Props) {
             aria-label="Meeting inspector"
             hidden={!inspectorOpen}
           >
-            <section className="insp-sec" aria-labelledby="insp-details">
-              <h2 id="insp-details">
-                Details
-                <span className="mw-gap" />
-              </h2>
-              <dl className="insp-kv">
-                <dt>Date</dt>
-                <dd className="mono">{formatDateTime(meeting.started_at)}</dd>
-                <dt>Source</dt>
-                <dd>{sourceLabels[meeting.source]}</dd>
-                <dt>Duration</dt>
-                <dd className="mono">
-                  {formatDuration(meeting.started_at, meeting.ended_at)}
-                </dd>
-                <dt>Tags</dt>
-                <dd>
-                  <MeetingTagsForm
-                    key={`${meeting.id}:${meeting.tags.join(",")}`}
-                    meetingId={meeting.id}
-                    tags={meeting.tags}
-                    disabled={disabled}
-                    onTags={(tags) => props.onTags(meeting.id, tags)}
-                  />
-                </dd>
-                <dt>Calendar event</dt>
-                <dd>
-                  <CalendarEventRow
-                    key={`${meeting.id}:${meeting.calendar_event_id ?? ""}`}
-                    meetingId={meeting.id}
-                    startedAt={meeting.started_at}
-                    eventId={meeting.calendar_event_id}
-                    disabled={disabled}
-                    onOpenMeeting={props.onOpenMeeting}
-                  />
-                </dd>
-                <dt>Notes</dt>
-                <dd className={`mono ${savedState}`}>{savedLabel}</dd>
-              </dl>
-            </section>
             <section className="insp-sec" aria-labelledby="insp-tasks">
               <h2 id="insp-tasks">
                 Tasks <span className="mw-count">{openTasks}</span>
@@ -1420,6 +1431,7 @@ export function MeetingWorkspace(props: Props) {
                   title="Copy as Markdown"
                   onClick={copyTasks}
                 >
+                  <IconCopy size={14} />
                   Copy
                 </button>
               </h2>

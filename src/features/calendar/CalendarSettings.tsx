@@ -13,6 +13,12 @@ import {
   type Settings,
 } from "../../shared/api/api";
 import { formatDateTime } from "../../entities/meeting";
+import {
+  IconAlert,
+  IconCheck,
+  IconClock,
+  IconTrash,
+} from "../../shared/ui/icons";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
 import "./calendar.css";
 
@@ -25,6 +31,19 @@ type Props = {
 
 const MINUTE_CHOICES = [0, 1, 2, 5, 10, 15, 20, 30];
 
+/** The icon and tint for one feed's last result; the sentence still carries the meaning. */
+function feedMark(feed: CalendarFeed): {
+  Glyph: typeof IconCheck;
+  tone: "ok" | "idle" | "error";
+} {
+  if (!feed.has_url) return { Glyph: IconAlert, tone: "error" };
+  if (feed.last_status === "never" || feed.last_sync_at === null)
+    return { Glyph: IconClock, tone: "idle" };
+  return feed.last_status === "ok"
+    ? { Glyph: IconCheck, tone: "ok" }
+    : { Glyph: IconAlert, tone: "error" };
+}
+
 /** One line under each feed: when it last synced, and whether that worked. */
 export function feedStatus(feed: CalendarFeed): string {
   if (!feed.has_url) return "Address missing. Remove it and add it again.";
@@ -32,6 +51,17 @@ export function feedStatus(feed: CalendarFeed): string {
     return "Not synced yet";
   const when = formatDateTime(feed.last_sync_at);
   return feed.last_status === "ok" ? `Synced ${when}` : `Sync failed ${when}`;
+}
+
+/** A 24px status pill: icon and sentence, tinted by the last result. */
+function FeedStatus({ feed }: { feed: CalendarFeed }) {
+  const { Glyph, tone } = feedMark(feed);
+  return (
+    <span className={`cal-status cal-status-${tone}`}>
+      <Glyph size={14} />
+      <span>{feedStatus(feed)}</span>
+    </span>
+  );
 }
 
 /** Settings > Recording > Calendar: read-only iCal feeds and the reminder switch. */
@@ -166,10 +196,10 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
 
   return (
     <section className="om-group" aria-label="Calendar">
-      <h3 className="om-group-label">
-        Calendar
+      <div className="om-group-head">
+        <h3 className="om-group-label">Calendar</h3>
         {shown && <Saved show />}
-      </h3>
+      </div>
 
       <div className="om-card om-rows">
         <div className="om-row">
@@ -218,7 +248,7 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
           <div className="om-row" key={feed.id}>
             <div className="om-what">
               <strong>{feed.label}</strong>
-              <span>{feedStatus(feed)}</span>
+              <FeedStatus feed={feed} />
               {feed.last_error && (
                 <span className="cal-error">{feed.last_error}</span>
               )}
@@ -226,11 +256,13 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
             <div className="om-side">
               <button
                 type="button"
-                className="om-ghost om-sm"
+                className="om-ghost om-sm cal-remove"
                 aria-label={`Remove ${feed.label}`}
+                title={`Remove ${feed.label}`}
                 disabled={controlsOff}
                 onClick={() => remove(feed)}
               >
+                <IconTrash size={14} />
                 Remove
               </button>
             </div>
@@ -252,6 +284,7 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
               <label htmlFor={addressId}>iCal address</label>
               <input
                 id={addressId}
+                className="om-mono"
                 type="text"
                 autoComplete="off"
                 spellCheck={false}
@@ -296,6 +329,7 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
             </label>
             <select
               id={minutesId}
+              className="cal-minutes"
               value={reminders.minutes}
               disabled={disabled || !settings}
               onChange={(event) =>

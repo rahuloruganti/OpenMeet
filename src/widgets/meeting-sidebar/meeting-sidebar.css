@@ -1,349 +1,438 @@
-/* Meetings home: sidebar. Owned by the meeting slice. */
+/* Meetings home: sidebar. Lane B owns this file.
+   Recipe: DESIGN-SPEC section 5 — 224px --sidebar surface, a 1px divider on the
+   right, a 44px brand row, one primary pill, one quiet search field, 28px filter
+   pills, two-line meeting rows and a quiet footer. Selected rows are a flat
+   --active fill: no stripe, no underline. Every icon is a Lucide component from
+   shared/ui/icons. */
 
-.sidebar.sb {
+/* ------------------------------------------------------------------- shell -- */
+/* The shell grid animates 224px -> 0 (styles.css); clip instead of overflowing. */
+.sidebar {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  padding: 12px 0 10px;
-  background: var(--sidebar);
+  padding: 4px 0 8px;
   border-right: 1px solid var(--divider);
+  background: var(--sidebar);
+  overflow: clip;
 }
 
+/* --------------------------------------------------------------- top block -- */
 .sb-top {
-  padding: 0 12px;
-}
-.sb .brand {
-  margin: 2px 0 12px;
-}
-.sb .brand {
-  gap: 9px;
+  /* Grid items default to min-width: auto; the chip strip must be allowed to
+     shrink to the column and scroll instead of widening the sidebar. */
+  min-width: 0;
+  padding: 0 8px;
 }
 
+/* Brand: a 44px strip so the mark sits on the same line as the page header. */
+.sb .brand {
+  height: 44px;
+  margin: 0;
+  padding: 0 4px;
+  gap: 8px;
+}
+.brand-name {
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* New recording is the one primary pill; New note is its quiet sibling. */
 .sb-new {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
-  height: 30px;
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: 13px;
+  height: var(--control-height);
+  min-height: var(--control-height);
+  margin-top: 2px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  text-align: left;
+}
+.sb-new svg {
+  flex: none;
 }
 .sb-new-alt {
   margin-top: 6px;
-  background: transparent;
   border-color: var(--control-border);
+  background: transparent;
+  color: var(--ink);
+}
+/* `.primary` is unlayered, so it outranks the layered `button:disabled` rule.
+   A disabled recording pill still has to read as disabled. */
+.sb .sb-new:disabled {
+  border-color: var(--divider);
+  background: var(--hover);
+  color: var(--ink-3);
 }
 
+/* Search: a 28px quiet field. The focus ring belongs to the field, not the
+   bare input inside it, so the input's own outline is dropped. */
 .sb-search {
-  position: relative;
-  margin: 10px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-height);
+  margin-top: 10px;
+  padding: 0 6px 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-8);
+  background: var(--paper);
+  transition:
+    background var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+.sb-search:hover {
+  border-color: var(--control-border);
+}
+.sb-search:focus-within {
+  border-color: var(--control-border);
+}
+.sb-search:has(input:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--focus) 60%, transparent);
+  outline-offset: 2px;
+}
+.sb-search > svg {
+  flex: none;
+  color: var(--ink-3);
+}
+.sb-search label {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
 }
 .sb-search input {
+  display: block;
   width: 100%;
-  height: 30px;
-  padding-right: 52px;
-  font-size: 12.5px;
-  background: var(--paper);
+  height: 26px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  line-height: var(--lh-sm);
+}
+.sb-search input:focus-visible {
+  outline: none;
 }
 .sb-search kbd {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+  flex: none;
   padding: 0 4px;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
+  border-radius: var(--radius-4);
+  color: var(--ink-2);
+  font-size: 11px;
   line-height: 16px;
 }
 
+/* Tag filters: one 28px strip of quiet pills, --active when pressed. It scrolls
+   sideways instead of stacking into rows, so many tags never push the list down.
+   The 4px pad leaves room for the focus ring an overflow clip would cut. */
 .sb-chips {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  max-height: 54px;
-  overflow-y: auto;
+  min-width: 0;
+  gap: 6px;
+  margin: 4px -2px 0;
+  padding: 4px 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.sb-chips::-webkit-scrollbar {
+  display: none;
 }
 .sb-chip {
-  height: 20px;
-  min-height: 20px;
-  padding: 0 7px;
+  flex: none;
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding: 0 10px;
   border: 1px solid var(--divider);
-  border-radius: 4px;
+  border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-weight: 400;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1;
+}
+.sb-chip:hover:not(:disabled) {
+  border-color: var(--control-border);
+  background: var(--hover);
+  color: var(--ink);
 }
 .sb-chip[aria-pressed="true"] {
+  border-color: transparent;
   background: var(--active);
-  border-color: var(--control-border);
   color: var(--ink);
 }
 
+/* -------------------------------------------------------------------- list -- */
 .sb-list {
   min-height: 0;
-  padding-bottom: 6px;
+  /* The stable gutter is the right inset, so titles get the full width. */
+  padding: 4px 0 8px 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
+
+/* Date-group heading: 12px/500 --ink-2, sentence case, 20px tall. */
 .sb-group {
-  margin: 0;
-  padding: 8px 12px 3px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  height: 20px;
+  margin: 10px 0 4px;
+  padding: 0 12px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: var(--lh-xs);
+  text-transform: none;
 }
+/* Folder heading is an interactive row: the inner button carries the chrome. */
+.sb-group.sb-fold {
+  display: block;
+  height: auto;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.sb-fold-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-8);
+  background: transparent;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  text-align: left;
+}
+.sb-fold-toggle svg {
+  flex: none;
+  color: var(--ink-3);
+}
+.sb-fold-toggle:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--ink);
+}
+.sb-fold-toggle:hover svg {
+  color: var(--ink-2);
+}
+.sb-count {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
 .sb .meeting-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
+.sb .meeting-list li + li {
+  margin-top: 1px;
+}
 
+/* Meeting row: title 14px --ink over one 12px --ink-2 meta line, 44px tall.
+   The row fills its own radius so hover and selection stay flat. */
 .sb-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: 8px;
+  display: block;
   width: 100%;
   height: auto;
-  min-height: 0;
-  padding: 6px 12px;
+  min-height: 44px;
+  padding: 5px 8px 5px 12px;
   border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 0;
+  border-radius: var(--radius-8);
   background: transparent;
+  color: var(--ink);
   text-align: left;
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease);
 }
 .sb .sb-row:hover:not(:disabled) {
+  border-color: transparent;
   background: var(--hover);
 }
 .sb .sb-row[aria-current="true"] {
-  background: var(--raised);
-  border-left-color: var(--accent);
+  border-color: transparent;
+  background: var(--active);
+}
+.sb .sb-row[aria-current="true"]:hover {
+  background: var(--active);
+}
+.sb .sb-row:disabled {
+  border-color: transparent;
+  background: transparent;
 }
 .sb-row i {
-  grid-row: 1;
-  grid-column: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-style: normal;
-  font-size: 12.5px;
-  font-weight: 600;
-  line-height: 1.4;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.sb-row time {
-  grid-row: 1;
-  grid-column: 2;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  line-height: 1.4;
-  white-space: nowrap;
-}
-.sb-row em {
-  display: flex;
-  grid-row: 2;
-  grid-column: 1 / -1;
-  gap: 5px;
-  align-items: center;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-style: normal;
-  line-height: 1.45;
-  white-space: nowrap;
-}
-.sb-row .meeting-tags {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sb-hit {
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: 2px;
-}
-.sb-hit strong {
-  grid-row: 1;
-  grid-column: 1;
+  display: block;
   overflow: hidden;
   color: var(--ink);
-  font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
+  font-size: var(--fs-base);
+  font-style: normal;
+  font-weight: 500;
+  line-height: var(--lh-base);
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.sb-hit span {
-  grid-row: 2;
-  grid-column: 1;
+.sb-row time {
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.sb-row em {
+  display: block;
   overflow: hidden;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  white-space: nowrap;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-style: normal;
+  font-weight: 400;
+  line-height: var(--lh-xs);
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.sb-none {
-  margin: 0;
-  padding: 18px 12px;
-  color: var(--muted);
-  font-size: 12.5px;
+.sb .sb-row .meeting-tags {
+  display: inline;
+}
+.sb .sb-row:disabled i {
+  color: var(--ink-3);
 }
 
+/* Full-text hit: a title line over a two-line snippet. */
+.sb-hit strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  line-height: var(--lh-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-hit span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.sb-none {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+}
+
+/* Folder manager takes the top of the list while it is open. Lane F owns its
+   internals; this only gives it a home and a breathing edge. */
+.sb .sb-manage {
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-12);
+  background: var(--raised);
+}
+
+/* -------------------------------------------------------------------- foot -- */
 .sb-foot {
   display: grid;
-  gap: 2px;
-  padding: 8px 12px 0;
+  gap: 1px;
+  margin-top: 4px;
+  padding: 6px 8px 0;
   border-top: 1px solid var(--divider);
 }
 .sb-navrow {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   gap: 8px;
   width: 100%;
   height: 28px;
   min-height: 28px;
-  padding: 0 8px;
-  border-color: transparent;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-8);
   background: transparent;
-  color: var(--muted);
-  font-size: 12.5px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
   font-weight: 400;
   text-align: left;
+}
+.sb-navrow svg {
+  flex: none;
+  color: var(--ink-3);
 }
 .sb-navrow:hover:not(:disabled) {
   border-color: transparent;
   background: var(--hover);
   color: var(--ink);
 }
+.sb-navrow:hover svg {
+  color: var(--ink-2);
+}
+.sb-navrow[aria-expanded="true"] {
+  background: var(--active);
+  color: var(--ink);
+}
 .sb-storage {
   margin: 0;
-  padding: 6px 8px 0;
+  padding: 4px 12px 0;
   overflow: hidden;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  white-space: nowrap;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
   text-overflow: ellipsis;
-}
-
-/* ---------------------------------------------------------------- moved in --
-   The sidebar shell and the legacy meeting list moved out of
-   src/app/styles.css in Phase 0, unchanged. Lane B owns and restyles them.
-   `.brand` and `.brand-mark` stay in the app stylesheet because first-run
-   renders the same mark. */
-
-/* Full-bleed rows: each block pads itself by 12px so hover and the selected
-   edge sit against the sidebar border. */
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  padding: 12px 0 10px;
-  border-right: 1px solid var(--divider);
-  background: var(--sidebar);
-  /* Required by the shell's 224px -> 0 collapse: clip instead of overflowing. */
-  overflow: clip;
-}
-.brand-name {
-  font-family: var(--mono);
-  font-size: 15px;
-  font-weight: 500;
-  letter-spacing: -0.02em;
-}
-.meeting-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.meeting-list li + li {
-  margin-top: 0;
-}
-/* Two flat lines per row, laid out from the existing markup: title + time on
-   the first line, source and tags on the second. */
-.meeting-list button {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  column-gap: 8px;
-  width: 100%;
-  padding: 6px 12px;
-  border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  text-align: left;
-}
-.meeting-list button:hover:not(:disabled) {
-  border-color: transparent;
-  border-left-color: transparent;
-  background: var(--hover);
-}
-.meeting-list button[aria-current="true"] {
-  border-color: transparent;
-  border-left-color: var(--accent);
-  background: var(--raised);
-}
-.meeting-list strong {
-  grid-row: 1;
-  grid-column: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  line-height: 1.45;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.meeting-list span,
-.meeting-list time {
-  color: var(--muted);
-  font-weight: 400;
-}
-.meeting-list time {
-  grid-row: 1;
-  grid-column: 2;
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.45;
   white-space: nowrap;
 }
-/* Search hits carry a snippet span instead of the meta wrapper; it gets the whole second row. */
-.meeting-list button > span:not(.meeting-item-meta) {
-  display: -webkit-box;
-  grid-row: 2;
-  grid-column: 1 / -1;
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--mono);
-  font-size: 11.5px;
-  font-weight: 400;
-  line-height: 1.45;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-/* Inline tag text inside .meeting-item-text: it inherits the mono/muted style and
-   the parent's ellipsis, so it must stay inline and never become a grid/flex row. */
-.meeting-list .meeting-tags {
-  display: inline;
-}
 
+/* ------------------------------------------------------------ narrow shell -- */
+/* The shell already narrows the column to 200px at 800px; trim the gutters so
+   labels keep their room and the shortcut hint still fits. */
 @media (max-width: 800px) {
   .sidebar {
-    padding: 10px 0 8px;
+    padding: 2px 0 6px;
   }
-  .meeting-list button {
-    column-gap: 6px;
+  .sb-top {
+    padding: 0 6px;
+  }
+  .sb-list {
+    padding: 4px 0 6px 6px;
+  }
+  .sb-foot {
+    padding: 6px 6px 0;
+  }
+  .sb-search {
+    padding-right: 4px;
+  }
+  /* At 200px the hint costs more than it explains: the placeholder would clip. */
+  .sb-search kbd {
+    display: none;
   }
 }

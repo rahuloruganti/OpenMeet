@@ -1,5 +1,11 @@
 import { useState } from "react";
 import { api, errorMessage, type Folder } from "../../shared/api/api";
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconPencil,
+  IconTrash,
+} from "../../shared/ui/icons";
 import "./folders.css";
 
 type Props = {
@@ -46,6 +52,7 @@ export function FolderManager({ folders, disabled, onChanged }: Props) {
   return (
     <section className="folder-manager" aria-label="Folders">
       <form
+        className="folder-new"
         onSubmit={(event) => {
           event.preventDefault();
           const clean = name.trim();
@@ -71,7 +78,7 @@ export function FolderManager({ folders, disabled, onChanged }: Props) {
       {folders.length === 0 && <p className="muted">No folders yet.</p>}
       <ul aria-label="Folder order">
         {folders.map((folder, index) => (
-          <li key={folder.id}>
+          <li key={folder.id} className="folder-row">
             {renaming?.id === folder.id ? (
               <form
                 onSubmit={(event) => {
@@ -113,42 +120,51 @@ export function FolderManager({ folders, disabled, onChanged }: Props) {
                 <span className="muted">{folder.meeting_count} meetings</span>
                 <button
                   type="button"
+                  className="folder-icon"
                   aria-label={`Move ${folder.name} up`}
+                  title={`Move ${folder.name} up`}
                   disabled={busyOrOff || index === 0}
                   onClick={() => move(index, -1)}
                 >
-                  ↑
+                  <IconArrowUp size={14} />
                 </button>
                 <button
                   type="button"
+                  className="folder-icon"
                   aria-label={`Move ${folder.name} down`}
+                  title={`Move ${folder.name} down`}
                   disabled={busyOrOff || index === folders.length - 1}
                   onClick={() => move(index, 1)}
                 >
-                  ↓
+                  <IconArrowDown size={14} />
                 </button>
                 <button
                   type="button"
+                  className="folder-icon"
+                  aria-label="Rename"
+                  title={`Rename ${folder.name}`}
                   disabled={busyOrOff}
                   onClick={() =>
                     setRenaming({ id: folder.id, name: folder.name })
                   }
                 >
-                  Rename
+                  <IconPencil size={14} />
                 </button>
                 <button
                   type="button"
+                  className="folder-icon folder-danger"
                   aria-label={`Delete ${folder.name}`}
+                  title={`Delete ${folder.name}`}
                   disabled={busyOrOff}
                   onClick={() => setDeleting(folder.id)}
                 >
-                  Delete
+                  <IconTrash size={14} />
                 </button>
               </>
             )}
             {deleting === folder.id && (
               <div
-                className="dialog-card folder-confirm"
+                className="folder-confirm"
                 role="group"
                 aria-label={`Delete ${folder.name}`}
               >
@@ -157,7 +173,7 @@ export function FolderManager({ folders, disabled, onChanged }: Props) {
                 </p>
                 <button
                   type="button"
-                  className="danger danger-filled"
+                  className="folder-danger"
                   disabled={busyOrOff}
                   onClick={() =>
                     void run(
@@ -170,6 +186,7 @@ export function FolderManager({ folders, disabled, onChanged }: Props) {
                 </button>
                 <button
                   type="button"
+                  className="folder-action"
                   disabled={busy}
                   onClick={() => setDeleting(null)}
                 >

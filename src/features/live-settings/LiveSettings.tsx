@@ -8,6 +8,7 @@ import {
   type Settings,
 } from "../../shared/api/api";
 import { formatBytes } from "../../entities/meeting";
+import { IconDownload } from "../../shared/ui/icons";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
 import "./live-settings.css";
 
@@ -145,10 +146,10 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
 
   return (
     <section className="om-group" aria-label="Live transcript">
-      <h3 className="om-group-label">
-        Live transcript
+      <div className="om-group-head">
+        <h3 className="om-group-label">Live transcript</h3>
         {shown && <Saved show />}
-      </h3>
+      </div>
 
       <div className="om-card om-rows">
         <div className="om-row">
@@ -165,6 +166,7 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
           </div>
           <div className="om-side">
             <select
+              className="ls-model-select"
               aria-label="Live model"
               value={chosen}
               disabled={disabled || !settings || !models}
@@ -191,7 +193,12 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
 
       {canDownload && (
         <div className="om-card-foot">
-          <button type="button" className="om-sm" onClick={download}>
+          <button
+            type="button"
+            className="om-sm ls-download"
+            onClick={download}
+          >
+            <IconDownload size={14} />
             Download
           </button>
           <span className="om-muted">
@@ -201,8 +208,13 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
       )}
 
       {transfer && progress && (
-        <div className="om-card-foot">
-          <progress max={progress.total} value={progress.done} />
+        <div className="om-card-foot ls-job">
+          <progress
+            className="ls-bar"
+            aria-label="Live model download progress"
+            max={progress.total}
+            value={progress.done}
+          />
           <span className="om-muted">
             {progress.stage === "verifying"
               ? "Checking the download…"

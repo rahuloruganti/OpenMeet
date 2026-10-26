@@ -499,10 +499,7 @@ export function ConnectionEditor(props: Props) {
                 <option value={CUSTOM_PROVIDER}>Custom</option>
               </select>
               {preset && (
-                <span
-                  className="om-muted"
-                  style={{ fontFamily: "var(--mono)" }}
-                >
+                <span className="om-muted ps-host">
                   {hostOf(preset.baseUrl)}
                 </span>
               )}
@@ -548,9 +545,24 @@ export function ConnectionEditor(props: Props) {
             </div>
           </div>
         )}
-        <div className="om-row">
+        <div className="om-row ps-key-row">
           <div className="om-what">
             <strong>API key</strong>
+            {testResult ? (
+              testResult.ok ? (
+                <span className="om-saved ps-key-status">Working</span>
+              ) : (
+                <span className="om-error ps-key-status">Not working</span>
+              )
+            ) : status === "present" ? (
+              <span className="om-saved ps-key-status">
+                Key saved. Type a new key to replace it.
+              </span>
+            ) : (
+              <span className="om-muted ps-key-status">
+                {isLocalBase(baseUrl) ? "Key optional" : "No key"}
+              </span>
+            )}
           </div>
           <div className="om-side">
             <input
@@ -578,24 +590,9 @@ export function ConnectionEditor(props: Props) {
             >
               Test
             </button>
-            {testResult ? (
-              testResult.ok ? (
-                <span className="om-saved">Working</span>
-              ) : (
-                <span className="om-error">Not working</span>
-              )
-            ) : status === "present" ? (
-              <span className="om-saved">
-                Key saved. Type a new key to replace it.
-              </span>
-            ) : (
-              <span className="om-muted">
-                {isLocalBase(baseUrl) ? "Key optional" : "No key"}
-              </span>
-            )}
           </div>
         </div>
-        <div className="om-row">
+        <div className="om-row ps-model-row">
           <div className="om-what">
             <strong>Model</strong>
           </div>
@@ -653,7 +650,7 @@ export function ConnectionEditor(props: Props) {
         <span className="om-spacer" />
         <Saved show={shown} />
       </div>
-      <details className="om-more">
+      <details className="om-more ps-more">
         <summary>More options</summary>
         <div className="om-more-body">
           <div className="om-frow">
@@ -693,7 +690,7 @@ export function ConnectionEditor(props: Props) {
             <span>Connection</span>
             {confirming && connection ? (
               <div
-                className="om-side"
+                className="om-side ps-confirm"
                 role="group"
                 aria-label="Confirm delete"
                 onKeyDown={(event) => {

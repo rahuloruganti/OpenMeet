@@ -259,7 +259,7 @@ it("saves the theme at once and confirms with a tick", async () => {
   const group = screen.getByRole("group", { name: "Theme" });
   await userEvent.click(within(group).getByRole("button", { name: "Dark" }));
   expect(input.onTheme).toHaveBeenCalledWith("dark");
-  expect(screen.getByText("✓ Saved")).toBeTruthy();
+  expect(screen.getByText("Saved")).toBeTruthy();
 });
 
 it("closes from the header back button", async () => {

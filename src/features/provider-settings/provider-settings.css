@@ -1,22 +1,106 @@
-/* Provider connection panel: moved out of src/app/styles.css in Phase 0.
-   Lane F owns this file and fills it in; the rules below are the pre-retheme
-   values that used to live in the global stylesheet. */
+/* Connection editor inside Settings > AI notes / Transcription.
+   The card, rows and footer come from the settings page; only layout of the
+   feature's own controls is set here. Tokens only, `ps-` names only. */
 
-.provider-settings > p {
-  margin-bottom: 12px;
+.provider-settings {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
-.provider-settings > button,
-.provider-settings > .panel-actions {
-  margin-bottom: 12px;
+
+/* The key's state reads as a quiet line under the label, not a third control. */
+.ps-key-status {
+  max-width: 46ch;
+  white-space: normal;
+  line-height: 1.45;
 }
-/* Short actions and status beside an input (Test, Working, Key saved) never wrap or shrink. */
-.provider-settings .om-side > button,
-.provider-settings .om-side > .om-saved,
-.provider-settings .om-side > .om-error,
-.provider-settings .om-side > .om-muted {
-  flex-shrink: 0;
-  white-space: nowrap;
+
+.om-what .ps-key-status {
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
 }
-.provider-settings code {
+
+.om-what .ps-key-status.om-saved {
+  color: var(--success);
+}
+
+.om-what .ps-key-status.om-error {
+  color: var(--danger);
+}
+
+.ps-host {
   overflow-wrap: anywhere;
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+/* Two controls in one row stay on one line at 1440 and wrap at 900. */
+.ps-key-row .om-side,
+.ps-model-row .om-side {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.ps-confirm {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 420px;
+}
+
+.ps-confirm .om-muted {
+  width: 100%;
+  text-align: right;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+/* The advanced block is one quiet inset, not another card. */
+.ps-more {
+  margin-top: 2px;
+}
+
+.ps-more .om-more-body {
+  display: grid;
+  gap: 10px;
+}
+
+.ps-more .om-frow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 340px);
+  align-items: center;
+  gap: 12px;
+}
+
+.ps-more .om-frow > span {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.ps-more .om-frow input {
+  width: 100%;
+}
+
+/* Destructive actions: --danger on --danger-bg. */
+.provider-settings .om-danger:not(:disabled) {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+@media (max-width: 620px) {
+  .ps-more .om-frow {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .ps-confirm {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .ps-confirm .om-muted {
+    text-align: left;
+  }
 }

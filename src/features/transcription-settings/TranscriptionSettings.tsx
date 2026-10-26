@@ -11,7 +11,9 @@ import {
   speechModelFits,
   speechModelLabel,
 } from "../../shared/lib/models";
+import { IconAlert, IconCheck, IconDownload } from "../../shared/ui/icons";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
+import "./transcription-settings.css";
 
 /** The three fields one transcription save writes. */
 export type SttDraft = Pick<
@@ -172,6 +174,32 @@ export function TranscriptionSettings(props: Props) {
       : !stt.engine
         ? "Missing. Reinstall OpenMeet."
         : "Available";
+  const statusTone = props.installing
+    ? "busy"
+    : !stt
+      ? "idle"
+      : !stt.supported
+        ? "warn"
+        : isReady
+          ? "ok"
+          : "idle";
+  const StatusIcon = props.installing
+    ? IconDownload
+    : !stt
+      ? IconAlert
+      : !stt.supported
+        ? IconAlert
+        : isReady
+          ? IconCheck
+          : IconDownload;
+  const engineTone = !stt
+    ? "idle"
+    : !stt.supported
+      ? "warn"
+      : !stt.engine
+        ? "error"
+        : "ok";
+  const EngineIcon = engineTone === "ok" ? IconCheck : IconAlert;
   return (
     <div className="om-pane">
       <h2>Transcription</h2>
@@ -233,6 +261,7 @@ export function TranscriptionSettings(props: Props) {
                 </div>
                 <div className="om-side">
                   <select
+                    className="stt-language"
                     aria-label="Spoken language"
                     value={settings?.stt_language ?? "auto"}
                     disabled={disabled || !settings}
@@ -259,8 +288,12 @@ export function TranscriptionSettings(props: Props) {
               <div className="om-row">
                 <div className="om-what">
                   <strong>Speech model</strong>
-                  <span className="om-muted" aria-live="polite">
-                    {status}
+                  <span
+                    className={`stt-status stt-status-${statusTone}`}
+                    aria-live="polite"
+                  >
+                    <StatusIcon size={14} />
+                    <span>{status}</span>
                   </span>
                   {showDownload && busy && (
                     <span className="om-muted">{BUSY_REASON}</span>
@@ -274,6 +307,7 @@ export function TranscriptionSettings(props: Props) {
                 <div className="om-side">
                   {choices.length > 0 ? (
                     <select
+                      className="stt-model-select"
                       aria-label="Speech model"
                       value={current}
                       disabled={busy}
@@ -305,33 +339,42 @@ export function TranscriptionSettings(props: Props) {
                       {shownId ? speechModelLabel(shownId) : "No model yet"}
                     </span>
                   )}
-                  {showDownload && (
-                    <button
-                      type="button"
-                      className="om-sm"
-                      disabled={busy}
-                      onClick={() => {
-                        if (downloadId === current) {
-                          props.onInstall();
-                          return;
-                        }
-                        props.onDownload?.(
-                          draft({ stt_model: downloadId ?? current }),
-                        );
-                        mark();
-                      }}
-                    >
-                      Download
-                    </button>
-                  )}
-                  {props.installing && (
-                    <button
-                      type="button"
-                      className="om-ghost om-sm"
-                      onClick={props.onCancel}
-                    >
-                      Cancel
-                    </button>
+                  {props.installing ? (
+                    <span className="stt-job">
+                      <progress
+                        className="stt-bar"
+                        aria-label="Speech model download progress"
+                        max={props.sttProgress?.total || 100}
+                        value={props.sttProgress?.downloaded ?? 0}
+                      />
+                      <button
+                        type="button"
+                        className="om-ghost om-sm"
+                        onClick={props.onCancel}
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    showDownload && (
+                      <button
+                        type="button"
+                        className="om-sm"
+                        disabled={busy}
+                        onClick={() => {
+                          if (downloadId === current) {
+                            props.onInstall();
+                            return;
+                          }
+                          props.onDownload?.(
+                            draft({ stt_model: downloadId ?? current }),
+                          );
+                          mark();
+                        }}
+                      >
+                        Download
+                      </button>
+                    )
                   )}
                 </div>
               </div>
@@ -340,7 +383,10 @@ export function TranscriptionSettings(props: Props) {
                   <strong>Engine</strong>
                 </div>
                 <div className="om-side">
-                  <span className="om-muted">{engineLine}</span>
+                  <span className={`stt-status stt-status-${engineTone}`}>
+                    <EngineIcon size={14} />
+                    <span>{engineLine}</span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -357,7 +403,7 @@ export function TranscriptionSettings(props: Props) {
                       <div className="om-row" key={model.id}>
                         <div className="om-what">
                           <strong>{name}</strong>
-                          <span className="om-muted">
+                          <span className="stt-size">
                             {formatBytes(model.size)}
                           </span>
                         </div>
@@ -385,7 +431,9 @@ export function TranscriptionSettings(props: Props) {
             )}
             <div className="om-card-foot">
               <span className="om-spacer" />
-              <span className="om-muted">{formatBytes(onDisk)} on disk</span>
+              <span className="om-muted stt-on-disk">
+                {formatBytes(onDisk)} on disk
+              </span>
             </div>
             <details className="om-more">
               <summary>More options</summary>

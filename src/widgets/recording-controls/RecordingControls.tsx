@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AudioHealth, RecordingState } from "../../shared/api/api";
 import { CallLifecycleBanner } from "../../features/auto-capture";
+import { IconMic, IconPause, IconPlay, IconStop } from "../../shared/ui/icons";
 import "./recording-controls.css";
 
 /** The bar says a recording's state in one capitalised word. */
@@ -101,6 +102,7 @@ export function RecordingControls(props: Props) {
   return (
     <section
       className={`recording-bar rec${active ? " is-live" : ""}`}
+      data-status={recording.status}
       aria-label="Recording controls"
     >
       <span className="rec-state">
@@ -153,7 +155,10 @@ export function RecordingControls(props: Props) {
       )}
       {micSilent && (
         <span className="rec-warn" role="alert">
-          No microphone signal. Check the device and its mute.
+          <IconMic size={12} />
+          <span className="rec-warn-text">
+            No microphone signal. Check the device and its mute.
+          </span>
         </span>
       )}
       <CallLifecycleBanner />
@@ -167,6 +172,11 @@ export function RecordingControls(props: Props) {
           disabled={controlsDisabled || finalizationPending}
           onClick={props.onToggle}
         >
+          {recording.status === "paused" ? (
+            <IconPlay size={14} />
+          ) : (
+            <IconPause size={14} />
+          )}
           {recording.status === "paused" ? "Resume" : "Pause"}
         </button>
         <button
@@ -174,6 +184,7 @@ export function RecordingControls(props: Props) {
           disabled={controlsDisabled}
           onClick={props.onStop}
         >
+          {!finalizationPending && <IconStop size={12} />}
           {finalizationPending ? "Retry finalization" : "Stop"}
         </button>
       </span>

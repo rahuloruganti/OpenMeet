@@ -1,9 +1,11 @@
-/* The live transcript above the saved one, in the meeting's Transcript tab. */
+/* The live transcript above the saved one, in the meeting's Transcript tab.
+   One calm card: a hairline, the raised surface, and a live marker. */
 .lt {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  margin: 0 0 18px;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-12);
+  background: var(--raised);
 }
 
 .mw-scroll .lt-scroll {
@@ -15,35 +17,102 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin: 0 0 8px;
-  font-size: 12px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+}
+
+/* A marker, not a chip: a dot in --live and one word, so the card stays calm. */
+.lt-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.lt-mark.is-paused {
+  color: var(--warning);
+}
+
+.lt-mark.is-off {
+  color: var(--ink-3);
+}
+
+.lt-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: lt-pulse 2s ease-in-out infinite;
+}
+
+.lt-mark.is-off .lt-dot {
+  background: var(--ink-3);
+  animation: none;
 }
 
 .lt-engine {
-  font-weight: 600;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+
+.lt-state {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
 }
 
 .lt-tag {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--chip, rgba(127, 127, 127, 0.14));
-  color: var(--muted);
-  font-size: 10.5px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
 }
 
-.lt-notice,
+.lt-notice {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-8);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+}
+
+.lt-notice.is-error {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.lt-notice button {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 .lt-hint {
   margin: 0 0 8px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
 }
 
 .lt-scroll {
   display: grid;
-  gap: 6px;
+  gap: 2px;
   max-height: 46vh;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -57,18 +126,20 @@
 
 .lt-line {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
 }
 
 .lt-time {
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .lt-muted {
-  color: var(--muted);
+  color: var(--ink-2);
 }
 
 /* A thin bar the width of a letter, blinking while the engine is still writing the line. */
@@ -88,10 +159,23 @@
   }
 }
 
+@keyframes lt-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lt-caret {
     animation: none;
     opacity: 0.6;
+  }
+  .lt-dot {
+    animation: none;
   }
   .lt-scroll {
     scroll-behavior: auto;

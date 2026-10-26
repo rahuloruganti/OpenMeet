@@ -1,27 +1,89 @@
-/* Automatic capture strip inside the recording bar. Owned by the auto-capture slice. */
-
+/* Automatic capture strip inside the recording bar. Lane D owns it.
+   A slim banner chip: semantic tint, an icon, and the sentence. No side stripe. */
 .call-life {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+  max-width: 360px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-pill);
+  background: var(--info-bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: var(--lh-xs);
+  white-space: nowrap;
+}
+
+.call-life svg {
+  flex: none;
+}
+
+.call-life-text {
   min-width: 0;
   overflow: hidden;
-  color: var(--ink);
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
-.call-life-end {
+
+.call-life-paused {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
   color: var(--warning);
 }
+
+.call-life-end {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 .call-life-acts {
   display: inline-flex;
-  gap: 6px;
+  flex: none;
+  gap: 4px;
+  margin-left: 2px;
 }
+
 .call-life-acts button {
-  height: 23px;
-  min-height: 23px;
-  padding: 0 9px;
-  background: var(--paper);
-  font-family: var(--mono);
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  min-height: 20px;
+  padding: 0 8px;
+  border-color: var(--warning-border);
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-ui);
   font-size: 11px;
+  font-weight: 500;
+}
+
+.call-life-acts button:hover:not(:disabled) {
+  border-color: var(--warning);
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* The shared `.error` chrome is a banner; in the bar this is one chip. */
+.call-life.call-life-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin: 0;
+  padding: 0 9px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: var(--lh-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

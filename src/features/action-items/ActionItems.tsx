@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { api, errorMessage, type ActionItem } from "../../shared/api/api";
 import { timestampTokens } from "../../shared/lib/timestamps";
+import { IconX } from "../../shared/ui/icons";
 import "./action-items.css";
 
 type Props = {
@@ -126,7 +127,7 @@ export function ActionItems({
                 void run(() => api.deleteActionItem(meetingId, item.id))
               }
             >
-              ✕
+              <IconX size={14} />
             </button>
           </li>
         ))}

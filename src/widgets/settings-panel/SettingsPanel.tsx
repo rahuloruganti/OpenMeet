@@ -36,6 +36,7 @@ import { ConnectionEditor } from "../../features/provider-settings";
 import { SummaryTemplates } from "../../features/summary-templates";
 import { TranscriptionSettings } from "../../features/transcription-settings";
 import { hostOf } from "../../shared/ui/provider-connection";
+import { IconAlert, IconChevronLeft, IconSearch } from "../../shared/ui/icons";
 import {
   OpenSettingsButton,
   resolveSettingsSection,
@@ -169,59 +170,61 @@ function ShortcutCapture(props: {
   };
   const keys = props.value ? shortcutLabel(props.value).split("+") : [];
   return (
-    <>
-      <span className="om-kbd-row" aria-label={`${props.label} shortcut`}>
-        {keys.length > 0 ? (
-          keys.map((key) => <kbd key={key}>{key}</kbd>)
-        ) : (
-          <span className="om-muted">None</span>
-        )}
-      </span>
-      <button
-        type="button"
-        className="om-sm"
-        aria-label={`Change ${props.label.toLowerCase()} shortcut`}
-        disabled={props.disabled}
-        onClick={() => setCapturing(true)}
-        onBlur={stopCapturing}
-        onKeyDown={(event) => {
-          // Tab still moves focus, so capturing never traps the keyboard.
-          if (!capturing || event.key === "Tab") return;
-          event.preventDefault();
-          event.stopPropagation();
-          if (event.key === "Escape") return stopCapturing();
-          const chord = accelerator(event);
-          if (chord) {
-            props.onCapture(chord);
-            stopCapturing();
-          } else if (!modifierKeys.includes(event.key)) {
-            setRefusal(
-              keyName(event)
-                ? "Add Ctrl or Alt, or use an F-key."
-                : "Use a letter, number, arrow or Space with Ctrl or Alt, or an F-key.",
-            );
-          }
-        }}
-      >
-        {capturing ? "Press keys…" : "Change"}
-      </button>
-      {props.optional && props.value !== "" && (
+    <div className="om-capture">
+      <div className="om-capture-line">
+        <span className="om-kbd-row" aria-label={`${props.label} shortcut`}>
+          {keys.length > 0 ? (
+            keys.map((key) => <kbd key={key}>{key}</kbd>)
+          ) : (
+            <span className="om-muted">None</span>
+          )}
+        </span>
         <button
           type="button"
-          className="om-ghost om-sm"
-          aria-label={`Clear ${props.label.toLowerCase()} shortcut`}
+          className="om-sm"
+          aria-label={`Change ${props.label.toLowerCase()} shortcut`}
           disabled={props.disabled}
-          onClick={() => props.onCapture("")}
+          onClick={() => setCapturing(true)}
+          onBlur={stopCapturing}
+          onKeyDown={(event) => {
+            // Tab still moves focus, so capturing never traps the keyboard.
+            if (!capturing || event.key === "Tab") return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.key === "Escape") return stopCapturing();
+            const chord = accelerator(event);
+            if (chord) {
+              props.onCapture(chord);
+              stopCapturing();
+            } else if (!modifierKeys.includes(event.key)) {
+              setRefusal(
+                keyName(event)
+                  ? "Add Ctrl or Alt, or use an F-key."
+                  : "Use a letter, number, arrow or Space with Ctrl or Alt, or an F-key.",
+              );
+            }
+          }}
         >
-          Clear
+          {capturing ? "Press keys…" : "Change"}
         </button>
-      )}
+        {props.optional && props.value !== "" && (
+          <button
+            type="button"
+            className="om-ghost om-sm"
+            aria-label={`Clear ${props.label.toLowerCase()} shortcut`}
+            disabled={props.disabled}
+            onClick={() => props.onCapture("")}
+          >
+            Clear
+          </button>
+        )}
+      </div>
       {refusal && (
-        <span role="status" className="om-muted">
+        <span role="status" className="om-capture-error">
           {refusal}
         </span>
       )}
-    </>
+    </div>
   );
 }
 
@@ -257,7 +260,7 @@ function GeneralSection(props: Props) {
   const theme = props.settings?.theme ?? "system";
   return (
     <div className="om-pane">
-      <h2>General</h2>
+      <h2 className="om-sr-only">General</h2>
       <Group label="Appearance">
         <Rows>
           <Row label="Theme">
@@ -311,7 +314,7 @@ function RecordingSection(props: Props) {
   const ignored = settings?.detection_ignored ?? [];
   return (
     <div className="om-pane">
-      <h2>Recording</h2>
+      <h2 className="om-sr-only">Recording</h2>
 
       <Group label="Capture" saved={capture.shown}>
         <Rows>
@@ -372,12 +375,14 @@ function RecordingSection(props: Props) {
         </Rows>
         {sameShortcuts || clash ? (
           <p role="alert" className="om-error">
-            Pause and stop can&apos;t use the same shortcut.
+            <IconAlert aria-hidden="true" />
+            <span>Pause and stop can&apos;t use the same shortcut.</span>
           </p>
         ) : null}
         {props.shortcutError ? (
           <p role="alert" className="om-error">
-            {props.shortcutError}
+            <IconAlert aria-hidden="true" />
+            <span>{props.shortcutError}</span>
           </p>
         ) : null}
       </Group>
@@ -502,7 +507,7 @@ function ExportSection(props: Props) {
   };
   return (
     <div className="om-pane">
-      <h2>Export &amp; storage</h2>
+      <h2 className="om-sr-only">Export &amp; storage</h2>
 
       <Group label="Folders">
         <Rows>
@@ -590,7 +595,7 @@ function ExportSection(props: Props) {
       </Group>
 
       <div className="om-foot-note">
-        <span className="om-mono">
+        <span className="om-num">
           {props.audioBytes === null
             ? "Unknown"
             : formatBytes(props.audioBytes)}
@@ -604,7 +609,7 @@ function ExportSection(props: Props) {
 function AboutSection(props: Props) {
   return (
     <div className="om-pane">
-      <h2>Privacy &amp; about</h2>
+      <h2 className="om-sr-only">Privacy &amp; about</h2>
 
       <Group label="What leaves this device">
         <div className="om-card om-table-card">
@@ -645,12 +650,12 @@ function AboutSection(props: Props) {
       <Group label="About">
         <Rows>
           <Row label="Version">
-            <span className="om-mono om-muted">{props.version ?? version}</span>
+            <span className="om-num om-muted">{props.version ?? version}</span>
           </Row>
           <Row label="First-run setup">
             <button
               type="button"
-              className="om-ghost om-sm"
+              className="om-sm"
               disabled={props.disabled}
               onClick={props.onRunSetup}
             >
@@ -786,7 +791,7 @@ function AiSection(
   const branch = pick ?? props.preferred ?? aiBranchOf(props.settings);
   return (
     <div className="om-pane">
-      <h2>AI notes</h2>
+      <h2 className="om-sr-only">AI notes</h2>
       <Group label="Notes written">
         <Segmented
           label="Notes written"
@@ -925,33 +930,6 @@ function groupsOf(section: HTMLElement): HTMLElement[] {
   );
 }
 
-function SearchIcon() {
-  return (
-    <svg
-      className="om-search-icon"
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      aria-hidden="true"
-    >
-      <circle
-        cx="7"
-        cy="7"
-        r="4.75"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-      <path
-        d="M10.5 10.5 14 14"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 export function SettingsPanel(props: Props) {
   // Uncontrolled fallback: without `section` the panel owns the requested section.
   const [own, setOwn] = useState<SettingsSectionId>(() =>
@@ -970,6 +948,7 @@ export function SettingsPanel(props: Props) {
     {},
   );
   const main = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLDivElement>(null);
   const indexNav = useRef<HTMLElement>(null);
   // The section picked from the index or the shell; it stays current until the user scrolls.
   const wanted = useRef<SettingsSectionId | null>(null);
@@ -979,10 +958,31 @@ export function SettingsPanel(props: Props) {
   const scrollTo = (id: SettingsSectionId) => {
     wanted.current = id;
     setCurrent(id);
+    // The first section sits under the page title; its real top is the top of the page.
+    if (id === settingsSections[0][0]) {
+      main.current?.scrollTo?.({ top: 0, behavior: "smooth" });
+      return;
+    }
     document
       .getElementById(`settings-${id}`)
       ?.scrollIntoView?.({ block: "start" });
   };
+  // Keep the section scroll-margin equal to the sticky search bar's real height.
+  useLayoutEffect(() => {
+    const root = main.current;
+    const field = search.current;
+    if (!root || !field) return;
+    const measure = () =>
+      root.style.setProperty(
+        "--om-sticky",
+        `${Math.ceil(field.getBoundingClientRect().height)}px`,
+      );
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, []);
   // A section picked while a search hides it: the search clears, then the page scrolls there.
   const pending = useRef<SettingsSectionId | null>(null);
   const pick = (id: SettingsSectionId) => {
@@ -1014,7 +1014,8 @@ export function SettingsPanel(props: Props) {
     const update = () => {
       frame = 0;
       if (wanted.current) return;
-      const line = root.getBoundingClientRect().top + 140;
+      const sticky = search.current?.offsetHeight || 72;
+      const line = root.getBoundingClientRect().top + sticky + 24;
       const tops = settingsSections.map(([id]) => {
         const el = document.getElementById(`settings-${id}`);
         // Sections hidden by a search have no box and never count.
@@ -1149,67 +1150,77 @@ export function SettingsPanel(props: Props) {
           aria-label="Back to Meetings"
           onClick={props.onClose}
         >
-          ← Meetings
+          <IconChevronLeft />
+          <span>Meetings</span>
         </button>
         <kbd>Esc</kbd>
-        <span className="om-rule" />
-        <h1 id="settings-title">Settings</h1>
         <span className="om-spacer" />
-        <span className="om-version om-mono">{props.version ?? version}</span>
+        <span className="om-version">{props.version ?? version}</span>
       </header>
       <div className="om-body">
         <div className="om-main" ref={main}>
-          {props.error ? (
-            <p role="alert" className="om-error">
-              {props.error}{" "}
-              <button
-                type="button"
-                className="om-ghost om-sm"
-                onClick={props.onDismissError}
-              >
-                Dismiss
-              </button>
-            </p>
-          ) : null}
-          <div className="om-search">
-            <label className="om-search-field">
-              <SearchIcon />
-              <input
-                type="search"
-                aria-label="Search settings"
-                placeholder="Search settings"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  // Escape clears the search; Settings stays open (Escape outside a field leaves).
-                  if (event.key === "Escape" && query !== "") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setQuery("");
-                  }
+          <div className="om-wrap">
+            <header className="om-page-head">
+              <h1 id="settings-title">Settings</h1>
+              <p className="om-subtitle">
+                How OpenMeet records, transcribes and writes notes on this PC.
+              </p>
+            </header>
+            {props.error ? (
+              <p role="alert" className="om-error om-alert">
+                <IconAlert className="om-alert-icon" />
+                <span>{props.error}</span>
+                <button
+                  type="button"
+                  className="om-ghost om-sm"
+                  onClick={props.onDismissError}
+                >
+                  Dismiss
+                </button>
+              </p>
+            ) : null}
+            <div className="om-search" ref={search}>
+              <label className="om-search-field">
+                <IconSearch className="om-search-icon" />
+                <input
+                  type="search"
+                  aria-label="Search settings"
+                  placeholder="Search settings"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    // Escape clears the search; Settings stays open (Escape outside a field leaves).
+                    if (event.key === "Escape" && query !== "") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setQuery("");
+                    }
+                  }}
+                />
+                {words && (
+                  <span className="om-search-count" role="status">
+                    {total === 1 ? "1 group" : `${total} groups`}
+                  </span>
+                )}
+              </label>
+              <a
+                href="#settings-index"
+                className="om-skip"
+                onClick={(event) => {
+                  event.preventDefault();
+                  const entry =
+                    indexNav.current?.querySelector<HTMLButtonElement>(
+                      "[aria-current]",
+                    ) ??
+                    indexNav.current?.querySelector<HTMLButtonElement>(
+                      "button",
+                    );
+                  entry?.focus();
                 }}
-              />
-              {words && (
-                <span className="om-search-count" role="status">
-                  {total === 1 ? "1 group" : `${total} groups`}
-                </span>
-              )}
-            </label>
-            <a
-              href="#settings-index"
-              className="om-skip"
-              onClick={(event) => {
-                event.preventDefault();
-                const entry =
-                  indexNav.current?.querySelector<HTMLButtonElement>(
-                    "[aria-current]",
-                  ) ??
-                  indexNav.current?.querySelector<HTMLButtonElement>("button");
-                entry?.focus();
-              }}
-            >
-              Skip to sections
-            </a>
+              >
+                Skip to sections
+              </a>
+            </div>
             <div className="om-qchips" role="group" aria-label="Quick searches">
               {needCount > 0 && (
                 <button
@@ -1238,8 +1249,6 @@ export function SettingsPanel(props: Props) {
                 </button>
               ))}
             </div>
-          </div>
-          <div className="om-wrap">
             {words && total === 0 && (
               <p className="om-no-match">
                 No settings match “{query.trim()}”.

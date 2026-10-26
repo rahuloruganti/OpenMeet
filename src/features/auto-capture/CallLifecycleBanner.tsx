@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage, type CallLifecycle } from "../../shared/api/api";
+import {
+  IconAlert,
+  IconClock,
+  IconMic,
+  IconPause,
+  IconSpinner,
+} from "../../shared/ui/icons";
 import { useCallLifecycle } from "./useCallLifecycle";
 import "./auto-capture.css";
 
@@ -26,21 +33,22 @@ export function CallLifecycleBanner() {
   switch (lifecycle.state) {
     case "recording":
       return lifecycle.origin === "auto" ? (
-        <Strip>
+        <Strip tone="auto">
           {`Recording automatically${lifecycle.app_name ? ` · ${lifecycle.app_name}` : ""}`}
         </Strip>
       ) : null;
     case "paused":
       return lifecycle.origin === "auto" ? (
-        <Strip>Automatic recording paused</Strip>
+        <Strip tone="paused">Automatic recording paused</Strip>
       ) : null;
     case "end_pending":
       return <EndPending lifecycle={lifecycle} refresh={refresh} />;
     case "finalizing":
-      return <Strip>Finishing transcript...</Strip>;
+      return <Strip tone="final">Finishing transcript...</Strip>;
     case "recoverable_error":
       return (
-        <span className="error" role="alert">
+        <span className="error call-life call-life-error" role="alert">
+          <IconAlert size={12} />
           {lifecycle.error ?? "Automatic capture stopped with an error."}
         </span>
       );
@@ -49,10 +57,19 @@ export function CallLifecycleBanner() {
   }
 }
 
-function Strip({ children }: { children: string }) {
+type Tone = "auto" | "paused" | "final";
+
+function Strip({ children, tone }: { children: string; tone: Tone }) {
   return (
-    <span className="call-life" aria-live="polite">
-      {children}
+    <span className={`call-life call-life-${tone}`} aria-live="polite">
+      {tone === "paused" ? (
+        <IconPause size={12} />
+      ) : tone === "final" ? (
+        <IconSpinner size={12} />
+      ) : (
+        <IconMic size={12} />
+      )}
+      <span className="call-life-text">{children}</span>
     </span>
   );
 }
@@ -104,7 +121,8 @@ function EndPending({
   return (
     <>
       <span className="call-life call-life-end">
-        <span>{`Call seems to have ended. Recording ends in ${countdown(remaining)}`}</span>
+        <IconClock size={12} />
+        <span className="call-life-text">{`Call seems to have ended. Recording ends in ${countdown(remaining)}`}</span>
         <span className="call-life-acts">
           <button
             type="button"

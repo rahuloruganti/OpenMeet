@@ -16,3 +16,369 @@
   display: grid;
   gap: 12px;
 }
+
+/* ---------------------------------------------------------------- retheme */
+
+.model-library {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ml-head {
+  display: grid;
+  gap: 2px;
+}
+
+.ml-title {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  font-weight: 500;
+  line-height: var(--lh-base);
+}
+
+.ml-lede,
+.ml-note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.ml-actions {
+  flex-wrap: wrap;
+}
+
+.ml-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Scan results: a quiet list of folders, then the one field that picks a file. */
+.ml-scan {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ml-folders {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ml-folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--divider);
+}
+
+.ml-folder:first-child {
+  border-top: 0;
+}
+
+.ml-folder-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.ml-folder-status {
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+}
+
+.ml-pick {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.ml-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: var(--lh-xs);
+}
+
+.ml-field select {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-input);
+  min-height: var(--control-height-input);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-8);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+}
+
+.ml-row-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+/* Hugging Face search: one field with a leading icon, then 48px result rows. */
+.ml-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.ml-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.ml-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.ml-search-field input {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-input);
+  min-height: var(--control-height-input);
+  padding: 0 10px 0 34px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-8);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+}
+
+.ml-search-field input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.ml-search .ml-note {
+  grid-column: 1 / -1;
+}
+
+.ml-rows {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ml-row,
+.ml-file,
+.ml-listing-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border-top: 1px dashed var(--divider);
+}
+
+.model-library form.ml-search {
+  gap: 8px;
+}
+
+.model-library li.ml-row,
+.model-library li.ml-file,
+.model-library li.ml-folder {
+  margin: 0;
+  border-bottom: 0;
+}
+
+.model-library li.ml-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 0;
+}
+
+.model-library li.ml-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 12px;
+  padding: 10px 0;
+}
+
+.model-library li.ml-folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  padding: 6px 0;
+}
+
+.ml-row {
+  min-height: 48px;
+  padding: 6px 0;
+}
+
+.ml-listing-head {
+  align-items: flex-start;
+  padding: 6px 0 10px;
+}
+
+.ml-what {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ml-name {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: var(--lh-sm);
+}
+
+.ml-meta {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-xs);
+}
+
+.ml-file {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 6px 12px;
+  padding: 10px 0;
+}
+
+.ml-file .ml-what {
+  flex: 1 1 240px;
+}
+
+.ml-file-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.ml-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.ml-check svg {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.ml-file > .ml-row-action {
+  order: 2;
+}
+
+.ml-details {
+  order: 3;
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.ml-details > summary {
+  font-size: var(--fs-xs);
+}
+
+/* One download at a time: a 6px track with an --accent fill. */
+.ml-job {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ml-job-label {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+.ml-bar {
+  display: block;
+  width: 160px;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  appearance: none;
+}
+
+.ml-bar::-webkit-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+}
+
+.ml-bar::-webkit-progress-value {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width var(--dur-2) var(--ease);
+}
+
+.ml-bar::-moz-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.ml-job-text {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ml-note.om-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+@media (max-width: 620px) {
+  .ml-pick {
+    grid-template-columns: 1fr;
+  }
+
+  .ml-pick .ml-row-action {
+    justify-self: start;
+  }
+
+  .ml-bar {
+    width: 120px;
+  }
+}

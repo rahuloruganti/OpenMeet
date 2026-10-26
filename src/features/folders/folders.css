@@ -72,6 +72,189 @@
 
 .sb-manage {
   padding: 8px 0 12px;
-  border-bottom: 1px solid rgba(127, 127, 127, 0.25);
+  border-bottom: 1px dashed var(--divider);
   margin-bottom: 8px;
+}
+
+/* ---------------------------------------------------------------- retheme */
+
+.folder-pick,
+.folder-move,
+.folder-manager {
+  gap: 8px;
+}
+
+.folder-pick label,
+.folder-manager label {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: var(--lh-xs);
+}
+
+.folder-pick select {
+  width: 100%;
+  min-width: 0;
+}
+
+.folder-new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.folder-new label {
+  flex: 1 1 100%;
+}
+
+.folder-new input {
+  flex: 1 1 120px;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-input);
+  min-height: var(--control-height-input);
+}
+
+.folder-manager ul {
+  gap: 0;
+  margin: 0;
+}
+
+.folder-manager li {
+  gap: 2px 4px;
+  min-width: 0;
+  padding: 10px 0;
+  border-top: 1px dashed var(--divider);
+}
+
+.folder-manager li:first-child {
+  border-top: 0;
+}
+
+.folder-manager .folder-name {
+  flex: 1 1 100%;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: var(--lh-sm);
+}
+
+.folder-manager .muted {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+}
+
+.folder-manager .folder-row > form {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.folder-manager .folder-row > form input {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.folder-icon,
+.folder-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-height);
+  min-height: var(--control-height);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.folder-icon {
+  width: var(--control-height);
+  min-width: var(--control-height);
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.folder-icon:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.folder-action {
+  padding: 0 10px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-2);
+}
+
+.folder-action:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* Destructive action: --danger on --danger-bg. */
+.folder-danger,
+.folder-icon.folder-danger {
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.folder-danger {
+  padding: 0 10px;
+}
+
+.folder-danger:hover:not(:disabled) {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* Inline delete confirmation: a quiet inset, not a card. */
+.folder-confirm {
+  gap: 6px 8px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-8);
+  background: var(--hover);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+.folder-confirm p {
+  flex: 1 1 100%;
+  margin: 0;
+}
+
+.folder-confirm strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.folder-manager .error,
+.folder-move .error {
+  margin: 0;
+  font-size: var(--fs-xs);
+}
+
+@media (max-width: 380px) {
+  .folder-icon {
+    width: 26px;
+    min-width: 26px;
+  }
 }

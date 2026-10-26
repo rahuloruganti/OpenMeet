@@ -1,8 +1,6 @@
-/* Command palette: moved out of src/app/styles.css in Phase 0.
-   Lane G owns this file. The scrim and elevation now come from --scrim and
-   --shadow (which is a full shadow value, not a colour). */
+/* Command palette. Lane G owns this file; colour and depth come from tokens.
+   Centred 560px dialog, a borderless 44px search field, 36px result rows. */
 
-/* ------------------------------------------------------------ command palette */
 .palette-scrim {
   position: fixed;
   inset: 0;
@@ -11,23 +9,25 @@
   place-items: start center;
   padding-top: 12vh;
   background: var(--scrim);
+  animation: palette-scrim-in var(--dur-2) var(--ease);
 }
 .palette {
   overflow: hidden;
   width: min(560px, 92vw);
   border: 1px solid var(--divider);
-  border-radius: 10px;
+  border-radius: var(--radius-12);
   background: var(--elevated);
   box-shadow: var(--shadow);
+  animation: palette-in var(--dur-2) var(--ease);
 }
 .palette-search {
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 46px;
-  padding: 0 14px;
+  gap: 10px;
+  height: 48px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--divider);
-  color: var(--muted);
+  color: var(--ink-2);
 }
 .palette-search svg {
   flex: none;
@@ -40,53 +40,66 @@
   border: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 14px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+}
+.palette-search input::placeholder {
+  color: var(--ink-3);
 }
 .palette-search input:focus-visible {
   outline: none;
 }
 .palette-list {
   max-height: 60vh;
-  padding-bottom: 6px;
+  padding: 6px 0 8px;
   overflow-y: auto;
 }
 .palette-group {
-  padding: 9px 14px 4px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  padding: 10px 18px 4px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 .palette-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  height: 31px;
-  padding: 0 12px 0 14px;
-  border-left: 2px solid transparent;
+  gap: 10px;
+  height: 36px;
+  margin: 0 8px;
+  padding: 0 10px;
+  border-radius: var(--radius-8);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
+  transition: background var(--dur-1) var(--ease);
 }
 .palette-row:hover {
   background: var(--hover);
 }
 .palette-row[aria-selected="true"] {
-  border-left-color: var(--accent);
-  background: var(--selection);
+  background: var(--active);
+  /* --active and --elevated are two levels apart in dark; a hairline keeps the
+     selected row legible without adding a side stripe. */
+  box-shadow: inset 0 0 0 1px var(--divider);
 }
 .palette-row[aria-disabled="true"] {
-  opacity: 0.45;
+  color: var(--ink-3);
   cursor: not-allowed;
 }
-.palette-row .glyph {
-  display: inline-grid;
-  place-items: center;
-  width: 14px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
+.palette-row[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.palette-row .icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--ink-2);
+}
+.palette-row:hover .icon,
+.palette-row[aria-selected="true"] .icon {
+  color: var(--ink);
 }
 .palette-row .label {
   flex: 1;
@@ -97,27 +110,64 @@
 }
 .palette-row .keys {
   display: flex;
+  flex: none;
   gap: 3px;
 }
 .palette-row .tag {
+  flex: none;
   border: 0;
   background: transparent;
-  color: var(--muted);
-  font-size: 10.5px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 .palette-empty {
   margin: 0;
-  padding: 10px 14px;
-  color: var(--muted);
-  font-size: 13px;
+  padding: 12px 18px;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
 }
 .palette-foot {
   display: flex;
-  gap: 10px;
-  padding: 7px 14px;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 16px;
   border-top: 1px solid var(--divider);
-  background: var(--chrome);
-  color: var(--muted);
-  font-family: var(--mono);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+}
+.palette-foot span {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.palette-foot kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
   font-size: 10px;
+}
+.palette-foot kbd svg {
+  display: block;
+}
+
+@keyframes palette-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

@@ -27,6 +27,16 @@ import {
 } from "../../shared/lib/providers";
 import { BrandMark } from "../../shared/ui/brand-mark";
 import {
+  IconArrowLeft,
+  IconCheck,
+  IconChevronRight,
+  IconDownload,
+  IconExternalLink,
+  IconMonitor,
+  IconRefresh,
+  IconSparkles,
+} from "../../shared/ui/icons";
+import {
   baseUrlError,
   hostOf,
   publishSettings,
@@ -445,8 +455,8 @@ export function FirstRunSetup(props: Props) {
                 name === step ? "current" : i < index ? "done" : undefined
               }
             >
-              <span>{i + 1}</span>
-              {stepLabels[name]}
+              <span className="step-dot" aria-hidden="true" />
+              <span className="step-name sr-only">{stepLabels[name]}</span>
             </li>
           ))}
         </ol>
@@ -456,8 +466,8 @@ export function FirstRunSetup(props: Props) {
             <section className="wizard-step" aria-labelledby="setup-import">
               <h1 id="setup-import">Bring your meetings over</h1>
               <p className="help">
-                Found meetings from the previous OpenMeet. They are copied
-                read-only: nothing is deleted, and API keys are not copied.
+                Found meetings from the previous OpenMeet; they are copied
+                read-only, nothing is deleted, and API keys are not copied.
               </p>
               <div className="card found">
                 <div className="counts">
@@ -490,6 +500,9 @@ export function FirstRunSetup(props: Props) {
               aria-labelledby="setup-transcription"
             >
               <h1 id="setup-transcription">How should we transcribe?</h1>
+              <p className="help">
+                Audio stays on this PC unless you choose a cloud service.
+              </p>
               <div className="choices">
                 <label className="choice">
                   <input
@@ -501,7 +514,10 @@ export function FirstRunSetup(props: Props) {
                       setRoute("local");
                     }}
                   />
-                  <span>
+                  <span className="choice-icon" aria-hidden="true">
+                    <IconMonitor />
+                  </span>
+                  <span className="choice-text">
                     <span className="head">
                       <strong>On this PC</strong>
                       <span className="tag">Recommended</span>
@@ -519,7 +535,10 @@ export function FirstRunSetup(props: Props) {
                       setRoute("api");
                     }}
                   />
-                  <span>
+                  <span className="choice-icon" aria-hidden="true">
+                    <IconExternalLink />
+                  </span>
+                  <span className="choice-text">
                     <span className="head">
                       <strong>Cloud service</strong>
                     </span>
@@ -531,6 +550,9 @@ export function FirstRunSetup(props: Props) {
               {route === "local" && (
                 <div className="wizard-block">
                   <div className="pick">
+                    <span className="pick-icon" aria-hidden="true">
+                      <IconDownload />
+                    </span>
                     <span className="pick-main">
                       <span className="pick-name">
                         {speechModelLabel(primary)}
@@ -541,21 +563,24 @@ export function FirstRunSetup(props: Props) {
                         </span>
                       )}
                     </span>
-                    <button
-                      type="button"
-                      className="sm"
-                      disabled={busy || props.installing}
-                      onClick={() => void chooseLocal(primary, true)}
-                    >
-                      {settings.stt_model === primary && stt?.installed
-                        ? "In use"
-                        : props.installing
-                          ? "Downloading…"
-                          : "Download"}
-                    </button>
+                    {settings.stt_model === primary && stt?.installed ? (
+                      <span className="pick-status">
+                        <IconCheck />
+                        In use
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="sm"
+                        disabled={busy || props.installing}
+                        onClick={() => void chooseLocal(primary, true)}
+                      >
+                        {props.installing ? "Downloading…" : "Download"}
+                      </button>
+                    )}
                   </div>
                   {props.sttProgress && (
-                    <p className="pick-meta mono" role="status">
+                    <p className="pick-meta pick-progress" role="status">
                       Downloading {props.sttProgress.stage}:{" "}
                       {formatBytes(props.sttProgress.downloaded)} /{" "}
                       {formatBytes(props.sttProgress.total)}
@@ -568,7 +593,10 @@ export function FirstRunSetup(props: Props) {
                   )}
                   {found !== null && found.length > 0 && (
                     <details>
-                      <summary>Use a model I already have</summary>
+                      <summary>
+                        <IconChevronRight className="details-chevron" />
+                        Use a model I already have
+                      </summary>
                       <ul
                         className="wizard-list"
                         aria-label="Installed Whisper models"
@@ -583,29 +611,38 @@ export function FirstRunSetup(props: Props) {
                               ));
                           return (
                             <li key={item.path}>
+                              <span className="pick-icon" aria-hidden="true">
+                                <IconDownload />
+                              </span>
                               <span className="pick-main">
                                 <span className="pick-name">
                                   {fileName(item.path)}
                                 </span>
                                 <span className="pick-meta">
-                                  {formatBytes(item.size)} · {item.path}
+                                  {formatBytes(item.size)}{" "}
+                                  <span className="mono pick-path">
+                                    {item.path}
+                                  </span>
                                 </span>
                               </span>
-                              <button
-                                type="button"
-                                className="sm"
-                                disabled={busy || inUse}
-                                aria-label={
-                                  inUse
-                                    ? undefined
-                                    : `Use ${fileName(item.path)}`
-                                }
-                                onClick={() =>
-                                  void chooseLocal(item.path, true)
-                                }
-                              >
-                                {inUse ? "In use" : "Use"}
-                              </button>
+                              {inUse ? (
+                                <span className="pick-status">
+                                  <IconCheck />
+                                  In use
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="sm"
+                                  disabled={busy}
+                                  aria-label={`Use ${fileName(item.path)}`}
+                                  onClick={() =>
+                                    void chooseLocal(item.path, true)
+                                  }
+                                >
+                                  Use
+                                </button>
+                              )}
                             </li>
                           );
                         })}
@@ -613,7 +650,10 @@ export function FirstRunSetup(props: Props) {
                     </details>
                   )}
                   <details>
-                    <summary>More models</summary>
+                    <summary>
+                      <IconChevronRight className="details-chevron" />
+                      More models
+                    </summary>
                     <ul
                       className="wizard-list"
                       aria-label="Recommended downloads"
@@ -624,6 +664,9 @@ export function FirstRunSetup(props: Props) {
                         )?.size;
                         return (
                           <li key={id}>
+                            <span className="pick-icon" aria-hidden="true">
+                              <IconDownload />
+                            </span>
                             <span className="pick-main">
                               <span className="pick-name">
                                 {speechModelLabel(id)}
@@ -634,21 +677,22 @@ export function FirstRunSetup(props: Props) {
                                 </span>
                               )}
                             </span>
-                            <button
-                              type="button"
-                              className="sm"
-                              disabled={busy || props.installing}
-                              aria-label={
-                                settings.stt_model === id && stt?.installed
-                                  ? undefined
-                                  : `Download and use ${speechModelLabel(id)}`
-                              }
-                              onClick={() => void chooseLocal(id, true)}
-                            >
-                              {settings.stt_model === id && stt?.installed
-                                ? "In use"
-                                : "Download"}
-                            </button>
+                            {settings.stt_model === id && stt?.installed ? (
+                              <span className="pick-status">
+                                <IconCheck />
+                                In use
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="sm"
+                                disabled={busy || props.installing}
+                                aria-label={`Download and use ${speechModelLabel(id)}`}
+                                onClick={() => void chooseLocal(id, true)}
+                              >
+                                Download
+                              </button>
+                            )}
                           </li>
                         );
                       })}
@@ -656,7 +700,10 @@ export function FirstRunSetup(props: Props) {
                   </details>
                   {speechServers.length > 0 && (
                     <details>
-                      <summary>Speech servers on this computer</summary>
+                      <summary>
+                        <IconChevronRight className="details-chevron" />
+                        Speech servers on this computer
+                      </summary>
                       {speechServers.map((server) => (
                         <div key={server.base_url} className="wizard-connect">
                           <p className="pick-meta">
@@ -695,6 +742,9 @@ export function FirstRunSetup(props: Props) {
               <h1 id="setup-ai">
                 AI notes <span className="opt">(optional)</span>
               </h1>
+              <p className="help">
+                A model can write a summary after each meeting.
+              </p>
               <div className="choices">
                 {speechConnection && (
                   <label className="choice">
@@ -707,7 +757,10 @@ export function FirstRunSetup(props: Props) {
                         setNotesChoice("speech");
                       }}
                     />
-                    <span>
+                    <span className="choice-icon" aria-hidden="true">
+                      <IconSparkles />
+                    </span>
+                    <span className="choice-text">
                       <span className="head">
                         <strong>Transcription connection</strong>
                       </span>
@@ -725,7 +778,10 @@ export function FirstRunSetup(props: Props) {
                       setNotesChoice("api");
                     }}
                   />
-                  <span>
+                  <span className="choice-icon" aria-hidden="true">
+                    <IconExternalLink />
+                  </span>
+                  <span className="choice-text">
                     <span className="head">
                       <strong>API service</strong>
                     </span>
@@ -814,6 +870,7 @@ export function FirstRunSetup(props: Props) {
                     disabled={busy}
                     onClick={props.onRefreshDevices}
                   >
+                    <IconRefresh />
                     Refresh
                   </button>
                 </div>
@@ -825,17 +882,10 @@ export function FirstRunSetup(props: Props) {
             <section className="wizard-step" aria-labelledby="setup-done">
               <div className="done">
                 <span className="done-check" aria-hidden="true">
-                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                    <path
-                      d="M4.5 10.5l3.6 3.6L15.5 6.5"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  <IconCheck size={20} />
                 </span>
                 <h1 id="setup-done">You're set</h1>
+                <p className="help">OpenMeet is ready for your next meeting.</p>
               </div>
             </section>
           )}
@@ -855,7 +905,8 @@ export function FirstRunSetup(props: Props) {
             hidden={index <= 0}
             onClick={() => go(steps[index - 1])}
           >
-            ← Back
+            <IconArrowLeft />
+            Back
           </button>
           <span className="grow" />
           {step !== "done" ? (

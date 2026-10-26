@@ -1,6 +1,11 @@
-/* Transcript reading pane, turns, and player. */
+/* Transcript reading pane, turns, and player. Lane D owns this file.
+   Turns are quiet rows: a dot and a name, a tabular timestamp, and the spoken
+   text. No cards, no stripes, no monospace except where a number is a clock. */
 
-html {
+/* The caret colour belongs to the transcript surface only. It used to be set
+   on `html`, which leaked the accent caret into Settings and the notes editor. */
+.tx,
+.tx-dock {
   caret-color: var(--accent);
 }
 
@@ -22,7 +27,6 @@ html {
 /* ---------------------------------------------------------------- toolbar */
 .tx {
   position: relative;
-  caret-color: var(--accent);
 }
 
 .tx-toolbar {
@@ -32,8 +36,8 @@ html {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 0 10px;
+  gap: 12px;
+  padding: 6px 0 8px;
   background: var(--workspace);
   white-space: nowrap;
 }
@@ -42,14 +46,15 @@ html {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   height: var(--control-height-compact);
   min-height: var(--control-height-compact);
-  padding: 0 8px;
+  padding: 0 10px;
   border-color: transparent;
   background: transparent;
-  color: var(--muted);
-  font-size: var(--control-font-compact);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-weight: 500;
 }
 
@@ -57,6 +62,12 @@ html {
   border-color: transparent;
   background: var(--hover);
   color: var(--ink);
+}
+
+.tx-toolbar button:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-3);
 }
 
 .tx-iconbtn {
@@ -74,45 +85,48 @@ html {
 
 .tx-find {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 4px;
   min-width: 0;
-  flex: 1;
 }
 
 .tx-find-field {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 1;
   max-width: 260px;
   height: var(--control-height-compact);
-  padding: 0 8px;
+  padding: 0 9px;
   border: 1px solid var(--control-border);
-  border-radius: 6px;
+  border-radius: var(--radius-8);
   background: var(--paper);
 }
 
 .tx-find-field:focus-within {
-  outline: 2px solid var(--focus);
+  border-color: var(--control-border-hover);
+  outline: 2px solid color-mix(in srgb, var(--focus) 60%, transparent);
   outline-offset: 2px;
 }
 
 .tx-find-field svg {
-  color: var(--muted);
+  color: var(--ink-3);
 }
 
 .tx-find-field input {
   display: block;
   width: 100%;
   min-width: 0;
+  height: 24px;
   min-height: 0;
-  height: 22px;
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: var(--control-font-compact);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   appearance: none;
   -webkit-appearance: none;
 }
@@ -123,63 +137,49 @@ html {
 
 .tx-find-count {
   flex: none;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .tx-tools {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 2px;
-  flex: none;
 }
 
+/* A warning is a banner row, not a coloured sentence: tint plus icon, no stripe. */
 .tx-warn {
-  margin: 0 0 8px;
-  padding: 0 0 8px;
-  border-bottom: 1px solid var(--divider);
-  color: var(--warning);
-  font-size: 12px;
-}
-
-.tx-status {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 4px 0 8px;
-  color: var(--muted);
-  font-size: 12.5px;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-8);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
-.tx-pulse {
+.tx-warn svg {
   flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  animation: tx-pulse 1.8s ease-in-out infinite;
-}
-
-.tx-pause-mark {
-  display: inline-flex;
-  color: var(--muted);
-}
-
-.tx-pause-mark svg {
-  display: block;
+  margin-top: 1px;
 }
 
 /* ---------------------------------------------------------------- turns */
 .tx-list {
-  padding: 32px 0 72px;
+  padding: 16px 0 48px;
   overflow: visible;
 }
 
 .tx.is-live .tx-list,
 .tx.is-paused .tx-list {
-  padding-top: 16px;
+  padding-top: 6px;
 }
 
 .tx.is-live .tx-mini,
@@ -189,29 +189,42 @@ html {
 
 .tx-turn {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  column-gap: 12px;
-  margin: 0 0 18px;
-  overflow: visible;
+  grid-template-columns: 72px minmax(0, 1fr);
+  column-gap: 6px;
+  margin: 0;
+  padding: 7px 10px 7px 0;
+  border-radius: var(--radius-8);
+}
+
+.tx-turn + .tx-turn {
+  margin-top: 2px;
+}
+
+.tx-turn.is-playing {
+  background: var(--accent-tint);
 }
 
 .tx-time {
+  position: relative;
+  display: inline-flex;
   grid-row: 1;
   grid-column: 1;
+  align-items: center;
   justify-self: start;
   align-self: start;
-  height: auto;
+  height: 20px;
   min-height: 0;
   margin: 0;
-  padding: 0;
+  padding: 0 0 0 16px;
   border: 0;
   background: transparent;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
-  line-height: 1.3;
+  line-height: var(--lh-xs);
+  text-align: left;
   cursor: pointer;
 }
 
@@ -227,27 +240,50 @@ html {
 }
 
 .tx-turn.is-playing .tx-time {
+  color: var(--ink-2);
+}
+
+/* The seek affordance: a play mark that fades in on the timestamp, so the row
+   stays quiet at rest and the time is still the button's label. */
+.tx-time-icon {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: inline-flex;
+  flex: none;
   color: var(--accent);
+  opacity: 0;
+  transform: translateY(-50%) translateX(-2px);
+  transition:
+    opacity var(--dur-1) var(--ease),
+    transform var(--dur-1) var(--ease);
+}
+
+.tx-time:hover .tx-time-icon,
+.tx-time:focus-visible .tx-time-icon {
+  opacity: 1;
+  transform: translateY(-50%);
 }
 
 .tx-name {
+  display: inline-flex;
   grid-row: 1;
   grid-column: 2;
-  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   width: max-content;
   max-width: 100%;
-  height: auto;
+  height: 20px;
   min-height: 0;
   margin: 0;
   padding: 0;
   border: 0;
   background: transparent;
-  color: color-mix(in srgb, var(--ink) 78%, var(--muted));
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.3;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: var(--lh-xs);
   cursor: pointer;
 }
 
@@ -255,42 +291,57 @@ html {
   border: 0;
   background: transparent;
   color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--control-border-hover);
 }
 
 .tx-dot {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
 }
 
+/* The palette marks the speaker; the name itself stays ink so it always passes. */
 .tx-dot.you {
-  background: color-mix(in srgb, var(--focus) 58%, var(--muted));
+  background: var(--spk-1);
 }
 
 .tx-dot.others {
-  background: color-mix(in srgb, var(--success) 58%, var(--muted));
+  background: var(--spk-3);
 }
 
 .tx-p {
   grid-row: 2;
   grid-column: 2;
-  max-width: 70ch;
-  margin: 4px 0 0;
+  max-width: 68ch;
+  margin: 3px 0 0;
   overflow: visible;
   color: var(--ink);
-  font-size: 14.5px;
-  line-height: 1.7;
+  font-family: var(--font-ui);
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .tx-p.is-live {
-  color: var(--muted);
+  color: var(--ink-2);
+}
+
+/* The shared segment primitive pads for the versions list; inside a turn the
+   text runs as prose. */
+.tx-p .transcript-segment {
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .tx-seg {
   position: relative;
+  margin: 0;
   padding: 0 0.15em;
-  margin: 0 -0.15em;
   border-radius: 3px;
   cursor: text;
 }
@@ -301,12 +352,7 @@ html {
 }
 
 .tx-seg.is-playing {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-}
-
-.tx-seg.is-playing:hover,
-.tx-seg.is-playing:focus-visible {
-  background: color-mix(in srgb, var(--accent) 22%, var(--hover));
+  background: var(--accent-tint);
 }
 
 .tx.is-live .tx-seg,
@@ -327,14 +373,14 @@ html {
   height: 4px;
   margin: 0 0 2px 5px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--ink-3);
   vertical-align: middle;
 }
 
 .tx-seg mark {
   padding: 0 0.12em;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 3px;
+  background: var(--accent-tint);
   color: inherit;
 }
 
@@ -346,36 +392,38 @@ html {
 .tx-edit {
   display: block;
   width: 100%;
-  max-width: 70ch;
+  max-width: 68ch;
   min-height: 0;
   margin: 0;
   padding: 4px 6px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-6);
   background: var(--raised);
   color: var(--ink);
-  font-size: 14.5px;
-  line-height: 1.7;
-  outline: 2px solid var(--focus);
+  font-family: var(--font-ui);
+  font-size: var(--fs-note);
+  line-height: 1.6;
+  caret-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--focus) 60%, transparent);
   outline-offset: 1px;
   resize: none;
   overflow: hidden;
-  caret-color: var(--accent);
 }
 
 .tx-edit:focus,
 .tx-edit:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid color-mix(in srgb, var(--focus) 60%, transparent);
   outline-offset: 1px;
 }
 
 .tx-edit-hint {
   display: block;
   margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 11px;
+  color: var(--ink-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-weight: 400;
-  line-height: 1.3;
+  line-height: var(--lh-xs);
 }
 
 .tx-caret {
@@ -386,13 +434,6 @@ html {
   background: currentColor;
   vertical-align: -0.18em;
   animation: tx-caret 1.1s steps(1) infinite;
-}
-
-.tx-paused-line {
-  margin: 0 0 18px 64px;
-  color: var(--muted);
-  font-size: 13.5px;
-  line-height: 1.7;
 }
 
 /* ---------------------------------------------------------------- mini */
@@ -406,8 +447,8 @@ html {
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--divider);
-  border-radius: 6px;
-  background: var(--raised);
+  border-radius: var(--radius-pill);
+  background: var(--elevated);
   box-shadow: var(--shadow);
   white-space: nowrap;
 }
@@ -418,24 +459,26 @@ html {
   gap: 4px;
   height: 24px;
   min-height: 24px;
-  padding: 0 7px;
+  padding: 0 8px;
   border-color: transparent;
   background: transparent;
-  color: var(--ink);
-  font-size: 11.5px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 11px;
   font-weight: 500;
 }
 
 .tx-mini button:hover:not(:disabled) {
   border-color: transparent;
   background: var(--hover);
+  color: var(--ink);
 }
 
 .tx-mini-time {
-  font-family: var(--mono);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
 }
 
 .tx-mini-play:hover .tx-mini-time {
@@ -452,11 +495,10 @@ html {
   z-index: 7;
   top: 44px;
   right: 0;
-  width: 240px;
-  padding: 10px 12px;
+  padding: 12px;
   border: 1px solid var(--divider);
-  border-radius: 8px;
-  background: var(--raised);
+  border-radius: var(--radius-8);
+  background: var(--elevated);
   box-shadow: var(--shadow);
 }
 
@@ -466,8 +508,9 @@ html {
 
 .tx-pop-title {
   margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  font-weight: 500;
 }
 
 .tx-pop-list {
@@ -482,36 +525,73 @@ html {
   gap: 8px;
   margin: 0;
   padding: 5px 0;
-  font-size: 12.5px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
   font-weight: 500;
 }
 
 .tx-pop-src {
   margin-left: auto;
-  color: var(--muted);
+  color: var(--ink-3);
   font-size: 11px;
   font-weight: 400;
 }
 
 .tx-pop-note {
   margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 11.5px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+/* The speaker form lives in this popover; the shared block margins are for the
+   inspector, not for a 280px menu. */
+.tx-pop .speaker-names {
+  gap: 10px;
+}
+
+.tx-pop .speaker-names label {
+  margin: 0;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.tx-pop .speaker-names input {
+  height: var(--control-height-input);
+  min-height: var(--control-height-input);
+  margin-top: 4px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+
+.tx-pop .speaker-names > p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+}
+
+.tx-pop .speaker-names button {
+  justify-self: start;
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
 }
 
 /* ---------------------------------------------------------------- player */
+/* The bottom action pill of the note column: one row, fully rounded, raised. */
 .tx-player {
   position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   row-gap: 8px;
-  margin: 0 0 8px;
-  padding: 8px 12px;
+  max-width: 608px;
+  margin: 0 auto 14px;
+  padding: 5px 12px 5px 6px;
   border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: var(--chrome);
+  border-radius: var(--radius-pill);
+  background: var(--elevated);
   box-shadow: var(--shadow);
 }
 
@@ -519,27 +599,37 @@ html {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: var(--primary);
+  color: var(--primary-ink);
 }
 
 .tx-play:hover:not(:disabled) {
   border: 0;
-  background: var(--accent-hover);
-  color: var(--accent-ink);
+  background: color-mix(in srgb, var(--primary) 86%, var(--paper));
+  color: var(--primary-ink);
+}
+
+.tx-play:active:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 78%, var(--paper));
+}
+
+.tx-play:disabled {
+  background: var(--hover);
+  color: var(--ink-3);
+  cursor: default;
 }
 
 .tx-clock {
   flex: none;
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -548,7 +638,7 @@ html {
   position: relative;
   flex: 1 1 auto;
   min-width: 72px;
-  height: 16px;
+  height: 24px;
   cursor: pointer;
 }
 
@@ -556,10 +646,10 @@ html {
   position: absolute;
   left: 0;
   right: 0;
-  top: 6px;
+  top: 10px;
   height: 4px;
-  border-radius: 2px;
-  background: var(--divider);
+  border-radius: var(--radius-pill);
+  background: var(--hover);
 }
 
 .tx-scrub-fill {
@@ -568,7 +658,7 @@ html {
   top: 0;
   height: 100%;
   width: 0;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   background: var(--accent);
 }
 
@@ -581,21 +671,23 @@ html {
   margin: -5px 0 0 -5px;
   border-radius: 50%;
   background: var(--accent);
+  box-shadow: 0 0 0 2px var(--elevated);
 }
 
 .tx-options {
   display: none;
+  flex: none;
   align-items: center;
   justify-content: center;
-  flex: none;
   gap: 4px;
+  width: var(--control-height-compact);
   height: var(--control-height-compact);
   min-height: var(--control-height-compact);
-  padding: 0 8px;
+  padding: 0;
   border-color: transparent;
   background: transparent;
-  color: var(--muted);
-  font-size: var(--control-font-compact);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
   font-weight: 500;
 }
 
@@ -614,19 +706,20 @@ html {
   flex: none;
   overflow: hidden;
   border: 1px solid var(--divider);
-  border-radius: 6px;
+  border-radius: var(--radius-pill);
 }
 
 .tx-speed button {
-  height: var(--control-height-compact);
-  min-height: var(--control-height-compact);
-  padding: 0 8px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 9px;
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--muted);
-  font-family: var(--mono);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
   font-size: 11px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -647,7 +740,7 @@ html {
 .tx-mutes {
   display: flex;
   flex: none;
-  gap: 4px;
+  gap: 2px;
 }
 
 .tx-mute {
@@ -656,11 +749,12 @@ html {
   gap: 5px;
   height: var(--control-height-compact);
   min-height: var(--control-height-compact);
-  padding: 0 8px;
+  padding: 0 9px;
   border-color: transparent;
   background: transparent;
-  color: var(--muted);
-  font-size: var(--control-font-compact);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-weight: 500;
 }
 
@@ -709,15 +803,16 @@ html {
   z-index: 5;
   display: inline-flex;
   align-items: center;
-  height: 28px;
-  min-height: 28px;
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
   padding: 0 12px;
   transform: translateX(-50%);
   border: 1px solid var(--divider);
-  border-radius: 999px;
-  background: var(--raised);
+  border-radius: var(--radius-pill);
+  background: var(--elevated);
   color: var(--ink);
-  font-size: 12px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
   font-weight: 500;
   box-shadow: var(--shadow);
   white-space: nowrap;
@@ -735,7 +830,7 @@ html {
 .tx ::selection,
 .tx-player::selection,
 .tx-player ::selection {
-  background: var(--selection);
+  background: var(--accent-tint);
   color: var(--ink);
 }
 
@@ -747,21 +842,11 @@ html {
 .tx-name:focus-visible,
 .tx-seg:focus-visible,
 .tx-jump:focus-visible {
-  outline: 2px solid var(--focus);
+  outline: 2px solid color-mix(in srgb, var(--focus) 60%, transparent);
   outline-offset: 2px;
 }
 
 /* ---------------------------------------------------------------- motion */
-@keyframes tx-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
 @keyframes tx-caret {
   0%,
   49% {
@@ -774,10 +859,6 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tx-pulse {
-    animation: none;
-    opacity: 1;
-  }
   .tx-caret {
     animation: none;
     opacity: 0.6;
@@ -808,10 +889,6 @@ html {
     width: 100%;
   }
 
-  .tx-paused-line {
-    margin-left: 0;
-  }
-
   .tx-options {
     display: inline-flex;
   }
@@ -831,18 +908,17 @@ html {
     gap: 6px;
     padding: 8px;
     border: 1px solid var(--divider);
-    border-radius: 8px;
-    background: var(--raised);
+    border-radius: var(--radius-8);
+    background: var(--elevated);
     box-shadow: var(--shadow);
   }
 }
 
-/* ---------------------------------------------------------------- moved in --
-   Moved out of src/app/styles.css in Phase 0, unchanged. Lane D owns it and
-   restyles the highlight with --accent-tint. */
+/* ---------------------------------------------------------------- moved in -- */
+/* Moved out of src/app/styles.css in Phase 0. Lane D owns it; a cited segment
+   is marked with the accent tint, never a stripe. */
 .highlighted-segment {
-  outline: 1px solid var(--divider);
-  outline-offset: 2px;
-  border-radius: 6px;
-  background: var(--selection);
+  border-radius: var(--radius-4);
+  background: var(--accent-tint);
+  outline: none;
 }

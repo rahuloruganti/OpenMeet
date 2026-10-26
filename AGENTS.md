@@ -53,6 +53,8 @@ just smoke     # OpenMeet.exe --smoke
 
 ## Frontend rules
 
+- Visual design (owner decision, informed by measuring Granola's shipped UI, nothing copied): warm cream light theme and warm charcoal dark theme following the OS; all colours, type, radii, spacing and motion are tokens in `src/app/styles.css` (declared once, `light-dark()`), no colour literals elsewhere; UI font Inter Variable, serif IBM Plex Serif only for note, page and first-run titles, mono only for code, paths and shortcuts; icons are Lucide through `src/shared/ui/icons.tsx`; primary buttons are ink pills, olive accent only for focus, links, switches and selection, recording stays a red dot. No side stripes, eyebrow labels, nested cards or glyph icons.
+
 - Feature-Sliced Design: layers are `app` > `pages` > `widgets` > `features` > `entities` > `shared`. An import may only point down that list; nothing may import upward. ESLint enforces this through `no-restricted-imports` — do not weaken the rule to land an import, move the code.
 - Each slice exposes a public `index.ts`; never import another slice's internal file.
 - Every backend call goes through `src/shared/api/api.ts` on top of `src/shared/api/transport.ts`. Components do not fetch, open sockets or know the RPC URL.

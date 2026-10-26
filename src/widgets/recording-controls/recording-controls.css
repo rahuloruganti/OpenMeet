@@ -1,109 +1,228 @@
-/* Recording status bar. Owned by the meeting slice. */
-
+/* Recording status row. Lane D owns it.
+   It keeps its place under the workspace (the shell reserves the row in
+   meeting-workspace.css, which this lane does not own) and reads as a pill
+   row: a state chip, the level meters, then the control pills. */
 .recording-bar.rec {
   display: flex;
   grid-row: 2;
   grid-column: 1;
   align-items: center;
-  gap: 11px;
+  gap: 12px;
   min-width: 0;
   height: 36px;
-  padding: 0 12px;
+  padding: 0 24px;
   border-top: 1px solid var(--divider);
   background: var(--chrome);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 11px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
 }
 
+/* The state reads as one chip, so recording is visible before any word is read. */
 .rec-state {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
   white-space: nowrap;
 }
+
 .rec .status-dot {
-  width: 7px;
-  height: 7px;
+  flex: none;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--muted);
+  background: var(--ink-3);
 }
+
 .rec .status-dot.recording {
   background: var(--danger);
+  animation: rec-pulse 2s ease-in-out infinite;
 }
+
 .rec .status-dot.paused {
   background: var(--warning);
-  border-radius: 1px;
 }
+
 .rec .status-dot.simulated {
-  background: transparent;
   border: 1px solid var(--accent);
+  background: transparent;
 }
+
 .rec .status-dot.stopped {
-  background: var(--muted);
+  background: var(--ink-3);
 }
+
+.rec-label {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
 .rec.is-live .rec-label {
   color: var(--ink);
 }
+
 .rec-timer {
-  color: var(--ink);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
 }
 
 .rec-meters {
   display: flex;
-  gap: 12px;
+  flex: none;
+  align-items: center;
+  gap: 14px;
   min-width: 0;
+  height: 16px;
+  padding-left: 12px;
+  border-left: 1px solid var(--divider);
 }
+
 .rec-meter {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
+  gap: 6px;
+  font-size: 11px;
 }
+
 .rec-meter-label {
-  color: var(--muted);
+  color: var(--ink-3);
+  font-size: 11px;
 }
+
 .rec-meter-bar {
-  width: 42px;
-  height: 5px;
+  width: 40px;
+  height: 4px;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   background: var(--active);
 }
+
 .rec-meter-bar i {
   display: block;
   height: 100%;
-  background: var(--accent);
+  border-radius: var(--radius-pill);
+  background: var(--live);
+  transition: width var(--dur-1) linear;
 }
+
 .rec-meter.warn .rec-meter-bar i {
   background: var(--warning);
 }
+
+/* A missing signal is a warning chip with a microphone mark, never a red bar alone. */
 .rec-warn {
-  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 340px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-pill);
+  background: var(--warning-bg);
   color: var(--warning);
-  font-size: 10.5px;
+  font-size: 11px;
   white-space: nowrap;
+}
+
+.rec-warn svg {
+  flex: none;
+}
+
+.rec-warn-text {
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .rec-acts {
   display: flex;
-  gap: 6px;
+  flex: none;
+  gap: 8px;
   margin-left: auto;
 }
+
 .rec-acts button {
-  height: 23px;
-  min-height: 23px;
-  padding: 0 9px;
-  background: var(--paper);
-  font-family: var(--mono);
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  padding: 0 12px;
+  border-color: var(--control-border);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 500;
 }
-.rec-acts .rec-stop {
+
+.rec-acts button:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.rec-acts button.rec-stop {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-ink);
+}
+
+.rec-acts button.rec-stop:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 86%, var(--paper));
+  background: color-mix(in srgb, var(--primary) 86%, var(--paper));
+  color: var(--primary-ink);
+}
+
+/* Stopping ends a recording: danger only while one is running. */
+.rec[data-status="recording"] .rec-acts button.rec-stop {
   border-color: var(--danger-border);
   background: var(--danger-bg);
   color: var(--danger);
-  font-weight: 600;
+}
+
+.rec[data-status="recording"] .rec-acts button.rec-stop:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger-bg) 82%, var(--danger));
+  color: var(--danger);
+}
+
+/* A disabled control must look disabled, not like a quiet one. */
+.rec-acts button:disabled,
+.rec-acts button.rec-stop:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: default;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rec .status-dot.recording {
+    animation: none;
+  }
+  .rec-meter-bar i {
+    transition: none;
+  }
 }

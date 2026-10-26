@@ -1,10 +1,16 @@
 import { formatBytes } from "../../../entities/meeting";
 import { stageLabel } from "../../../entities/processing";
 import type { SessionProcessingSnapshot } from "../../../shared/api/api";
+import {
+  IconAlert,
+  IconCheck,
+  IconSpinner,
+  IconX,
+} from "../../../shared/ui/icons";
 import { awaitingNotes, endedStages, retryStages } from "../model/processing";
 
 /**
- * Session processing as ONE status line above the editor: what runs now, why it
+ * Session processing as ONE status row above the editor: what runs now, why it
  * stopped, and the single action that helps. Usage details sit beside it in muted text.
  */
 export function ProcessingStatus(props: {
@@ -37,9 +43,26 @@ export function ProcessingStatus(props: {
   ]
     .filter(Boolean)
     .join(" ");
+  // The icon is the status at a glance; the words say the same thing beside it.
+  const StageIcon =
+    stage === "completed"
+      ? IconCheck
+      : stage === "cancelled"
+        ? IconX
+        : stage === "needs_attention" ||
+            stage === "failed" ||
+            stage === "interrupted"
+          ? IconAlert
+          : IconSpinner;
+  const running = !ended;
   return (
     <section className="proc" aria-label="Session processing">
-      <span className={`proc-dot ${stage}`} aria-hidden="true" />
+      <span
+        className={`proc-icon ${stage}${running ? " running" : ""}`}
+        aria-hidden="true"
+      >
+        <StageIcon />
+      </span>
       <span className="proc-text" role="status">
         {stageLabel(stage)}
         {waiting ? " · waiting for notes" : ""}
@@ -77,10 +100,11 @@ export function ProcessingStatus(props: {
         )}
         {["completed", "cancelled"].includes(stage) && (
           <button
+            className="ghost"
             aria-label="Dismiss processing status"
             onClick={props.onDismiss}
           >
-            ✕
+            <IconX />
           </button>
         )}
       </span>

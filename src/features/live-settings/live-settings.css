@@ -1,11 +1,46 @@
 /* Settings > Recording > Live transcript. The rows reuse the page's own classes. */
 .ls-reason {
   margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
 }
 
-.om-card-foot progress {
-  width: 140px;
+.om-side select.ls-model-select {
+  width: 320px;
+  max-width: 100%;
+}
+
+.ls-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Progress: a 6px rounded track in --hover, an --accent fill. */
+.om-card-foot .ls-bar {
+  width: 160px;
   height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  appearance: none;
+}
+
+.ls-bar::-webkit-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+}
+
+.ls-bar::-webkit-progress-value {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width var(--dur-2) var(--ease);
+}
+
+.ls-bar::-moz-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
 }

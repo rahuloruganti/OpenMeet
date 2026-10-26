@@ -2,8 +2,10 @@ import type { ComponentProps, ReactNode, RefObject } from "react";
 import { MeetingSidebar } from "../../../widgets/meeting-sidebar";
 import { MeetingWorkspace } from "../../../widgets/meeting-workspace";
 import { RecordingControls } from "../../../widgets/recording-controls";
+import { IconX } from "../../../shared/ui/icons";
 import { FeedbackStack, type FeedbackProps } from "./FeedbackStack";
 import { ProcessingStatus } from "./ProcessingStatus";
+import "./page-shell.css";
 
 export type Panel = "setup" | "settings" | null;
 
@@ -90,7 +92,17 @@ export function MeetingPage(props: MeetingPageProps) {
             aria-modal="true"
             aria-labelledby="close-title"
           >
-            <h2 id="close-title">Not saved yet</h2>
+            <div className="close-head">
+              <h2 id="close-title">Not saved yet</h2>
+              <button
+                className="ghost close-x"
+                aria-label="Close"
+                disabled={close.saving}
+                onClick={close.onKeepWorking}
+              >
+                <IconX />
+              </button>
+            </div>
             <p>OpenMeet saves everything when you quit. This did not save:</p>
             <ul role="alert">
               {close.problems.map((problem) => (

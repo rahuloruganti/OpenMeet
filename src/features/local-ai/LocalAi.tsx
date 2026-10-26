@@ -10,6 +10,15 @@ import {
   type Settings,
 } from "../../shared/api/api";
 import { formatBytes } from "../../entities/meeting";
+import {
+  IconAlert,
+  IconCheck,
+  IconLock,
+  IconSpinner,
+  IconTrash,
+  IconX,
+} from "../../shared/ui/icons";
+import { FitLabel } from "./FitLabel";
 import { FIT } from "./labels";
 import { ProgressJob } from "./LocalAiProgress";
 import { LocalAiSearch } from "./LocalAiSearch";
@@ -41,6 +50,24 @@ const SERVER: Record<LocalAiStatus["server"], string> = {
 function optionLabel(model: LocalAiModel): string {
   return [model.name, formatBytes(model.size_bytes), FIT[model.fit]].join(
     " · ",
+  );
+}
+
+const SERVER_ICON: Record<LocalAiStatus["server"], typeof IconCheck> = {
+  stopped: IconX,
+  starting: IconSpinner,
+  running: IconCheck,
+  failed: IconAlert,
+};
+
+/** One 24px status pill: semantic tint, an icon and the word. */
+function ServerPill({ server }: { server: LocalAiStatus["server"] }) {
+  const Glyph = SERVER_ICON[server];
+  return (
+    <span className={`lai-status lai-status-${server}`}>
+      <Glyph size={14} />
+      {SERVER[server]}
+    </span>
   );
 }
 
@@ -223,29 +250,35 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
     error || (status.server === "failed" ? (status.server_error ?? "") : "");
 
   return (
-    <>
-      <div className="om-card lai-machine">
-        <span className="lai-what">
-          <strong>Your PC</strong>
-          <span className="om-muted">{machineLabel(status.hardware)}</span>
-        </span>
-        <span className="om-tag">Stays on this device</span>
-      </div>
-
-      <div className="om-card lai-rows">
+    <div className="lai">
+      <div className="om-card">
+        <div className="om-row">
+          <div className="om-what">
+            <strong>Your PC</strong>
+            <span className="om-muted lai-machine-line">
+              {machineLabel(status.hardware)}
+            </span>
+          </div>
+          <div className="om-side">
+            <span className="lai-device">
+              <IconLock size={14} />
+              Stays on this device
+            </span>
+          </div>
+        </div>
         <div className="om-row">
           <div className="om-what">
             <strong>Engine</strong>
           </div>
           <div className="om-side">
             {status.engine_installed ? (
-              <span className="om-muted">
+              <span className="om-muted lai-installed">
                 {`Installed · ${status.engine_tag} · ${status.hardware.backend.toUpperCase()}`}
               </span>
             ) : (
               <button
                 type="button"
-                className="om-sm"
+                className="om-sm lai-download"
                 aria-busy={busy === "engine"}
                 disabled={disabled || busy !== null}
                 onClick={installEngine}
@@ -255,14 +288,27 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
             )}
           </div>
         </div>
+        {engineJob && (
+          <div className="om-row lai-progress-row">
+            <div className="om-what">
+              <span className="om-muted">Engine download</span>
+            </div>
+            <div className="om-side">
+              <ProgressJob
+                job={engineJob}
+                label="Engine download progress"
+                cancelLabel="Cancel engine download"
+                onCancel={cancel}
+              />
+            </div>
+          </div>
+        )}
         <div className="om-row">
           <div className="om-what">
             <strong>Server</strong>
           </div>
           <div className="om-side">
-            <span className={`om-tag lai-pill lai-pill-${status.server}`}>
-              {SERVER[status.server]}
-            </span>
+            <ServerPill server={status.server} />
             <button
               type="button"
               className="om-sm"
@@ -276,26 +322,26 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
             </button>
           </div>
         </div>
-        {engineJob && (
-          <div className="lai-inline">
-            <ProgressJob
-              job={engineJob}
-              label="Engine download progress"
-              cancelLabel="Cancel engine download"
-              onCancel={cancel}
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="om-card lai-model">
-        <div className="om-row">
+        <div className="om-row lai-model-row">
           <div className="om-what">
             <strong>Model</strong>
+            <span className="om-muted lai-model-help">
+              {selected
+                ? [selected.description, selected.license]
+                    .filter(Boolean)
+                    .join(" · ")
+                : "No model on this PC yet."}
+            </span>
+            {selected && (
+              <span className="om-muted lai-model-help">
+                {FIT_NOTE[selected.fit]}
+              </span>
+            )}
           </div>
-          <div className="om-side">
+          <div className="om-side lai-model-controls">
             <select
               aria-label="Local model"
+              className="lai-model-select"
               value={selected?.id ?? ""}
               disabled={disabled || available.length === 0}
               onChange={(event) => setPicked(event.target.value)}
@@ -313,10 +359,11 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
                 </optgroup>
               )}
             </select>
-            {selected && <span className="om-tag">{FIT[selected.fit]}</span>}
+            {selected && <FitLabel fit={selected.fit} />}
             {selected &&
               (inUse ? (
-                <button type="button" className="om-sm" disabled>
+                <button type="button" className="lai-inuse" disabled>
+                  <IconCheck size={14} />
                   In use
                 </button>
               ) : (
@@ -334,24 +381,17 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
             {removable && (
               <button
                 type="button"
-                className="om-ghost om-sm"
+                className="om-ghost om-sm lai-remove"
                 aria-label={`Remove ${selected.name}`}
                 disabled={disabled || busy !== null}
                 onClick={() => selected && removeModel(selected)}
               >
+                <IconTrash size={14} />
                 Remove
               </button>
             )}
           </div>
         </div>
-        <p className="lai-note">
-          {selected
-            ? [selected.description, selected.license]
-                .filter(Boolean)
-                .join(" · ")
-            : "No model on this PC yet."}
-        </p>
-        {selected && <p className="lai-note">{FIT_NOTE[selected.fit]}</p>}
       </div>
 
       <LocalAiSearch
@@ -363,19 +403,23 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
         onCancel={cancel}
       />
 
-      {tooBig > 0 && (
-        <p className="lai-line">
-          {tooBig === 1
-            ? "1 more model is too big for this PC, so it is not listed."
-            : `${tooBig} more models are too big for this PC, so they are not listed.`}
-        </p>
+      {(tooBig > 0 || detected || alert) && (
+        <div className="lai-lines">
+          {tooBig > 0 && (
+            <p className="lai-line">
+              {tooBig === 1
+                ? "1 more model is too big for this PC, so it is not listed."
+                : `${tooBig} more models are too big for this PC, so they are not listed.`}
+            </p>
+          )}
+          {detected && <p className="lai-line">{detected}</p>}
+          {alert && (
+            <p role="alert" className="om-error lai-line">
+              {alert}
+            </p>
+          )}
+        </div>
       )}
-      {detected && <p className="lai-line">{detected}</p>}
-      {alert && (
-        <p role="alert" className="om-error">
-          {alert}
-        </p>
-      )}
-    </>
+    </div>
   );
 }

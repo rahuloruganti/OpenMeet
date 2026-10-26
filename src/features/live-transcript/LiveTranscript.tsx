@@ -13,6 +13,7 @@ import {
   formatTranscript,
 } from "../../shared/lib/transcript-text";
 import { groupTurns } from "../../shared/lib/turns";
+import { IconPause } from "../../shared/ui/icons";
 import {
   OpenSettingsButton,
   type OpenSettings,
@@ -205,28 +206,32 @@ export function LiveTranscript(props: Props) {
   );
 
   return (
-    <section className="lt" aria-label="Live transcript">
-      <p className="tx-status">
+    <section
+      className={`lt${props.paused ? " is-paused" : ""}${off ? " is-off" : ""}`}
+      aria-label="Live transcript"
+    >
+      <header className="lt-head">
         {props.paused ? (
-          <span className="tx-pause-mark" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="14" height="14" focusable="false">
-              <path
-                d="M4.5 3.5h2.2v9H4.5zM9.3 3.5h2.2v9H9.3z"
-                fill="currentColor"
-              />
-            </svg>
+          <span className="lt-mark is-paused">
+            <IconPause size={12} />
+            Paused
           </span>
         ) : (
-          <span className="tx-pulse" aria-hidden="true" />
+          <span className={`lt-mark${off ? " is-off" : ""}`}>
+            <span className="lt-dot" aria-hidden="true" />
+            {statusOf(state)}
+          </span>
         )}
-        <span>{transcript?.engine ?? "Live transcript"}</span>
-        {props.paused ? (
-          <span>Paused. Nothing is recorded until you resume.</span>
-        ) : (
-          <span>{statusOf(state)}</span>
+        <span className="lt-engine">
+          {transcript?.engine ?? "Live transcript"}
+        </span>
+        {props.paused && (
+          <span className="lt-state">
+            Nothing is recorded until you resume.
+          </span>
         )}
-        {props.provisional && <span>Provisional</span>}
-      </p>
+        {props.provisional && <span className="lt-tag">Provisional</span>}
+      </header>
 
       {said && (
         <p className="lt-notice" role="status">
@@ -280,8 +285,6 @@ export function LiveTranscript(props: Props) {
           {tail.map(renderPartial)}
         </div>
       )}
-
-      {props.paused && <p className="tx-paused-line">Paused</p>}
 
       {!following && !quiet && (
         <button type="button" className="lt-jump" onClick={follow}>

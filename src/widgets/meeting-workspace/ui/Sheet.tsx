@@ -5,6 +5,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { IconX } from "../../../shared/ui/icons";
 
 const focusable =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -86,7 +87,7 @@ export function Sheet({
         {count !== undefined && <span className="mw-count">{count}</span>}
         <span className="mw-gap" />
         <button aria-label="Close" onClick={onClose}>
-          ✕
+          <IconX size={14} />
         </button>
       </div>
       <div className="mw-sheet-body">{children}</div>

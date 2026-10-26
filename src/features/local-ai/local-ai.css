@@ -1,132 +1,356 @@
-/* Local AI rows inside Settings > AI notes. Tokens only; every class is namespaced `lai-`.
-   The card, row and tag look comes from the settings page (om-card, om-row, om-tag). */
+/* Local AI inside Settings > AI notes. Tokens only; feature classes are namespaced `lai-`.
+   Cards, rows and dividers come from the settings page (om-card, om-row, om-side). */
 
-.lai-machine {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-}
-.lai-what {
+.lai {
   display: grid;
-  gap: 2px;
+  gap: 12px;
   min-width: 0;
 }
-.lai-what strong {
-  font-size: 13.5px;
-  font-weight: 500;
-}
-.lai-what .om-muted {
+
+/* Row text */
+.lai-machine-line,
+.lai-installed {
+  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
-  font-size: 12.5px;
 }
 
-.lai-rows,
-.lai-model {
-  padding: 0 14px;
-}
-.lai-model .om-row {
-  border-bottom: 0;
-}
-.lai-inline {
-  padding: 0 0 10px;
+.lai-model-help {
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
-.lai-note {
-  margin: 0;
-  padding: 0 0 10px;
-  color: var(--muted);
-  font-size: 12.5px;
+.lai-model-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 460px;
 }
-.lai-line {
-  margin: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 12.5px;
-  text-overflow: ellipsis;
+
+.lai-model-controls select.lai-model-select {
+  width: 300px;
+  max-width: 100%;
+}
+
+/* A fit is a sentence with an icon, never a colour alone. */
+.lai-fit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
-.lai-job {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.lai-bar {
-  width: 120px;
-  height: 6px;
-  accent-color: var(--accent);
+.lai-fit svg {
+  flex: none;
+  color: var(--ink-3);
 }
 
-.lai-pill-starting {
+.lai-fit-too_big,
+.lai-fit-too_big svg {
+  color: var(--warning);
+}
+
+/* Status pill: 24px, semantic tint, icon and word. */
+.lai-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.lai-status-stopped {
+  background: var(--hover);
+  color: var(--ink-2);
+}
+
+.lai-status-starting {
   border-color: var(--warning-border);
   background: var(--warning-bg);
   color: var(--warning);
 }
-.lai-pill-running {
+
+.lai-status-running {
   border-color: var(--success-border);
   background: var(--success-bg);
   color: var(--success);
 }
-.lai-pill-failed {
+
+.lai-status-failed {
   border-color: var(--danger-border);
   background: var(--danger-bg);
   color: var(--danger);
 }
 
-/* Hugging Face search: one card with a search row, then the results or one repository's files. */
-.lai-hub {
-  display: grid;
-  gap: 10px;
-  padding: 12px 14px;
+.lai-device {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
 }
+
+.lai-device svg {
+  flex: none;
+  color: var(--ink-3);
+}
+
+/* The active model: a quiet success pill, not another action. */
+.lai-inuse {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-pill);
+  background: var(--success-bg);
+  color: var(--success);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+}
+
+.lai-inuse:disabled {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success);
+  opacity: 1;
+}
+
+/* Destructive action: --danger on --danger-bg. */
+.lai-remove:not(:disabled),
+.om-settings .lai-remove:hover:not(:disabled) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.lai-remove {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lai-download {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Progress: a 6px rounded track in --hover, an --accent fill. */
+.lai-job {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lai-bar {
+  display: block;
+  width: 160px;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  appearance: none;
+}
+
+.lai-bar::-webkit-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+}
+
+.lai-bar::-webkit-progress-value {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width var(--dur-2) var(--ease);
+}
+
+.lai-bar::-moz-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.lai-job-text {
+  min-width: 34px;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Hugging Face search: one card, a leading search icon, 48px result rows. */
+.lai-hub {
+  padding: 12px 0 4px;
+}
+
 .lai-search {
   display: flex;
   gap: 8px;
+  padding: 0 16px 10px;
 }
-.lai-search input {
+
+.lai-search-field {
+  position: relative;
+  display: flex;
   flex: 1;
+  align-items: center;
   min-width: 0;
 }
+
+.lai-search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.lai-search-field input {
+  width: 100%;
+  padding-left: 34px;
+}
+
+.lai-search-field input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.lai-gutter {
+  margin: 0;
+  padding: 0 16px 8px;
+}
+
 .lai-list {
-  display: grid;
-  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+
+.lai-list li + li {
+  border-top: 1px dashed var(--divider);
+}
+
 .lai-hit {
   display: grid;
-  width: 100%;
+  align-content: center;
   gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--divider);
-  border-radius: 6px;
+  width: 100%;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: inherit;
   text-align: left;
 }
-.lai-hit strong {
+
+.lai-hit-name {
   overflow-wrap: anywhere;
-  font-size: 13.5px;
+  color: var(--ink);
+  font-size: var(--fs-sm);
   font-weight: 500;
 }
-.lai-hit .om-muted {
-  font-size: 12.5px;
+
+.lai-hit-meta {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
+
 .lai-repo-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px dashed var(--divider);
 }
+
+.lai-repo-name {
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
 .lai-file {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: 6px 12px;
+  min-height: 56px;
+  padding: 8px 16px;
 }
-.lai-file .lai-what {
-  flex: 1;
+
+.lai-what {
+  display: grid;
+  flex: 1 1 220px;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lai-file-name {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.lai-size {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.lai-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+}
+
+.lai-done svg {
+  flex: none;
+}
+
+/* Quiet footnotes under the cards. */
+.lai-lines {
+  display: grid;
+  gap: 6px;
+}
+
+.lai-line {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+.lai-line.om-error {
+  color: var(--danger);
+}
+
+@media (max-width: 620px) {
+  .lai-model-controls {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .lai-bar {
+    width: 120px;
+  }
 }

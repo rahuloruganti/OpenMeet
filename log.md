@@ -967,3 +967,13 @@ Known limitation: per-block live timing metadata still grows with recording leng
 **Checks that ran:** backend pytest 866 passed, vitest 563 passed, tsc, ESLint, Prettier, Vite build, PyInstaller build, exe `--smoke` (fresh DB at version 37 with the always-on values and auto_capture 0). An independent review (interrupted before its final report) found four issues, fixed with tests.
 
 **Unverified:** no real Hugging Face download, llama-server run or packaged-app shortcut test; model-download total deadline and stall cancel are inherited from the speech downloader and not added.
+
+## Owner design round: Granola-informed redesign (2026-10-26)
+
+**Prompt:** use REA to reverse engineer Granola's design and implement it in OpenMeet with Impeccable, as fast as possible with many subagents.
+
+**Implemented:** nine research lanes measured Granola's shipped renderer (tokens, shell, note view, recording surfaces, settings, motion/icons, public screenshots, a runtime look at dark mode) and OpenMeet's own baseline; a design spec was written from the measurements; then one foundation lane (tokens, fonts, Lucide icon wrapper, styles.css split) and six surface lanes (sidebar, meeting page, transcript/recording, settings shell, settings panels, first-run/palette/page shell) restyled the UI. No Granola code, assets, fonts or icons were copied: Inter and IBM Plex Serif (OFL) and Lucide (ISC) are bundled instead.
+
+**Checks that ran:** tsc, ESLint, Prettier, vitest 564/564, token contrast script (160 required pairs pass), Impeccable detector (only finding: Inter flagged as an overused font, accepted), PyInstaller build, exe `--smoke`, packaged window confirms Inter and Plex load from the bundle.
+
+**Unverified or not done:** REA's own analyze call was rejected by the Granola ASAR integrity check, so research cites byte offsets, not REA evidence IDs; light theme and Granola Settings were never seen rendered live; recording bar is a clean pill row rather than a floating pill; empty-home top strip not added; Local AI model select truncates a long option; no hardware recording test; several states (auto-capture banner, folder manager, calendar, templates) checked by tests or sampling rather than full screenshot matrix.

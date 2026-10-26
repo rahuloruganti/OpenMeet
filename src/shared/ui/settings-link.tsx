@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { IconCheck } from "./icons";
 
 /** Settings sections in page order: the left list, one visible at a time. */
 export const settingsSections = [
@@ -69,7 +70,8 @@ export function Saved(props: { show: boolean }) {
   if (!props.show) return null;
   return (
     <span className="om-saved" aria-live="polite">
-      ✓ Saved
+      <IconCheck size={12} />
+      Saved
     </span>
   );
 }

@@ -1,0 +1,148 @@
+/* Transcription: status pills, model sizes and the one download in flight.
+   Cards, rows and controls come from the settings page. */
+
+.stt-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-pill);
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.stt-status > svg {
+  flex: none;
+  color: var(--ink-3);
+}
+
+.stt-status > span,
+.om-what .stt-status > span {
+  min-width: 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.stt-status-ok {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.stt-status-ok > svg {
+  color: var(--success);
+}
+
+.stt-status-busy {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.stt-status-busy > svg {
+  color: var(--warning);
+}
+
+.stt-status-warn {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.stt-status-warn > svg {
+  color: var(--warning);
+}
+
+.stt-status-error {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.stt-status-error > svg {
+  color: var(--danger);
+}
+
+.stt-status-idle {
+  background: var(--hover);
+}
+
+.stt-size,
+.stt-on-disk {
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--lh-xs);
+}
+
+.om-what .stt-size {
+  color: var(--ink-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.om-side select.stt-model-select {
+  width: 280px;
+  max-width: 100%;
+}
+
+.om-side select.stt-language {
+  width: 200px;
+  max-width: 100%;
+}
+
+/* Progress: a 6px rounded track in --hover, an --accent fill. */
+.stt-job {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.stt-bar {
+  display: block;
+  width: 140px;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  appearance: none;
+}
+
+.stt-bar::-webkit-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+}
+
+.stt-bar::-webkit-progress-value {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width var(--dur-2) var(--ease);
+}
+
+.stt-bar::-moz-progress-bar {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+@media (max-width: 620px) {
+  .stt-bar {
+    width: 110px;
+  }
+
+  .om-side select.stt-model-select {
+    width: 100%;
+  }
+}

@@ -6,6 +6,7 @@ import {
   type MeetingPreparation,
 } from "../../shared/api/api";
 import { formatDateTime } from "../../entities/meeting";
+import { IconCalendar } from "../../shared/ui/icons";
 import "./calendar.css";
 
 type Props = {
@@ -123,9 +124,10 @@ export function CalendarEventRow({
       ) : (
         <div className="cal-linked">
           {preparation ? (
-            <span>
-              <strong>{preparation.event.title}</strong>{" "}
-              <span className="mono">
+            <span className="cal-chip">
+              <IconCalendar size={14} />
+              <strong>{preparation.event.title}</strong>
+              <span className="cal-time">
                 {formatDateTime(preparation.event.start_utc)}
               </span>
             </span>
@@ -178,8 +180,8 @@ export function CalendarEventRow({
                 disabled={off}
                 onClick={() => link(event.id)}
               >
-                <span>{event.title}</span>
-                <span className="om-muted mono">
+                <span className="cal-choice-title">{event.title}</span>
+                <span className="cal-time">
                   {formatDateTime(event.start_utc)}
                 </span>
               </button>

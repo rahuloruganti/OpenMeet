@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { IconCheck } from "../ui/icons";
 
 // Renders the Markdown the summary prompts and library answers emit: headings,
 // nested `-`/`*`/`1.` lists, pipe tables, fenced and inline code, **bold**,
@@ -62,15 +63,19 @@ function inline(text: string, reference?: ReferenceRenderer): ReactNode[] {
   return nodes;
 }
 
-/** Task-list items get a read-only ☐/☑ glyph with the same meaning in text. */
+/** Task-list items get a read-only drawn checkbox with the same meaning in text. */
 function itemContent(text: string, reference?: ReferenceRenderer): ReactNode {
   const task = /^\[([ xX])\](?:\s+(.*))?$/.exec(text);
   if (!task) return inline(text, reference);
   const done = task[1] !== " ";
   return (
     <>
-      <span role="img" aria-label={done ? "Done" : "Not done"}>
-        {done ? "☑" : "☐"}
+      <span
+        className={done ? "md-task is-done" : "md-task"}
+        role="img"
+        aria-label={done ? "Done" : "Not done"}
+      >
+        {done && <IconCheck size={12} strokeWidth={1.5} />}
       </span>{" "}
       {inline(task[2] ?? "", reference)}
     </>
@@ -171,9 +176,10 @@ export function renderMarkdown(
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
     const heading = /^#{1,6}\s+(.+)$/.exec(line);
+    const quote = /^\s*>\s?(.*)$/.exec(line);
     const bullet = /^(\s*)[-*]\s+(.+)$/.exec(line);
     const item = bullet ?? /^(\s*)\d+\.\s+(.+)$/.exec(line);
-    const table = heading ? null : readTable(lines, index);
+    const table = heading || quote ? null : readTable(lines, index);
     if (/^\s*```/.test(line)) {
       flush();
       const body: string[] = [];
@@ -190,6 +196,21 @@ export function renderMarkdown(
       flush();
       blocks.push(
         <h4 key={blocks.length}>{inline(heading[1].trim(), reference)}</h4>,
+      );
+    } else if (quote) {
+      flush();
+      // Consecutive quoted lines are one quote; a blank line ends it.
+      const body = [quote[1]];
+      while (index + 1 < lines.length) {
+        const next = /^\s*>\s?(.*)$/.exec(lines[index + 1]);
+        if (!next) break;
+        body.push(next[1]);
+        index++;
+      }
+      blocks.push(
+        <blockquote key={blocks.length}>
+          <p>{inline(body.join(" "), reference)}</p>
+        </blockquote>,
       );
     } else if (table) {
       flush();

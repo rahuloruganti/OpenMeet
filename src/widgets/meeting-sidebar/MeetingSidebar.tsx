@@ -12,6 +12,14 @@ import {
 } from "../../entities/meeting";
 import { FolderManager, useFolders } from "../../features/folders";
 import { BrandMark } from "../../shared/ui/brand-mark";
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconFolder,
+  IconPlus,
+  IconSearch,
+  IconSettings,
+} from "../../shared/ui/icons";
 import "./meeting-sidebar.css";
 
 const hitLabels: Record<SearchHit["kind"], string> = {
@@ -112,14 +120,15 @@ export function MeetingSidebar(props: Props) {
         onClick={() => props.onOpenMeeting(meeting.id)}
       >
         <i>{meeting.title}</i>
-        <time dateTime={meeting.started_at}>
-          {/* Same-day meetings differ by start time; older ones by date. */}
-          {label === "Earlier"
-            ? formatShortDate(meeting.started_at)
-            : formatTime(meeting.started_at)}
-        </time>
         <em>
-          {sourceWords[meeting.source]}
+          <time dateTime={meeting.started_at}>
+            {/* Same-day meetings differ by start time; older ones by date. */}
+            {label === "Earlier"
+              ? formatShortDate(meeting.started_at)
+              : formatTime(meeting.started_at)}
+          </time>
+          {" · "}
+          <span>{sourceWords[meeting.source]}</span>
           {meeting.status === "stopped"
             ? ""
             : ` · ${statusWords[meeting.status]}`}
@@ -156,7 +165,7 @@ export function MeetingSidebar(props: Props) {
     >
       <div className="sb-top">
         <div className="brand">
-          <BrandMark size={22} />
+          <BrandMark size={20} />
           <span className="brand-name">openmeet</span>
         </div>
         <button
@@ -164,16 +173,19 @@ export function MeetingSidebar(props: Props) {
           disabled={disabled || props.recordingActive}
           onClick={(event) => props.onNewRecording(event.currentTarget)}
         >
-          <span aria-hidden="true">＋</span> New recording
+          <IconPlus />
+          New recording
         </button>
         <button
           className="sb-new sb-new-alt"
           disabled={disabled}
           onClick={props.onNewNote}
         >
-          <span aria-hidden="true">＋</span> New note
+          <IconPlus />
+          New note
         </button>
         <div className="sb-search">
+          <IconSearch />
           <label>
             <span className="sr-only">Search meetings</span>
             <input
@@ -237,8 +249,12 @@ export function MeetingSidebar(props: Props) {
                       aria-expanded={!isCollapsed}
                       onClick={() => toggle(section.key)}
                     >
-                      <span aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>{" "}
-                      {section.label}{" "}
+                      {isCollapsed ? (
+                        <IconChevronRight size={14} />
+                      ) : (
+                        <IconChevronDown size={14} />
+                      )}
+                      {section.label}
                       <span className="sb-count">
                         {section.meetings.length}
                       </span>
@@ -264,7 +280,9 @@ export function MeetingSidebar(props: Props) {
                     disabled={disabled}
                     onClick={() => props.onOpenHit(hit)}
                   >
-                    <strong>{titles.get(hit.meeting_id)}</strong>
+                    <strong title={titles.get(hit.meeting_id)}>
+                      {titles.get(hit.meeting_id)}
+                    </strong>
                     <span>
                       {hitLabels[hit.kind]} · {hit.snippet}
                     </span>
@@ -286,40 +304,19 @@ export function MeetingSidebar(props: Props) {
           aria-expanded={managing}
           onClick={() => setManaging((open) => !open)}
         >
-          <svg
-            viewBox="0 0 24 24"
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          </svg>
+          <IconFolder />
           Folders
         </button>
         <button
           className="sb-navrow"
           onClick={(event) => props.onSettings(event.currentTarget)}
         >
-          <svg
-            viewBox="0 0 24 24"
-            width="14"
-            height="14"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <circle cx="12" cy="12" r="3" />
-            <path d="M4 12h2M18 12h2M12 4v2M12 18v2" />
-          </svg>
+          <IconSettings />
           Settings
         </button>
-        <p className="sb-storage">{storage}</p>
+        <p className="sb-storage" title={storage}>
+          {storage}
+        </p>
       </div>
     </aside>
   );

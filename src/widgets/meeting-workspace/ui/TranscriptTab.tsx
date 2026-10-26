@@ -32,6 +32,17 @@ import {
 import { formatBytes } from "../../../entities/meeting";
 import { SpeakerNamesForm } from "../../../features/speaker-names";
 import { LiveTranscript, liveSeen } from "../../../features/live-transcript";
+import {
+  IconAlert,
+  IconChevronDown,
+  IconChevronUp,
+  IconMore,
+  IconPause,
+  IconPlay,
+  IconSearch,
+  IconVolumeOff,
+  IconVolumeOn,
+} from "../../../shared/ui/icons";
 import type { OpenSettings } from "../../../shared/ui/settings-link";
 import "../../../shared/ui/transcript-turns.css";
 
@@ -203,135 +214,6 @@ function marked(
   if (cursor < text.length) parts.push(text.slice(cursor));
   return parts;
 }
-
-const IconSearch = () => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.6"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-    focusable="false"
-  >
-    <circle cx="7" cy="7" r="4.5" />
-    <path d="M10.5 10.5L14 14" />
-  </svg>
-);
-
-const IconUp = () => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.6"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-    focusable="false"
-  >
-    <path d="M4 10l4-4 4 4" />
-  </svg>
-);
-
-const IconDown = () => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.6"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-    focusable="false"
-  >
-    <path d="M4 6l4 4 4-4" />
-  </svg>
-);
-
-const IconDots = () => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    aria-hidden="true"
-    focusable="false"
-  >
-    <circle cx="3.5" cy="8" r="1.15" fill="currentColor" />
-    <circle cx="8" cy="8" r="1.15" fill="currentColor" />
-    <circle cx="12.5" cy="8" r="1.15" fill="currentColor" />
-  </svg>
-);
-
-const IconPlay = () => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    aria-hidden="true"
-    focusable="false"
-  >
-    <path d="M5 3.2v9.6L13 8z" fill="currentColor" />
-  </svg>
-);
-
-const IconPause = () => (
-  <svg
-    viewBox="0 0 16 16"
-    width="16"
-    height="16"
-    aria-hidden="true"
-    focusable="false"
-  >
-    <path d="M4.5 3.5h2.2v9H4.5zM9.3 3.5h2.2v9H9.3z" fill="currentColor" />
-  </svg>
-);
-
-const IconSpeaker = ({ off }: { off: boolean }) =>
-  off ? (
-    <svg
-      className="tx-spk-off"
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path d="M3 6.2h2.1L8 4v8L5.1 9.8H3z" />
-      <path d="M10.4 6.2a2.3 2.3 0 0 1 0 3.6" />
-      <path d="M3.2 13L12.8 3" />
-    </svg>
-  ) : (
-    <svg
-      className="tx-spk"
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path d="M3 6.2h2.1L8 4v8L5.1 9.8H3z" />
-      <path d="M10.4 6.2a2.3 2.3 0 0 1 0 3.6" />
-      <path d="M12 4.8a4.2 4.2 0 0 1 0 6.4" />
-    </svg>
-  );
 
 export function TranscriptProvider(
   props: TranscriptModel & { children: ReactNode },
@@ -1067,7 +949,7 @@ export function TranscriptPanel() {
                 aria-label="Previous match"
                 onClick={() => model.stepMatch(-1)}
               >
-                <IconUp />
+                <IconChevronUp />
               </button>
               <button
                 type="button"
@@ -1075,7 +957,7 @@ export function TranscriptPanel() {
                 aria-label="Next match"
                 onClick={() => model.stepMatch(1)}
               >
-                <IconDown />
+                <IconChevronDown />
               </button>
             </>
           )}
@@ -1133,7 +1015,7 @@ export function TranscriptPanel() {
               data-tx-pop="more"
               onClick={(event) => model.togglePop("more", event.currentTarget)}
             >
-              <IconDots />
+              <IconMore />
             </button>
           )}
         </div>
@@ -1143,7 +1025,12 @@ export function TranscriptPanel() {
           {model.playbackError}
         </p>
       )}
-      {warnings.length > 0 && <p className="tx-warn">{warnings.join(" ")}</p>}
+      {warnings.length > 0 && (
+        <p className="tx-warn">
+          <IconAlert size={14} />
+          <span>{warnings.join(" ")}</span>
+        </p>
+      )}
       {/* While the live view shows, it says what is happening; the hint would repeat it. */}
       {hints && !liveShown && <p className="mw-hint">{hints}</p>}
       {model.retranscribing && (
@@ -1247,6 +1134,9 @@ export function TranscriptPanel() {
                   aria-label={`Play from ${formatClock(turn.startMs)}`}
                   onClick={() => void model.seekTo(turn.startMs ?? 0, true)}
                 >
+                  <span className="tx-time-icon" aria-hidden="true">
+                    <IconPlay size={12} />
+                  </span>
                   {formatClock(turn.startMs)}
                 </button>
               ) : (
@@ -1446,7 +1336,7 @@ function SegmentView(props: {
                   );
                 }}
               >
-                <IconPlay />
+                <IconPlay size={12} />
                 <span className="tx-mini-time">{time}</span>
               </button>
             )}
@@ -1672,7 +1562,11 @@ export function TranscriptDock() {
                 >
                   {available ? (
                     <>
-                      <IconSpeaker off={pressed} />
+                      {pressed ? (
+                        <IconVolumeOff className="tx-spk-off" />
+                      ) : (
+                        <IconVolumeOn className="tx-spk" />
+                      )}
                       {label}
                     </>
                   ) : (
@@ -1690,7 +1584,7 @@ export function TranscriptDock() {
           aria-expanded={model.options}
           onClick={() => model.setOptions((value) => !value)}
         >
-          <IconDots />
+          <IconMore />
         </button>
       </div>
     </div>

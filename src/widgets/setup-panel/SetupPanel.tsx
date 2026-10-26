@@ -5,6 +5,7 @@ import {
   modeLabels,
   type ProcessingChoice,
 } from "../../entities/processing";
+import { IconAlert, IconChevronRight, IconX } from "../../shared/ui/icons";
 import "./setup-panel.css";
 
 type Props = {
@@ -102,7 +103,7 @@ export function SetupPanel(props: Props) {
           <h2 id="setup-title">New recording</h2>
           <span className="setup-gap" />
           <button aria-label="Close" onClick={props.onClose}>
-            ✕
+            <IconX size={16} />
           </button>
         </header>
         <div className="setup-body">
@@ -161,21 +162,27 @@ export function SetupPanel(props: Props) {
           <p className="setup-hint">Audio stays on this device.</p>
           {devices && !devices.capture_supported && (
             <p role="alert" className="setup-alert">
+              <IconAlert size={14} />
               Recording needs Windows.
             </p>
           )}
           {!microphoneAvailable && (
             <p role="alert" className="setup-alert">
+              <IconAlert size={14} />
               That microphone is unavailable. Pick another one.
             </p>
           )}
           {!outputAvailable && (
             <p role="alert" className="setup-alert">
+              <IconAlert size={14} />
               That system audio device is unavailable. Pick another one.
             </p>
           )}
           <details className="setup-more">
-            <summary>More options</summary>
+            <summary>
+              <IconChevronRight size={14} className="setup-more-icon" />
+              More options
+            </summary>
             <div className="setup-more-body">
               <div className="setup-row">
                 <button

@@ -1,41 +1,50 @@
-/* Tag chips in the inspector. Owned by the meeting slice. */
+/* Tag chips and their edit field. Lane B owns this file; the inspector (lane C)
+   places it. Shape follows DESIGN-SPEC section 4: chips are 24px pills on
+   --hover, the field is a quiet 28px row that fills --paper on focus. No mono. */
 
 .tags {
   display: grid;
-  gap: 5px;
+  gap: 8px;
   min-width: 0;
 }
 .tags .tagchips {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 .tags .tag {
   display: inline-flex;
   align-items: center;
-  height: 19px;
-  padding: 0 6px;
-  border: 1px solid var(--divider);
-  border-radius: 4px;
-  background: var(--active);
-  color: var(--ink);
-  font-family: var(--mono);
-  font-size: 10.5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  line-height: 1;
 }
 .tags-edit {
   display: flex;
-  gap: 4px;
+  gap: 6px;
+  align-items: center;
   min-width: 0;
 }
 .tags-edit input {
   flex: 1 1 auto;
+  width: auto;
   min-width: 0;
-  height: 24px;
-  min-height: 24px;
-  padding: 0 6px;
-  border-color: transparent;
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-6);
   background: transparent;
-  font-size: 12px;
+  color: var(--ink);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
 }
 .tags-edit input:hover:not(:disabled) {
   border-color: var(--divider);
@@ -45,8 +54,12 @@
   background: var(--paper);
 }
 .tags-edit button {
-  height: 24px;
-  min-height: 24px;
-  padding: 0 7px;
-  font-size: 11px;
+  flex: none;
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+}
+.tags .error {
+  margin: 0;
 }

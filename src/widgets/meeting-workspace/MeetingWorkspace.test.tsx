@@ -124,16 +124,15 @@ it("keeps tasks in the inspector and off the Summary tab", () => {
   ).toBeNull();
 });
 
-it("shows details and the devices of the meeting's tracks", () => {
+it("shows meeting details under the title and the devices in the inspector", () => {
   render(<MeetingWorkspace {...base} selected={recorded} />);
+  const meta = screen.getByRole("group", { name: "Meeting details" });
+  expect(within(meta).getByText("Recording")).toBeTruthy();
+  expect(within(meta).getByText("48:12")).toBeTruthy();
+  expect(within(meta).getByText("atlas")).toBeTruthy();
   const inspector = screen.getByRole("complementary", {
     name: "Meeting inspector",
   });
-  expect(within(inspector).getByText("Recording")).toBeTruthy();
-  expect(within(inspector).getByText("48:12")).toBeTruthy();
-  expect(within(inspector).getByText("atlas")).toBeTruthy();
-  // The saved-state row is about the notes, not the meeting.
-  expect(within(inspector).getByText("Notes")).toBeTruthy();
   expect(within(inspector).getByText("Headset (SoundCore 2)")).toBeTruthy();
   expect(within(inspector).getByText("Speakers (Realtek)")).toBeTruthy();
 });

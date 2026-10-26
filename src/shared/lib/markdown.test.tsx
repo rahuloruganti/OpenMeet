@@ -122,10 +122,27 @@ describe("renderMarkdown", () => {
     expect(output).not.toMatch(/<img[\s>]/);
   });
 
-  it("renders task-list markers as read-only glyphs with text", () => {
-    expect(html("- [ ] Draft\n- [x] Shipped")).toBe(
-      '<div><ul><li><span role="img" aria-label="Not done">☐</span> Draft</li>' +
-        '<li><span role="img" aria-label="Done">☑</span> Shipped</li></ul></div>',
+  it("renders task-list markers as drawn checkboxes with text", () => {
+    const output = html("- [ ] Draft\n- [x] Shipped");
+    expect(output).toContain(
+      '<span class="md-task" role="img" aria-label="Not done">',
+    );
+    expect(output).toContain(
+      '<span class="md-task is-done" role="img" aria-label="Done">',
+    );
+    expect(output).toContain("lucide-check");
+    expect(output).not.toContain("<rect");
+    expect(output).toContain("Draft");
+    expect(output).toContain("Shipped");
+    expect(output).not.toMatch(/[☐☑]/);
+  });
+
+  it("renders consecutive quoted lines as one block quote", () => {
+    expect(html("> quiet line\n> second line")).toBe(
+      "<div><blockquote><p>quiet line second line</p></blockquote></div>",
+    );
+    expect(html("After\n> quoted")).toBe(
+      "<div><p>After</p><blockquote><p>quoted</p></blockquote></div>",
     );
   });
 
@@ -140,11 +157,15 @@ describe("renderMarkdown", () => {
         )}
       </div>,
     ).container.innerHTML;
-    expect(output).toBe(
-      '<div><div class="md-table"><table><thead><tr><th>At</th></tr></thead><tbody>' +
-        "<tr><td><mark>[0:01]</mark></td></tr></tbody></table></div>" +
-        '<ul><li><span role="img" aria-label="Done">☑</span> Ship <mark>[0:02]</mark></li></ul></div>',
+    expect(output).toContain(
+      '<div class="md-table"><table><thead><tr><th>At</th></tr></thead><tbody>' +
+        "<tr><td><mark>[0:01]</mark></td></tr></tbody></table></div>",
     );
+    expect(output).toContain(
+      '<span class="md-task is-done" role="img" aria-label="Done">',
+    );
+    expect(output).toContain("Ship <mark>[0:02]</mark>");
+    expect(output).not.toMatch(/[☐☑]/);
   });
 
   it.each([
