@@ -21,6 +21,7 @@ import {
 } from "../../shared/lib/providers";
 import { hostOf, type Publish } from "../../shared/ui/provider-connection";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
+import "./provider-settings.css";
 
 // One sentence each, and each says the action that fixes it (TEXT RULES).
 const urlFormat = "Use a full URL like https://api.example.com/v1.";

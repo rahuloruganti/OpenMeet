@@ -72,8 +72,13 @@ The Vite build ships `react` and `react-dom` inside `backend/web` and then insid
 | Component | Version | License |
 | --- | --- | --- |
 | `react`, `react-dom` | 19.3.0 | MIT |
+| `lucide-react` | 1.61.0 | ISC |
+| `@fontsource-variable/inter` | 5.3.0 | OFL-1.1 |
+| `@fontsource/ibm-plex-serif` | 5.3.0 | OFL-1.1 |
 
 The bundle is minified; check that the React MIT notice survives minification in the produced assets, and add it to the notices if it does not.
+
+The two `@fontsource` packages self-host the UI faces, so the executable carries them and nothing is fetched at runtime. Only these subset files are bundled, imported from `src/app/fonts.css`: Inter Variable `latin` and `latin-ext` (weight axis 100–900), IBM Plex Serif `latin` 400 and 500. Both families are SIL Open Font License 1.1, which requires the copyright notice and licence text to travel with the fonts; the source text is each package's `LICENSE` in `node_modules`, and both packages ship it. `lucide-react` is ISC and ships its `LICENSE` the same way. Neither Granola's KMR Melange Grotesk, Quadrant Notepad nor RadionB is bundled or referenced.
 
 ## Frontend build and test packages
 

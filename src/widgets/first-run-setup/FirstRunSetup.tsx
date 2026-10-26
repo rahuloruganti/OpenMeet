@@ -31,6 +31,7 @@ import {
   hostOf,
   publishSettings,
 } from "../../features/provider-settings";
+import "./first-run.css";
 
 /** The wizard's steps, in order; Import appears only when there is something to bring over. */
 type Step = "import" | "transcription" | "ai" | "devices" | "done";

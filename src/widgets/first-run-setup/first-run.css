@@ -1,0 +1,322 @@
+/* First-run wizard: layout moved out of src/app/styles.css in Phase 0.
+   Lane G owns this file. Tokens are A's; values here are still the pre-retheme
+   ones on purpose, so G can restyle without a merge. */
+
+/* ---------------------------------------------------------- first-run wizard */
+.first-run {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--workspace);
+}
+.first-run-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  height: 48px;
+  padding: 0 20px;
+}
+.first-run-top .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.first-run-top .grow {
+  flex: 1;
+}
+.wizard {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: min(560px, 100% - 40px);
+  min-height: 0;
+  margin: 0 auto;
+}
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
+  margin: 0;
+  padding: 10px 0 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  list-style: none;
+}
+.wizard-steps li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding-bottom: 7px;
+  border-bottom: 2px solid transparent;
+}
+.wizard-steps li.done {
+  color: var(--ink);
+}
+.wizard-steps li.current {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.wizard-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.wizard-step {
+  margin: auto 0;
+  padding: 28px 0 26px;
+}
+.wizard-step h1 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+.wizard-step h1 .opt {
+  color: var(--muted);
+  font-size: 17px;
+  font-weight: 400;
+}
+.wizard-step .help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.choices {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+}
+.choice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--paper);
+  font-weight: 400;
+}
+.choice:hover {
+  border-color: var(--control-border);
+}
+.choice:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--raised);
+}
+.choice > span {
+  min-width: 0;
+}
+.choice .head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.choice .head strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.choice .sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.choice input[type="radio"] {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+.wizard-block {
+  margin-top: 16px;
+}
+.pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--divider);
+}
+.pick-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.pick-name {
+  font-size: 13.5px;
+}
+.pick-meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.wizard-list {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.wizard-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--divider);
+}
+.wizard-list li:last-child {
+  border-bottom: 0;
+}
+.wizard-step details {
+  margin-top: 12px;
+}
+.wizard-step summary {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  list-style: none;
+}
+.wizard-step summary::-webkit-details-marker {
+  display: none;
+}
+.wizard-step summary::before {
+  content: "▸";
+  font-size: 10px;
+}
+.wizard-step details[open] summary {
+  color: var(--ink);
+}
+.wizard-step details[open] summary::before {
+  content: "▾";
+}
+.wizard-fields {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.field {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+.field input,
+.field select {
+  margin-top: 0;
+}
+.wizard-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+.wizard-connect {
+  margin-top: 8px;
+}
+.setup-connect {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+.skip-now {
+  justify-content: center;
+  width: 100%;
+  height: 36px;
+  margin-top: 18px;
+  border-color: var(--divider);
+  background: transparent;
+  color: var(--muted);
+}
+.skip-now:hover:not(:disabled) {
+  border-color: var(--control-border);
+  background: transparent;
+  color: var(--ink);
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+.check span {
+  flex: 1;
+  min-width: 0;
+}
+.done {
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  padding: 20px 0 12px;
+  text-align: center;
+}
+.done-check {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--success-border);
+  border-radius: 50%;
+  background: var(--success-bg);
+  color: var(--success);
+}
+.card.found {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised);
+}
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+}
+.counts .sep {
+  color: var(--muted);
+}
+.path {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.found-actions {
+  display: flex;
+  gap: 8px;
+}
+.wizard-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 64px;
+  padding: 14px 0 20px;
+  border-top: 1px solid var(--divider);
+}
+.wizard-actions .grow {
+  flex: 1;
+}

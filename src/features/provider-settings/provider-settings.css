@@ -1,0 +1,22 @@
+/* Provider connection panel: moved out of src/app/styles.css in Phase 0.
+   Lane F owns this file and fills it in; the rules below are the pre-retheme
+   values that used to live in the global stylesheet. */
+
+.provider-settings > p {
+  margin-bottom: 12px;
+}
+.provider-settings > button,
+.provider-settings > .panel-actions {
+  margin-bottom: 12px;
+}
+/* Short actions and status beside an input (Test, Working, Key saved) never wrap or shrink. */
+.provider-settings .om-side > button,
+.provider-settings .om-side > .om-saved,
+.provider-settings .om-side > .om-error,
+.provider-settings .om-side > .om-muted {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.provider-settings code {
+  overflow-wrap: anywhere;
+}

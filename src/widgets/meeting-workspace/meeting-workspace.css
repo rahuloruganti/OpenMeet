@@ -154,7 +154,7 @@
   border: 1px solid var(--divider);
   border-radius: 8px;
   background: var(--raised);
-  box-shadow: 0 10px 28px var(--shadow);
+  box-shadow: var(--shadow);
 }
 .mw-menu button {
   justify-content: flex-start;
@@ -641,8 +641,8 @@
   position: absolute;
   inset: 0;
   z-index: 4;
-  background: var(--shadow);
-  opacity: 0.25;
+  background: var(--scrim);
+  opacity: 0.6;
 }
 .mw-sheet {
   position: absolute;
@@ -656,7 +656,7 @@
   min-height: 0;
   border-left: 1px solid var(--divider);
   background: var(--raised);
-  box-shadow: -14px 0 30px var(--shadow);
+  box-shadow: -14px 0 30px var(--shadow-ink);
 }
 .mw-sheet-head {
   display: flex;
@@ -725,4 +725,131 @@
   .mw-sheet {
     width: 280px;
   }
+}
+
+/* ---------------------------------------------------------------- moved in --
+   Summary reading rules, recipe chips, the rewrite card and the seek button
+   moved out of src/app/styles.css in Phase 0, unchanged. Lane C owns them. */
+
+.summary-body h1,
+.summary-body h2 {
+  font-size: 1.25rem;
+  margin: 24px 0 12px;
+}
+.summary-body ul,
+.summary-body ol {
+  padding-left: 24px;
+}
+.summary-body li > ul,
+.summary-body li > ol {
+  margin: 4px 0;
+}
+.summary-body code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--hover);
+  font-family: var(--mono);
+  font-size: 0.875em;
+}
+.summary-body pre {
+  max-width: 100%;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--hover);
+  overflow-x: auto;
+}
+.summary-body pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+.md-table {
+  max-width: 100%;
+  margin: 12px 0;
+  overflow-x: auto;
+}
+.md-table table {
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.md-table th,
+.md-table td {
+  padding: 6px 10px;
+  border: 1px solid var(--divider);
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  background: var(--hover);
+  font-weight: 600;
+}
+.recipe-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+.recipe-chip {
+  min-height: var(--control-height-compact);
+  padding: 2px 10px;
+  border-color: var(--control-border);
+  border-radius: 6px;
+  background: var(--raised);
+  font-size: var(--control-font-compact);
+}
+.recipe-chip:hover:not(:disabled),
+.recipe-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--selection);
+}
+/* Opens below the whole footer row, so footer buttons keep their places. */
+.rewrite-card {
+  display: grid;
+  order: 1;
+  flex-basis: 100%;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised);
+  font-size: 0.8125rem;
+}
+.rewrite-card p {
+  margin: 0;
+}
+.rewrite-source {
+  margin: 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--divider);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.rewrite-result {
+  padding: 12px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--paper);
+  white-space: pre-wrap;
+  font-size: 0.9375rem;
+}
+.seek-button {
+  min-height: var(--control-height-compact);
+  margin: 0 4px;
+  padding: 2px 7px;
+  border-color: transparent;
+  border-radius: 5px;
+  background: var(--selection);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.seek-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--selection);
 }

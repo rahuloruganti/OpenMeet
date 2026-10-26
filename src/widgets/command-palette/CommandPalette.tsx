@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { Meeting, Theme } from "../../shared/api/api";
 import { foldText, formatShortDate } from "../../entities/meeting";
+import "./command-palette.css";
 
 /** Everything the palette can run. Nothing here starts a recording by itself. */
 export type PaletteAction =

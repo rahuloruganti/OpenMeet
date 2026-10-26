@@ -11,6 +11,7 @@ import {
   type SherpaLayout,
 } from "../../shared/api/api";
 import { formatBytes } from "../../entities/meeting";
+import "./model-library.css";
 
 type Props = {
   disabled: boolean;

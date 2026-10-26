@@ -408,7 +408,7 @@ html {
   border: 1px solid var(--divider);
   border-radius: 6px;
   background: var(--raised);
-  box-shadow: 0 8px 24px var(--shadow);
+  box-shadow: var(--shadow);
   white-space: nowrap;
 }
 
@@ -457,7 +457,7 @@ html {
   border: 1px solid var(--divider);
   border-radius: 8px;
   background: var(--raised);
-  box-shadow: 0 8px 24px var(--shadow);
+  box-shadow: var(--shadow);
 }
 
 .tx-pop[hidden] {
@@ -512,7 +512,7 @@ html {
   border: 1px solid var(--divider);
   border-radius: 10px;
   background: var(--chrome);
-  box-shadow: 0 8px 24px var(--shadow);
+  box-shadow: var(--shadow);
 }
 
 .tx-play {
@@ -719,7 +719,7 @@ html {
   color: var(--ink);
   font-size: 12px;
   font-weight: 500;
-  box-shadow: 0 8px 24px var(--shadow);
+  box-shadow: var(--shadow);
   white-space: nowrap;
 }
 
@@ -833,6 +833,16 @@ html {
     border: 1px solid var(--divider);
     border-radius: 8px;
     background: var(--raised);
-    box-shadow: 0 8px 24px var(--shadow);
+    box-shadow: var(--shadow);
   }
+}
+
+/* ---------------------------------------------------------------- moved in --
+   Moved out of src/app/styles.css in Phase 0, unchanged. Lane D owns it and
+   restyles the highlight with --accent-tint. */
+.highlighted-segment {
+  outline: 1px solid var(--divider);
+  outline-offset: 2px;
+  border-radius: 6px;
+  background: var(--selection);
 }
