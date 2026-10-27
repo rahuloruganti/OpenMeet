@@ -6,7 +6,7 @@ Audio capture, local transcription, shortcuts and meeting detection have not bee
 
 ## Install
 
-**Quickest:** download `OpenMeet.exe` from the [latest release](https://github.com/rahuloruganti/OpenMeet/releases/latest) (the repository is private, so sign in to GitHub first) and run it. Check it against the SHA256 in the [release notes](docs/release-notes.md).
+**Quickest:** download `OpenMeet.exe` from the [latest release](https://github.com/rahuloruganti/OpenMeet/releases/latest) and run it. Check it against the SHA256 in the [release notes](docs/release-notes.md).
 
 **Or build it yourself:**
 
