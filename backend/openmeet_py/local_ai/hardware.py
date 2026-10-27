@@ -1,26 +1,38 @@
-"""What this PC can run: GPU name and vendor, dedicated VRAM and system RAM.
+"""What this PC can run: GPU name and vendor, memory for the GPU and system RAM.
 
-Nothing here loads a driver SDK. The GPU comes from `nvidia-smi`, which ships with the NVIDIA
-driver, and from the display adapters Windows already reports. RAM comes from
-GlobalMemoryStatusEx. Every probe is injectable (`nvidia_smi`, `adapters`, `memory`), so tests
-never start a process or read the real machine.
+Nothing here loads a driver SDK. On Windows the GPU comes from `nvidia-smi`, which ships with the
+NVIDIA driver, and from the display adapters Windows already reports; RAM comes from
+GlobalMemoryStatusEx. On Apple silicon the chip name and the memory size come from `sysctl` and the
+free memory from `vm_stat`, because memory is unified and there is no separate VRAM to read. Every
+probe is injectable (`nvidia_smi`, `adapters`, `memory`, `sysctl`, `vm_stat`), so tests never start
+a process or read the real machine.
 
-The engine build follows the vendor: CUDA for NVIDIA, Vulkan for AMD and Intel, CPU otherwise.
-A display adapter with no recognised vendor is not guessed: this PC then reports no GPU, so a
-model is only ever offered for system RAM.
+The engine build follows the vendor: CUDA for NVIDIA, Vulkan for AMD and Intel, Metal on Apple
+silicon, CPU otherwise. A display adapter with no recognised vendor is not guessed: this PC then
+reports no GPU, so a model is only ever offered for system RAM.
 """
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import sys
 from typing import Any, Callable, Optional
 
 MIB = 1024 * 1024
-BACKENDS = ("cuda", "vulkan", "cpu")
+BACKENDS = ("cuda", "vulkan", "metal", "cpu")
 NVIDIA_QUERY = ("nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits")
 NVIDIA_TIMEOUT = 10.0
 MAX_ADAPTERS = 16
+SYSCTL_TIMEOUT = 5.0
+# Apple silicon has one memory pool shared by the CPU and the GPU. llama.cpp can use most of it, but
+# the app, the window and the rest of macOS need room, so the GPU is offered a fixed share of RAM.
+UNIFIED_VRAM_SHARE = 0.65
+APPLE_GPU = "Apple GPU"
+# "Pages free: 1234." lines in vm_stat; the app can use free, inactive and speculative pages.
+_VM_PAGES = re.compile(r"^(Pages free|Pages inactive|Pages speculative):\s+(\d+)\.", re.MULTILINE)
+_VM_PAGE_SIZE = re.compile(r"page size of (\d+) bytes")
 # Display adapters Windows reports for software rendering; they never mean a usable GPU.
 _GENERIC_ADAPTERS = ("microsoft basic display", "remote display", "virtual display", "generic")
 
@@ -145,6 +157,60 @@ def _memory_status() -> tuple[int, int]:
     return (int(status.ullTotalPhys), int(status.ullAvailPhys))
 
 
+def _sysctl(name: str) -> str:
+    """One `sysctl -n` value. An unreadable key is an empty string, never an exception."""
+    try:
+        done = subprocess.run(
+            ("sysctl", "-n", name),
+            capture_output=True,
+            text=True,
+            timeout=SYSCTL_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def _vm_stat() -> str:
+    """The `vm_stat` report. An unreadable report is empty, so free memory reads as unknown."""
+    try:
+        done = subprocess.run(
+            ("vm_stat",),
+            capture_output=True,
+            text=True,
+            timeout=SYSCTL_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout if done.returncode == 0 else ""
+
+
+def parse_vm_stat(report: str, page_size: int) -> int:
+    """Free, inactive and speculative pages of a `vm_stat` report, in bytes.
+
+    Pages that are inactive or speculative are still reclaimable, which is why they count as
+    available; wired, active and compressed memory does not.
+    """
+    pages = sum(int(count) for _name, count in _VM_PAGES.findall(report))
+    return pages * page_size
+
+
+def vm_page_size(report: str) -> int:
+    """The page size `vm_stat` prints in its header, else the kernel's own page size."""
+    found = _VM_PAGE_SIZE.search(report)
+    if found is not None:
+        return int(found.group(1))
+    sysconf = getattr(os, "sysconf", None)  # POSIX only, so it is looked up, not called blindly
+    if sysconf is None:
+        return 0
+    try:
+        return int(sysconf("SC_PAGE_SIZE"))
+    except (OSError, ValueError):
+        return 0
+
+
 def _pick_adapter(names: list[str]) -> Optional[str]:
     """The first named adapter with a known vendor, else the first one that is not software-only."""
     named = [name for name in names if name.strip()]
@@ -157,13 +223,39 @@ def _pick_adapter(names: list[str]) -> Optional[str]:
     return None
 
 
+def _detect_apple(
+    sysctl: Callable[[str], str], vm_stat: Callable[[], str]
+) -> dict[str, Any]:
+    """Apple silicon: the chip, the unified memory pool and the free part of it."""
+    try:
+        total = int(sysctl("hw.memsize").strip())
+    except ValueError:
+        total = 0
+    report = vm_stat()
+    chip = sysctl("machdep.cpu.brand_string").strip()
+    return {
+        "gpu_name": chip or APPLE_GPU,
+        "gpu_vendor": "apple",
+        # Metal takes the GPU's memory from the same pool as the CPU, so a share of total RAM is
+        # what a model can actually use. There is no separate VRAM figure to report.
+        "vram_bytes": int(total * UNIFIED_VRAM_SHARE) if total > 0 else None,
+        "ram_bytes": total,
+        "ram_available_bytes": parse_vm_stat(report, vm_page_size(report)),
+        "backend": "metal",
+    }
+
+
 def detect(
     *,
     nvidia_smi: Optional[Callable[[], str]] = None,
     adapters: Optional[Callable[[], list[str]]] = None,
     memory: Optional[Callable[[], tuple[int, int]]] = None,
+    sysctl: Optional[Callable[[str], str]] = None,
+    vm_stat: Optional[Callable[[], str]] = None,
 ) -> dict[str, Any]:
-    """This PC's GPU, VRAM and RAM, in the shape the Settings page reads."""
+    """This PC's GPU, memory for it and RAM, in the shape the Settings page reads."""
+    if sys.platform == "darwin":
+        return _detect_apple(sysctl or _sysctl, vm_stat or _vm_stat)
     nvidia = parse_nvidia_smi((nvidia_smi or _run_nvidia_smi)())
     if nvidia is not None:
         name, vram = nvidia

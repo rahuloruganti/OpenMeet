@@ -28,6 +28,7 @@ import {
   type ProcessingChoice,
 } from "../../entities/processing";
 import { shortcutLabel } from "../../shared/lib/shortcut-label";
+import { credentialStoreName, isMac } from "../../shared/lib/platform";
 import { ModelLibrary } from "../../features/model-library";
 import { LocalAi } from "../../features/local-ai";
 import { CalendarSettings } from "../../features/calendar";
@@ -142,9 +143,12 @@ function accelerator(event: KeyboardEvent): string | null {
   const key = keyName(event);
   const modified = event.ctrlKey || event.metaKey || event.altKey;
   if (!key || (!modified && !/^F\d{1,2}$/.test(key))) return null;
+  // Windows sends Control as CommandOrControl. macOS sends Command as CommandOrControl, which is
+  // what the backend reads as Command, and keeps Control separate.
+  const mac = isMac();
   return [
-    event.ctrlKey && "CommandOrControl",
-    event.metaKey && "Win",
+    (mac ? event.metaKey : event.ctrlKey) && "CommandOrControl",
+    mac ? event.ctrlKey && "Control" : event.metaKey && "Win",
     event.altKey && "Alt",
     event.shiftKey && "Shift",
     key,
@@ -197,10 +201,13 @@ function ShortcutCapture(props: {
               props.onCapture(chord);
               stopCapturing();
             } else if (!modifierKeys.includes(event.key)) {
+              const modifiers = isMac()
+                ? "Command, Control or Option"
+                : "Ctrl or Alt";
               setRefusal(
                 keyName(event)
-                  ? "Add Ctrl or Alt, or use an F-key."
-                  : "Use a letter, number, arrow or Space with Ctrl or Alt, or an F-key.",
+                  ? `Add ${modifiers}, or use an F-key.`
+                  : `Use a letter, number, arrow or Space with ${modifiers}, or an F-key.`,
               );
             }
           }}
@@ -625,7 +632,7 @@ function AboutSection(props: Props) {
               </tr>
               <tr>
                 <th scope="row">API keys</th>
-                <td>Windows Credential Manager</td>
+                <td>{credentialStoreName()}</td>
               </tr>
               <tr>
                 <th scope="row">Model searches</th>

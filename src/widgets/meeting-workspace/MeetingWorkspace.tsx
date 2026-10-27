@@ -18,6 +18,7 @@ import {
 } from "../../shared/api/api";
 import { builtinTemplates as templates } from "../../entities/processing";
 import { tabTarget } from "../../shared/lib/tabs";
+import { chordHint, modKeyLabel } from "../../shared/lib/shortcut-label";
 import { renderMarkdown } from "../../shared/lib/markdown";
 import { ActionItems } from "../../features/action-items";
 import {
@@ -433,7 +434,7 @@ export function MeetingWorkspace(props: Props) {
           </button>
         </div>
         <p className="mw-hero-keys">
-          <kbd>Ctrl</kbd> <kbd>N</kbd> for a new recording
+          <kbd>{modKeyLabel()}</kbd> <kbd>N</kbd> for a new recording
         </p>
         {firstRun && missing && (
           <details className="mw-hero-setup">
@@ -729,11 +730,11 @@ export function MeetingWorkspace(props: Props) {
             className="mw-tool mw-toggle"
             aria-pressed={inspectorOpen}
             aria-label="Inspector"
-            title="Inspector · Ctrl+I"
+            title={`Inspector · ${chordHint("I")}`}
             onClick={toggleInspector}
           >
             <IconPanelLeft size={16} />
-            <span className="mw-keyhint">Ctrl I</span>
+            <span className="mw-keyhint">{chordHint("I")}</span>
           </button>
         )}
         <details
@@ -840,7 +841,7 @@ export function MeetingWorkspace(props: Props) {
                     ref={titleButton}
                     title={
                       props.sidebarOpen === false
-                        ? `${meeting.title} · Rename (F2) · Ctrl+I toggles the inspector`
+                        ? `${meeting.title} · Rename (F2) · ${chordHint("I")} toggles the inspector`
                         : `${meeting.title} · Rename (F2)`
                     }
                     onClick={startRename}
@@ -1140,7 +1141,7 @@ export function MeetingWorkspace(props: Props) {
                     <button
                       className="mw-mini"
                       disabled={disabled}
-                      title="Ctrl+Shift+T while typing"
+                      title={`${chordHint("T", ["shift"])} while typing`}
                       onClick={() => void insertTimestamp()}
                     >
                       Insert timestamp

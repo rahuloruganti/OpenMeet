@@ -2,11 +2,11 @@
 
 ## What this is
 
-OpenMeet is a local-first Windows meeting notetaker: one PyInstaller executable that runs a Python 3.13 backend (`FastAPI` + `uvicorn`), a `pywebview` window on WebView2, and a React 19 + TypeScript + Vite UI. Windows 11 only. Version 0.9.0.
+OpenMeet is a local-first meeting notetaker: a Python 3.13 backend (`FastAPI` + `uvicorn`), a `pywebview` window, and a React 19 + TypeScript + Vite UI. Windows 11 ships as one PyInstaller executable (WebView2). Apple Silicon Macs (macOS 14.2 or newer) ship as an unsigned `.app` in a DMG built on a Mac with `packaging/build.sh`; there is no Apple Developer account, no notarization and no CI. Version 0.9.0.
 
 - One active capture: microphone plus system audio, written locally as separate tracks.
 - Local transcription (whisper.cpp and sherpa-onnx) is the default; cloud STT and AI summaries are optional user-configured connections.
-- Real-hardware qualification is **not** done. Audio capture, local transcription, global shortcuts, meeting detection and the Windows credential store are exercised only with fakes and stubs. Every `unqualified` label in the docs is current.
+- Real-hardware qualification is **not** done. Audio capture, local transcription, global shortcuts, meeting detection and the OS credential store are exercised only with fakes and stubs. The whole macOS port was written on a Windows PC and has never run on a Mac; its code and tests are in the `*_mac.py` modules and `platform/macos.py`. Read `docs/macos-port.md` before changing it. Every `unqualified` label in the docs is current.
 - Simulation and fictional fixtures are not recordings or generated summaries. Preserve that distinction in the UI, database, exports and reports.
 
 Read `docs/README.md` and `docs/development.md` before substantial work. The product direction is an original, open-source, local-first meeting assistant in the style of Granola, using models the user chooses; never copy Granola code, assets, prompts or private APIs. Verify claims against code and executed checks; documentation can lag implementation.
@@ -24,15 +24,16 @@ Read `docs/README.md` and `docs/development.md` before substantial work. The pro
 | `backend/openmeet_py/app.py` | Desktop entry point: free loopback port, server thread, `pywebview` window, `--smoke`, `--import-from`. |
 | `backend/openmeet_py/api/` | HTTP/WebSocket surface and the command registry (`commands.py`), recording command handlers, reads. |
 | `backend/openmeet_py/domain/` | Summaries, rewrite, tasks, export, transcript edits, processing runs, provider connections and LLM calls. |
-| `backend/openmeet_py/audio/` | WASAPI capture backend, WAV writing and repair, timing indexes, recorder lifecycle. |
+| `backend/openmeet_py/audio/` | WASAPI capture backend (Windows), Core Audio capture (`audio_backend_mac.py`, `system_tap_mac.py`), WAV writing and repair, timing indexes, recorder lifecycle. |
 | `backend/openmeet_py/speech/` | Local engines (whisper.cpp, sherpa-onnx), model catalogues and library, downloads, safe archive install, cloud STT, transcription pipeline, and `live/` (live transcript while recording: streaming ONNX, VAD plus offline model, or cloud per utterance). |
 | `backend/openmeet_py/local_ai/` | Local AI: hardware probe, pinned llama.cpp engine, Hugging Face GGUF search and download (`hub.py`), the managed `llama-server` supervisor, and `ensure_ready` before any AI request. |
-| `backend/openmeet_py/platform/` | Windows integration: global shortcuts, keyring credentials, meeting detection, Win32 helpers. |
+| `backend/openmeet_py/platform/` | OS integration: global shortcuts, keyring credentials, meeting detection, Win32 helpers (`win32.py`) and their macOS counterparts (`macos.py`, `detection_mac.py`). |
 | `backend/openmeet_py/infra/` | SQLite store and migrations runner, and the one-time importer for an old data folder. |
-| `backend/openmeet_py/paths.py` | Data folder (`%APPDATA%\OpenMeetPy`) and bundled UI paths. |
+| `backend/openmeet_py/paths.py` | Data folder (`%APPDATA%\OpenMeetPy` on Windows, `~/Library/Application Support/OpenMeetPy` on macOS) and bundled UI paths. |
 | `backend/openmeet_py/migrations/` | Append-only numbered SQL migrations. |
 | `backend/tests/` | pytest suite; fakes instead of devices and engines. |
 | `packaging/build.ps1` | Builds the UI into `backend/web` and produces `packaging/dist/OpenMeet.exe`, with the icon `packaging/openmeet.ico` (source `openmeet-icon.svg`). |
+| `packaging/build.sh` | macOS only: the same build as an ad-hoc signed `OpenMeet.app` and `packaging/dist/OpenMeet-<version>-arm64.dmg`, with `packaging/openmeet.icns` (made by `packaging/macos/make-icns.py`). |
 | `docs/` | Current documentation. Retired product and status documents live in Git history only. |
 
 ## Run and check
@@ -71,7 +72,8 @@ just smoke     # OpenMeet.exe --smoke
 7. SQLite migrations are append-only: add the next number (currently `038`), never edit or renumber a shipped file, never reset a user's database. Test upgrades with populated notes and foreign keys.
 8. Fake backends exist for tests only: `OPENMEET_PY_FAKE_AUDIO=1` and `OPENMEET_PY_FAKE_STT=1`. Never ship a path that enables them implicitly, and never present their output as real capture or a real transcript.
 9. Add a small regression test for nontrivial behavior. Routine audio tests use synthetic samples; real-device tests are separate and opt-in.
-10. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization or speculative integrations before their planned phase. Meeting detection is always on (owner decision) and only offers a prompt that opens recording setup. Automatic capture is a second, separate opt-in (`auto_capture`, off by default): when the user has enabled it, the backend lifecycle may start capture for a supported desktop call app using the devices saved in Settings, with a visible recording indicator and the same stop, pause and cancel controls as a manual recording. Detection itself never starts capture, checks consent or picks devices; uncertain signals (browsers, unknown apps) prompt instead of starting; silence or a calendar end time alone never ends a capture; manual stop or pause suppresses automatic restart for that call. Detection reads only which apps use the microphone; nothing records unless the user starts it or has enabled `auto_capture`.
+10. Keep platform code behind `sys.platform` and import macOS-only libraries (`sounddevice`, `catap`, `objc`, frameworks through `ctypes`) lazily inside functions, so Windows and the test suite never import them. Test macOS code with fakes; never claim it works on a Mac.
+11. Record unmet gates instead of marking a phase complete. Do not widen scope to bots, SharePoint, diarization or speculative integrations before their planned phase. Meeting detection is always on (owner decision) and only offers a prompt that opens recording setup. Automatic capture is a second, separate opt-in (`auto_capture`, off by default): when the user has enabled it, the backend lifecycle may start capture for a supported desktop call app using the devices saved in Settings, with a visible recording indicator and the same stop, pause and cancel controls as a manual recording. Detection itself never starts capture, checks consent or picks devices; uncertain signals (browsers, unknown apps) prompt instead of starting; silence or a calendar end time alone never ends a capture; manual stop or pause suppresses automatic restart for that call. Detection reads only which apps use the microphone; nothing records unless the user starts it or has enabled `auto_capture`.
 
 ## Data, consent and privacy
 
@@ -79,7 +81,7 @@ just smoke     # OpenMeet.exe --smoke
 - Consent is the user's responsibility; the app does not check it and there is no consent checkbox. Keep active, paused, failed and simulated states visibly distinct.
 - Paused audio must not be persisted or transcribed. Test queued and in-flight callbacks and the resume boundary, not only the UI label.
 - The owner removed the "Leaves this device" tags from the UI; docs/privacy.md is where cloud destinations are disclosed. There are no per-request confirmation cards. Automatic processing (transcript, summary, enhanced notes) and the live transcript are always on and not in Settings (owner decision).
-- API keys live only in Windows Credential Manager through `keyring`, under a per-connection account. Never write a key to SQLite, Markdown, logs, environment files, frontend state or a report. Read responses carry key status only. Changing a destination requires a new key.
+- API keys live only in the OS credential store (Windows Credential Manager, macOS Keychain) through `keyring`, under a per-connection account. Never write a key to SQLite, Markdown, logs, environment files, frontend state or a report. Read responses carry key status only. Changing a destination requires a new key.
 - Keep hard request and byte limits. Never retry a billable request, fall back to another model automatically, or publish a result whose configuration changed mid-request.
 - Preserve user notes and external Markdown edits. A failed save must not discard text or allow an unsafe close.
 - Snapshot exports are non-overwriting until a tested merge replaces them; protect filenames, destinations and concurrent publication.

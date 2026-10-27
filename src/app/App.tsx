@@ -28,6 +28,7 @@ import { MeetingPage, useMeetingPage } from "../pages/meeting";
 import { SettingsPage, useSettingsPage } from "../pages/settings";
 import { FirstRunPage, SetupPage, useSetupPage } from "../pages/setup";
 import { CommandPalette, type PaletteAction } from "../widgets/command-palette";
+import { isMac } from "../shared/lib/platform";
 
 type Panel = "setup" | "settings" | null;
 
@@ -615,13 +616,15 @@ export function App() {
     }
   };
 
-  // Global shortcuts. Ctrl+K, Ctrl+, and Ctrl+I always work; the rest yield to text fields.
+  // Global shortcuts. Cmd+K on macOS, Ctrl+K on Windows, the same for comma and I. Those three
+  // always work; the rest yield to text fields.
   // No dependency list: the handler reads this render's state and handlers, and the
   // page hooks build their props anew every render.
   useEffect(() => {
     if (!desktop || !ready || firstRun) return;
     const onKey = (event: KeyboardEvent) => {
-      const mod = event.ctrlKey || event.metaKey;
+      // Only one modifier is the shortcut key per platform, so Ctrl+K stays inert on a Mac.
+      const mod = isMac() ? event.metaKey : event.ctrlKey;
       const key = event.key.toLowerCase();
       if (mod && key === "k") {
         event.preventDefault();

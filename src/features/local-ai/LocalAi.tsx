@@ -75,7 +75,9 @@ function ServerPill({ server }: { server: LocalAiStatus["server"] }) {
 function machineLabel(hardware: LocalAiStatus["hardware"]): string {
   const gpu =
     hardware.gpu_name && hardware.vram_bytes
-      ? `${hardware.gpu_name} · ${formatBytes(hardware.vram_bytes)} VRAM`
+      ? `${hardware.gpu_name} · ${formatBytes(hardware.vram_bytes)} ${
+          hardware.gpu_vendor === "apple" ? "usable for models" : "VRAM"
+        }`
       : "No GPU found";
   return `${gpu} · ${formatBytes(hardware.ram_bytes)} RAM`;
 }

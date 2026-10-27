@@ -19,6 +19,7 @@ import {
   IconClock,
   IconTrash,
 } from "../../shared/ui/icons";
+import { credentialStoreName } from "../../shared/lib/platform";
 import { Saved, useSaved } from "../../shared/ui/settings-link";
 import "./calendar.css";
 
@@ -294,8 +295,8 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
               />
               <p className="om-muted cal-helper">
                 Paste the secret iCal address from Google Calendar settings or
-                the Outlook published ICS link. It is stored in Windows
-                Credential Manager.
+                the Outlook published ICS link. It is stored in{" "}
+                {credentialStoreName()}.
               </p>
               <div className="cal-actions">
                 <button

@@ -228,7 +228,7 @@ export type Settings = {
   processing_enhance: boolean;
   /** First-run setup was finished or skipped. */
   setup_done: boolean;
-  /** Colour theme; "system" follows Windows. */
+  /** Colour theme; "system" follows the OS. */
   theme: Theme;
   /** Whether the meeting page's right inspector is open. */
   inspector_open: boolean;
@@ -330,15 +330,15 @@ export type ImportResult = {
   notes: string[];
 };
 /** Local AI: OpenMeet's own llama.cpp server running a downloaded model on this PC. */
-export type LocalAiBackend = "cuda" | "vulkan" | "cpu";
+export type LocalAiBackend = "cuda" | "vulkan" | "metal" | "cpu";
 export type LocalAiHardware = {
   gpu_name: string | null;
-  gpu_vendor: "nvidia" | "amd" | "intel" | null;
+  gpu_vendor: "nvidia" | "amd" | "intel" | "apple" | null;
   /** Total dedicated GPU memory; null when no GPU could be read. */
   vram_bytes: number | null;
   ram_bytes: number;
   ram_available_bytes: number;
-  /** The engine build this PC uses: CUDA for NVIDIA, Vulkan for AMD/Intel, else CPU. */
+  /** The engine build this PC uses: Metal on Apple silicon, CUDA for NVIDIA, Vulkan for AMD/Intel, else CPU. */
   backend: LocalAiBackend;
 };
 /** `gpu`: runs entirely in GPU memory; `ram`: part runs from system RAM (slower);
@@ -741,7 +741,7 @@ export const api = {
   /** Stores the automatic capture switch. Saving it starts nothing by itself. */
   saveAutoCapture: (enabled: boolean) =>
     invoke<Settings>("save_auto_capture", { enabled }),
-  /** Calendar feeds: read-only iCal subscriptions. The address goes to Windows Credential Manager. */
+  /** Calendar feeds: read-only iCal subscriptions. The address goes to the OS credential store. */
   listCalendarFeeds: () => invoke<CalendarFeed[]>("list_calendar_feeds"),
   addCalendarFeed: (label: string, url: string) =>
     invoke<CalendarFeed>("add_calendar_feed", { label, url }),

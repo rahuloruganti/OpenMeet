@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -308,6 +309,55 @@ def test_absolute_and_relative_audio_paths_are_rewritten(tmp_path: Path) -> None
         assert Path(paths[kind]).is_file()
     for _kind, _path, timing in rows:
         assert timing.startswith(str(dest / "audio"))
+        assert Path(timing).is_file()
+
+
+def test_relative_paths_match_without_case_on_windows_and_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert importer._case_insensitive_paths() is True
+    assert importer._relative_to(
+        Path("C:/Data/AUDIO/call/a.wav"), Path("c:/data/audio")
+    ) == Path("call/a.wav")
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert importer._case_insensitive_paths() is True
+    assert importer._relative_to(
+        Path("/Users/x/Data/Audio/a.wav"), Path("/users/x/data")
+    ) == Path("Audio/a.wav")
+    assert importer._relative_to(Path("/Users/x/a.wav"), Path("/Volumes/other")) is None
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert importer._case_insensitive_paths() is False
+
+
+def test_a_macos_import_rewrites_paths_whose_case_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """APFS is case-insensitive, so a stored path with other casing still belongs to the source."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    source = build_old_folder(tmp_path)
+    db = sqlite3.connect(source / "meetings.db")
+    try:
+        db.execute('UPDATE tracks SET path = UPPER("path"), timing_path = UPPER("timing_path")')
+        db.commit()
+    finally:
+        db.close()
+
+    dest = tmp_path / "data"
+    import_old_data(source, dest)
+
+    check = sqlite3.connect(dest / "meetings.db")
+    try:
+        rows = check.execute("SELECT kind, path, timing_path FROM tracks ORDER BY kind").fetchall()
+    finally:
+        check.close()
+    assert len(rows) == 2
+    for _kind, path, timing in rows:
+        assert path.startswith(str(dest / "audio"))
+        assert timing.startswith(str(dest / "audio"))
+        assert Path(path).is_file()
         assert Path(timing).is_file()
 
 

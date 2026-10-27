@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { Meeting, Theme } from "../../shared/api/api";
 import { foldText, formatShortDate } from "../../entities/meeting";
+import { modKeyLabel } from "../../shared/lib/shortcut-label";
 import {
   ICONS,
   IconArrowDown,
@@ -55,7 +56,11 @@ type Props = {
   returnFocus?: HTMLElement | null;
 };
 
-type ActionRow = Omit<Row, "run"> & { action: PaletteAction };
+type ActionRow = Omit<Row, "run"> & {
+  action: PaletteAction;
+  /** The row's chord starts with the platform shortcut key, shown at render time. */
+  mod?: boolean;
+};
 
 const ACTIONS: ActionRow[] = [
   {
@@ -63,28 +68,32 @@ const ACTIONS: ActionRow[] = [
     action: "new-recording",
     label: "New recording",
     icon: "mic",
-    keys: ["Ctrl", "N"],
+    mod: true,
+    keys: ["N"],
   },
   {
     key: "new-note",
     action: "new-note",
     label: "New note",
     icon: "plus",
-    keys: ["Ctrl", "⇧", "N"],
+    mod: true,
+    keys: ["⇧", "N"],
   },
   {
     key: "settings",
     action: "settings",
     label: "Open settings",
     icon: "settings",
-    keys: ["Ctrl", ","],
+    mod: true,
+    keys: [","],
   },
   {
     key: "export",
     action: "export",
     label: "Export meeting",
     icon: "download",
-    keys: ["Ctrl", "E"],
+    mod: true,
+    keys: ["E"],
   },
   {
     key: "rename",
@@ -123,8 +132,8 @@ const themeOf = (action: PaletteAction): Theme | null =>
         : null;
 
 /**
- * Command palette (Ctrl+K): one searchable list of actions and open meetings.
- * Arrow keys move, Enter runs, Escape closes; nothing here starts a recording.
+ * Command palette (Cmd+K on macOS, Ctrl+K on Windows): one searchable list of actions and open
+ * meetings. Arrow keys move, Enter runs, Escape closes; nothing here starts a recording.
  */
 export function CommandPalette(props: Props) {
   const { onClose, onAction, onOpenMeeting, currentMeetingId, theme } = props;
@@ -147,7 +156,7 @@ export function CommandPalette(props: Props) {
           key: row.key,
           label: row.label,
           icon: row.icon,
-          keys: row.keys,
+          keys: row.mod && row.keys ? [modKeyLabel(), ...row.keys] : row.keys,
           disabled: needsMeeting && currentMeetingId === null,
           tag: wanted && theme === wanted ? "Current" : undefined,
           run: () => {

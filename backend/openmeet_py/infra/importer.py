@@ -14,6 +14,7 @@ import os
 import shutil
 import sqlite3
 import stat
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass, field
@@ -279,22 +280,31 @@ def _blank_secrets(db: sqlite3.Connection) -> int:
     return changed
 
 
+def _case_insensitive_paths() -> bool:
+    """True where the filesystem compares names without case: Windows, and macOS (APFS by default)."""
+    return sys.platform in ("win32", "darwin")
+
+
 def _relative_to(path: Path, base: Path) -> Optional[Path]:
-    """Case-insensitive relative path on Windows, exact elsewhere."""
+    """Case-insensitive relative path on Windows and macOS, exact elsewhere."""
+    if not _case_insensitive_paths():
+        try:
+            return path.relative_to(base)
+        except ValueError:
+            return None
+    # Compared as text: normcase only lowercases on Windows, and Path equality ignores case only
+    # there, so both platforms need the same lowered comparison. Lowering keeps the string length.
+    left = os.path.normpath(str(path))
+    right = os.path.normpath(str(base))
+    if left.lower() == right.lower():
+        return Path()
+    prefix = right.lower() + os.sep
+    if left.lower().startswith(prefix):
+        return Path(left[len(prefix):])
     try:
         return path.relative_to(base)
     except ValueError:
-        pass
-    if os.name != "nt":
         return None
-    left = os.path.normcase(os.path.normpath(str(path)))
-    right = os.path.normcase(os.path.normpath(str(base)))
-    if left == right:
-        return Path()
-    prefix = right + os.sep
-    if left.startswith(prefix):
-        return Path(str(path)[len(prefix):])
-    return None
 
 
 def _map_audio_path(value: str, source: Path, dest: Path) -> Optional[str]:

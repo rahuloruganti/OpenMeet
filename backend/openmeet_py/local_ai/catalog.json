@@ -3,7 +3,7 @@
   "context_tokens": 16384,
   "engine": {
     "tag": "b11671",
-    "source": "Pins match Hermes Agent's pm/lock.json (llamacpp-cuda/vulkan/cpu, win32-x64). Digests checked against the GitHub release API.",
+    "source": "Pins match Hermes Agent's pm/lock.json (llamacpp-cuda/vulkan/cpu, win32-x64). Digests checked against the GitHub release API. The macOS pin is the arm64 tarball from the same release; its Metal backend is on by default on Apple silicon, so no separate GPU runtime is downloaded.",
     "backends": {
       "cuda": [
         {
@@ -29,6 +29,13 @@
           "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11671/llama-b11671-bin-win-cpu-x64.zip",
           "size": 19550938,
           "sha256": "a9a407979a351add66016ffb558a53de8b6655fed1eec362591d66ea671fec81"
+        }
+      ],
+      "metal": [
+        {
+          "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11671/llama-b11671-bin-macos-arm64.tar.gz",
+          "size": 12201717,
+          "sha256": "0f9c093f77b9c194f2f097df6204d9f5f8758968815e7db0374e98b0485ef9df"
         }
       ]
     }

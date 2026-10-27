@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The bundle is signed with the hardened runtime. Under it the app may only open an input
+	     device when this entitlement is present, even after the user has granted Microphone
+	     access in System Settings. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<!-- Ad-hoc signing gives the bundle no team identifier, so library validation has nothing to
+	     compare the bundled dylibs against (PortAudio from sounddevice, sherpa-onnx,
+	     pywhispercpp, catap). Without this the app dies at startup on a load failure. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

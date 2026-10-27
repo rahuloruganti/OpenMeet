@@ -9,19 +9,27 @@ The process is killed with OpenMeet, even if OpenMeet is killed: a Windows Job o
 KILL_ON_JOB_CLOSE is assigned to it. `stop()` also ends it directly, which frees GPU memory for the
 "Turn off" button.
 
+macOS has no job object, so the server is started in its own session and ended by its process
+group: on stop, from an `atexit` hook, from a SIGTERM handler, and on the next start from a pid file
+for the case where OpenMeet itself was killed outright.
+
 Every external effect is injectable: `spawn` (tests use a fake process), `probe` and `touch` (tests
-never call the network), `job_factory`, `sleep` and `clock` (tests never wait in real time).
+never call the network), `job_factory`, `group_kill`, `command_of`, `sleep` and `clock` (tests never
+wait in real time).
 """
 
 from __future__ import annotations
 
+import atexit
 import ctypes
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
 import time
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -40,6 +48,10 @@ TERMINATE_SECONDS = 5.0
 MAX_RESTARTS = 1
 TOUCH_TOKENS = 64
 TOUCH_PROMPT = "ping"
+PID_FILE = "server.pid"
+# SIGKILL is POSIX only, so it is looked up by name; the fallback is never used, because a stale
+# pid is only ever reaped on macOS.
+SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
 CRASH_MESSAGE = (
     "Local AI stopped twice. Check local-ai/server.log, then turn it off and on again."
 )
@@ -75,6 +87,11 @@ class Spec:
     @property
     def alias(self) -> str:
         return self.model
+
+    @property
+    def pid_path(self) -> Path:
+        """Beside the log, in the Local AI data folder: what a later start reads after a hard kill."""
+        return self.log_path.parent / PID_FILE
 
 
 def base_url(port: int) -> str:
@@ -194,6 +211,69 @@ class JobGuard:
             ctypes.windll.kernel32.CloseHandle(handle)
 
 
+# ---- macOS process group ---------------------------------------------------------------
+
+
+def _process_command(pid: int) -> str:
+    """The command a pid runs, from `ps`. Empty when there is no such process."""
+    try:
+        done = subprocess.run(
+            ("ps", "-p", str(pid), "-o", "comm="),
+            capture_output=True,
+            text=True,
+            timeout=HEALTH_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def _kill_group(pid: int, sig: int) -> bool:
+    """Signals the process group `pid` leads. False when the group is gone or has no such call."""
+    killpg = getattr(os, "killpg", None)  # POSIX only, so it is looked up, not called blindly
+    getpgid = getattr(os, "getpgid", None)
+    if killpg is None or getpgid is None:
+        return False
+    try:
+        killpg(getpgid(pid), sig)
+    except OSError:
+        return False
+    return True
+
+
+def is_server(pid: int, program: str, command_of: Callable[[int], str]) -> bool:
+    """True only when `pid` really is our llama-server. A reused pid must never be killed."""
+    command = command_of(pid).strip()
+    return bool(command) and Path(command).name == program
+
+
+def write_pid(spec: Spec, pid: int) -> None:
+    """Records the running server's pid so a later start can end it after a hard kill of OpenMeet."""
+    try:
+        spec.pid_path.parent.mkdir(parents=True, exist_ok=True)
+        spec.pid_path.write_text(f"{int(pid)}\n", encoding="utf-8")
+    except OSError:
+        # The pid file only helps a future start, so failing to write it must not stop this one.
+        return
+
+
+def read_pid(spec: Spec) -> Optional[int]:
+    """The pid a previous run recorded, or None when there is no readable pid file."""
+    try:
+        return int(spec.pid_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def clear_pid(spec: Spec) -> None:
+    """Removes the pid file, so a pid that is gone is never looked at again."""
+    try:
+        spec.pid_path.unlink(missing_ok=True)
+    except OSError:
+        return
+
+
 # ---- process and HTTP ------------------------------------------------------------------
 
 
@@ -201,6 +281,21 @@ def environment(spec: Spec) -> dict[str, str]:
     """This process's environment plus the key, read by llama-server from LLAMA_API_KEY (the env
     form of --api-key in common/arg.cpp at the pinned build)."""
     return {**os.environ, "LLAMA_API_KEY": spec.api_key}
+
+
+def _launch_flags(handle: Any) -> dict[str, Any]:
+    """Process flags for one platform: no console window on Windows, and its own session on macOS
+    so the whole group, including anything the server started, can be signalled on stop."""
+    flags: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": handle,
+        "stderr": subprocess.STDOUT,
+    }
+    if sys.platform == "darwin":
+        flags["start_new_session"] = True
+    else:
+        flags["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return flags
 
 
 def spawn(spec: Spec) -> subprocess.Popen:
@@ -212,10 +307,7 @@ def spawn(spec: Spec) -> subprocess.Popen:
             arguments(spec),
             cwd=str(spec.executable.parent),
             env=environment(spec),
-            stdin=subprocess.DEVNULL,
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **_launch_flags(handle),
         )
     finally:
         handle.close()
@@ -274,6 +366,8 @@ class Supervisor:
         probe: Optional[Callable[[Spec], bool]] = None,
         touch: Optional[Callable[[Spec], bool]] = None,
         job_factory: Optional[Callable[[], Any]] = None,
+        group_kill: Optional[Callable[[int, int], bool]] = None,
+        command_of: Optional[Callable[[int], str]] = None,
         transport: Any = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -283,6 +377,8 @@ class Supervisor:
         self._probe = probe or (lambda spec: http_health(spec, transport))
         self._touch = touch or (lambda spec: http_touch(spec, transport))
         self._job_factory = job_factory or JobGuard
+        self._group_kill = group_kill or _kill_group
+        self._command_of = command_of or _process_command
         self._sleep = sleep
         self._clock = clock
         self._timeout = timeout
@@ -356,6 +452,34 @@ class Supervisor:
             self._set_state_locked("stopped")
         self._release(*detached)
 
+    # -- macOS exit and stale pid --
+    def _reap_stale(self, spec: Spec) -> None:
+        """Ends a server left behind by a killed OpenMeet, and only when it really is llama-server.
+
+        A hard kill runs no hook, so the pid file is the only record of a server that outlived
+        the app. The pid may belong to something else by now, so the command is checked first.
+        """
+        if sys.platform != "darwin":
+            return
+        pid = read_pid(spec)
+        if pid is None:
+            return
+        if is_server(pid, spec.executable.name, self._command_of):
+            self._group_kill(pid, SIGKILL)  # it never reported readiness, so no grace period
+        clear_pid(spec)
+
+    def end_if_running(self) -> None:
+        """Ends a server still running when OpenMeet exits, without waiting for it to answer."""
+        spec = self._spec
+        if spec is None:
+            return
+        pid = read_pid(spec)
+        if pid is None:
+            return
+        if is_server(pid, spec.executable.name, self._command_of):
+            self._group_kill(pid, signal.SIGTERM)
+        clear_pid(spec)
+
     # -- internals --
     def _alive_locked(self) -> bool:
         return self._process is not None and self._process.poll() is None
@@ -368,7 +492,15 @@ class Supervisor:
         process, job = self._process, self._job
         self._process = None
         self._job = None
+        if process is not None and sys.platform == "darwin":
+            self._forget_pid_locked(process)
         return process, job
+
+    def _forget_pid_locked(self, process: Any) -> None:
+        """Drops the pid file of a server that is ending, so the next start does not chase it."""
+        spec = self._spec
+        if spec is not None and read_pid(spec) == getattr(process, "pid", None):
+            clear_pid(spec)
 
     def _retire_locked(self) -> tuple[Any, Any]:
         """Ends the current generation. Its process and job are returned for release outside the lock."""
@@ -407,16 +539,28 @@ class Supervisor:
         with self._lock:
             return self._generation == generation
 
+    def _stop_group(self, process: Any, force: bool = False) -> bool:
+        """macOS: signals the whole group the child leads. False when there is no group of ours."""
+        if sys.platform != "darwin":
+            return False
+        pid = getattr(process, "pid", None)
+        if not pid:
+            return False
+        return bool(self._group_kill(int(pid), SIGKILL if force else signal.SIGTERM))
+
     def _release(self, process: Any, job: Any) -> None:
         """Ends one process and closes its job. Runs outside the lock: a stubborn process may take seconds."""
         if process is not None:
             try:
                 if process.poll() is None:
-                    process.terminate()
+                    if not self._stop_group(process):
+                        process.terminate()
                     try:
                         process.wait(timeout=TERMINATE_SECONDS)
                     except subprocess.TimeoutExpired:
-                        process.kill()
+                        # Nothing that ignored the polite signal survives the group being killed.
+                        if not self._stop_group(process, force=True):
+                            process.kill()
                         process.wait(timeout=TERMINATE_SECONDS)
             except (OSError, subprocess.SubprocessError):
                 pass
@@ -467,6 +611,7 @@ class Supervisor:
             spec = self._spec if self._generation == generation else None
         if spec is None:
             raise error(STOPPED_MESSAGE)
+        self._reap_stale(spec)
         try:
             process = self._spawn(spec)
         except OSError as cause:
@@ -481,6 +626,9 @@ class Supervisor:
             if self._generation == generation:
                 self._process = process
                 self._job = job
+                if sys.platform == "darwin":
+                    write_pid(spec, process.pid)
+                    _LIVE.add(self)
                 return process
         # Stopped while the process was starting: nothing else knows about it, so end it here.
         self._release(process, job)
@@ -543,3 +691,37 @@ class Supervisor:
             self._finish(generation, cause.message)
             return False
         return self._publish_running(generation)
+
+
+# ---- macOS exit --------------------------------------------------------------------------
+
+# Supervisors with a server running. macOS has no job object, so these hooks are what ends a
+# server when OpenMeet goes away; a weak set keeps a stopped one from being held alive by them.
+_LIVE: "weakref.WeakSet[Supervisor]" = weakref.WeakSet()
+
+
+def _end_live() -> None:
+    """Ends every server this process started, whichever supervisor owns it."""
+    for supervisor in list(_LIVE):
+        supervisor.end_if_running()
+
+
+def _on_sigterm(signum: int, _frame: Any) -> None:
+    _end_live()
+    raise SystemExit(128 + int(signum))
+
+
+def install_exit_hooks() -> None:
+    """Ends the servers on exit and on SIGTERM. Registered at import, on the main thread, because
+    a supervisor that starts later runs on a request thread, where a signal cannot be taken."""
+    if sys.platform != "darwin":
+        return
+    atexit.register(_end_live)
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (OSError, ValueError):
+        # Only the main thread may take a signal; the atexit hook still covers a normal exit.
+        return
+
+
+install_exit_hooks()

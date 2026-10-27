@@ -20,6 +20,7 @@ import logging
 import os
 import queue
 import sqlite3
+import sys
 import threading
 import time
 import uuid
@@ -46,6 +47,10 @@ MIC_MISSING = (
     "Selected microphone is unavailable. Enable microphone access or remote microphone "
     "redirection, then refresh devices."
 )
+MIC_MISSING_MAC = (
+    "Selected microphone is unavailable. Allow microphone access in System Settings, Privacy and "
+    "Security, Microphone, then refresh devices."
+)
 OUTPUT_MISSING = "Selected system-output device is unavailable. Refresh devices."
 FORMAT_LIMITS = "This preview supports 1–8 channels at 8–192 kHz. Choose another device format."
 FORMAT_CHANGED = "Device format changed. Stop and start a new recording."
@@ -58,6 +63,11 @@ OVERFLOW = 2
 IO_ERROR = 4
 SUSPENDED = 8
 WORKER_ERROR = 32
+
+
+def _mic_missing() -> str:
+    """The Windows text mentions remote microphone redirection, a Windows remote-desktop feature."""
+    return MIC_MISSING_MAC if sys.platform == "darwin" else MIC_MISSING
 
 
 def audio_error(message: str) -> AppError:
@@ -497,7 +507,7 @@ class Recorder:
             title = validate_title(title)
             if not microphone_id or not output_id:
                 raise AppError("audio_devices", "Select both a microphone and a system-output device.")
-            mic = self._resolve(self.backend.input_devices, microphone_id, MIC_MISSING)
+            mic = self._resolve(self.backend.input_devices, microphone_id, _mic_missing())
             out = self._resolve(self.backend.output_devices, output_id, OUTPUT_MISSING)
             # Automatic processing is decided before any file exists. A skipped plan never blocks the recording.
             plan, notice = self._prepare_processing()
@@ -647,7 +657,7 @@ class Recorder:
                 raise AppError("invalid_state", "Recording is not paused.")
             if session.fault:
                 raise audio_error(session.fault_text() or "Capture stopped.")
-            mic = self._resolve(self.backend.input_devices, session.tracks[0].device.id, MIC_MISSING)
+            mic = self._resolve(self.backend.input_devices, session.tracks[0].device.id, _mic_missing())
             out = self._resolve(self.backend.output_devices, session.tracks[1].device.id, OUTPUT_MISSING)
             for device, track in zip((mic, out), session.tracks):
                 if (device.rate, device.channels) != (track.device.rate, track.device.channels):

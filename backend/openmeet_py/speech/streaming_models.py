@@ -91,11 +91,10 @@ def engine_available() -> bool:
 
 
 def unavailable_reason() -> Optional[str]:
-    import platform
-    import sys
+    from openmeet_py.speech.stt import local_speech_supported
 
-    if sys.platform != "win32" or platform.machine().lower() not in ("amd64", "x86_64"):
-        return "Streaming models need Windows x64."
+    if not local_speech_supported():
+        return "Live transcript models need Windows x64 or a Mac with Apple silicon."
     if not engine_available():
         return "The sherpa-onnx speech engine is missing from this build. Reinstall OpenMeet."
     return None

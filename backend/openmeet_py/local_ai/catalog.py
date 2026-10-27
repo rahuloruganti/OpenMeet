@@ -12,6 +12,9 @@ Fit for one model:
 Without a readable GPU there is no "gpu" fit, so a model is either "ram" or "too big".
 The recommended model is the best-quality one that fits the GPU; if none does, the best-quality
 one under 6 GB that fits RAM; if none does, nothing is recommended.
+
+Engine backends are `cuda`, `vulkan`, `cpu` and `metal`. On macOS the probe reports unified memory
+as `vram_bytes`, so the fit rules and `offload_layers` below apply unchanged there.
 """
 
 from __future__ import annotations
@@ -36,6 +39,8 @@ FULL_OFFLOAD_LAYERS = 999
 FILE_KV_BYTES_PER_TOKEN = 131072
 MAX_MODELS = 50
 MAX_ENGINE_FILES = 4
+# The only archive shapes an engine pin may name: Windows zips and the macOS tarball.
+ENGINE_SUFFIXES = (".zip", ".tar.gz")
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -125,7 +130,12 @@ def _engine(raw: Any) -> Engine:
                 raise _broken(f"{backend} engine file")
             url = _text(entry.get("url"), "engine url")
             sha = _text(entry.get("sha256"), "engine checksum")
-            if not url.lower().startswith("https://") or unsafe_text(url) or not _HEX64.match(sha):
+            if (
+                not url.lower().startswith("https://")
+                or unsafe_text(url)
+                or not url.lower().endswith(ENGINE_SUFFIXES)
+                or not _HEX64.match(sha)
+            ):
                 raise _broken(f"{backend} engine file")
             files.append(EngineFile(url=url, size=_size(entry.get("size"), "engine size"), sha256=sha))
         parsed[backend] = tuple(files)
@@ -203,7 +213,10 @@ def needs_bytes(size_bytes: int, kv_bytes_per_token: int, context_tokens: int) -
 
 
 def fit(need: int, hardware: dict[str, Any]) -> str:
-    """gpu, ram or too_big for a memory need, using this PC's VRAM and available RAM."""
+    """gpu, ram or too_big for a memory need, using this PC's VRAM and available RAM.
+
+    Unchanged for `metal`: unified memory arrives as `vram_bytes`, and the shares still apply.
+    """
     vram = hardware.get("vram_bytes") or 0
     available = hardware.get("ram_available_bytes") or 0
     gpu_limit = GPU_SHARE * vram
@@ -215,7 +228,10 @@ def fit(need: int, hardware: dict[str, Any]) -> str:
 
 
 def offload_layers(model: Model, fit_kind: str, vram_bytes: Optional[int]) -> int:
-    """GPU layers to offload: all of them when the model fits VRAM, else the share VRAM covers."""
+    """GPU layers to offload: all of them when the model fits VRAM, else the share VRAM covers.
+
+    Unchanged for `metal`; the Apple GPU shares memory with the CPU, so the same split holds.
+    """
     if fit_kind == "gpu":
         return FULL_OFFLOAD_LAYERS
     if not vram_bytes or vram_bytes <= 0 or model.size_bytes <= 0:

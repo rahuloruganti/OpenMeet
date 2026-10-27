@@ -187,8 +187,14 @@ class NativeWin32:
 
 
 def win32_from_env() -> Win32:
-    """The real backend, unless the browser check or tests ask for the fake one."""
-    if os.environ.get(FAKE_HOTKEYS_ENV) == "1" or sys.platform != "win32":
+    """The real desktop for this platform (NativeWin32, NativeMacOS), unless the fake is asked for."""
+    if os.environ.get(FAKE_HOTKEYS_ENV) == "1":
+        return FakeWin32()
+    if sys.platform == "darwin":
+        from openmeet_py.platform.macos import NativeMacOS
+
+        return NativeMacOS()
+    if sys.platform != "win32":
         return FakeWin32()
     return NativeWin32()
 

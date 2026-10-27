@@ -1,6 +1,6 @@
 """Meeting detection (always on): which other apps are using the microphone.
 
-Covers the Windows part of meeting detection and its commands. The poll thread
+Covers meeting detection and its commands on Windows and macOS. The poll thread
 reads a ConsentRegistry every 3 seconds. It emits `microphone_apps` for the prompt only after two polls in a row,
 and emits the stable list when it changes. On every poll it also hands the raw, undebounced signals (in use and
 idle) to subscribed listeners. It has no reference to the recorder, so a detection can never start capture, check
@@ -9,6 +9,8 @@ consent or pick devices. The user's click on the prompt is what opens New record
 ConsentRegistry readers:
 - WindowsConsentRegistry: stdlib winreg, read-only, HKCU microphone consent store (and its NonPackaged
   subkeys). Imported and opened only inside its method.
+- MacConsentRegistry: Core Audio process objects on macOS 14.2+, in `detection_mac`, imported only inside the
+  function that needs it. Entries are bundle ids, so the app's own key is a bundle id rather than a file name.
 - FileConsentRegistry: OPENMEET_PY_FAKE_DETECTION=1 only. Reads a JSON file in the data folder so the browser
   check can drive a fake app. Tests use their own fakes.
 - EmptyConsentRegistry: the default for create_app, so nothing reads the real store unless app.py asks.
@@ -155,12 +157,24 @@ def consent_from_env(data_dir: Path) -> ConsentRegistry:
         return FileConsentRegistry(data_dir / FAKE_FILE)
     if sys.platform == "win32":
         return WindowsConsentRegistry()
+    if sys.platform == "darwin":
+        from openmeet_py.platform.detection_mac import MacConsentRegistry
+
+        return MacConsentRegistry()
     return EmptyConsentRegistry()
 
 
 def supported() -> bool:
-    """Windows, or the fake registry for the browser check."""
-    return sys.platform == "win32" or fake_detection()
+    """Windows, macOS 14.2 or newer, or the fake registry for the browser check."""
+    if fake_detection():
+        return True
+    if sys.platform == "win32":
+        return True
+    if sys.platform == "darwin":
+        from openmeet_py.platform import detection_mac
+
+        return detection_mac.supported()
+    return False
 
 
 def own_file_name() -> str:
@@ -168,8 +182,28 @@ def own_file_name() -> str:
     return Path(sys.executable).name.lower()
 
 
+def own_app_id() -> str:
+    """This app's own detection key: the executable's file name on Windows, the bundle id on macOS.
+
+    macOS entries are bundle ids, so an executable name would never match one and the app could end
+    up offering a recording prompt about its own capture.
+    """
+    if sys.platform == "darwin":
+        from openmeet_py.platform.detection_mac import OWN_BUNDLE_ID
+
+        return OWN_BUNDLE_ID
+    return own_file_name()
+
+
 def display_name(key: str) -> str:
-    """`C:#Program Files#Google#Chrome#Application#chrome.exe` is Chrome; `5319275A.WhatsAppDesktop_cv1g1gvanyjgm` is WhatsAppDesktop."""
+    """`C:#Program Files#Google#Chrome#Application#chrome.exe` is Chrome; on macOS `us.zoom.xos` is Zoom.
+
+    Windows packaged apps such as `5319275A.WhatsAppDesktop_cv1g1gvanyjgm` use the family name.
+    """
+    if sys.platform == "darwin":
+        from openmeet_py.platform.detection_mac import display_name as mac_display_name
+
+        return mac_display_name(key)
     if "#" in key:
         file = key.rsplit("#", 1)[1]
         name = file[:-4] if file.lower().endswith(".exe") else file
@@ -226,7 +260,7 @@ class DetectionService:
     def __init__(self, ctx: Context, registry: ConsentRegistry, own: Optional[str] = None, poll: float = POLL_SECONDS):
         self.ctx = ctx
         self.registry = registry
-        self.own = own if own is not None else own_file_name()
+        self.own = own if own is not None else own_app_id()
         self.poll = poll
         self.debounce = Debounce()
         self._listeners: list[Callable[[tuple[Signal, ...]], None]] = []

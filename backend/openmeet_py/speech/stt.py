@@ -50,8 +50,21 @@ def engine_available() -> bool:
     return importlib.util.find_spec("pywhispercpp") is not None
 
 
+def local_speech_supported() -> bool:
+    """Whether this machine is one of the two targets the local engines ship binaries for.
+
+    Windows x64 and Apple silicon macOS only: the whisper.cpp and sherpa-onnx wheels exist for those
+    and nothing else, so an Intel Mac reports unsupported instead of failing inside a native library
+    after the download. Other speech modules import this one function.
+    """
+    machine = platform.machine().lower()
+    if sys.platform == "win32":
+        return machine in ("amd64", "x86_64")
+    return sys.platform == "darwin" and machine == "arm64"
+
+
 def supported() -> bool:
-    return sys.platform == "win32" and platform.machine().lower() in ("amd64", "x86_64")
+    return local_speech_supported()
 
 
 def stt_root(ctx: Context) -> Path:
@@ -210,7 +223,7 @@ def install(ctx: Context) -> dict[str, Any]:
     if sherpa_models.is_sherpa(model_id):
         return _install_sherpa(ctx, root, model_id)
     if not supported():
-        raise AppError("stt", "Local speech-to-text needs Windows x64 in this build.")
+        raise AppError("stt", "Local speech-to-text needs Windows x64 or a Mac with Apple silicon.")
     if not engine_available():
         raise AppError(
             "stt", "The speech engine (pywhispercpp) is missing from this build. Reinstall OpenMeet."
@@ -245,7 +258,7 @@ def install(ctx: Context) -> dict[str, Any]:
 def _install_sherpa(ctx: Context, root: Path, model_id: str) -> dict[str, Any]:
     """Downloads the shared VAD and, for a pinned model, its archive. A downloaded folder needs only the VAD."""
     if not sherpa_models.supported():
-        raise AppError("stt", "The sherpa-onnx speech engine is available on Windows x64 only.")
+        raise AppError("stt", "The sherpa-onnx speech engine needs Windows x64 or a Mac with Apple silicon.")
     model = sherpa_models.pinned(model_id)
     if model is None and not sherpa_models.custom_ready(root, model_id):
         raise AppError(

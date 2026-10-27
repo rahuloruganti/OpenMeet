@@ -1,6 +1,11 @@
 [windows]
 set shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
+# The macOS recipes are bash, not PowerShell. Recipes carry [windows] or [macos] so both builds
+# answer to the same names.
+[macos]
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
 # List available commands.
 default:
     @just --list
@@ -32,12 +37,27 @@ check:
     uv run --project backend pytest -c backend/pyproject.toml
 
 # Build the one-file Windows executable: packaging/dist/OpenMeet.exe.
+[windows]
 build:
     powershell -ExecutionPolicy Bypass -File packaging/build.ps1
 
+# Build the macOS app and DMG: packaging/dist/OpenMeet-<version>-arm64.dmg.
+[macos]
+build:
+    bash packaging/build.sh
+
 # Start the built exe, check /health and one command, then exit.
+[windows]
 smoke:
     packaging/dist/OpenMeet.exe --smoke
+
+# Same check against the built macOS app, in a temporary data folder.
+[macos]
+smoke:
+    @app=packaging/dist/OpenMeet.app; \
+    [ -d "$app" ] || app=packaging/dist/OpenMeet/OpenMeet.app; \
+    if [ ! -d "$app" ]; then echo "No app bundle in packaging/dist; run 'just build' first." >&2; exit 1; fi; \
+    "$app/Contents/MacOS/OpenMeet" --smoke --data-dir "$(mktemp -d)"
 
 # Opt-in real-audio run on real devices.
 hardware:

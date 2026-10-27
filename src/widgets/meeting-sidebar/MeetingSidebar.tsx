@@ -11,6 +11,7 @@ import {
   tagChoices,
 } from "../../entities/meeting";
 import { FolderManager, useFolders } from "../../features/folders";
+import { chordHint } from "../../shared/lib/shortcut-label";
 import { BrandMark } from "../../shared/ui/brand-mark";
 import {
   IconChevronDown,
@@ -195,7 +196,7 @@ export function MeetingSidebar(props: Props) {
               placeholder="Search meetings…"
             />
           </label>
-          <kbd>Ctrl K</kbd>
+          <kbd>{chordHint("K")}</kbd>
         </div>
         {tags.length > 0 && (
           <div className="sb-chips" role="group" aria-label="Filter by tag">

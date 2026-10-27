@@ -6,6 +6,7 @@ import {
   type ProcessingChoice,
 } from "../../entities/processing";
 import { IconAlert, IconChevronRight, IconX } from "../../shared/ui/icons";
+import { isMac } from "../../shared/lib/platform";
 import "./setup-panel.css";
 
 type Props = {
@@ -163,7 +164,9 @@ export function SetupPanel(props: Props) {
           {devices && !devices.capture_supported && (
             <p role="alert" className="setup-alert">
               <IconAlert size={14} />
-              Recording needs Windows.
+              {isMac()
+                ? "Recording is not available on this Mac."
+                : "Recording needs Windows."}
             </p>
           )}
           {!microphoneAvailable && (

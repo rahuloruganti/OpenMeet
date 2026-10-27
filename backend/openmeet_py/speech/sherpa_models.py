@@ -79,10 +79,10 @@ def is_sherpa(model_id: str) -> bool:
 
 
 def supported() -> bool:
-    import platform
-    import sys
+    """The shared target gate lives in stt.py, which imports this module, so it is imported lazily."""
+    from openmeet_py.speech.stt import local_speech_supported
 
-    return sys.platform == "win32" and platform.machine().lower() in ("amd64", "x86_64")
+    return local_speech_supported()
 
 
 def engine_available() -> bool:
@@ -189,7 +189,7 @@ def download_size(model: SherpaModel) -> int:
 def unavailable_reason() -> Optional[str]:
     """Why a sherpa model cannot run in this build right now, or None."""
     if not supported():
-        return "sherpa-onnx speech models need Windows x64."
+        return "sherpa-onnx speech models need Windows x64 or a Mac with Apple silicon."
     if not engine_available():
         return "The sherpa-onnx speech engine is missing from this build. Reinstall OpenMeet."
     return None

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import threading
 import time
 from array import array
@@ -68,6 +69,10 @@ class CaptureBackend(Protocol):
 def make_backend() -> "CaptureBackend":
     if os.environ.get("OPENMEET_PY_FAKE_AUDIO") == "1":
         return FakeBackend()
+    if sys.platform == "darwin":
+        from openmeet_py.audio.audio_backend_mac import MacBackend  # lazy: macOS only
+
+        return MacBackend()
     return PortAudioBackend()
 
 

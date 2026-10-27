@@ -2,7 +2,7 @@
 
     python -m openmeet_py.app                 open the window
     python -m openmeet_py.app --smoke         start, check /health and one command, print OK, exit
-    python -m openmeet_py.app --data-dir DIR  use DIR instead of %APPDATA%\\OpenMeetPy (tests)
+    python -m openmeet_py.app --data-dir DIR  use DIR instead of the default data folder (tests)
     python -m openmeet_py.app --check-audio-import  import the audio library, print its version, no device
     python -m openmeet_py.app --check-stt-import    import the speech library, print its version, no model
     python -m openmeet_py.app --import-from DIR     copy an old data folder into this app's folder; no window
@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import secrets
 import socket
 import sys
@@ -41,6 +42,12 @@ class CloseGuard:
     close_application (which sets `allow_close`). The close is never blocked when the page
     cannot answer: no WebSocket client is attached, the UI already asked to close, or it stayed
     silent for CLOSE_ANSWER_TIMEOUT seconds and the user closed again.
+
+    Both backends ask the same question through `closing`: WebView2 raises it from the window
+    close button, Cocoa raises it from `windowShouldClose_` and from `applicationShouldTerminate_`
+    (Cmd+Q) in pywebview 6.2.1. Both cancel only when the return value `is False`, so the handler
+    always returns a bool, never None. The Cocoa event runs handlers on the GUI thread, so the
+    emit below must not block; it only schedules the message on the server loop.
     """
 
     def __init__(
@@ -144,7 +151,8 @@ def run_window(data_dir: Path) -> int:
         return picked[0] if picked else None
 
     def close_window() -> None:
-        # destroy() fires the same `closing` event; the guard must let our own close through.
+        # destroy() raises the same `closing` event on WebView2, so let our own close through first.
+        # Cocoa's window.close() skips windowShouldClose_, so allow() is simply unused there.
         guard.allow()
         windows["window"].destroy()
 
@@ -154,7 +162,7 @@ def run_window(data_dir: Path) -> int:
         token=token,
         pick_folder=pick_folder,
         close_window=close_window,
-        # The real desktop only in the window: hotkeys, taskbar flashing and the Windows consent store.
+        # The real desktop only in the window: shortcuts, Dock or taskbar attention and the consent store.
         # OPENMEET_PY_FAKE_HOTKEYS=1 and OPENMEET_PY_FAKE_DETECTION=1 select the fakes (browser check).
         win32=win32_from_env(),
         consent=consent_from_env(data_dir),
@@ -165,6 +173,10 @@ def run_window(data_dir: Path) -> int:
     server = ServerThread(app, port)
     server.start()
     try:
+        # No icon: on macOS the window icon comes from the app bundle, and pywebview only reads
+        # start(icon=...) on GTK/QT. No custom menu either: pywebview 6.2.1 MenuAction has no key
+        # equivalent, so it cannot give Settings Cmd+comma. Its default Cocoa app menu already
+        # supplies Quit with Cmd+Q, and that terminate: path runs the same close guard (see CloseGuard).
         window = webview.create_window(
             TITLE,
             f"http://127.0.0.1:{port}/",
@@ -181,13 +193,20 @@ def run_window(data_dir: Path) -> int:
 
 
 def check_audio_import() -> int:
-    # Import only. PyAudio() is never constructed here, so no PortAudio stream or device is opened.
+    # Import only. No stream and no device is opened: the library object is never constructed.
+    # Windows ships WASAPI through pyaudiowpatch; a Mac has no PortAudio patch wheel, so it uses sounddevice.
+    module_name = "sounddevice" if sys.platform == "darwin" else "pyaudiowpatch"
     try:
-        import pyaudiowpatch
-    except ImportError as error:
+        module = importlib.import_module(module_name)
+        version = getattr(module, "__version__", None)
+        if version is None:
+            from importlib.metadata import version as package_version
+
+            version = package_version(module_name)
+    except Exception as error:  # report the failure type and message only
         print(f"FAILED: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
-    print(f"OK: pyaudiowpatch {pyaudiowpatch.__version__} imported; no audio device was opened.")
+    print(f"OK: {module_name} {version} imported; no audio device was opened.")
     return 0
 
 
@@ -259,7 +278,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="OpenMeet", description="OpenMeet desktop app")
     parser.add_argument("--smoke", action="store_true", help="check the server and exit; no window")
     parser.add_argument(
-        "--data-dir", type=Path, default=None, help="data folder (default: %%APPDATA%%\\OpenMeetPy)"
+        "--data-dir", type=Path, default=None, help="data folder (default: this app's data folder)"
     )
     parser.add_argument(
         "--check-audio-import",

@@ -1,13 +1,17 @@
 """Local AI building blocks: hardware probes, the pinned catalog, the engine and the supervisor.
 
 No real hardware, no real process, no network and no real time: every probe, spawn and clock is
-injected. The engine tests write their own zip archives in a temporary folder.
+injected. The engine tests write their own zip and tar.gz archives in a temporary folder.
 """
 
 from __future__ import annotations
 
+import io
 import itertools
 import math
+import os
+import sys
+import tarfile
 import threading
 import time
 import zipfile
@@ -92,12 +96,26 @@ def test_the_bundled_catalog_holds_the_verified_pins() -> None:
     assert pinned.engine.tag == "b11671"
     assert pinned.context_tokens == 16384
     assert len(pinned.models) == 7
-    assert set(pinned.engine.backends) == {"cuda", "vulkan", "cpu"}
+    assert set(pinned.engine.backends) == {"cuda", "vulkan", "cpu", "metal"}
     assert len(pinned.engine.files("cuda")) == 2
     assert all(entry.url.startswith("https://github.com/ggml-org/llama.cpp/") for entry in pinned.engine.files("cpu"))
+    assert len(pinned.engine.files("metal")) == 1
     for entry in pinned.models:
         assert len(entry.sha256) == 64 and len(entry.revision) == 40
         assert entry.size_bytes > 0 and entry.kv_bytes_per_token > 0 and entry.n_layers > 0
+
+
+def test_the_macos_pin_is_the_arm64_tarball_with_its_release_digest() -> None:
+    catalog.load.cache_clear()
+    metal = catalog.load().engine.files("metal")
+    assert [entry.url for entry in metal] == [
+        "https://github.com/ggml-org/llama.cpp/releases/download/b11671/"
+        "llama-b11671-bin-macos-arm64.tar.gz"
+    ]
+    assert metal[0].size == 12201717
+    assert metal[0].sha256 == "0f9c093f77b9c194f2f097df6204d9f5f8758968815e7db0374e98b0485ef9df"
+    for backend in ("cuda", "vulkan", "cpu", "metal"):
+        assert all(entry.url.endswith(catalog.ENGINE_SUFFIXES) for entry in catalog.load().engine.files(backend))
 
 
 def test_fit_uses_vram_first_then_available_ram() -> None:
@@ -157,6 +175,41 @@ def test_a_broken_pin_is_refused_instead_of_guessed() -> None:
     assert catalog.parse(raw).models[0].id == "one"
 
 
+def raw_catalog(url: str) -> dict[str, Any]:
+    """One valid catalog record whose only engine file is served from url."""
+    return {
+        "context_tokens": 16384,
+        "engine": {"tag": "b1", "backends": {"cpu": [{"url": url, "size": 10, "sha256": "0" * 64}]}},
+        "models": [
+            {
+                "id": "one",
+                "name": "One",
+                "description": "",
+                "repo": "owner/name",
+                "revision": "a" * 40,
+                "file": "one.gguf",
+                "size_bytes": 10,
+                "sha256": "b" * 64,
+                "license": None,
+                "n_layers": 1,
+                "kv_bytes_per_token": 1,
+                "quality": 1,
+            }
+        ],
+    }
+
+
+def test_an_engine_pin_must_name_a_zip_or_a_tar_gz() -> None:
+    for allowed in (".zip", ".tar.gz"):
+        url = f"https://github.com/ggml-org/llama.cpp/releases/download/b1/engine{allowed}"
+        assert catalog.parse(raw_catalog(url)).engine.tag == "b1"
+    for refused in (".7z", ".tar.bz2", ".exe", ""):
+        url = f"https://github.com/ggml-org/llama.cpp/releases/download/b1/engine{refused}"
+        with pytest.raises(AppError) as caught:
+            catalog.parse(raw_catalog(url))
+        assert caught.value.code == "local_ai_catalog"
+
+
 # ---- engine --------------------------------------------------------------------------
 
 
@@ -170,16 +223,22 @@ def write_zip(path: Path, entries: dict[str, bytes], modes: Optional[dict[str, i
     return path.read_bytes()
 
 
-def engine_catalog(archive: bytes, files: int = 1) -> catalog.Catalog:
-    """A one-model catalog whose engine is one tiny zip served from the pinned URL."""
+def engine_catalog(
+    archive: bytes,
+    files: int = 1,
+    *,
+    backend: str = "cpu",
+    name: str = "llama-b11671-bin-win-cpu-x64.zip",
+) -> catalog.Catalog:
+    """A one-model catalog whose engine is one tiny archive served from the pinned URL."""
     entry = catalog.EngineFile(
-        url="https://github.com/ggml-org/llama.cpp/releases/download/b11671/llama-b11671-bin-win-cpu-x64.zip",
+        url="https://github.com/ggml-org/llama.cpp/releases/download/b11671/" + name,
         size=len(archive),
         sha256="c" * 64,
     )
     return catalog.Catalog(
         context_tokens=16384,
-        engine=catalog.Engine(tag="b11671", backends={"cpu": tuple([entry] * files)}),
+        engine=catalog.Engine(tag="b11671", backends={backend: tuple([entry] * files)}),
         models=(
             catalog.Model(
                 id="tiny",
@@ -275,6 +334,214 @@ def test_a_cancelled_engine_install_leaves_nothing_behind(tmp_path: Path) -> Non
         engine.install(base, "cpu", pinned, lambda *_: None, cancel, fetch=fetch)
     assert caught.value.code == "model_cancelled"
     assert not (base / engine.ENGINE_DIR / "b11671-cpu").exists()
+
+
+# ---- engine tarballs -----------------------------------------------------------------
+
+
+def tar_file(name: str, body: bytes, mode: int = 0o644) -> tuple[tarfile.TarInfo, bytes]:
+    info = tarfile.TarInfo(name)
+    info.mode = mode
+    info.size = len(body)
+    return info, body
+
+
+def tar_link(name: str, target: str, kind: str = "symlink") -> tuple[tarfile.TarInfo, bytes]:
+    info = tarfile.TarInfo(name)
+    info.type = tarfile.SYMTYPE if kind == "symlink" else tarfile.LNKTYPE
+    info.linkname = target
+    return info, b""
+
+
+def write_tar(path: Path, entries: list[tuple[tarfile.TarInfo, bytes]]) -> Path:
+    with tarfile.open(path, "w:gz") as bundle:
+        for info, body in entries:
+            bundle.addfile(info, io.BytesIO(body) if info.isreg() else None)
+    return path
+
+
+def can_symlink(folder: Path) -> bool:
+    """Windows needs a privilege to create symlinks, so the positive test is skipped without it."""
+    if not hasattr(os, "symlink"):
+        return False
+    probe = folder / "probe-link"
+    try:
+        os.symlink("probe-target", probe)
+    except (OSError, NotImplementedError):
+        return False
+    probe.unlink(missing_ok=True)
+    return True
+
+
+MAC_ARCHIVE = "llama-b11671-bin-macos-arm64.tar.gz"
+
+
+def mac_catalog(archive: bytes) -> catalog.Catalog:
+    return engine_catalog(archive, backend="metal", name=MAC_ARCHIVE)
+
+
+def test_the_server_program_name_follows_the_platform(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert engine.server_program() == "llama-server.exe"
+    installed = tmp_path / "b11671-cpu"
+    nested = installed / "build" / "bin"
+    nested.mkdir(parents=True)
+    (nested / "llama-server").write_bytes(b"MZ")
+    assert engine.executable(installed) is None  # a Windows engine needs the .exe
+    (nested / "llama-server.exe").write_bytes(b"MZ")
+    assert engine.executable(installed) == nested / "llama-server.exe"
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert engine.server_program() == "llama-server"
+    assert engine.executable(installed) == nested / "llama-server"
+
+
+def test_the_server_and_libraries_get_the_executable_mode(monkeypatch: Any) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert engine._file_mode("llama-server") == 0o755
+    assert engine._file_mode("libggml.dylib") == 0o755
+    assert engine._file_mode("LICENSE") == 0o644
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert engine._file_mode("llama-server.exe") == 0o755
+
+
+def test_an_engine_link_that_is_not_an_archive_is_refused() -> None:
+    assert engine._archive_name("https://example.com/a.zip", 0) == "a.zip"
+    assert engine._archive_name("https://example.com/a.tar.gz", 0) == "a.tar.gz"
+    for refused in ("a.7z", "a.tar.bz2", "a.exe", ""):
+        with pytest.raises(AppError) as caught:
+            engine._archive_name(f"https://example.com/{refused}", 0)
+        assert caught.value.code == "local_ai_engine"
+
+
+def test_a_tarball_installs_the_nested_server_and_keeps_it_executable(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    archive = write_tar(
+        tmp_path / MAC_ARCHIVE,
+        [
+            tar_file("llama-b11671/llama-server", b"\xcf\xfa\xed\xfe fake"),
+            tar_file("llama-b11671/libggml.dylib", b"dylib"),
+            tar_file("llama-b11671/LICENSE", b"MIT"),
+        ],
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+    pinned = mac_catalog(archive.read_bytes())
+    base = tmp_path / "local-ai"
+
+    def fetch(url: str, folder: Path, name: str, size: int, sha256: str, **kwargs: Any) -> Path:
+        path = folder / name
+        path.write_bytes(archive.read_bytes())
+        return path
+
+    program = engine.install(base, "metal", pinned, lambda *_: None, None, fetch=fetch)
+    assert program.name == "llama-server"
+    assert program.parent.name == "llama-b11671"
+    assert program.read_bytes() == b"\xcf\xfa\xed\xfe fake"
+    assert (program.parent / "libggml.dylib").is_file()
+    assert engine.installed(base, pinned.engine.tag, "metal") is True
+    assert not list((base / engine.ENGINE_DIR).glob(".staging-*"))
+    if os.name == "posix":
+        assert program.stat().st_mode & 0o111
+        assert (program.parent / "libggml.dylib").stat().st_mode & 0o111
+
+
+def test_a_relative_symlink_inside_the_tarball_is_kept(tmp_path: Path) -> None:
+    if not can_symlink(tmp_path):
+        pytest.skip("this file system cannot create symlinks")
+    archive = write_tar(
+        tmp_path / MAC_ARCHIVE,
+        [
+            tar_file("engine/libggml.0.dylib", b"lib"),
+            tar_link("engine/libggml.dylib", "libggml.0.dylib"),
+        ],
+    )
+    out = tmp_path / "out"
+    engine.extract_tar(archive, out, None)
+    link = out / "engine" / "libggml.dylib"
+    assert link.is_symlink()
+    assert os.readlink(link) == "libggml.0.dylib"
+    assert link.read_bytes() == b"lib"
+
+
+@pytest.mark.parametrize("target", ["../../etc/passwd", "/usr/lib/libSystem.B.dylib", "..\\x"])
+def test_a_symlink_that_leaves_the_destination_is_refused(tmp_path: Path, target: str) -> None:
+    archive = write_tar(tmp_path / MAC_ARCHIVE, [tar_link("engine/libevil.dylib", target)])
+    with pytest.raises(AppError) as caught:
+        engine.extract_tar(archive, tmp_path / "out", None)
+    assert caught.value.code == "local_ai_engine"
+    assert not (tmp_path / "out" / "engine" / "libevil.dylib").is_symlink()
+
+
+def test_link_checks_accept_a_relative_target_inside_the_destination(tmp_path: Path) -> None:
+    """The resolver check runs on every platform, including one that cannot create symlinks."""
+    root = tmp_path.resolve()
+    target = root / "engine" / "libggml.dylib"
+    info = tarfile.TarInfo("engine/libggml.dylib")
+    info.linkname = "libggml.0.dylib"
+    engine._check_link(info, target, root)
+    for refused in ("../elsewhere.dylib", "/usr/lib/libSystem.B.dylib", ""):
+        info.linkname = refused
+        with pytest.raises(AppError):
+            engine._check_link(info, target, root)
+
+
+def test_a_hard_link_member_is_refused(tmp_path: Path) -> None:
+    archive = write_tar(
+        tmp_path / MAC_ARCHIVE,
+        [tar_file("engine/llama-server", b"x"), tar_link("engine/copy", "engine/llama-server", "hard")],
+    )
+    with pytest.raises(AppError):
+        engine.extract_tar(archive, tmp_path / "out", None)
+
+
+def test_a_device_member_is_refused(tmp_path: Path) -> None:
+    device = tarfile.TarInfo("engine/console")
+    device.type = tarfile.CHRTYPE
+    device.devmajor, device.devminor = 1, 3
+    archive = write_tar(tmp_path / MAC_ARCHIVE, [(device, b"")])
+    with pytest.raises(AppError):
+        engine.extract_tar(archive, tmp_path / "out", None)
+
+
+@pytest.mark.parametrize("name", ["../escaped", "/etc/escaped", "engine/../../escaped"])
+def test_a_tar_member_that_climbs_out_of_the_folder_is_refused(tmp_path: Path, name: str) -> None:
+    archive = write_tar(tmp_path / MAC_ARCHIVE, [tar_file(name, b"x")])
+    with pytest.raises(AppError) as caught:
+        engine.extract_tar(archive, tmp_path / "out", None)
+    assert caught.value.code == "local_ai_engine"
+    assert not (tmp_path / "escaped").exists()
+
+
+def test_duplicate_tar_paths_are_refused_whatever_their_case(tmp_path: Path) -> None:
+    archive = write_tar(
+        tmp_path / MAC_ARCHIVE,
+        [tar_file("engine/lib.dylib", b"a"), tar_file("engine/LIB.dylib", b"b")],
+    )
+    with pytest.raises(AppError) as caught:
+        engine.extract_tar(archive, tmp_path / "out", None)
+    assert caught.value.code == "local_ai_engine"
+
+
+def test_a_tarball_larger_than_its_cap_is_refused(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(engine, "MAX_MEMBER_BYTES", 4)
+    archive = write_tar(tmp_path / MAC_ARCHIVE, [tar_file("engine/big.bin", b"0123456789")])
+    with pytest.raises(AppError) as caught:
+        engine.extract_tar(archive, tmp_path / "out", None)
+    assert caught.value.code == "local_ai_engine"
+    monkeypatch.setattr(engine, "MAX_MEMBER_BYTES", 1024)
+    monkeypatch.setattr(engine, "MAX_TOTAL_BYTES", 6)
+    archive = write_tar(
+        tmp_path / "two.tar.gz",
+        [tar_file("engine/a.bin", b"0123"), tar_file("engine/b.bin", b"4567")],
+    )
+    with pytest.raises(AppError):
+        engine.extract_tar(archive, tmp_path / "other", None)
+
+
+def test_a_tarball_reader_cannot_be_tricked_by_a_zip(tmp_path: Path) -> None:
+    archive = write_zip(tmp_path / "engine.zip", {"llama-server": b"x"})
+    with pytest.raises(AppError):
+        engine.extract_tar(tmp_path / "engine.zip", tmp_path / "out", None)
 
 
 # ---- supervisor ----------------------------------------------------------------------

@@ -17,7 +17,7 @@ just dev
 
 Use the layout table in [AGENTS.md](../AGENTS.md). The frontend follows Feature-Sliced Design: `app` > `pages` > `widgets` > `features` > `entities` > `shared`, imports only downward, and each slice exposes a public `index.ts`. ESLint's `no-restricted-imports` rule enforces the boundary.
 
-The backend is `backend/openmeet_py/`: `api/` (HTTP surface and `commands.py` registry), `domain/` (meetings, notes, transcripts, summaries, settings, processing, provider HTTP, chat calls and export), `audio/`, `speech/` (engines, cloud STT, model library, safe archive, live transcript decoding in `live/`, streaming models in `streaming_models.py`), `platform/` (Windows integration), `infra/` (SQLite store and migrations, plus the read-only importer), plus `app.py`, `paths.py` and `migrations/`. Command arguments must agree between `src/shared/api/api.ts`, `api/commands.py` and the payload types the handlers return; `backend/tests/test_commands.py` catches a command the UI invokes but the backend does not serve.
+The backend is `backend/openmeet_py/`: `api/` (HTTP surface and `commands.py` registry), `domain/` (meetings, notes, transcripts, summaries, settings, processing, provider HTTP, chat calls and export), `audio/`, `speech/` (engines, cloud STT, model library, safe archive, live transcript decoding in `live/`, streaming models in `streaming_models.py`), `platform/` (Windows and macOS integration), `infra/` (SQLite store and migrations, plus the read-only importer), plus `app.py`, `paths.py` and `migrations/`. Command arguments must agree between `src/shared/api/api.ts`, `api/commands.py` and the payload types the handlers return; `backend/tests/test_commands.py` catches a command the UI invokes but the backend does not serve.
 
 Follow [AGENTS.md](../AGENTS.md) when using coding agents, especially its recording, data-preservation and repository rules.
 
@@ -29,14 +29,14 @@ just check
 
 The recipe runs, in order:
 
-| Check | Command |
-| --- | --- |
-| TypeScript | `corepack pnpm typecheck` |
-| Frontend lint (includes the FSD import boundary) | `corepack pnpm lint` |
-| Frontend formatting | `corepack pnpm format:check` |
-| Frontend behavior tests | `corepack pnpm test` |
-| Frontend production build | `corepack pnpm build` |
-| Backend tests | `uv run --directory backend pytest` |
+| Check                                            | Command                             |
+| ------------------------------------------------ | ----------------------------------- |
+| TypeScript                                       | `corepack pnpm typecheck`           |
+| Frontend lint (includes the FSD import boundary) | `corepack pnpm lint`                |
+| Frontend formatting                              | `corepack pnpm format:check`        |
+| Frontend behavior tests                          | `corepack pnpm test`                |
+| Frontend production build                        | `corepack pnpm build`               |
+| Backend tests                                    | `uv run --directory backend pytest` |
 
 Format frontend changes with `corepack pnpm format`. The formatting scripts exclude Markdown, so pass documents explicitly: `corepack pnpm exec prettier --check README.md docs/README.md`, and `--write` to fix them. `just --fmt --check` checks the justfile.
 
@@ -44,14 +44,14 @@ Compilation and mocked tests do not establish hardware capture or live provider 
 
 ## Test at the right boundary
 
-| Area | Existing coverage | What it does not establish |
-| --- | --- | --- |
-| React | Vitest, jsdom, Testing Library, mocked transport commands and events. | WebView2 behavior, permissions, playback devices. |
-| Notes | Debounced writes, stale revision refusal, save failure, draft retention, export and close ordering. | Survival of text never saved before power loss. |
-| Storage | Populated-database upgrades, foreign keys, FTS5 updates, source labels, deletion bounds. | Secure erasure, live backup consistency, every filesystem failure. |
-| Audio | Synthetic samples, pause generations, WAV writing and repair, capture internals with `OPENMEET_PY_FAKE_AUDIO=1`. | Audible real-device content, pause privacy on real callbacks, sleep/wake, driver failure, drift. |
-| Speech | Fake engines via `OPENMEET_PY_FAKE_STT=1`: argument building, output parsing, timing, cancellation. | whisper.cpp or sherpa-onnx accuracy and performance on real models. |
-| Providers | `httpx` mock transports: discovery, custom IDs, redirects, errors, text and audio plans, atomic publication. | Live billing, quality, availability, provider retention, Credential Manager fault behavior. |
+| Area      | Existing coverage                                                                                                | What it does not establish                                                                       |
+| --------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| React     | Vitest, jsdom, Testing Library, mocked transport commands and events.                                            | WebView2 or WKWebView behavior, permissions, playback devices.                                   |
+| Notes     | Debounced writes, stale revision refusal, save failure, draft retention, export and close ordering.              | Survival of text never saved before power loss.                                                  |
+| Storage   | Populated-database upgrades, foreign keys, FTS5 updates, source labels, deletion bounds.                         | Secure erasure, live backup consistency, every filesystem failure.                               |
+| Audio     | Synthetic samples, pause generations, WAV writing and repair, capture internals with `OPENMEET_PY_FAKE_AUDIO=1`. | Audible real-device content, pause privacy on real callbacks, sleep/wake, driver failure, drift. |
+| Speech    | Fake engines via `OPENMEET_PY_FAKE_STT=1`: argument building, output parsing, timing, cancellation.              | whisper.cpp or sherpa-onnx accuracy and performance on real models.                              |
+| Providers | `httpx` mock transports: discovery, custom IDs, redirects, errors, text and audio plans, atomic publication.     | Live billing, quality, availability, provider retention, credential store fault behavior.        |
 
 The fake switches exist for tests only. Never enable them in a build you hand to someone, and never present their output as real capture or a real transcript.
 
@@ -71,9 +71,21 @@ The app icon is `packaging/openmeet.ico` (16 to 256 px). Its source is `packagin
 
 `just smoke` runs `OpenMeet.exe --smoke`, which starts the server, checks `/health` and one command, prints `OK` and exits. It proves the bundle starts; it does not prove capture or transcription.
 
+### Build the Mac app
+
+On an Apple silicon Mac with macOS 14.2 or newer, `just build` runs `packaging/build.sh` instead, which needs Xcode command line tools, `uv`, Node.js 24 with Corepack and Git. It reuses the same steps as the Windows script, then differs where macOS does:
+
+- PyInstaller runs `--windowed --onedir`, because a one-file bundle is a poor Mac app, and produces `OpenMeet.app` with bundle id `dev.openmeet.app`.
+- The two permission sentences, `LSMinimumSystemVersion` 14.2 and the high-resolution and category keys are written into `Contents/Info.plist`.
+- The bundle is ad-hoc signed (`codesign --sign -`) with `packaging/macos/entitlements.plist`, which grants audio input and disables library validation because ad-hoc signing carries no team identifier. There is no notarization, and the signature changes on every rebuild, so a rebuilt app can need the permissions granted again.
+- `hdiutil` wraps `packaging/dist/OpenMeet-<version>-arm64.dmg` around the app; the version comes from `backend/pyproject.toml`.
+- The smoke step runs the built app with `--smoke` in a temporary data folder, and the build fails if PyInstaller could not collect `pydantic`'s submodules.
+
+The script refuses a non-Mac and an Intel Mac, and it prints the DMG's path, size and SHA-256. `just smoke` repeats the check against an existing bundle. Building the Mac app is untested here: the script was reviewed on a Windows PC, not run on a Mac. See [macOS](macos.md).
+
 ## Protect data during development
 
-Source runs and the built executable use the same data folder, `%APPDATA%\OpenMeetPy\`. Tests and ad-hoc runs should pass `--data-dir` to a scratch folder instead. Do not delete a database to resolve a development error, and do not point a development build at a folder you have not backed up.
+Source runs and the built executable use the same data folder, `%APPDATA%\OpenMeetPy\` on Windows and `~/Library/Application Support/OpenMeetPy` on a Mac. Tests and ad-hoc runs should pass `--data-dir` to a scratch folder instead. Do not delete a database to resolve a development error, and do not point a development build at a folder you have not backed up.
 
 Before a backup, wait for **Saved** and close the app normally. Copy the whole data folder, including `meetings.db-wal` and `meetings.db-shm` if present, plus exported snapshots separately. Keep original partial recordings when investigating recovery.
 

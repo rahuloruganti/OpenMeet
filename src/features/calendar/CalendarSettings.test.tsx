@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CalendarFeed, Settings } from "../../shared/api/api";
 import { api } from "../../shared/api/api";
 import { initialSettings } from "../../shared/test/app-harness";
@@ -35,6 +35,8 @@ const feed = (over: Partial<CalendarFeed> = {}): CalendarFeed => ({
   has_url: true,
   ...over,
 });
+
+afterEach(() => vi.unstubAllGlobals());
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -297,4 +299,31 @@ it("a fresh mount starts with an empty add form", async () => {
   expect(
     (within(reopened).getByLabelText("iCal address") as HTMLInputElement).value,
   ).toBe("");
+});
+
+it("names the Keychain as the store on a Mac", async () => {
+  vi.stubGlobal("navigator", {
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)",
+  });
+  const user = userEvent.setup();
+  render(<CalendarSettings settings={settings} disabled={false} />);
+
+  await user.click(await screen.findByRole("button", { name: "Add calendar" }));
+  const text =
+    screen.getByRole("form", { name: "Add calendar" }).textContent ?? "";
+  expect(text).toContain("It is stored in Keychain.");
+  expect(text).not.toContain("Windows Credential Manager");
+});
+
+it("names Windows Credential Manager as the store on Windows", async () => {
+  vi.stubGlobal("navigator", {
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+  });
+  const user = userEvent.setup();
+  render(<CalendarSettings settings={settings} disabled={false} />);
+
+  await user.click(await screen.findByRole("button", { name: "Add calendar" }));
+  const text =
+    screen.getByRole("form", { name: "Add calendar" }).textContent ?? "";
+  expect(text).toContain("It is stored in Windows Credential Manager.");
 });

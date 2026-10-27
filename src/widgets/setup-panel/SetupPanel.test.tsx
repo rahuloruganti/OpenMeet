@@ -1,8 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type { AudioDevices } from "../../shared/api/api";
 import { SetupPanel } from "./SetupPanel";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const devices: AudioDevices = {
   capture_supported: true,
@@ -71,4 +73,32 @@ it("keeps every option in More options", async () => {
   expect(more?.open).toBe(true);
   expect(screen.getByRole("button", { name: "Refresh devices" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Open Settings" })).toBeTruthy();
+});
+
+const unsupported: AudioDevices = {
+  capture_supported: false,
+  microphones: [],
+  outputs: [],
+};
+
+it("says recording needs Windows on Windows when capture is unsupported", () => {
+  vi.stubGlobal("navigator", {
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+  });
+  render(<SetupPanel {...props} devices={unsupported} />);
+
+  const alerts = screen.getAllByRole("alert").map((node) => node.textContent);
+  expect(alerts.join(" ")).toContain("Recording needs Windows.");
+  expect(alerts.join(" ")).not.toContain("this Mac");
+});
+
+it("does not claim a Mac needs Windows when capture is unsupported", () => {
+  vi.stubGlobal("navigator", {
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)",
+  });
+  render(<SetupPanel {...props} devices={unsupported} />);
+
+  const alerts = screen.getAllByRole("alert").map((node) => node.textContent);
+  expect(alerts.join(" ")).toContain("Recording is not available on this Mac.");
+  expect(alerts.join(" ")).not.toContain("Windows");
 });

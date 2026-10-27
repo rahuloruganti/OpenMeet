@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "../../shared/api/api";
 import { api } from "../../shared/api/api";
 import { SettingsPanel } from "./SettingsPanel";
@@ -896,4 +896,83 @@ it("shows a failed save on the Settings page and lets it be dismissed", async ()
   );
   await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
   expect(onDismissError).toHaveBeenCalled();
+});
+
+describe("on a Mac", () => {
+  const useMac = () =>
+    vi.stubGlobal("navigator", {
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)",
+    });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("records Command as CommandOrControl, the chord the backend reads as Command", async () => {
+    useMac();
+    const input = props();
+    render(<SettingsPanel {...input} initialSection="recording" />);
+    const capture = screen.getByRole("button", {
+      name: "Change stop recording shortcut",
+    });
+    await userEvent.click(capture);
+    fireEvent.keyDown(capture, {
+      key: "S",
+      code: "KeyS",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(input.onSaveShortcuts).toHaveBeenCalledWith(
+      "CommandOrControl+Shift+Space",
+      "CommandOrControl+Shift+S",
+    );
+  });
+
+  it("keeps Control as its own modifier instead of Ctrl", async () => {
+    useMac();
+    const input = props();
+    render(<SettingsPanel {...input} initialSection="recording" />);
+    const capture = screen.getByRole("button", {
+      name: "Change stop recording shortcut",
+    });
+    await userEvent.click(capture);
+    fireEvent.keyDown(capture, {
+      key: "F9",
+      code: "F9",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    expect(input.onSaveShortcuts).toHaveBeenCalledWith(
+      "CommandOrControl+Shift+Space",
+      "Control+Shift+F9",
+    );
+  });
+
+  it("shows the saved chord as modifier symbols", () => {
+    useMac();
+    render(<SettingsPanel {...props()} initialSection="recording" />);
+    expect(screen.getByLabelText("Pause / resume shortcut").textContent).toBe(
+      "⌘⇧Space",
+    );
+  });
+
+  it("asks for Command, Control or Option when a key has no modifier", async () => {
+    useMac();
+    const input = props();
+    render(<SettingsPanel {...input} initialSection="recording" />);
+    const capture = screen.getByRole("button", {
+      name: "Change pause / resume shortcut",
+    });
+    await userEvent.click(capture);
+    fireEvent.keyDown(capture, { key: "s", code: "KeyS" });
+    expect(
+      screen.getByText("Add Command, Control or Option, or use an F-key."),
+    ).toBeTruthy();
+    expect(input.onSaveShortcuts).not.toHaveBeenCalled();
+  });
+
+  it("names the Keychain instead of Windows Credential Manager", () => {
+    useMac();
+    render(<SettingsPanel {...props()} initialSection="about" />);
+    expect(screen.getByText("Keychain")).toBeTruthy();
+    expect(screen.queryByText("Windows Credential Manager")).toBeNull();
+  });
 });

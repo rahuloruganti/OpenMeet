@@ -1,11 +1,13 @@
 """API keys in the OS credential store, never in SQLite, logs, responses or frontend state.
 
-Keys go to the Windows Credential Manager through `keyring`, under this build's own service name.
-Tests install an in-memory backend with use_backend(); nothing else changes.
+Keys go to the OS credential store through `keyring`: Windows Credential Manager on Windows, Keychain
+on macOS, always under this build's own service name. Tests install an in-memory backend with
+use_backend(); nothing else changes.
 """
 
 from __future__ import annotations
 
+import sys
 import uuid
 from typing import Any, Optional
 
@@ -17,25 +19,33 @@ SERVICE = "OpenMeetPy"
 MAX_KEY_BYTES = 4096
 
 _override: Any = None
-_windows: Any = None
+_default: Any = None
+_default_platform: Optional[str] = None
 
 
 def use_backend(backend: Any) -> None:
-    """Replaces the credential backend (tests only). Pass None to restore the Windows store."""
+    """Replaces the credential backend (tests only). None restores the OS credential store."""
     global _override
     _override = backend
 
 
 def _backend() -> Any:
-    global _windows
+    global _default, _default_platform
     if _override is not None:
         return _override
-    if _windows is None:
-        # Constructed explicitly: entry-point discovery can miss inside a one-file PyInstaller exe.
-        from keyring.backends.Windows import WinVaultKeyring
+    if _default is None or _default_platform != sys.platform:
+        # Constructed explicitly: entry-point discovery can miss inside a frozen PyInstaller build.
+        # keyring.backends.macOS.Keyring is a pure ctypes wrapper, so no pyobjc import happens here.
+        if sys.platform == "darwin":
+            from keyring.backends.macOS import Keyring
 
-        _windows = WinVaultKeyring()
-    return _windows
+            _default = Keyring()
+        else:
+            from keyring.backends.Windows import WinVaultKeyring
+
+            _default = WinVaultKeyring()
+        _default_platform = sys.platform
+    return _default
 
 
 def _unavailable() -> AppError:

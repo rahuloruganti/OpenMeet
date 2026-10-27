@@ -1,4 +1,4 @@
-"""Global shortcuts: parsing and validation, RegisterHotKey on one owner thread, and WM_HOTKEY actions.
+"""Global shortcuts: parsing and validation, registration through the desktop backend, and actions.
 
 Covers parse_shortcuts, shortcut_warning and the register/restore steps of save_settings.
 There is deliberately no global start shortcut. A hotkey runs the same recorder pause/resume/stop
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import sys
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -24,12 +25,12 @@ log = logging.getLogger("openmeet_py")
 MAX_SHORTCUT_CHARS = 100
 PAUSE_ID = 1
 STOP_ID = 2
+# CommandOrControl and CmdOrCtrl mean Command on macOS and Control on Windows, so _modifier_bits
+# resolves them per platform instead of living in this table.
+COMMAND_OR_CONTROL = ("commandorcontrol", "cmdorctrl")
 MODIFIERS = {
     "ctrl": MOD_CONTROL,
     "control": MOD_CONTROL,
-    # CommandOrControl is Control on Windows.
-    "commandorcontrol": MOD_CONTROL,
-    "cmdorctrl": MOD_CONTROL,
     "alt": MOD_ALT,
     "option": MOD_ALT,
     "shift": MOD_SHIFT,
@@ -61,7 +62,9 @@ NAMED_KEYS = {
     "right": 0x27,
 }
 USE_HINT = "Use a shortcut such as Control+Shift+F9."
+USE_HINT_MAC = "Use a shortcut such as Command+Shift+F9."
 BARE_KEY = "Add Ctrl or Alt, or use an F-key."
+BARE_KEY_MAC = "Add Command, Control or Option, or use an F-key."
 DIFFERENT = "Use different shortcuts for pause and stop."
 UNAVAILABLE = "This shortcut could not be registered. Choose another combination."
 
@@ -74,8 +77,30 @@ class Accelerator:
     ctrl_or_alt: bool
 
 
+def _on_mac() -> bool:
+    return sys.platform == "darwin"
+
+
+def _hint() -> str:
+    """The parse hint names the modifier key the platform spells it with."""
+    return USE_HINT_MAC if _on_mac() else USE_HINT
+
+
+def _modifier_bits(token: str) -> Optional[int]:
+    """Our platform-neutral bits for one modifier name, or None for a key token."""
+    lower = token.lower()
+    if lower in COMMAND_OR_CONTROL:
+        return MOD_WIN if _on_mac() else MOD_CONTROL
+    return MODIFIERS.get(lower)
+
+
 def _key_code(token: str) -> Optional[tuple[int, bool]]:
     """Virtual-key code and whether it is an F-key, or None for an unknown key name."""
+    if _on_mac():
+        # macOS key codes sit next to the Carbon table, so only macos.py knows them.
+        from openmeet_py.platform.macos import mac_key_code
+
+        return mac_key_code(token)
     lower = token.lower()
     if len(token) == 1 and token.isascii() and token.isalpha():
         return ord(token.upper()), False
@@ -94,26 +119,29 @@ def parse(text: str) -> Accelerator:
         raise AppError("invalid_shortcut", "Shortcut is too long.")
     tokens = [token.strip() for token in text.split("+")]
     if any(not token for token in tokens):
-        raise AppError("invalid_shortcut", USE_HINT)
+        raise AppError("invalid_shortcut", _hint())
     modifiers = 0
     key: Optional[tuple[int, bool]] = None
     for token in tokens:
-        bit = MODIFIERS.get(token.lower())
+        bit = _modifier_bits(token)
         if bit is not None:
             modifiers |= bit
             continue
         code = _key_code(token)
         if code is None or key is not None:
-            raise AppError("invalid_shortcut", USE_HINT)
+            raise AppError("invalid_shortcut", _hint())
         key = code
     if key is None:
-        raise AppError("invalid_shortcut", USE_HINT)
+        raise AppError("invalid_shortcut", _hint())
     vk, f_key = key
+    # A bare non-F key needs a modifier that a shortcut can safely sit on: Ctrl or Alt on Windows,
+    # Command, Control or Option on macOS.
+    required = MOD_WIN | MOD_CONTROL | MOD_ALT if _on_mac() else MOD_CONTROL | MOD_ALT
     return Accelerator(
         modifiers=modifiers,
         vk=vk,
         f_key=f_key,
-        ctrl_or_alt=bool(modifiers & (MOD_CONTROL | MOD_ALT)),
+        ctrl_or_alt=bool(modifiers & required),
     )
 
 
@@ -123,7 +151,7 @@ def validate(pause_text: str, stop_text: Optional[str]) -> tuple[Accelerator, Op
     stop = parse(stop_text) if stop_text is not None else None
     for accelerator in (pause, stop):
         if accelerator is not None and not accelerator.f_key and not accelerator.ctrl_or_alt:
-            raise AppError("invalid_shortcut", BARE_KEY)
+            raise AppError("invalid_shortcut", BARE_KEY_MAC if _on_mac() else BARE_KEY)
     if stop is not None and stop == pause:
         raise AppError("invalid_shortcut", DIFFERENT)
     return pause, stop
@@ -176,7 +204,15 @@ class HotkeyService:
             self._thread.start()
             if not self._ready.wait(10):
                 log.warning("the hotkey thread did not start")
+        else:
+            self._bind_presses()
         return self._call(lambda: self._register_saved(pause_text, stop_text))
+
+    def _bind_presses(self) -> None:
+        """A backend without a loop of its own (Carbon on macOS) gets our consumer for presses."""
+        attach = getattr(self.win32, "on_message", None)  # only the native backends deliver events
+        if attach is not None:
+            attach(self._on_message)
 
     def apply(self, pause: Accelerator, stop: Optional[Accelerator], pause_text: str, stop_text: Optional[str]) -> None:
         """Replaces the registrations. On failure the previous ones are registered again and this raises."""

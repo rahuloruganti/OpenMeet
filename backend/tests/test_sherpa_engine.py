@@ -329,7 +329,7 @@ def test_make_engine_chooses_sherpa_for_a_spec_and_the_fake_flag_wins(tmp_path: 
 
 
 def test_sherpa_status_and_listing_follow_the_installed_files(client: TestClient, sherpa: types.ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sherpa_models, "supported", lambda: True)  # platform-independent: the project is Windows x64
+    monkeypatch.setattr(sherpa_models, "supported", lambda: True)  # platform-independent: the gate is tested in test_speech_targets
     root = client.app.state.ctx.store.data_dir / "stt"
     by_id = {row["id"]: row for row in invoke(client, "stt_status")["models"]}
     assert by_id["sherpa:parakeet-v3"]["installed"] is False and by_id["sherpa:parakeet-v3"]["engine"] == "sherpa-onnx"
