@@ -50,7 +50,13 @@
   line-height: 1.4;
 }
 .task-text {
+  display: block;
+  height: auto;
+  padding: 2px 4px;
+  overflow: hidden;
+  field-sizing: content;
   font-weight: 500;
+  resize: none;
 }
 .task-text:hover:not(:disabled),
 .task-owner:hover:not(:disabled) {
@@ -89,6 +95,14 @@
 }
 .task input[type="date"]::-webkit-calendar-picker-indicator {
   opacity: 0.5;
+}
+/* No date yet: show only the calendar icon, so empty rows stay quiet. */
+.task input.task-due-empty:not(:focus-within):not(:hover) {
+  width: 28px;
+}
+.task
+  input.task-due-empty:not(:focus-within):not(:hover)::-webkit-datetime-edit {
+  display: none;
 }
 .task-src {
   display: inline-flex;

@@ -72,12 +72,20 @@ export function ActionItems({
               onChange={(event) => save(item, { done: event.target.checked })}
             />
             <div className="task-body">
-              <input
+              <textarea
                 className="task-text"
+                rows={1}
                 aria-label={`Task: ${item.text}`}
                 defaultValue={item.text}
                 maxLength={500}
                 disabled={locked}
+                // One logical line that wraps; Enter commits like it did in a text field.
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  }
+                }}
                 onBlur={(event) =>
                   event.target.value.trim() !== item.text &&
                   save(item, { text: event.target.value })
@@ -98,6 +106,7 @@ export function ActionItems({
                 />
                 <input
                   type="date"
+                  className={item.due_date ? undefined : "task-due-empty"}
                   aria-label={`Due date: ${item.text}`}
                   defaultValue={item.due_date ?? ""}
                   disabled={locked}

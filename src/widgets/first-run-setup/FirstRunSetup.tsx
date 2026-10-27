@@ -910,24 +910,14 @@ export function FirstRunSetup(props: Props) {
           </button>
           <span className="grow" />
           {step !== "done" ? (
-            <>
-              <button
-                type="button"
-                className="ghost"
-                disabled={busy}
-                onClick={() => go(steps[index + 1])}
-              >
-                Skip step
-              </button>
-              <button
-                type="button"
-                className="primary"
-                disabled={busy}
-                onClick={() => go(steps[index + 1])}
-              >
-                Continue
-              </button>
-            </>
+            <button
+              type="button"
+              className="primary"
+              disabled={busy}
+              onClick={() => go(steps[index + 1])}
+            >
+              Continue
+            </button>
           ) : (
             <>
               <button

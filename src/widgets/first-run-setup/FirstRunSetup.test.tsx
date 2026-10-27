@@ -169,7 +169,7 @@ it("shows what import would bring over, states the result, and lets the step be 
     ).getAttribute("role"),
   ).toBe("status");
   // The step is skippable: Import leaves the step alone and Continue moves on.
-  await userEvent.click(screen.getByRole("button", { name: "Skip step" }));
+  await userEvent.click(screen.getByRole("button", { name: "Continue" }));
   expect(
     await screen.findByRole("heading", { name: "How should we transcribe?" }),
   ).toBeTruthy();
