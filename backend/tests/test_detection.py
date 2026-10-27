@@ -175,9 +175,7 @@ def test_setting_commands_validate_their_input(setup: Any) -> None:
     assert body["code"] == "detection_app"
 
 
-def test_detection_support_follows_the_platform_or_the_fake(setup: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, _, _, _ = setup
-    assert invoke(client, "detection_supported") is detection.supported()
+def test_detection_support_follows_the_platform_or_the_fake(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(detection.sys, "platform", "linux")
     monkeypatch.delenv("OPENMEET_PY_FAKE_DETECTION", raising=False)
     assert detection.supported() is False

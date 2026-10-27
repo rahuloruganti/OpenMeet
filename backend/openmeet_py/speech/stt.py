@@ -1,8 +1,8 @@
 """Local speech-to-text: status, settings validation and the explicit install.
 
 Whisper: whisper.cpp b5454 runs through pywhispercpp in-process (the package is installed with the
-app), so the "engine" flag means the package imports and no engine download exists. sherpa-onnx
-(phase 4b): the engine is the pip package sherpa-onnx; models and the Silero VAD are downloaded by
+app), so the "engine" flag means the package imports and no engine download exists. sherpa-onnx:
+the engine is the pip package sherpa-onnx; models and the Silero VAD are downloaded by
 stt_install (see sherpa_models.py).
 Only the selected model and the VAD file are downloaded, and only by stt_install.
 OPENMEET_PY_FAKE_STT=1 replaces the engine with a fake for tests and browser checks; it reports the

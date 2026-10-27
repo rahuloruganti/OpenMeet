@@ -154,11 +154,7 @@ def read_settings(db: sqlite3.Connection) -> Settings:
             "SELECT id,name,instructions FROM summary_templates ORDER BY name,id"
         ).fetchall()
     ]
-    recipes = [
-        {"id": row[0], "name": row[1], "prompt": row[2]}
-        for row in db.execute("SELECT id,name,prompt FROM recipes ORDER BY name,id").fetchall()
-    ]
-    # ponytail: apps ignored before names were kept get their id as the name; no rows exist in Phase 1.
+    # Apps ignored before names were kept get their id as the name.
     ignored = [
         {"id": row[0], "name": row[1] or row[0]}
         for row in db.execute(
@@ -199,7 +195,6 @@ def read_settings(db: sqlite3.Connection) -> Settings:
         },
         "summary_instructions": row[12],
         "summary_templates": templates,
-        "recipes": recipes,
         "processing_mode": row[14],
         "processing_summary": row[15],
         "summary_default": row[16],
@@ -294,26 +289,6 @@ def action_items(db: sqlite3.Connection, meeting_id: str) -> list[dict[str, Any]
     ]
 
 
-def question_threads(db: sqlite3.Connection, meeting_id: str) -> list[dict[str, Any]]:
-    """Newest thread first; each thread's turns oldest first."""
-    threads = [
-        {"id": row[0], "turns": []}
-        for row in db.execute(
-            "SELECT id FROM question_threads WHERE meeting_id=?1 ORDER BY id DESC", (meeting_id,)
-        ).fetchall()
-    ]
-    by_id = {thread["id"]: thread for thread in threads}
-    for turn_id, thread_id, question, answer, provider, model in db.execute(
-        "SELECT u.id, u.thread_id, u.question, u.answer, u.provider, u.model FROM question_turns u "
-        "JOIN question_threads t ON t.id = u.thread_id WHERE t.meeting_id=?1 ORDER BY u.id",
-        (meeting_id,),
-    ).fetchall():
-        by_id[thread_id]["turns"].append(
-            {"id": turn_id, "question": question, "answer": answer, "provider": provider, "model": model}
-        )
-    return threads
-
-
 def latest_summary(db: sqlite3.Connection, meeting_id: str) -> Optional[tuple]:
     return db.execute(
         "SELECT markdown, provider, model, template_hash, edited_from IS NOT NULL, transcript_hash "
@@ -360,7 +335,6 @@ def meeting_detail(db: sqlite3.Connection, meeting_id: str) -> dict[str, Any]:
         "speaker_names": names,
         "segment_meta": meta,
         "transcript_versions": transcript_edits.transcript_versions(db, meeting_id),
-        "question_threads": question_threads(db, meeting_id),
         "tracks": tracks_of(db, meeting_id),
     }
 
@@ -397,29 +371,3 @@ def list_summaries(db: sqlite3.Connection, meeting_id: str) -> list[dict[str, An
         }
         for row in rows
     ]
-
-
-def library_answers(db: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Newest first; meeting_ids in the order they were sent (M1 first); scope null when none was stored."""
-    answers = [
-        {
-            "id": row[0],
-            "question": row[1],
-            "answer": row[2],
-            "provider": row[3],
-            "model": row[4],
-            "meeting_ids": [],
-            "scope": None if row[5] is None else json.loads(row[5]),
-        }
-        for row in db.execute(
-            "SELECT id, question, answer, provider, model, scope_json FROM library_answers "
-            "ORDER BY id DESC"
-        ).fetchall()
-    ]
-    by_id = {answer["id"]: answer for answer in answers}
-    for answer_id, meeting_id in db.execute(
-        "SELECT answer_id, meeting_id FROM library_answer_meetings ORDER BY answer_id, position"
-    ).fetchall():
-        if answer_id in by_id:
-            by_id[answer_id]["meeting_ids"].append(meeting_id)
-    return answers

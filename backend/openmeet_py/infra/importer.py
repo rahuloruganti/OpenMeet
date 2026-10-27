@@ -5,7 +5,7 @@ folder inside the destination, checked there, and only moved into place after th
 been copied successfully. A failed import removes the staging folder and the files it created, so
 the destination is never left half-imported. A destination database that holds no meeting and no
 audio is replaced, not refused: it is moved into pre-import-backup/<UTC timestamp>/ first and kept
-there, so settings, recipes and the vault path are never deleted with the staging folder.
+there, so settings, saved templates and the vault path are never deleted with the staging folder.
 """
 
 from __future__ import annotations
@@ -187,7 +187,7 @@ def _destination_has_data(dest_data_dir: Path) -> bool:
 def _backup_folder(dest: Path) -> tuple[Path, str]:
     """Creates pre-import-backup/<UTC timestamp>/ and returns it with its report label.
 
-    A used destination is not refused just because it holds no meeting (settings, a recipe or a
+    A used destination is not refused just because it holds no meeting (settings, a saved template or a
     vault folder live elsewhere in the database), so its database is kept here instead of deleted.
     """
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

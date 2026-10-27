@@ -58,7 +58,6 @@ const settings: Settings = {
   },
   summary_instructions: "",
   summary_templates: [],
-  recipes: [],
   processing_mode: "final",
   processing_summary: "general-v1",
   summary_default: "general-v1",

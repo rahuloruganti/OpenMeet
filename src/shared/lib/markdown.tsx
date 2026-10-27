@@ -256,27 +256,3 @@ export function renderMarkdown(
   flush();
   return blocks;
 }
-
-/**
- * The body of the `## heading` section (case-insensitive), up to the next
- * heading of the same or a higher level; null when the heading is missing.
- */
-export function extractSection(
-  markdown: string,
-  heading: string,
-): string | null {
-  const wanted = heading.trim().toLowerCase();
-  let level = 0;
-  const body: string[] = [];
-  for (const line of markdown.split(/\r?\n/)) {
-    const match = /^(#{1,6})\s+(.*?)\s*$/.exec(line);
-    if (level === 0) {
-      if (match?.[2].toLowerCase() === wanted) level = match[1].length;
-    } else if (match && match[1].length <= level) {
-      break;
-    } else {
-      body.push(line);
-    }
-  }
-  return level === 0 ? null : body.join("\n").trim();
-}

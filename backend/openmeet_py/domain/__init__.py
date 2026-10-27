@@ -1,1 +1,1 @@
-"""Meeting logic: summaries, questions, tasks, export, transcript edits, processing and providers."""
+"""Meeting logic: summaries, rewrite, tasks, export, transcript edits, processing and providers."""

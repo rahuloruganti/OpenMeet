@@ -1,5 +1,4 @@
-/* Tag chips and their edit field. Lane B owns this file; the inspector (lane C)
-   places it. Shape follows DESIGN-SPEC section 4: chips are 24px pills on
+/* Tag chips and their edit field; the inspector places it. Chips are 24px pills on
    --hover, the field is a quiet 28px row that fills --paper on focus. No mono. */
 
 .tags {

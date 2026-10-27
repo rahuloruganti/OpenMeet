@@ -1,4 +1,4 @@
-/* Transcript reading pane, turns, and player. Lane D owns this file.
+/* Transcript reading pane, turns, and player. 
    Turns are quiet rows: a dot and a name, a tabular timestamp, and the spoken
    text. No cards, no stripes, no monospace except where a number is a clock. */
 
@@ -506,43 +506,6 @@
   display: none;
 }
 
-.tx-pop-title {
-  margin: 0 0 8px;
-  font-family: var(--font-ui);
-  font-size: var(--fs-sm);
-  font-weight: 500;
-}
-
-.tx-pop-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.tx-pop-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 5px 0;
-  font-family: var(--font-ui);
-  font-size: var(--fs-sm);
-  font-weight: 500;
-}
-
-.tx-pop-src {
-  margin-left: auto;
-  color: var(--ink-3);
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.tx-pop-note {
-  margin: 8px 0 0;
-  color: var(--ink-2);
-  font-size: var(--fs-xs);
-}
-
 /* The speaker form lives in this popover; the shared block margins are for the
    inspector, not for a 280px menu. */
 .tx-pop .speaker-names {
@@ -915,8 +878,7 @@
 }
 
 /* ---------------------------------------------------------------- moved in -- */
-/* Moved out of src/app/styles.css in Phase 0. Lane D owns it; a cited segment
-   is marked with the accent tint, never a stripe. */
+/* A cited segment is marked with the accent tint, never a stripe. */
 .highlighted-segment {
   border-radius: var(--radius-4);
   background: var(--accent-tint);

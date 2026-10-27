@@ -360,7 +360,7 @@ class CloudDecoder(VadDecoder):
 
 
 class FakeDecoder:
-    """Deterministic fictional lines for tests and the browser harness. Never presented as real speech."""
+    """Deterministic fictional lines for tests. Never presented as real speech."""
 
     def __init__(self, text: str = "Fictional line", segment: int = FAKE_SEGMENT):
         self.text = text

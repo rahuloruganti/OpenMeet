@@ -9,7 +9,7 @@ saved Settings like every other settings command. Downloads run only on an expli
 Hugging Face search, emit `local_ai_progress`, and honour `local_ai_cancel`.
 
 `ensure_ready` is the one hook the LLM path uses: when the assigned connection is this managed
-server, a summary, question or rewrite first makes sure the server is running with the chosen model.
+server, a summary or a rewrite first makes sure the server is running with the chosen model.
 """
 
 from __future__ import annotations

@@ -124,7 +124,7 @@ VAD = Artifact(
     '29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf', 885_098,
 )
 
-# sherpa-onnx (second engine, phase 4b): the VAD file and the model archives.
+# sherpa-onnx (second engine): the VAD file and the model archives.
 # The engine itself is the pip package sherpa-onnx, not a download, so there is no engine entry here.
 SHERPA_VAD = Artifact(
     'sherpa-silero', 'silero_vad.onnx',

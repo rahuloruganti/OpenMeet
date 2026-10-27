@@ -2,7 +2,7 @@
 
 ## Set up and run
 
-Follow the [README prerequisites](../README.md#build-and-run-from-source). From the repository root:
+Install the tools listed in the [README](../README.md#install). From the repository root:
 
 ```sh
 just setup
@@ -12,8 +12,6 @@ just dev
 `setup` installs the pinned Python environment with `uv` (Python 3.13, `backend/uv.lock`) and the JavaScript dependencies with the pinned pnpm version. It does not download speech models. `dev` builds the UI into the backend, starts the FastAPI server on a free loopback port, and opens the `pywebview` window. Keep the terminal open.
 
 `just ui` starts only the Vite dev server on `127.0.0.1:1420`; no backend is attached and there is no mock layer, so the page shows the not-connected notice and every command fails. It does not prove persistence, capture, shortcuts or permissions. Stop the earlier process before starting another on port 1420.
-
-`.preview/` is an untracked browser harness on port 1430 that serves fictional data and simulated recording; run it with `corepack pnpm exec vite --config .preview/vite.preview.config.ts`. Nothing in it touches a database, an audio device or the network.
 
 ## Find the relevant code
 
@@ -55,11 +53,11 @@ Compilation and mocked tests do not establish hardware capture or live provider 
 | Speech | Fake engines via `OPENMEET_PY_FAKE_STT=1`: argument building, output parsing, timing, cancellation. | whisper.cpp or sherpa-onnx accuracy and performance on real models. |
 | Providers | `httpx` mock transports: discovery, custom IDs, redirects, errors, text and audio plans, atomic publication. | Live billing, quality, availability, provider retention, Credential Manager fault behavior. |
 
-The fake switches exist for tests and the browser harness only. Never enable them in a build you hand to someone, and never present their output as real capture or a real transcript.
+The fake switches exist for tests only. Never enable them in a build you hand to someone, and never present their output as real capture or a real transcript.
 
 Routine tests use synthetic audio and fictional text. Do not start a recording, open audio devices, or send meeting content to a provider during normal verification.
 
-`just hardware` runs the opt-in real-hardware tests. Run it only with explicit authorization and only when real devices are the point; missing devices block the test rather than passing it. Hardware qualification also needs audible distinct tracks, absence of paused content, failure recovery, and a 60-minute run with measured relative drift below 100 ms. See [Phase 7 hardware qualification](phase-7-hardware-qualification.md).
+`just hardware` runs the opt-in real-hardware tests. Run it only with explicit authorization and only when real devices are the point; missing devices block the test rather than passing it. Hardware qualification also needs audible distinct tracks, absence of paused content, failure recovery, and a 60-minute run with measured relative drift below 100 ms.
 
 ## Build the executable
 

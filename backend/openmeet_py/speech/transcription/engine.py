@@ -1,4 +1,4 @@
-"""Speech engines behind one protocol: whisper.cpp (pywhispercpp, phase 4a), sherpa-onnx (phase 4b) and a fake.
+"""Speech engines behind one protocol: whisper.cpp (pywhispercpp), sherpa-onnx and a fake.
 
 pywhispercpp and sherpa_onnx are imported only inside engine methods, never at module import, so nothing
 in the app or the tests loads a native library until a real transcription starts. Models are constructed

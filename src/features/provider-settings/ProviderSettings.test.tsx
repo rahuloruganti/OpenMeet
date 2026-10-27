@@ -63,7 +63,6 @@ const settings: Settings = {
   },
   summary_instructions: "",
   summary_templates: [],
-  recipes: [],
   processing_mode: "recording",
   processing_summary: null,
   summary_default: "general-v1",

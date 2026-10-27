@@ -42,7 +42,6 @@ export const sample: MeetingDetail = {
   speaker_names: { you: null, others: null },
   segment_meta: [],
   transcript_versions: [],
-  question_threads: [],
 };
 
 export const textPlan = {
@@ -131,7 +130,6 @@ export const initialSettings: Settings = {
   stop_shortcut: null,
   summary_instructions: "",
   summary_templates: [],
-  recipes: [],
   processing_mode: "final",
   processing_summary: "general-v1",
   summary_default: "general-v1",

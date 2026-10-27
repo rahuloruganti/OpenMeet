@@ -1,4 +1,4 @@
-"""Phase 2: provider connections, keys, model discovery, summaries, questions, tasks, library, rewrite.
+"""Provider connections, keys, model discovery, summaries, tasks, rewrite.
 
 Every provider call goes through httpx.MockTransport. No real network, no real key, no real keychain.
 """
@@ -543,50 +543,6 @@ def test_defaults_and_templates_are_validated(client: TestClient) -> None:
     assert body["code"] == "summary_template"
 
 
-# ---- questions ---------------------------------------------------------------
-
-
-def test_question_thread_sends_earlier_turns_and_is_saved(client: TestClient) -> None:
-    stub = Stub(lambda r: reply("Friday."), lambda r: reply("Room B."))
-    configure(client, stub)
-    meeting = note(client, "Fictional", "We ship on Friday in room B.")
-    thread = invoke(client, "ask_meeting", id=meeting, question="When do we ship?", thread_id=None)
-    assert len(thread["turns"]) == 1 and thread["turns"][0]["answer"] == "Friday."
-    follow = invoke(client, "ask_meeting", id=meeting, question="Where?", thread_id=thread["id"])
-    assert [t["answer"] for t in follow["turns"]] == ["Friday.", "Room B."]
-    second_body = stub.bodies()[1]
-    assert "<previous>" in second_body and "When do we ship?" in second_body
-    assert invoke(client, "get_meeting", id=meeting)["question_threads"][0]["id"] == thread["id"]
-    remaining = invoke(client, "delete_question_thread", meeting_id=meeting, thread_id=thread["id"])
-    assert remaining == []
-    status, body = invoke_error(
-        client, "delete_question_thread", meeting_id=meeting, thread_id=thread["id"]
-    )
-    assert body["code"] == "not_found"
-
-
-def test_question_with_no_matching_passages_sends_nothing(client: TestClient) -> None:
-    stub = Stub(lambda r: reply("never"))
-    configure(client, stub)
-    meeting = note(client, "Fictional", "alpha beta gamma " * 9000)  # over the single-request size
-    status, body = invoke_error(
-        client, "ask_meeting", id=meeting, question="zebra quantum?", thread_id=None
-    )
-    assert body["code"] == "insufficient_evidence"
-    assert stub.requests == []
-
-
-def test_question_excerpts_include_matching_notes_when_too_long(client: TestClient) -> None:
-    stub = Stub(lambda r: reply("Budget is 5k."))
-    configure(client, stub)
-    notes = ("filler words " * 9000) + "\n\nThe budget is 5k for the launch.\n\n" + ("more filler " * 4000)
-    meeting = note(client, "Fictional", notes)
-    thread = invoke(client, "ask_meeting", id=meeting, question="What is the budget?", thread_id=None)
-    assert thread["turns"][0]["answer"] == "Budget is 5k."
-    assert "The budget is 5k for the launch." in stub.bodies()[0]
-    assert len(stub.bodies()[0]) < 130_000
-
-
 # ---- tasks -------------------------------------------------------------------
 
 
@@ -646,43 +602,6 @@ def test_summary_bullets_follow_the_action_items_rules() -> None:
     assert summary_bullets(markdown) == ["Ship it.", "Numbered one", "Star"]
 
 
-# ---- library -----------------------------------------------------------------
-
-
-def test_library_question_cites_meetings_in_order_and_is_saved(client: TestClient) -> None:
-    stub = Stub(lambda r: reply("Launch is Friday [M2]."))
-    configure(client, stub)
-    first = note(client, "Fictional A", "Budget notes.")
-    second = note(client, "Fictional B", "Launch on Friday.")
-    answer = invoke(client, "ask_library", meeting_ids=[second, first, second], question="When is launch?")
-    assert answer["meeting_ids"] == [second, first]
-    body = stub.bodies()[0]
-    assert '<meeting ref="M1" title="Fictional B"' in body and '<meeting ref="M2" title="Fictional A"' in body
-    assert [a["id"] for a in invoke(client, "list_library_answers")] == [answer["id"]]
-    invoke(client, "delete_meeting", id=second)
-    assert invoke(client, "list_library_answers") == []
-
-
-def test_library_scope_limits_are_checked_before_sending(client: TestClient) -> None:
-    stub = Stub(lambda r: reply("x"))
-    configure(client, stub)
-    status, body = invoke_error(client, "ask_library", meeting_ids=[], question="q")
-    assert body["code"] == "invalid_scope"
-    ids = [note(client, f"Fictional {i}", "n") for i in range(21)]
-    status, body = invoke_error(client, "ask_library", meeting_ids=ids, question="q")
-    assert body["code"] == "invalid_scope"
-    assert stub.requests == []
-
-
-def test_delete_library_answer_returns_the_rest(client: TestClient) -> None:
-    configure(client, Stub(lambda r: reply("one"), lambda r: reply("two")))
-    meeting = note(client, "Fictional", "Notes.")
-    first = invoke(client, "ask_library", meeting_ids=[meeting], question="first?")
-    second = invoke(client, "ask_library", meeting_ids=[meeting], question="second?")
-    remaining = invoke(client, "delete_library_answer", id=first["id"])
-    assert [a["id"] for a in remaining] == [second["id"]]
-
-
 # ---- rewrite -----------------------------------------------------------------
 
 
@@ -695,7 +614,6 @@ def test_rewrite_sends_only_the_selection_and_the_request(client: TestClient) ->
     body = stub.bodies()[0]
     assert "A long sentence here." in body and "Make it shorter" in body
     assert "salaries" not in body
-    assert invoke(client, "list_library_answers") == []
 
 
 def test_rewrite_refuses_empty_or_oversize_text_before_sending(client: TestClient) -> None:

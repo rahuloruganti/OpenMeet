@@ -1,6 +1,6 @@
-/* Recording status row. Lane D owns it.
+/* Recording status row.
    It keeps its place under the workspace (the shell reserves the row in
-   meeting-workspace.css, which this lane does not own) and reads as a pill
+   meeting-workspace.css) and reads as a pill
    row: a state chip, the level meters, then the control pills. */
 .recording-bar.rec {
   display: flex;

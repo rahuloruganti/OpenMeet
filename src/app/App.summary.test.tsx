@@ -66,18 +66,6 @@ describe("summaries and questions", () => {
       ]);
     };
 
-    const turn = (id: number, question: string, answer: string) => ({
-      id,
-
-      question,
-
-      answer,
-
-      provider: "https://provider.example/v1",
-
-      model: "test-chat",
-    });
-
     it("sends notes and transcript text on Create summary, then shows provenance", async () => {
       const model = "anthropic/claude-haiku-5-5";
       vi.mocked(api.providerKeyStatus).mockResolvedValue("present");
@@ -450,12 +438,6 @@ describe("summaries and questions", () => {
 
     it("has no question box or saved threads on the Summary tab", async () => {
       providerReady();
-      vi.mocked(api.getMeeting).mockResolvedValue({
-        ...sample,
-        question_threads: [
-          { id: 4, turns: [turn(1, "What is the budget?", "It is 40k.")] },
-        ],
-      });
       await ready();
       await userEvent.click(screen.getByRole("tab", { name: "Summary" }));
       expect(screen.getByRole("tabpanel", { name: "Summary" })).toBeTruthy();

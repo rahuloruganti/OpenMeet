@@ -14,7 +14,7 @@ import threading
 import unicodedata
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from openmeet_py.api import auto_capture, import_commands, lifecycle, live_commands, reads, recording
 from openmeet_py.api import calendar as calendar_feeds
@@ -29,7 +29,7 @@ from openmeet_py.api.context import (
 )
 from openmeet_py.api.errors import AppError, not_available
 from openmeet_py.api.reads import EXPORT_FORMATS, read_settings
-from openmeet_py.domain import connections, folders, processing, questions, summaries, tasks, transcript_edits
+from openmeet_py.domain import connections, folders, processing, rewrite, summaries, tasks, transcript_edits
 from openmeet_py.domain.exporter import write_snapshot
 from openmeet_py.infra.store import transaction
 from openmeet_py.local_ai import service as local_ai
@@ -218,10 +218,6 @@ def list_summaries(ctx: Context, id: str) -> list[dict[str, Any]]:
     return summaries.list_summaries(ctx, id)
 
 
-def list_library_answers(ctx: Context) -> list[dict[str, Any]]:
-    return questions.list_library_answers(ctx)
-
-
 def provider_key_status(ctx: Context, role: str) -> str:
     return connections.provider_key_status(ctx, role)
 
@@ -331,7 +327,6 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "search_meetings": search_meetings,
     "export_meeting": export_meeting,
     "list_summaries": list_summaries,
-    "list_library_answers": list_library_answers,
     # Folders: one optional folder per meeting; the sidebar groups by folder
     "list_folders": folders.list_folders,
     "create_folder": folders.create_folder,
@@ -339,7 +334,7 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "delete_folder": folders.delete_folder,
     "move_meeting_to_folder": folders.move_meeting,
     "reorder_folders": folders.reorder_folders,
-    # Phase 3: devices, recording and audio files
+    # Devices, recording and audio files
     "get_recording_state": recording.get_recording_state,
     "list_audio_devices": recording.list_audio_devices,
     "save_default_devices": recording.save_default_devices,
@@ -351,10 +346,9 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "recover_audio": recording.recover_audio,
     "audio_position": recording.audio_position,
     "audio_usage": recording.audio_usage,
-    # Phase 5: global shortcuts, meeting detection, taskbar attention, session processing
+    # Global shortcuts, meeting detection, taskbar attention, session processing
     "get_startup_warning": hotkeys.get_startup_warning,
     "save_settings": hotkeys.save_settings,
-    "detection_supported": detection.detection_supported,
     "set_detection_ignored": detection.set_detection_ignored,
     "save_auto_capture": auto_capture.save_auto_capture,
     # Calendar context: read-only ICS feeds, meeting-to-event links, preparation and reminders
@@ -375,7 +369,7 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "retry_session_processing": processing.retry_session_processing,
     "cancel_session_processing": processing.cancel_session_processing,
     "provider_key_status": provider_key_status,
-    # Phase 4a: local and cloud speech, model library, transcripts
+    # Local and cloud speech, model library, transcripts
     "save_stt_mode": stt.save_stt_mode,
     "save_stt_settings": stt.save_stt_settings,
     "stt_install": stt.stt_install,
@@ -414,7 +408,7 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     # The one-time import from the previous OpenMeet data folder, run while the app is open
     "import_status": import_commands.import_status,
     "import_previous": import_commands.import_previous,
-    # Phase 2: providers, summaries, questions, tasks, library, rewrite, templates, recipes
+    # Providers, summaries, rewrite, tasks and templates
     "save_api_connection": connections.save_api_connection,
     "delete_api_connection": connections.delete_api_connection,
     "api_connection_key_status": connections.api_connection_key_status,
@@ -435,20 +429,14 @@ COMMANDS: dict[str, Callable[..., Any]] = {
     "live_models": live_commands.live_models,
     "live_model_install": live_commands.live_model_install,
     "live_model_cancel": live_commands.live_model_cancel,
-    "save_recipe": summaries.save_recipe,
-    "delete_recipe": summaries.delete_recipe,
     "save_speaker_names": summaries.save_speaker_names,
-    "ask_meeting": questions.ask_meeting,
-    "ask_library": questions.ask_library,
-    "delete_question_thread": questions.delete_question_thread,
-    "delete_library_answer": questions.delete_library_answer,
-    "rewrite_text": questions.rewrite_text,
+    "rewrite_text": rewrite.rewrite_text,
     "save_action_item": tasks.save_action_item,
     "delete_action_item": tasks.delete_action_item,
     "import_action_items": tasks.import_action_items,
 }
 
-# Commands that answer HTTP 501, mapped to the feature name. Empty after phase 5: every command the UI
+# Commands that answer HTTP 501, mapped to the feature name. Empty: every command the UI
 # invokes is implemented. Tray controls are deferred, but they have no command.
 NOT_AVAILABLE: dict[str, str] = {}
 

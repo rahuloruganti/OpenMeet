@@ -59,8 +59,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type IconSize = 16 | 20;
-
 export type IconProps = Omit<
   ComponentProps<LucideIcon>,
   "size" | "strokeWidth"

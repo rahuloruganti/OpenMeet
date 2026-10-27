@@ -1,4 +1,4 @@
-/* Command palette. Lane G owns this file; colour and depth come from tokens.
+/* Command palette. Colour and depth come from tokens.
    Centred 560px dialog, a borderless 44px search field, 36px result rows. */
 
 .palette-scrim {

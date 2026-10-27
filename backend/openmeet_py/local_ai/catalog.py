@@ -214,10 +214,6 @@ def fit(need: int, hardware: dict[str, Any]) -> str:
     return "too_big"
 
 
-def fit_of(model: Model, context_tokens: int, hardware: dict[str, Any]) -> str:
-    return fit(needs_bytes(model.size_bytes, model.kv_bytes_per_token, context_tokens), hardware)
-
-
 def offload_layers(model: Model, fit_kind: str, vram_bytes: Optional[int]) -> int:
     """GPU layers to offload: all of them when the model fits VRAM, else the share VRAM covers."""
     if fit_kind == "gpu":

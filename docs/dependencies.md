@@ -46,6 +46,9 @@ Pinned in `[project].dependencies` in [backend/pyproject.toml](../backend/pyproj
 | `sherpa-onnx` | 1.13.8 | Apache-2.0 | Second local speech engine (Python API over ONNX Runtime) | None |
 | `sherpa-onnx-core` | 1.13.8 | Apache-2.0 | Native runtime shipped with `sherpa-onnx` (`onnxruntime.dll`) | None |
 | `websockets` | 15.0.1 | BSD-3-Clause | WebSocket protocol for the event stream; pinned explicitly because `uvicorn` runs without its `standard` extra | Loopback only |
+| `icalendar` | 6.3.2 | BSD-2-Clause | Calendar feed parsing (ICS) | Outbound only to the feed URL you add |
+| `python-dateutil` | 2.9.0.post0 | Apache-2.0 OR BSD-3-Clause | Recurrence rules (RRULE, RDATE, EXDATE) in calendar feeds | None |
+| `tzdata` | 2026.5 | Apache-2.0 | Time zone data for `zoneinfo` on Windows | None |
 
 Notes:
 
@@ -83,6 +86,7 @@ Installed in `backend/.venv` and collected by PyInstaller. Listed because they s
 | `clr_loader` | 0.3.1 | unverified (no license field in installed metadata) | `pythonnet` |
 | `proxy_tools` | 0.1.0 | MIT | `pywebview` |
 | `packaging` | 26.3 | Apache-2.0 OR BSD-2-Clause | `pywhispercpp` |
+| `six` | 1.17.0 | MIT | `python-dateutil` |
 
 Build-only packages (PyInstaller, `altgraph` MIT, `pefile` MIT, `pyinstaller-hooks-contrib` Apache-2.0/GPLv2 with the PyInstaller exception, `setuptools` MIT) belong to the build environment, not to the shipped application code.
 

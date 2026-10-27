@@ -1096,19 +1096,6 @@
   color: var(--ink-2);
 }
 
-/* Installed speech models */
-.om-model-name {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-.om-model-name .om-mono {
-  color: var(--ink-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-}
-
 /* --------------------------------------------------- templates / empty states */
 .om-empty {
   margin: 0;

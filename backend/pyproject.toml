@@ -38,7 +38,7 @@ package = false
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
-  "hardware: opens real audio devices. Runs only with -m hardware AND OPENMEET_PY_HARDWARE_AUDIO=1 (see docs/phase-7-hardware-qualification.md).",
+  "hardware: opens real audio devices. Runs only with -m hardware AND OPENMEET_PY_HARDWARE_AUDIO=1.",
   "real_model: loads a real whisper.cpp model. Runs only with OPENMEET_PY_REAL_MODEL=1 and OPENMEET_PY_MODEL_FILE (never downloads).",
 ]
 addopts = '-q -m "not hardware and not real_model"'

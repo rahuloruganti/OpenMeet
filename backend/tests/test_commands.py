@@ -12,7 +12,6 @@ from conftest import TOKEN, invoke, invoke_error, latest_migration
 from openmeet_py import paths
 from openmeet_py.api.commands import COMMANDS, NOT_AVAILABLE
 from openmeet_py.infra.store import Store
-from openmeet_py.platform import detection
 
 REPO = Path(__file__).resolve().parents[2]
 API_TS = REPO / "src" / "shared" / "api" / "api.ts"
@@ -70,12 +69,9 @@ def test_startup_commands_return_harmless_idle_values(client: TestClient) -> Non
     assert speech["installed"] is False and speech["model"] is False and speech["vad"] is False
     assert len(speech["models"]) == 36
     assert not any(model["installed"] for model in speech["models"])
-    # Supported on Windows (the consent store) or with the fake for the browser check; never on other platforms.
-    assert invoke(client, "detection_supported") is detection.supported()
     status, body = invoke_error(client, "get_session_processing", id="x")
     assert (status, body["code"]) == (400, "not_found")
     assert invoke(client, "list_summaries", id="x") == []
-    assert invoke(client, "list_library_answers") == []
     assert invoke(client, "audio_usage") == 0
     settings = invoke(client, "get_settings")
     assert settings["stt_mode"] == "local"

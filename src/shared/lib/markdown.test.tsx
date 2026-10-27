@@ -1,6 +1,6 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { extractSection, renderMarkdown } from "./markdown";
+import { renderMarkdown } from "./markdown";
 
 const html = (markdown: string) =>
   render(<div>{renderMarkdown(markdown)}</div>).container.innerHTML;
@@ -189,31 +189,5 @@ describe("renderMarkdown", () => {
     const output = html(input);
     expect(output).not.toMatch(/<(script|img|a|b|i)[\s>]/);
     expect(output).toContain(inner);
-  });
-});
-
-describe("extractSection", () => {
-  const summary =
-    "## Summary\nShort.\n\n## Action items\n- Ana: send deck\n- Raj: book room\n";
-
-  it("returns the section body up to the next heading", () => {
-    expect(extractSection(`${summary}## Notes\nlater`, "Action items")).toBe(
-      "- Ana: send deck\n- Raj: book room",
-    );
-  });
-
-  it("handles a last section, CRLF and case", () => {
-    expect(extractSection(summary.replace(/\n/g, "\r\n"), "action ITEMS")).toBe(
-      "- Ana: send deck\n- Raj: book room",
-    );
-  });
-
-  it("keeps deeper subheadings and returns null when missing", () => {
-    expect(
-      extractSection("## Action items\n### Ana\n- x\n# Next", "Action items"),
-    ).toBe("### Ana\n- x");
-    expect(
-      extractSection("## Summary\nNo actions.", "Action items"),
-    ).toBeNull();
   });
 });

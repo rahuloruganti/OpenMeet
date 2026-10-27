@@ -15,10 +15,7 @@ type Props = {
   onDefaultTemplate: (template: string) => void;
 };
 
-/**
- * Saved summary templates. Recipes (saved questions) stay in storage but are not offered:
- * Ask was removed, so nothing would use them.
- */
+/** Saved summary templates, with the template the Enhance picker starts at. */
 export function SummaryTemplates(props: Props) {
   const { settings } = props;
   const { shown, mark } = useSaved();

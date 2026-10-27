@@ -39,6 +39,6 @@ build:
 smoke:
     packaging/dist/OpenMeet.exe --smoke
 
-# Opt-in real-audio run on real devices (see docs/phase-7-hardware-qualification.md).
+# Opt-in real-audio run on real devices.
 hardware:
     $env:OPENMEET_PY_HARDWARE_AUDIO = "1"; uv run --project backend pytest -c backend/pyproject.toml -m hardware

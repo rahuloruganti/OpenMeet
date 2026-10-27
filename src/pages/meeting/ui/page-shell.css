@@ -1,5 +1,5 @@
-/* Page-shell surfaces (lane G): feedback rows and the one processing row.
-   Lane A owns the base `.feedback-stack` placement; this file styles the rows. */
+/* Page-shell surfaces: feedback rows and the one processing row.
+   The base `.feedback-stack` placement is in styles.css; this file styles the rows. */
 
 .feedback-stack .detection-card,
 .feedback-stack .error,

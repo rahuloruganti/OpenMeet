@@ -1,6 +1,6 @@
-"""Summaries, summary versions and edits, templates, instructions, defaults, recipes and speaker names.
+"""Summaries, summary versions and edits, templates, instructions, defaults and speaker names.
 
-Covers generate_summary and the storage/recipes save functions. A generated summary is saved only
+Covers generate_summary and the template save functions. A generated summary is saved only
 if the notes, transcript, provider and speaker names are unchanged since the request was prepared.
 """
 
@@ -27,7 +27,6 @@ MAX_SUMMARY_EDIT_BYTES = 2 * 1024 * 1024
 EMPTY_EDIT = "Enter summary text. Nothing was saved."
 MAX_SUMMARY_INSTRUCTIONS = 2000
 MAX_TEMPLATE_INSTRUCTIONS = 4000
-MAX_RECIPE_PROMPT = 1000
 
 
 @dataclass(frozen=True)
@@ -274,15 +273,10 @@ def _missing_template() -> AppError:
     )
 
 
-def _missing_recipe() -> AppError:
-    return AppError("recipe_missing", "This recipe no longer exists.")
-
-
 TEMPLATES = Named(
     "summary_templates", "instructions", llm.CUSTOM_TEMPLATE_PREFIX, "summary_template",
     "custom template", 50, _missing_template,
 )
-RECIPES = Named("recipes", "prompt", "recipe-", "recipe", "recipe", 50, _missing_recipe)
 
 
 def _save_named(db: sqlite3.Connection, kind: Named, id: Optional[str], name: str, body: str) -> None:
@@ -372,30 +366,6 @@ def save_processing_default(ctx: Context, mode: Any, summary: Any) -> dict[str, 
             (mode, summary),
         )
         return reads.read_settings(db)
-
-
-# ---- recipes -----------------------------------------------------------------
-
-
-def save_recipe(ctx: Context, id: Any, name: Any, prompt: Any) -> dict[str, Any]:
-    id = optional_text_arg(id, "id")
-    name = text_arg(name, "name")
-    text = text_arg(prompt, "prompt").strip()
-    if not text:
-        raise AppError("recipe", "Write the question this recipe asks.")
-    try:
-        llm.validate_instructions(text, MAX_RECIPE_PROMPT)
-    except AppError as error:
-        raise AppError("recipe", error.message) from None
-    with ctx.store.lock:
-        _save_named(ctx.store.db, RECIPES, id, name, text)
-        return reads.read_settings(ctx.store.db)
-
-
-def delete_recipe(ctx: Context, id: Any) -> dict[str, Any]:
-    with ctx.store.lock:
-        _delete_named(ctx.store.db, RECIPES, text_arg(id, "id"))
-        return reads.read_settings(ctx.store.db)
 
 
 # ---- speaker names -----------------------------------------------------------

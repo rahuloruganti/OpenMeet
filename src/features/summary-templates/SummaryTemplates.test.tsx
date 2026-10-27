@@ -17,7 +17,6 @@ const settings = {
   summary_templates: [
     { id: "custom-retro", name: "Retro", instructions: "## Went well" },
   ],
-  recipes: [{ id: "recipe-1", name: "Risks", prompt: "Which risks?" }],
 } as unknown as Settings;
 const props = (input: Settings = settings) => ({
   settings: input,
@@ -27,12 +26,10 @@ const props = (input: Settings = settings) => ({
 });
 beforeEach(() => vi.resetAllMocks());
 
-it("offers summary templates only: no recipes and no kind choice, since Ask is gone", async () => {
+it("offers summary templates only, with no kind choice", async () => {
   const input = props();
   render(<SummaryTemplates {...input} />);
   expect(screen.getByRole("button", { name: "Edit Retro" })).toBeTruthy();
-  expect(screen.queryByRole("button", { name: "Edit Risks" })).toBeNull();
-  expect(screen.queryByText("Recipe")).toBeNull();
   expect(screen.getByText("1 saved")).toBeTruthy();
   await userEvent.click(screen.getByRole("button", { name: "New template" }));
   expect(screen.queryByRole("group", { name: "Template kind" })).toBeNull();
@@ -116,7 +113,6 @@ it("shows a plain list message when nothing is saved yet", () => {
       {...props({
         ...settings,
         summary_templates: [],
-        recipes: [],
       } as Settings)}
     />,
   );

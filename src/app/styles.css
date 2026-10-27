@@ -1,7 +1,7 @@
 /* ============================================================================
    OpenMeet design tokens and global base
    ----------------------------------------------------------------------------
-   Lane A owns this file: tokens, fonts, the global element base, the app shell,
+   Tokens, fonts, the global element base, the app shell,
    and the shared primitives every surface uses (`.primary`, `.muted`, `.tag`,
    `.ghost`, `.sm`, `kbd`, `.sr-only`, dialog chrome, banners, feedback).
 
@@ -192,8 +192,8 @@ html[data-theme="light"] {
 }
 
 /* ---------------------------------------------------------------- base --- */
-/* Element defaults sit in a layer, so any lane's scoped rule wins without a
-   specificity fight. Lane A is the only writer of this block. */
+/* Element defaults sit in a layer, so any scoped rule wins without a
+   specificity fight. */
 @layer base {
   * {
     box-sizing: border-box;

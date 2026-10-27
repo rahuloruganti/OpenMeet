@@ -1,5 +1,4 @@
-/* Meetings home: sidebar. Lane B owns this file.
-   Recipe: DESIGN-SPEC section 5 — 224px --sidebar surface, a 1px divider on the
+/* Meetings home: sidebar. 224px --sidebar surface, a 1px divider on the
    right, a 44px brand row, one primary pill, one quiet search field, 28px filter
    pills, two-line meeting rows and a quiet footer. Selected rows are a flat
    --active fill: no stripe, no underline. Every icon is a Lucide component from
@@ -350,8 +349,8 @@
   line-height: var(--lh-xs);
 }
 
-/* Folder manager takes the top of the list while it is open. Lane F owns its
-   internals; this only gives it a home and a breathing edge. */
+/* Folder manager takes the top of the list while it is open. This only gives it a
+   home and a breathing edge. */
 .sb .sb-manage {
   margin: 0 0 8px;
   padding: 8px;

@@ -24,7 +24,7 @@ from typing import Optional
 
 import numpy as np
 
-MAX_DURATION_S = 65 * 60  # the owner's upper bound, see docs/phase-7-hardware-qualification.md
+MAX_DURATION_S = 65 * 60  # the owner's upper bound
 CHUNK_FRAMES = 48_000  # generated and written one second at a time, so long files need little RAM
 MARKER_FADE_S = 0.005  # short fade in and out, so the burst does not click
 

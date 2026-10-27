@@ -1,27 +1,35 @@
-.pi/
+# Dependencies and generated output
 node_modules/
 dist/
-*.log
-.env
-.env.*
-.DS_Store
-Thumbs.db
-
-# Locally installed agent skills
-.agents/
-skills-lock.json
-
-# Local audit and agent worktree artifacts
-.audit/
-.claude/
-
-# Python environment and generated UI (backend/web is written by the Vite build)
 backend/.venv/
 backend/web/
-
-# PyInstaller output: dist/OpenMeet.exe, intermediate build tree, generated spec
 packaging/build/
 packaging/dist/
 packaging/*.spec
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+*.tsbuildinfo
+*.log
+
+# Secrets
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local agent and design tooling
+.agents/
+.audit/
+.claude/
+.impeccable/
+.pi/
+.preview/
+.superlite/
+skills-lock.json
+PRODUCT.md
+
+# Local work history (kept on disk, not tracked)
+log.md

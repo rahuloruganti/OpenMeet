@@ -2,8 +2,8 @@
 
 Covers the whole after-recording lifecycle: plan, attach, snapshot, cancel and retry; the durable
 stages with their budgets, notes barrier, publication, failure mapping and restart; the worker loop;
-and the cancellation gate that allows one operation at a time. Speech and summaries reuse the phase 4
-transcription jobs and the phase 2 summary helpers; this module adds the durable state around them.
+and the cancellation gate that allows one operation at a time. Speech and summaries reuse the
+transcription jobs and the summary helpers; this module adds the durable state around them.
 
 The database is the authority. Every publish re-checks the plan (configuration revision, state, stage,
 deadline, budgets) under the store lock. Settings and provider changes flip a
@@ -402,13 +402,6 @@ class Processing:
                 (now + POST_STOP_SECONDS, meeting_id),
             )
 
-    def cancel_live(self, meeting_id: str) -> None:
-        """Stopping cancels an in-flight live chunk."""
-        with self.owner.lock:
-            active = self.owner.active
-            if active is not None and active.meeting_id == meeting_id and active.stage == "live":
-                active.cancel.set()
-
     def quit(self) -> None:
         """Window or server closing: refuse new work and mark unfinished runs interrupted."""
         self.quitting = True
@@ -662,7 +655,7 @@ class Processing:
         tracks: list[dict[str, Any]],
         guard: _Guard,
     ) -> tuple[list[dict[str, Any]], str, str]:
-        """Local or cloud speech for these tracks, through the phase 4 jobs. The speech slot is non-blocking."""
+        """Local or cloud speech for these tracks, through the transcription jobs. The speech slot is non-blocking."""
         if not self.ctx.stt_busy.acquire(blocking=False):
             raise AppError(
                 "processing_busy",

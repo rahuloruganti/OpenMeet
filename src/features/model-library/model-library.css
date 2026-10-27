@@ -1,6 +1,4 @@
-/* Model library panel: moved out of src/app/styles.css in Phase 0.
-   Lane F owns this file and fills it in; the rules below are the pre-retheme
-   values that used to live in the global stylesheet. */
+/* Model library panel. */
 
 .model-library {
   grid-column: 1 / -1;

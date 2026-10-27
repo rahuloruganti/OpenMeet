@@ -142,14 +142,6 @@ export type Segment = {
     { kind: "timed"; start_ms: number; end_ms: number } | { kind: "untimed" };
   text: string;
 };
-export type QuestionTurn = {
-  id: number;
-  question: string;
-  answer: string;
-  provider: string;
-  model: string;
-};
-export type QuestionThread = { id: number; turns: QuestionTurn[] };
 export type MeetingDetail = {
   meeting: Meeting;
   user_markdown: string;
@@ -170,8 +162,6 @@ export type MeetingDetail = {
   segment_meta: SegmentMeta[];
   /** Earlier transcripts, newest first. */
   transcript_versions: TranscriptVersion[];
-  /** Saved questions and answers, newest thread first, turns oldest first. */
-  question_threads: QuestionThread[];
   tracks: Array<{
     kind: string;
     path: string;
@@ -219,7 +209,6 @@ export type Settings = {
   export: ExportOptions;
   summary_instructions: string;
   summary_templates: CustomTemplate[];
-  recipes: Recipe[];
   /** "recording" or "final"; applied to every new recording. Old "live"/"both" rows read as "recording"/"final". */
   processing_mode: string;
   processing_summary: string | null;
@@ -419,8 +408,6 @@ export type LocalAiStatus = {
 };
 /** An app using the microphone: a Windows privacy-store key or a macOS bundle identifier. */
 export type MicApp = { id: string; name: string };
-/** A saved question prompt; `id` is `recipe-<uuid>`. */
-export type Recipe = { id: string; name: string; prompt: string };
 /** `original_text` holds the engine's text once the user edited a segment. */
 export type SegmentMeta = { id: number; original_text: string | null };
 export type TranscriptVersion = {

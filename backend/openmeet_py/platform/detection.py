@@ -296,10 +296,6 @@ class DetectionService:
         return apps
 
 
-def detection_supported(ctx: Context) -> bool:
-    return supported()
-
-
 def set_detection_ignored(ctx: Context, app_id: Any, name: Any, ignored: Any) -> dict[str, Any]:
     if not isinstance(app_id, str) or not isinstance(name, str):
         raise AppError("invalid_args", "app_id and name must be text.")

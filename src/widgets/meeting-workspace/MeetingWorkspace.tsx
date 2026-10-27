@@ -500,7 +500,6 @@ export function MeetingWorkspace(props: Props) {
     !selected.summary &&
     versions.length === 0 &&
     selected.action_items.length === 0 &&
-    selected.question_threads.length === 0 &&
     selected.tracks.length === 0;
   const needsTitle = !(deleting === "meeting" && emptyNote);
   const askDelete = (what: "meeting" | "audio") => {

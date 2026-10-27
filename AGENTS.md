@@ -2,11 +2,11 @@
 
 ## What this is
 
-OpenMeet is a local-first Windows meeting notetaker: one PyInstaller executable that runs a Python 3.13 backend (`FastAPI` + `uvicorn`), a `pywebview` window on WebView2, and a React 19 + TypeScript + Vite UI. Windows 11 only. Version 0.9.0. The retired implementation is kept at git tag `rust-final` for history; do not restore or port from it.
+OpenMeet is a local-first Windows meeting notetaker: one PyInstaller executable that runs a Python 3.13 backend (`FastAPI` + `uvicorn`), a `pywebview` window on WebView2, and a React 19 + TypeScript + Vite UI. Windows 11 only. Version 0.9.0.
 
 - One active capture: microphone plus system audio, written locally as separate tracks.
 - Local transcription (whisper.cpp and sherpa-onnx) is the default; cloud STT and AI summaries are optional user-configured connections.
-- Real-hardware qualification is **not** done. Audio capture, local transcription, global shortcuts, meeting detection and the Windows credential store are exercised only with fakes and stubs. Every `unqualified` label in the docs is current. See `docs/phase-7-hardware-qualification.md`.
+- Real-hardware qualification is **not** done. Audio capture, local transcription, global shortcuts, meeting detection and the Windows credential store are exercised only with fakes and stubs. Every `unqualified` label in the docs is current.
 - Simulation and fictional fixtures are not recordings or generated summaries. Preserve that distinction in the UI, database, exports and reports.
 
 Read `docs/README.md` and `docs/development.md` before substantial work. The product direction is an original, open-source, local-first meeting assistant in the style of Granola, using models the user chooses; never copy Granola code, assets, prompts or private APIs. Verify claims against code and executed checks; documentation can lag implementation.
@@ -16,14 +16,14 @@ Read `docs/README.md` and `docs/development.md` before substantial work. The pro
 | Path | Responsibility |
 | --- | --- |
 | `src/app/` | App shell: providers, layout, page routing, global styles. |
-| `src/pages/meeting/`, `pages/settings/`, `pages/setup/` | One page per route: meetings home, settings, first-run setup. Ask was removed from the UI (owner decision); its backend commands and saved data remain. |
+| `src/pages/meeting/`, `pages/settings/`, `pages/setup/` | One page per route: meetings home, settings, first-run setup. Ask was removed (owner decision); old databases keep their saved Ask rows but no code reads them. |
 | `src/widgets/` | Composite UI blocks (`meeting-sidebar`, `meeting-workspace`, `settings-panel`, `setup-panel`, `recording-controls`, `first-run-setup`, `command-palette`). |
 | `src/features/` | User actions with their own state (`note-writer`, `transcription-settings`, `provider-settings`, `rewrite-selection`, `action-items`, `meeting-tags`, `model-library`, `local-ai`, `speaker-names`, `summary-templates`, `transcript-versions`, `live-transcript`, `live-settings`). |
 | `src/entities/` | Domain models and their read/update logic (`meeting`, `processing`). |
 | `src/shared/` | Framework-free code: `api/` (command bindings, `transport.ts`), `lib/` (Markdown, timestamps), `ui/` (small shared components), `test/`. |
 | `backend/openmeet_py/app.py` | Desktop entry point: free loopback port, server thread, `pywebview` window, `--smoke`, `--import-from`. |
 | `backend/openmeet_py/api/` | HTTP/WebSocket surface and the command registry (`commands.py`), recording command handlers, reads. |
-| `backend/openmeet_py/domain/` | Summaries, questions, tasks, export, transcript edits, processing runs, provider connections and LLM calls. |
+| `backend/openmeet_py/domain/` | Summaries, rewrite, tasks, export, transcript edits, processing runs, provider connections and LLM calls. |
 | `backend/openmeet_py/audio/` | WASAPI capture backend, WAV writing and repair, timing indexes, recorder lifecycle. |
 | `backend/openmeet_py/speech/` | Local engines (whisper.cpp, sherpa-onnx), model catalogues and library, downloads, safe archive install, cloud STT, transcription pipeline, and `live/` (live transcript while recording: streaming ONNX, VAD plus offline model, or cloud per utterance). |
 | `backend/openmeet_py/local_ai/` | Local AI: hardware probe, pinned llama.cpp engine, Hugging Face GGUF search and download (`hub.py`), the managed `llama-server` supervisor, and `ensure_ready` before any AI request. |
@@ -33,7 +33,6 @@ Read `docs/README.md` and `docs/development.md` before substantial work. The pro
 | `backend/openmeet_py/migrations/` | Append-only numbered SQL migrations. |
 | `backend/tests/` | pytest suite; fakes instead of devices and engines. |
 | `packaging/build.ps1` | Builds the UI into `backend/web` and produces `packaging/dist/OpenMeet.exe`, with the icon `packaging/openmeet.ico` (source `openmeet-icon.svg`). |
-| `.preview/` | Untracked browser harness on port 1430 with fictional data. |
 | `docs/` | Current documentation. Retired product and status documents live in Git history only. |
 
 ## Run and check
@@ -90,9 +89,9 @@ just smoke     # OpenMeet.exe --smoke
 
 ## Honesty about qualification
 
-- Phase 7 (`docs/phase-7-hardware-qualification.md`) is open. A passing pytest run, a `--smoke` run, a browser preview or a fake-device run does **not** qualify audio capture, pause privacy, drift, transcription accuracy, shortcuts, detection or credential storage.
+- Real-hardware qualification is open. A passing pytest run, a `--smoke` run, a browser preview or a fake-device run does **not** qualify audio capture, pause privacy, drift, transcription accuracy, shortcuts, detection or credential storage.
 - Never describe a successful build or a mocked test as verified hardware behavior. Do not invent measurements, device results or provider quality.
-- Keep `unqualified` labels unless a recorded PASS entry exists in Phase 7.
+- Keep `unqualified` labels until the owner records a passing real-device run.
 
 ## Repository and handoff
 
@@ -101,5 +100,5 @@ just smoke     # OpenMeet.exe --smoke
 - Keep build output (`packaging/dist/`, `backend/web/`, `dist/`), `node_modules`, `.venv`, local databases and audio, credentials and environment files out of commits.
 - Keep both lockfiles tracked: `pnpm-lock.yaml` and `backend/uv.lock`.
 - Track new dependency and model licenses in `THIRD_PARTY_LICENSES.md`; the inventory is not a completed release audit.
-- Update affected documentation when behavior changes, especially privacy wording and qualification claims. Append significant requests and brief outcomes to `log.md` without secrets or invented timestamps.
+- Update affected documentation when behavior changes, especially privacy wording and qualification claims. Append significant requests and brief outcomes to `log.md` (a local file, ignored by Git) without secrets or invented timestamps.
 - End each handoff with what changed, which checks actually ran, and what remains unverified or blocked.

@@ -1,1 +1,1 @@
-"""Read-only and write-only helpers for the phase 7 hardware checklist. Not part of the exe."""
+"""Read-only and write-only helpers for the manual hardware checks. Not part of the exe."""

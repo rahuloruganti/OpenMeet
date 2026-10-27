@@ -1,5 +1,5 @@
 /* Meeting workspace: toolbar, one reading column, inspector and sheets.
-   Lane C owns this file. Tokens only; no bare element selectors. */
+   Tokens only; no bare element selectors. */
 
 /* The main column: workspace above, recording bar below. */
 .workspace.meeting-main {

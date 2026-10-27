@@ -57,7 +57,7 @@ def test_stt_settings_validate_and_persist(client: TestClient) -> None:
     assert (status, body["code"]) == (400, "stt_settings")
     status, body = invoke_error(client, "save_stt_settings", language="en", prompt="bad\x07", model="small")
     assert body["code"] == "stt_settings"
-    # sherpa ids are accepted in phase 4b; a downloaded-folder id must be one plain name.
+    # sherpa ids are accepted; a downloaded-folder id must be one plain name.
     assert invoke(client, "save_stt_settings", language="en", prompt="", model="sherpa:parakeet-v3")["stt_model"] == "sherpa:parakeet-v3"
     status, body = invoke_error(client, "save_stt_settings", language="en", prompt="", model="sherpa-dir:../team")
     assert body["code"] == "stt_settings"

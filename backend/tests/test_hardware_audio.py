@@ -5,7 +5,7 @@ Not run by default (the pytest config excludes the hardware marker). It runs onl
   - the owner authorized it:     OPENMEET_PY_HARDWARE_AUDIO=1
 Missing devices FAIL here, never skip. Passing proves only that two finalized files were written.
 It does not prove audible content, pause privacy or clock accuracy.
-Those are phase 7 manual checks (docs/phase-7-hardware-qualification.md).
+Those are manual checks.
 """
 
 from __future__ import annotations
