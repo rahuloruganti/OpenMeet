@@ -17,7 +17,7 @@ from openmeet_py.api.server import create_app
 from openmeet_py.audio.audio_backend import FakeBackend
 from openmeet_py.platform import hotkeys
 from openmeet_py.platform.hotkeys import PAUSE_ID, STOP_ID, HotkeyService, parse, shortcut_warning, validate
-from openmeet_py.platform.win32 import MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, FakeWin32
+from openmeet_py.platform.win32 import MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, FakeWin32, NativeWin32, Win32
 
 CTRL_SHIFT = MOD_CONTROL | MOD_SHIFT
 DEVICES = {"microphoneId": "fake-mic", "outputId": "fake-output"}
@@ -101,6 +101,31 @@ class Spy:
 
     def __call__(self, kind: str) -> None:
         self.actions.append(kind)
+
+
+def test_the_backend_protocol_requires_a_press_consumer() -> None:
+    assert callable(Win32.on_message)
+
+
+def test_a_non_threaded_fake_delivers_presses_to_the_bound_consumer() -> None:
+    win32 = FakeWin32()
+    spy = Spy()
+    service = HotkeyService(win32, spy)
+    service.start("Ctrl+Shift+F9", "Ctrl+Shift+F10")
+    assert win32._handle is not None
+    win32._handle(("hotkey", PAUSE_ID))
+    win32._handle(("hotkey", STOP_ID))
+    win32._handle(("hotkey", 7))
+    assert spy.actions == ["pause", "stop"]
+    service.stop()
+    win32._handle(("hotkey", PAUSE_ID))
+    assert spy.actions == ["pause", "stop"]
+
+
+def test_the_windows_press_binding_is_a_noop_without_native_calls() -> None:
+    # Skip initialization so any attempt to use native state fails without loading a DLL.
+    native = object.__new__(NativeWin32)
+    assert native.on_message(lambda message: pytest.fail("unexpected press")) is None
 
 
 def test_registration_uses_modifiers_keys_and_norepeat() -> None:

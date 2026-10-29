@@ -14,10 +14,17 @@
   overflow-wrap: anywhere;
 }
 
-.lai-model-help {
+.lai .lai-model-help {
+  display: -webkit-box;
+  overflow: hidden;
   font-size: 12.5px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .lai-model-controls {

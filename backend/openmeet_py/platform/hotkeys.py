@@ -210,9 +210,7 @@ class HotkeyService:
 
     def _bind_presses(self) -> None:
         """A backend without a loop of its own (Carbon on macOS) gets our consumer for presses."""
-        attach = getattr(self.win32, "on_message", None)  # only the native backends deliver events
-        if attach is not None:
-            attach(self._on_message)
+        self.win32.on_message(self._on_message)
 
     def apply(self, pause: Accelerator, stop: Optional[Accelerator], pause_text: str, stop_text: Optional[str]) -> None:
         """Replaces the registrations. On failure the previous ones are registered again and this raises."""
@@ -267,10 +265,11 @@ class HotkeyService:
     def _register(self, hotkey_id: int, accelerator: Accelerator) -> bool:
         return bool(self.win32.register_hotkey(hotkey_id, accelerator.modifiers | MOD_NOREPEAT, accelerator.vk))
 
-    def _unregister_all(self) -> None:
+    def _unregister_all(self) -> bool:
         for hotkey_id in list(self._registered):
-            self.win32.unregister_hotkey(hotkey_id)
-        self._registered = {}
+            if self.win32.unregister_hotkey(hotkey_id) is not False:
+                del self._registered[hotkey_id]
+        return not self._registered
 
     def _register_saved(self, pause_text: str, stop_text: Optional[str]) -> Optional[str]:
         failed: dict[str, Optional[str]] = {"pause": None, "stop": None}
@@ -298,7 +297,11 @@ class HotkeyService:
     ) -> None:
         del pause_text, stop_text  # the stored text is written by save_settings, not here
         previous = dict(self._registered)
-        self._unregister_all()
+        if not self._unregister_all():
+            for hotkey_id, accelerator in previous.items():
+                if hotkey_id not in self._registered and self._register(hotkey_id, accelerator):
+                    self._registered[hotkey_id] = accelerator
+            raise AppError("shortcut_unavailable", UNAVAILABLE)
         wanted = {PAUSE_ID: pause}
         if stop is not None:
             wanted[STOP_ID] = stop
@@ -311,11 +314,11 @@ class HotkeyService:
                 ok = False
                 break
         if not ok:
-            for hotkey_id in done:
-                self.win32.unregister_hotkey(hotkey_id)
+            self._registered = done
+            self._unregister_all()
             for hotkey_id, accelerator in previous.items():
-                self._register(hotkey_id, accelerator)
-            self._registered = previous
+                if hotkey_id not in self._registered and self._register(hotkey_id, accelerator):
+                    self._registered[hotkey_id] = accelerator
             raise AppError("shortcut_unavailable", UNAVAILABLE)
         self._registered = done
 

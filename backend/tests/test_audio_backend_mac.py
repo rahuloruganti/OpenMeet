@@ -94,7 +94,28 @@ class FakeSoundDevice:
             raise self.list_error
         return self.devices
 
-    def InputStream(self, **kwargs: Any) -> FakeStreamHandle:  # noqa: N802 - sounddevice's name
+    def InputStream(  # noqa: N802 - sounddevice's name
+        self,
+        samplerate: Any = None,
+        blocksize: Any = None,
+        device: Any = None,
+        channels: Any = None,
+        dtype: Any = None,
+        latency: Any = None,
+        extra_settings: Any = None,
+        callback: Any = None,
+        finished_callback: Any = None,
+        clip_off: Any = None,
+        dither_off: Any = None,
+        never_drop_input: Any = None,
+        prime_output_buffers_using_stream_callback: Any = None,
+    ) -> FakeStreamHandle:
+        # The real parameter list of sounddevice 0.5.x, so an unknown keyword fails here as it would there.
+        kwargs = {
+            key: value
+            for key, value in locals().items()
+            if key != "self" and value is not None
+        }
         if self.open_error is not None:
             raise self.open_error
         handle = FakeStreamHandle()

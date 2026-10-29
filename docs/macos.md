@@ -6,7 +6,7 @@ Every macOS code path was written and unit-tested on a Windows PC, with fakes at
 
 ## Install
 
-1. Download `OpenMeet-0.9.0-arm64.dmg` from the [latest release](https://github.com/rahuloruganti/OpenMeet/releases/latest).
+1. There is no published download yet. Build the DMG with `just build`; see [Build on a Mac](#build-on-a-mac).
 2. Open the DMG and drag **OpenMeet** to **Applications**.
 3. Open it the first time with a right-click (or Control-click), then **Open**, then **Open** again. The other route is to remove the download flag:
 

@@ -27,12 +27,12 @@ from __future__ import annotations
 
 import ctypes
 import os
-import platform
 import sys
 import time
 from typing import Any, Callable, Optional
 
 from openmeet_py.platform.detection import ConsentEntry
+from openmeet_py.platform.macos_version import process_audio_supported
 
 CORE_AUDIO = "/System/Library/Frameworks/CoreAudio.framework/CoreAudio"
 CORE_FOUNDATION = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
@@ -41,7 +41,6 @@ CORE_FOUNDATION = "/System/Library/Frameworks/CoreFoundation.framework/CoreFound
 # ids on macOS, so this is how the app recognises itself and never offers a prompt about itself.
 OWN_BUNDLE_ID = "dev.openmeet.app"
 
-MIN_MACOS = (14, 2)
 NO_ERROR = 0
 SYSTEM_OBJECT = 1  # kAudioObjectSystemObject
 SCOPE_GLOBAL = 0x676C6F62  # 'glob', kAudioObjectPropertyScopeGlobal
@@ -71,19 +70,33 @@ def _address(selector: int) -> PropertyAddress:
     return PropertyAddress(selector, SCOPE_GLOBAL, ELEMENT_MAIN)
 
 
-def _macos_version() -> tuple[int, int]:
-    parts = platform.mac_ver()[0].split(".")[:2]
-    numbers = [int(part) if part.isdigit() else 0 for part in parts]
-    while len(numbers) < 2:
-        numbers.append(0)
-    return numbers[0], numbers[1]
+def _bind_signatures(lib: Any = None, foundation: Any = None) -> None:
+    """Declare native widths so CFIndex values and pointers are not truncated on arm64."""
+    if lib is not None:
+        property_args = [
+            ctypes.c_uint32, ctypes.POINTER(PropertyAddress), ctypes.c_uint32,
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32),
+        ]
+        lib.AudioObjectGetPropertyDataSize.argtypes = property_args
+        lib.AudioObjectGetPropertyDataSize.restype = ctypes.c_int32
+        lib.AudioObjectGetPropertyData.argtypes = property_args + [ctypes.c_void_p]
+        lib.AudioObjectGetPropertyData.restype = ctypes.c_int32
+    if foundation is not None:
+        foundation.CFStringGetLength.argtypes = [ctypes.c_void_p]
+        foundation.CFStringGetLength.restype = ctypes.c_long
+        foundation.CFStringGetMaximumSizeForEncoding.argtypes = [ctypes.c_long, ctypes.c_uint32]
+        foundation.CFStringGetMaximumSizeForEncoding.restype = ctypes.c_long
+        foundation.CFStringGetCString.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_char), ctypes.c_long, ctypes.c_uint32,
+        ]
+        foundation.CFStringGetCString.restype = ctypes.c_ubyte
+        foundation.CFRelease.argtypes = [ctypes.c_void_p]
+        foundation.CFRelease.restype = None
 
 
 def supported() -> bool:
     """True on macOS 14.2 or newer, the first release with Core Audio process objects."""
-    if sys.platform != "darwin":
-        return False
-    return _macos_version() >= MIN_MACOS
+    return process_audio_supported()
 
 
 def display_name(bundle_id: str) -> str:
@@ -118,6 +131,8 @@ class MacConsentRegistry:
     """
 
     def __init__(self, lib: Any = None, read_string: Optional[Callable[[Any], Optional[str]]] = None):
+        if lib is not None:
+            _bind_signatures(lib=lib)
         self._lib = lib
         self._read_string = read_string
         self._foundation: Any = None
@@ -144,6 +159,7 @@ class MacConsentRegistry:
     def _library(self) -> Any:
         if self._lib is None:
             self._lib = ctypes.CDLL(CORE_AUDIO)
+            _bind_signatures(lib=self._lib)
         return self._lib
 
     def _strings(self) -> Callable[[Any], Optional[str]]:
@@ -200,6 +216,7 @@ class MacConsentRegistry:
 
 def _core_foundation_reader(foundation: Any) -> Callable[[Any], Optional[str]]:
     """Turns the CFString Core Audio hands back into text, then releases it as the header requires."""
+    _bind_signatures(foundation=foundation)
 
     def read(reference: Any) -> Optional[str]:
         length = foundation.CFStringGetLength(reference)

@@ -24,6 +24,7 @@ import httpx
 from openmeet_py.api.errors import AppError
 from openmeet_py.speech import model_library, safe_archive
 from openmeet_py.speech.stt_catalog import STREAMING_MODELS, StreamingModel
+from openmeet_py.speech.targets import local_speech_supported
 
 STREAM_PREFIX = "stream:"
 CUSTOM_PREFIX = "stream-dir:"
@@ -91,8 +92,6 @@ def engine_available() -> bool:
 
 
 def unavailable_reason() -> Optional[str]:
-    from openmeet_py.speech.stt import local_speech_supported
-
     if not local_speech_supported():
         return "Live transcript models need Windows x64 or a Mac with Apple silicon."
     if not engine_available():

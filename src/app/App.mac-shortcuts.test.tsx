@@ -82,9 +82,8 @@ describe("macOS shortcuts", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("shows the Mac modifier in the sidebar hint and the palette key caps", async () => {
+  it("shows the Mac modifier in the workspace hint and the palette key caps", async () => {
     await ready();
-    expect(screen.getByText("⌘K")).toBeTruthy();
     // The workspace key hint under the inspector toggle uses the same label.
     expect(screen.getByText("⌘I")).toBeTruthy();
     press("k", { metaKey: true });

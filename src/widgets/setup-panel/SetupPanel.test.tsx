@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AudioDevices } from "../../shared/api/api";
@@ -101,4 +101,55 @@ it("does not claim a Mac needs Windows when capture is unsupported", () => {
   const alerts = screen.getAllByRole("alert").map((node) => node.textContent);
   expect(alerts.join(" ")).toContain("Recording is not available on this Mac.");
   expect(alerts.join(" ")).not.toContain("Windows");
+});
+
+it.each(["local", "cloud"] as const)(
+  "keeps missing %s transcription visible above the actions with More options closed",
+  async (sttMode) => {
+    const onOpenSettings = vi.fn();
+    const onStartCapture = vi.fn();
+    render(
+      <SetupPanel
+        {...props}
+        speechReady={false}
+        sttMode={sttMode}
+        onOpenSettings={onOpenSettings}
+        onStartCapture={onStartCapture}
+      />,
+    );
+    const more = screen.getByText("More options").closest("details");
+    expect(more?.open).toBe(false);
+    const readiness = screen.getByRole("status");
+    expect(readiness.closest("details")).toBeNull();
+    expect(readiness.textContent).toContain(
+      "Transcription is not set up. You can still record.",
+    );
+    const actions = screen
+      .getByRole("button", { name: "Start recording" })
+      .closest("footer");
+    expect(readiness.nextElementSibling).toBe(actions);
+    await userEvent.click(
+      within(readiness).getByRole("button", { name: "Set up transcription" }),
+    );
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: "Start recording" }),
+    ).toHaveProperty("disabled", false);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start recording" }),
+    );
+    expect(onStartCapture).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("hides the persistent warning once transcription is ready", () => {
+  const { rerender } = render(<SetupPanel {...props} speechReady={false} />);
+  expect(
+    screen.getByRole("button", { name: "Set up transcription" }),
+  ).toBeTruthy();
+  rerender(<SetupPanel {...props} speechReady />);
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Set up transcription" }),
+  ).toBeNull();
 });

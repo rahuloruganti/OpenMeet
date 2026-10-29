@@ -38,9 +38,13 @@ Message = tuple  # ("hotkey", id) | ("wake",)
 class Win32(Protocol):
     threaded: bool
 
+    def on_message(self, handle: Callable[[Message], None]) -> None: ...
+
     def register_hotkey(self, hotkey_id: int, modifiers: int, vk: int) -> bool: ...
 
-    def unregister_hotkey(self, hotkey_id: int) -> None: ...
+    def unregister_hotkey(self, hotkey_id: int) -> Optional[bool]:
+        """False means release failed; None preserves the Windows success contract."""
+        ...
 
     def pump(self, handle: Callable[[Message], None], ready: threading.Event) -> None: ...
 
@@ -62,6 +66,10 @@ class FakeWin32:
         self.registered: dict[int, tuple[int, int]] = {}
         self.register_calls: list[tuple[int, int, int]] = []
         self.flashes: list[str] = []
+        self._handle: Optional[Callable[[Message], None]] = None
+
+    def on_message(self, handle: Callable[[Message], None]) -> None:
+        self._handle = handle
 
     def register_hotkey(self, hotkey_id: int, modifiers: int, vk: int) -> bool:
         self.register_calls.append((hotkey_id, modifiers, vk))
@@ -118,6 +126,10 @@ class NativeWin32:
             user32.FindWindowW.restype = wintypes.HWND
             self._lib = (ctypes, wintypes, user32, kernel32)
         return self._lib
+
+    def on_message(self, handle: Callable[[Message], None]) -> None:
+        # The Windows pump already owns the consumer and delivers messages on its thread.
+        pass
 
     def register_hotkey(self, hotkey_id: int, modifiers: int, vk: int) -> bool:
         _, _, user32, _ = self._libs()

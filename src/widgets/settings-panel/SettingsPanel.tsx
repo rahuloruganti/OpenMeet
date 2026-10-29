@@ -422,12 +422,7 @@ function RecordingSection(props: Props) {
             label="Automatic capture"
             detail={
               <span>
-                Starts a recording with your saved devices when a supported call
-                app (Teams, Zoom, Slack, Discord, Webex, Skype) uses the
-                microphone. Browsers and other apps still only prompt. You can
-                stop or pause at any time. A manual stop or pause blocks
-                automatic restart for that call. Audio is stored on this PC, as
-                for any recording.
+                Starts only for supported call apps. You can stop it anytime.
               </span>
             }
           >

@@ -19,6 +19,7 @@ import {
 import { builtinTemplates as templates } from "../../entities/processing";
 import { tabTarget } from "../../shared/lib/tabs";
 import { chordHint, modKeyLabel } from "../../shared/lib/shortcut-label";
+import { primaryModifierPressed } from "../../shared/lib/platform";
 import { renderMarkdown } from "../../shared/lib/markdown";
 import { ActionItems } from "../../features/action-items";
 import {
@@ -474,6 +475,7 @@ export function MeetingWorkspace(props: Props) {
   const playable = playableTracks(selected);
   const transcribable = playable.length > 0;
   const hasTranscript = selected.segments.length > 0;
+  const hasSummaryInput = /\S/.test(props.notes) || hasTranscript;
   // The Transcript tab already says "No transcript yet." with the same action, so the card stays off it.
   const nextSteps =
     meeting.source === "desktop" &&
@@ -1106,7 +1108,7 @@ export function MeetingWorkspace(props: Props) {
                       !disabled &&
                       props.live &&
                       event.shiftKey &&
-                      (event.ctrlKey || event.metaKey) &&
+                      primaryModifierPressed(event) &&
                       event.key.toLowerCase() === "t"
                     ) {
                       event.preventDefault();
@@ -1195,21 +1197,24 @@ export function MeetingWorkspace(props: Props) {
                       ))}
                     </select>
                   </label>
-                  <button
-                    className="primary"
-                    disabled={blocked}
-                    aria-describedby="enhance-hint"
-                    onClick={() => props.onGenerate(template)}
-                  >
-                    {job === "summary" ? "Generating…" : "Create summary"}
-                  </button>
+                  {(summary ||
+                    (hasSummaryInput && props.llmBlocked === null)) && (
+                    <button
+                      className="primary"
+                      disabled={blocked}
+                      aria-describedby={summary ? "enhance-hint" : undefined}
+                      onClick={() => props.onGenerate(template)}
+                    >
+                      {job === "summary" ? "Generating…" : "Create summary"}
+                    </button>
+                  )}
                 </div>
                 {summary && stale && (
                   <p className="mw-hint" role="status">
                     Transcript changed after this summary.
                   </p>
                 )}
-                {props.enhanceBlocked !== null && (
+                {summary && props.enhanceBlocked !== null && (
                   <div className="mw-card-row">
                     <span id="enhance-hint" className="mw-hint">
                       {props.enhanceBlocked}
@@ -1279,11 +1284,19 @@ export function MeetingWorkspace(props: Props) {
                   >
                     {renderMarkdown(summary, reference)}
                   </div>
-                ) : (
-                  <p className="mw-hint">
-                    No summary yet. Add notes or a transcript first.
-                  </p>
-                )}
+                ) : !hasSummaryInput ? (
+                  <p className="mw-hint">Write notes or add a transcript.</p>
+                ) : props.llmBlocked ? (
+                  <div className="mw-card-row">
+                    <span className="mw-hint">
+                      Choose an AI model to summarise these notes.
+                    </span>
+                    <OpenSettingsButton
+                      section={props.llmBlocked.section}
+                      onOpenSettings={props.onOpenSettings}
+                    />
+                  </div>
+                ) : null}
                 {summary && !draft && (
                   <div className="mw-card-row">
                     <button

@@ -243,6 +243,9 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
     available.find((model) => model.id === status.active_model) ?? available[0];
   const selected =
     available.find((model) => model.id === picked) ?? preferred ?? null;
+  const description = selected
+    ? [selected.description, selected.license].filter(Boolean).join(" · ")
+    : "No model on this PC yet.";
   const engineJob = job && job.kind === "engine" ? job : null;
   const removable = selected?.removable === true;
   const inUse = status.in_use && status.active_model === selected?.id;
@@ -327,15 +330,14 @@ export function LocalAi({ active, disabled, onSettings }: Props) {
         <div className="om-row lai-model-row">
           <div className="om-what">
             <strong>Model</strong>
-            <span className="om-muted lai-model-help">
-              {selected
-                ? [selected.description, selected.license]
-                    .filter(Boolean)
-                    .join(" · ")
-                : "No model on this PC yet."}
+            <span className="om-muted lai-model-help" title={description}>
+              {description}
             </span>
             {selected && (
-              <span className="om-muted lai-model-help">
+              <span
+                className="om-muted lai-model-help"
+                title={FIT_NOTE[selected.fit]}
+              >
                 {FIT_NOTE[selected.fit]}
               </span>
             )}

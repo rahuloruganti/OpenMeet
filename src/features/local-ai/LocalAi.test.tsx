@@ -173,6 +173,23 @@ it("offers only the GGUF files on this PC, with no catalog and no set-up card", 
   expect(api.localAiDownloadHf).not.toHaveBeenCalled();
 });
 
+it("keeps the selected model description and license in its title", async () => {
+  const description =
+    "A local model for detailed meeting notes, summaries, and follow-up tasks.";
+  await open({
+    models: [{ ...qwen4, description, license: "Apache-2.0" }, found],
+  });
+  const fullDescription = `${description} · Apache-2.0`;
+  expect(screen.getByText(fullDescription).getAttribute("title")).toBe(
+    fullDescription,
+  );
+
+  await userEvent.selectOptions(screen.getByLabelText("Local model"), found.id);
+  expect(screen.getByText(found.description).getAttribute("title")).toBe(
+    found.description,
+  );
+});
+
 it("installs the engine from its row and then shows the pinned build", async () => {
   await open({
     engine_installed: false,

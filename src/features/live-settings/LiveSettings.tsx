@@ -157,8 +157,7 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
             <strong>Model</strong>
             {chosen === "" ? (
               <span>
-                {helperReason ??
-                  "Same as Transcription uses the Speech model above."}
+                {helperReason ?? "Uses the model chosen under Transcription."}
               </span>
             ) : (
               <span>What listens while you record</span>

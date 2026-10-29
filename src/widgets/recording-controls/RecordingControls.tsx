@@ -86,8 +86,19 @@ export function RecordingControls(props: Props) {
   }, [capturing, health]);
   const micSilent = (silentFor.mic ?? 0) >= SILENT_WARN_MS;
   const simulated = recording.source !== null && recording.source !== "desktop";
-  const label =
-    recording.source === null
+  const idle =
+    !active &&
+    !props.showOpenActive &&
+    !recording.error &&
+    !simulated &&
+    recording.status !== "recording" &&
+    recording.status !== "paused";
+  const failed = !!recording.error && !active;
+  const label = failed
+    ? simulated
+      ? "Simulation failed"
+      : "Recording failed"
+    : recording.source === null
       ? "Ready"
       : finalizationPending
         ? "Finishing audio…"
@@ -101,13 +112,13 @@ export function RecordingControls(props: Props) {
 
   return (
     <section
-      className={`recording-bar rec${active ? " is-live" : ""}`}
+      className={`recording-bar rec${active ? " is-live" : ""}${idle ? " is-idle" : ""}`}
       data-status={recording.status}
       aria-label="Recording controls"
     >
       <span className="rec-state">
         <span
-          className={`status-dot ${simulated ? "simulated" : recording.status}`}
+          className={`status-dot ${failed ? "failed" : simulated ? "simulated" : recording.status}`}
           aria-hidden="true"
         />
         <span className="rec-label" role="status">
@@ -162,32 +173,34 @@ export function RecordingControls(props: Props) {
         </span>
       )}
       <CallLifecycleBanner />
-      <span className="rec-acts">
-        {props.showOpenActive && (
-          <button disabled={props.disabled} onClick={props.onOpenActive}>
-            Open active meeting
-          </button>
-        )}
-        <button
-          disabled={controlsDisabled || finalizationPending}
-          onClick={props.onToggle}
-        >
-          {recording.status === "paused" ? (
-            <IconPlay size={14} />
-          ) : (
-            <IconPause size={14} />
+      {!idle && (
+        <span className="rec-acts">
+          {props.showOpenActive && (
+            <button disabled={props.disabled} onClick={props.onOpenActive}>
+              Open active meeting
+            </button>
           )}
-          {recording.status === "paused" ? "Resume" : "Pause"}
-        </button>
-        <button
-          className={active ? "stop-button rec-stop" : ""}
-          disabled={controlsDisabled}
-          onClick={props.onStop}
-        >
-          {!finalizationPending && <IconStop size={12} />}
-          {finalizationPending ? "Retry finalization" : "Stop"}
-        </button>
-      </span>
+          <button
+            disabled={controlsDisabled || finalizationPending}
+            onClick={props.onToggle}
+          >
+            {recording.status === "paused" ? (
+              <IconPlay size={14} />
+            ) : (
+              <IconPause size={14} />
+            )}
+            {recording.status === "paused" ? "Resume" : "Pause"}
+          </button>
+          <button
+            className={active ? "stop-button rec-stop" : ""}
+            disabled={controlsDisabled}
+            onClick={props.onStop}
+          >
+            {!finalizationPending && <IconStop size={12} />}
+            {finalizationPending ? "Retry finalization" : "Stop"}
+          </button>
+        </span>
+      )}
     </section>
   );
 }

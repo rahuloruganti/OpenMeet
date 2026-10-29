@@ -493,6 +493,12 @@ kbd {
 .app.sidebar-collapsed {
   grid-template-columns: 0 minmax(0, 1fr);
 }
+/* The collapsed sidebar is display:none via [hidden], so without an explicit
+   column the workspace would be auto-placed into the 0px first track. */
+.app > .meeting-main {
+  grid-column: 2;
+  grid-row: 1;
+}
 .brand {
   display: flex;
   align-items: center;

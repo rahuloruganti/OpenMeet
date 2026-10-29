@@ -1,7 +1,28 @@
-/* Recording status row.
-   It keeps its place under the workspace (the shell reserves the row in
-   meeting-workspace.css) and reads as a pill
-   row: a state chip, the level meters, then the control pills. */
+/* Recording status row: a state chip, level meters and control pills.
+   Override the shell's fixed row so an idle bar gives its space to the workspace. */
+.workspace.meeting-main:has(> .recording-bar.rec) {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+/* Keep the live status node mounted without occupying a row. Lifecycle warnings
+   can arrive independently of recording state and must still show the full bar. */
+.recording-bar.rec.is-idle:not(:has(.call-life)) {
+  height: 0;
+  padding: 0;
+  border: 0;
+}
+
+.recording-bar.rec.is-idle:not(:has(.call-life)) .rec-state {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .recording-bar.rec {
   display: flex;
   grid-row: 2;
@@ -43,6 +64,10 @@
 .rec .status-dot.recording {
   background: var(--danger);
   animation: rec-pulse 2s ease-in-out infinite;
+}
+
+.rec .status-dot.failed {
+  background: var(--danger);
 }
 
 .rec .status-dot.paused {

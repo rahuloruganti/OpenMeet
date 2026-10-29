@@ -469,16 +469,18 @@ class Supervisor:
         clear_pid(spec)
 
     def end_if_running(self) -> None:
-        """Ends a server still running when OpenMeet exits, without waiting for it to answer."""
-        spec = self._spec
-        if spec is None:
+        """Ends the owned server on exit without waiting for readiness or a busy supervisor."""
+        # SIGTERM may interrupt a thread that another lock holder is waiting for.
+        if not self._lock.acquire(blocking=False):
             return
-        pid = read_pid(spec)
-        if pid is None:
+        try:
+            process, spec = self._process, self._spec
+        finally:
+            self._lock.release()
+        if process is None or process.poll() is not None:
             return
-        if is_server(pid, spec.executable.name, self._command_of):
-            self._group_kill(pid, signal.SIGTERM)
-        clear_pid(spec)
+        if self._stop_group(process) and spec is not None:
+            clear_pid(spec)
 
     # -- internals --
     def _alive_locked(self) -> bool:

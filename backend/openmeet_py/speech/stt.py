@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import platform
-import sys
 import unicodedata
 from pathlib import Path
 from typing import Any, Optional
@@ -24,6 +22,7 @@ from openmeet_py.api.errors import AppError
 from openmeet_py.api.reads import read_settings
 from openmeet_py.speech import model_library, sherpa_models
 from openmeet_py.speech.stt_catalog import SHERPA_MODELS, VAD, WHISPER_MODELS, Artifact
+from openmeet_py.speech.targets import local_speech_supported
 
 LANGUAGES = (
     "auto", "ar", "ca", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hr", "hu",
@@ -48,19 +47,6 @@ def engine_available() -> bool:
     if fake_engine():
         return True
     return importlib.util.find_spec("pywhispercpp") is not None
-
-
-def local_speech_supported() -> bool:
-    """Whether this machine is one of the two targets the local engines ship binaries for.
-
-    Windows x64 and Apple silicon macOS only: the whisper.cpp and sherpa-onnx wheels exist for those
-    and nothing else, so an Intel Mac reports unsupported instead of failing inside a native library
-    after the download. Other speech modules import this one function.
-    """
-    machine = platform.machine().lower()
-    if sys.platform == "win32":
-        return machine in ("amd64", "x86_64")
-    return sys.platform == "darwin" and machine == "arm64"
 
 
 def supported() -> bool:

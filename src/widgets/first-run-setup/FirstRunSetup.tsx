@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type Ref } from "react";
 import {
   api,
+  isLocalBase,
   type AudioDevices,
   type ImportStatus,
   type KeyStatus,
@@ -41,6 +42,7 @@ import {
   hostOf,
   publishSettings,
 } from "../../features/provider-settings";
+import { LocalAi } from "../../features/local-ai";
 import "./first-run.css";
 
 /** The wizard's steps, in order; Import appears only when there is something to bring over. */
@@ -305,7 +307,13 @@ export function FirstRunSetup(props: Props) {
   );
   const [found, setFound] = useState<LocalModel[] | null>(null);
   const [servers, setServers] = useState<LocalServer[] | null>(null);
-  const [notesChoice, setNotesChoice] = useState<string>("");
+  // Choosing a view changes no saved model or connection.
+  const [notesRoute, setNotesRoute] = useState<"local" | "connection">(
+    settings.llm && !isLocalBase(settings.llm.base_url)
+      ? "connection"
+      : "local",
+  );
+  const [notesChoice, setNotesChoice] = useState<"api" | "speech">("api");
   const [microphone, setMicrophone] = useState(settings.microphone_id ?? "");
   const [output, setOutput] = useState(settings.output_id ?? "");
   const [importing, setImporting] = useState(false);
@@ -422,6 +430,13 @@ export function FirstRunSetup(props: Props) {
   const speechServers = (servers ?? []).filter((item) => item.kind !== "chat");
   const speechConnection = settings.provider_assignments.cloud_stt;
   const localReady = settings.stt_mode === "local" && !!stt?.installed;
+  const transcriptConfigured =
+    settings.stt_mode === "cloud" ? !!settings.cloud_stt?.model : localReady;
+  const notesConfigured = !!settings.llm?.model;
+  const recordingReady =
+    !!props.devices?.capture_supported &&
+    props.devices.microphones.some((item) => item.id === microphone) &&
+    props.devices.outputs.some((item) => item.id === output);
   const recommended = recommendedSpeechModels(settings.stt_language);
   const primary = recommended[0];
   const primarySize = stt?.models.find((item) => item.id === primary)?.size;
@@ -745,51 +760,100 @@ export function FirstRunSetup(props: Props) {
               <p className="help">
                 A model can write a summary after each meeting.
               </p>
-              <div className="choices">
-                {speechConnection && (
-                  <label className="choice">
-                    <input
-                      type="radio"
-                      className="radio"
-                      name="setup-notes"
-                      checked={notesChoice === "speech"}
-                      onChange={() => {
-                        setNotesChoice("speech");
-                      }}
-                    />
-                    <span className="choice-icon" aria-hidden="true">
-                      <IconSparkles />
-                    </span>
-                    <span className="choice-text">
-                      <span className="head">
-                        <strong>Transcription connection</strong>
-                      </span>
-                      <span className="sub">Same connection, a chat model</span>
-                    </span>
-                  </label>
-                )}
+              <div
+                className="choices"
+                role="radiogroup"
+                aria-label="Notes written"
+              >
                 <label className="choice">
                   <input
                     type="radio"
                     className="radio"
-                    name="setup-notes"
-                    checked={notesChoice === "api"}
-                    onChange={() => {
-                      setNotesChoice("api");
-                    }}
+                    name="setup-notes-route"
+                    checked={notesRoute === "local"}
+                    onChange={() => setNotesRoute("local")}
+                  />
+                  <span className="choice-icon" aria-hidden="true">
+                    <IconMonitor />
+                  </span>
+                  <span className="choice-text">
+                    <strong>On this PC</strong>
+                  </span>
+                </label>
+                <label className="choice">
+                  <input
+                    type="radio"
+                    className="radio"
+                    name="setup-notes-route"
+                    checked={notesRoute === "connection"}
+                    onChange={() => setNotesRoute("connection")}
                   />
                   <span className="choice-icon" aria-hidden="true">
                     <IconExternalLink />
                   </span>
                   <span className="choice-text">
-                    <span className="head">
-                      <strong>API service</strong>
-                    </span>
-                    <span className="sub">Your own API</span>
+                    <strong>With a connection</strong>
                   </span>
                 </label>
               </div>
-              {notesChoice && (
+              {notesRoute === "local" && (
+                <div className="wizard-block setup-local-ai">
+                  <LocalAi
+                    active
+                    disabled={busy}
+                    onSettings={props.onSettings}
+                  />
+                </div>
+              )}
+              {notesRoute === "connection" && speechConnection && (
+                <div className="choices">
+                  {speechConnection && (
+                    <label className="choice">
+                      <input
+                        type="radio"
+                        className="radio"
+                        name="setup-notes"
+                        checked={notesChoice === "speech"}
+                        onChange={() => {
+                          setNotesChoice("speech");
+                        }}
+                      />
+                      <span className="choice-icon" aria-hidden="true">
+                        <IconSparkles />
+                      </span>
+                      <span className="choice-text">
+                        <span className="head">
+                          <strong>Transcription connection</strong>
+                        </span>
+                        <span className="sub">
+                          Same connection, a chat model
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                  <label className="choice">
+                    <input
+                      type="radio"
+                      className="radio"
+                      name="setup-notes"
+                      checked={notesChoice === "api"}
+                      onChange={() => {
+                        setNotesChoice("api");
+                      }}
+                    />
+                    <span className="choice-icon" aria-hidden="true">
+                      <IconExternalLink />
+                    </span>
+                    <span className="choice-text">
+                      <span className="head">
+                        <strong>API service</strong>
+                      </span>
+                      <span className="sub">Your own API</span>
+                    </span>
+                  </label>
+                </div>
+              )}
+              {notesRoute === "connection" && (
                 <div className="wizard-fields">
                   <ConnectAndPick
                     key={notesChoice}
@@ -881,11 +945,67 @@ export function FirstRunSetup(props: Props) {
           {step === "done" && (
             <section className="wizard-step" aria-labelledby="setup-done">
               <div className="done">
-                <span className="done-check" aria-hidden="true">
-                  <IconCheck size={20} />
-                </span>
-                <h1 id="setup-done">You're set</h1>
-                <p className="help">OpenMeet is ready for your next meeting.</p>
+                <h1 id="setup-done">
+                  {recordingReady ? "Ready to record" : "Setup progress"}
+                </h1>
+                <ul className="setup-readiness" aria-label="Setup readiness">
+                  <li>
+                    <span>
+                      {recordingReady
+                        ? "Recording is ready."
+                        : props.devices && !props.devices.capture_supported
+                          ? "Recording is not available on this device."
+                          : "Recording needs a microphone and system audio."}
+                    </span>
+                    {!recordingReady && (
+                      <button
+                        type="button"
+                        className="ghost sm"
+                        onClick={() => go("devices")}
+                      >
+                        Choose devices
+                      </button>
+                    )}
+                  </li>
+                  <li>
+                    <span>
+                      {settings.stt_mode === "cloud"
+                        ? transcriptConfigured
+                          ? "Cloud transcription is configured."
+                          : "Cloud transcription is not set up."
+                        : localReady
+                          ? "Local transcription is ready."
+                          : "Local transcription is not set up."}
+                    </span>
+                    {!transcriptConfigured && (
+                      <button
+                        type="button"
+                        className="ghost sm"
+                        onClick={() => go("transcription")}
+                      >
+                        Set up transcription
+                      </button>
+                    )}
+                  </li>
+                  <li>
+                    <span>
+                      {notesConfigured
+                        ? transcriptConfigured
+                          ? "AI notes are configured."
+                          : "AI notes are configured but need a transcript."
+                        : "AI notes are not set up."}
+                    </span>
+                    {!notesConfigured && (
+                      <button
+                        type="button"
+                        className="ghost sm"
+                        onClick={() => go("ai")}
+                      >
+                        Set up notes
+                      </button>
+                    )}
+                  </li>
+                </ul>
               </div>
             </section>
           )}

@@ -189,10 +189,16 @@ class CarbonLib:
         self._refs[hotkey_id] = ref
         return True
 
-    def unregister(self, hotkey_id: int) -> None:
-        ref = self._refs.pop(hotkey_id, None)
-        if ref is not None:
-            self.lib().UnregisterEventHotKey(ref)
+    def unregister(self, hotkey_id: int) -> bool:
+        ref = self._refs.get(hotkey_id)
+        if ref is None:
+            return True
+        status = self.lib().UnregisterEventHotKey(ref)
+        if status != NO_ERR:
+            log.warning("Carbon refused shortcut release %s (OSStatus %s)", hotkey_id, status)
+            return False
+        del self._refs[hotkey_id]
+        return True
 
     def _handle(self, _call_ref: object, event: object, _user_data: object) -> int:
         hotkey = EventHotKeyID()
@@ -264,11 +270,12 @@ class NativeMacOS:
             return False
         return bool(lib.register(vk, mask, hotkey_id))
 
-    def unregister_hotkey(self, hotkey_id: int) -> None:
+    def unregister_hotkey(self, hotkey_id: int) -> bool:
         try:
-            self._on_main(lambda: self._lib().unregister(hotkey_id))
+            return bool(self._on_main(lambda: self._lib().unregister(hotkey_id)))
         except MainThreadUnavailable:
             log.warning("the main thread did not answer a shortcut release")
+            return False
 
     def pump(self, handle: Callable[[Message], None], ready: threading.Event) -> None:
         raise RuntimeError("NativeMacOS has no message loop; the Cocoa loop delivers Carbon events.")
@@ -299,13 +306,21 @@ class NativeMacOS:
             return False
 
     def _on_main(self, operation: Callable[[], object]) -> object:
-        """Runs on the main thread and returns its answer; raises MainThreadUnavailable on timeout."""
+        """Cancel queued work on timeout; once started, wait for its actual result."""
         if threading.current_thread() is threading.main_thread():
             return operation()
         box: dict[str, object] = {}
         done = threading.Event()
+        lock = threading.Lock()
+        started = False
+        cancelled = False
 
         def run() -> None:
+            nonlocal started
+            with lock:
+                if cancelled:
+                    return
+                started = True
             try:
                 box["value"] = operation()
             except BaseException as error:  # handed back to the waiting thread below
@@ -319,7 +334,12 @@ class NativeMacOS:
             raise MainThreadUnavailable("PyObjCTools is not importable") from error
         AppHelper.callAfter(run)
         if not done.wait(MAIN_THREAD_TIMEOUT):
-            raise MainThreadUnavailable("the main thread stayed busy")
+            with lock:
+                if not started:
+                    cancelled = True
+                    raise MainThreadUnavailable("the main thread stayed busy")
+            # A running native call cannot be cancelled, so report its actual result before rollback.
+            done.wait()
         if "error" in box:
             raise box["error"]  # type: ignore[misc]
         return box.get("value")

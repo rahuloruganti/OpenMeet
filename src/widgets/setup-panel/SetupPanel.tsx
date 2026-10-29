@@ -216,6 +216,14 @@ export function SetupPanel(props: Props) {
             </div>
           </details>
         </div>
+        {!props.speechReady && (
+          <p role="status" className="setup-readiness-line">
+            Transcription is not set up. You can still record.{" "}
+            <button type="button" onClick={props.onOpenSettings}>
+              Set up transcription
+            </button>
+          </p>
+        )}
         <footer className="setup-foot">
           <button onClick={props.onClose}>Cancel</button>
           <button

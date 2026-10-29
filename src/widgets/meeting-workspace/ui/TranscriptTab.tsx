@@ -18,6 +18,7 @@ import {
 } from "../../../shared/api/api";
 import { api } from "../../../shared/api/api";
 import { groupTurns } from "../../../shared/lib/turns";
+import { primaryModifierPressed } from "../../../shared/lib/platform";
 import {
   findInSegments,
   formatClock,
@@ -584,7 +585,7 @@ export function TranscriptProvider(
   useEffect(() => {
     if (props.tab !== "transcript" || props.hidden) return;
     const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      if (primaryModifierPressed(event) && event.key.toLowerCase() === "f") {
         event.preventDefault();
         findRef.current?.focus();
         return;
@@ -940,7 +941,7 @@ export function TranscriptPanel() {
             <>
               <span className="tx-find-count" aria-live="polite">
                 {model.matches.length === 0
-                  ? "0 of 0"
+                  ? "No matches"
                   : `${model.matchAt + 1} of ${model.matches.length}`}
               </span>
               <button

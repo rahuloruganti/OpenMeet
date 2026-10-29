@@ -125,14 +125,6 @@
 .sb-search input:focus-visible {
   outline: none;
 }
-.sb-search kbd {
-  flex: none;
-  padding: 0 4px;
-  border-radius: var(--radius-4);
-  color: var(--ink-2);
-  font-size: 11px;
-  line-height: 16px;
-}
 
 /* Tag filters: one 28px strip of quiet pills, --active when pressed. It scrolls
    sideways instead of stacking into rows, so many tags never push the list down.

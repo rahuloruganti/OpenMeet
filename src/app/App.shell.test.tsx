@@ -114,7 +114,7 @@ describe("command palette", () => {
     expect(document.activeElement).toBe(search());
     // Actions first, meetings under their own heading.
     expect(
-      within(palette()).getByRole("group", { name: "Actions" }),
+      within(palette()).getByRole("group", { name: "Create" }),
     ).toBeTruthy();
     expect(
       within(palette()).getByRole("group", { name: "Meetings" }),

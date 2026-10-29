@@ -421,6 +421,51 @@
 .done .help {
   margin: 0;
 }
+.first-run .setup-readiness {
+  display: grid;
+  gap: var(--space-12);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+.first-run .setup-readiness li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+.first-run .setup-readiness li > span {
+  flex: 1;
+}
+.first-run .setup-readiness button {
+  color: var(--accent);
+}
+/* Reuse Local AI without nesting Settings cards inside the wizard card. */
+.setup-local-ai .om-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.setup-local-ai .om-row {
+  flex-wrap: wrap;
+  padding-inline: 0;
+}
+.setup-local-ai .om-what {
+  flex-basis: 100%;
+}
+.setup-local-ai .om-side {
+  flex-wrap: wrap;
+  flex-shrink: 1;
+  justify-content: flex-start;
+}
+.setup-local-ai .lai-device {
+  display: none;
+}
 .done-check {
   display: grid;
   place-items: center;

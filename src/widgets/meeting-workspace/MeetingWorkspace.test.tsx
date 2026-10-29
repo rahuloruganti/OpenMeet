@@ -1,6 +1,12 @@
-import { render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import type {
   ActionItem,
   MeetingDetail,
@@ -8,6 +14,12 @@ import type {
 } from "../../shared/api/api";
 import { sample } from "../../shared/test/app-harness";
 import { MeetingWorkspace } from "./MeetingWorkspace";
+
+const scrollIntoView = Element.prototype.scrollIntoView;
+afterEach(() => {
+  vi.unstubAllGlobals();
+  Element.prototype.scrollIntoView = scrollIntoView;
+});
 
 const task: ActionItem = {
   id: 1,
@@ -240,6 +252,130 @@ const withSegment: MeetingDetail = {
   segment_meta: [{ id: 12, original_text: null }],
 };
 
+const noAiModel = {
+  message: "Choose a model for AI notes in Settings → AI notes.",
+  section: "ai" as const,
+};
+
+it.each([
+  { name: "no content", notes: "", segments: [], ready: false },
+  {
+    name: "no content with AI ready",
+    notes: " \n ",
+    segments: [],
+    ready: true,
+  },
+  {
+    name: "notes without AI",
+    notes: "Draft notes",
+    segments: [],
+    ready: false,
+  },
+  {
+    name: "transcript without AI",
+    notes: "",
+    segments: withSegment.segments,
+    ready: false,
+  },
+  {
+    name: "notes with AI ready",
+    notes: "Draft notes",
+    segments: [],
+    ready: true,
+  },
+  {
+    name: "transcript with AI ready",
+    notes: "",
+    segments: withSegment.segments,
+    ready: true,
+  },
+])(
+  "shows one summary next step for $name",
+  async ({ notes, segments, ready }) => {
+    const onOpenSettings = vi.fn();
+    const onGenerate = vi.fn();
+    const hasInput = /\S/.test(notes) || segments.length > 0;
+    render(
+      <MeetingWorkspace
+        {...base}
+        selected={{ ...sample, summary: null, segments }}
+        notes={notes}
+        llmBlocked={ready ? null : noAiModel}
+        enhanceBlocked={
+          !ready
+            ? noAiModel.message
+            : !hasInput
+              ? "Add notes or transcribe the audio first."
+              : null
+        }
+        onOpenSettings={onOpenSettings}
+        onGenerate={onGenerate}
+      />,
+    );
+    const panel = screen.getByRole("tabpanel", { name: "Summary" });
+    const writeHint = within(panel).queryByText(
+      "Write notes or add a transcript.",
+    );
+    const modelHint = within(panel).queryByText(
+      "Choose an AI model to summarise these notes.",
+    );
+    const settings = within(panel).queryByRole("button", {
+      name: "Open Settings for AI notes",
+    });
+    const generate = within(panel).queryByRole("button", {
+      name: "Create summary",
+    });
+    expect(Boolean(writeHint)).toBe(!hasInput);
+    expect(Boolean(modelHint)).toBe(hasInput && !ready);
+    expect(Boolean(settings)).toBe(hasInput && !ready);
+    expect(Boolean(generate)).toBe(hasInput && ready);
+    expect(within(panel).queryByText(noAiModel.message)).toBeNull();
+    expect(
+      within(panel).queryByText(/Add notes or a transcript first/),
+    ).toBeNull();
+    if (settings) {
+      await userEvent.click(settings);
+      expect(onOpenSettings).toHaveBeenCalledWith("ai", settings);
+    }
+    if (generate) {
+      expect(generate).toHaveProperty("disabled", false);
+      await userEvent.click(generate);
+      expect(onGenerate).toHaveBeenCalledWith("general-v1");
+    }
+  },
+);
+
+it("announces No matches when transcript Find has no results", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  render(
+    <MeetingWorkspace {...base} selected={withSegment} tab="transcript" />,
+  );
+  const find = screen.getByRole("searchbox", { name: "Find in transcript" });
+  await userEvent.type(find, "missing");
+  const count = screen.getByText("No matches");
+  expect(count.getAttribute("aria-live")).toBe("polite");
+  expect(count.getAttribute("aria-hidden")).not.toBe("true");
+  expect(screen.queryByText("0 of 0")).toBeNull();
+  await userEvent.clear(find);
+  await userEvent.type(find, "Friday");
+  expect(screen.getByText("1 of 1")).toBeTruthy();
+});
+
+it("keeps numbered Find results when transcript matches exist", async () => {
+  Element.prototype.scrollIntoView = vi.fn();
+  render(
+    <MeetingWorkspace {...base} selected={withSegment} tab="transcript" />,
+  );
+  await userEvent.type(
+    screen.getByRole("searchbox", { name: "Find in transcript" }),
+    "i",
+  );
+  expect(screen.getByText("1 of 2").getAttribute("aria-live")).toBe("polite");
+  await userEvent.click(screen.getByRole("button", { name: "Next match" }));
+  expect(screen.getByText("2 of 2")).toBeTruthy();
+  expect(screen.queryByText("No matches")).toBeNull();
+});
+
 it("labels enhanced notes apart from a summary and opens a source in the transcript", async () => {
   const onTab = vi.fn();
   render(
@@ -271,15 +407,26 @@ it("regenerates enhanced notes with the picked template", async () => {
   expect(onEnhance).toHaveBeenCalledWith("general-v1");
 });
 
-it("says why Enhance notes is off when there is no transcript", () => {
-  render(<MeetingWorkspace {...base} selected={recorded} />);
+it("says why Enhance notes is off only in the enhancement block", () => {
+  render(
+    <MeetingWorkspace {...base} selected={{ ...recorded, summary: null }} />,
+  );
+  const enhanced = screen.getByRole("region", { name: "Enhanced notes" });
   expect(
-    (screen.getByRole("button", { name: "Enhance notes" }) as HTMLButtonElement)
-      .disabled,
+    (
+      within(enhanced).getByRole("button", {
+        name: "Enhance notes",
+      }) as HTMLButtonElement
+    ).disabled,
   ).toBe(true);
   expect(
-    screen.getByText("No transcript yet. Record or transcribe first."),
+    within(enhanced).getByText(
+      "No transcript yet. Record or transcribe first.",
+    ),
   ).toBeTruthy();
+  expect(
+    screen.getAllByText("No transcript yet. Record or transcribe first."),
+  ).toHaveLength(1);
 });
 
 it("reuses the freshness line for enhanced notes that went stale", () => {
@@ -397,3 +544,90 @@ it("edits enhanced notes as their own draft, not the plain summary", async () =>
   // While one block is being edited, the other block's edit control waits: no draft is silently replaced.
   expect(screen.queryByRole("button", { name: "Edit summary" })).toBeNull();
 });
+
+const modifierCases = [
+  {
+    name: "macOS with Command",
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)",
+    ctrlKey: false,
+    metaKey: true,
+    expected: true,
+  },
+  {
+    name: "macOS with Control",
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5)",
+    ctrlKey: true,
+    metaKey: false,
+    expected: false,
+  },
+  {
+    name: "Windows with Control",
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    ctrlKey: true,
+    metaKey: false,
+    expected: true,
+  },
+  {
+    name: "Windows with Meta",
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    ctrlKey: false,
+    metaKey: true,
+    expected: false,
+  },
+];
+
+it.each(modifierCases)(
+  "uses the primary modifier for timestamp insertion on $name",
+  async ({ userAgent, ctrlKey, metaKey, expected }) => {
+    vi.stubGlobal("navigator", { userAgent });
+    const getRecordingOffset = vi.fn().mockResolvedValue(65_400);
+    const onNotes = vi.fn();
+    render(
+      <MeetingWorkspace
+        {...base}
+        selected={recorded}
+        tab="notes"
+        live
+        getRecordingOffset={getRecordingOffset}
+        onNotes={onNotes}
+      />,
+    );
+    const editor = screen.getByRole("textbox", { name: /My notes/ });
+    editor.focus();
+    (editor as HTMLTextAreaElement).setSelectionRange(0, 0);
+    expect(
+      fireEvent.keyDown(editor, {
+        key: "T",
+        shiftKey: true,
+        ctrlKey,
+        metaKey,
+      }),
+    ).toBe(!expected);
+    if (expected) {
+      await waitFor(() =>
+        expect(onNotes).toHaveBeenCalledWith("[01:05] Notes"),
+      );
+      expect(getRecordingOffset).toHaveBeenCalledOnce();
+    } else {
+      expect(getRecordingOffset).not.toHaveBeenCalled();
+      expect(onNotes).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it.each(modifierCases)(
+  "uses the primary modifier for transcript Find on $name",
+  ({ userAgent, ctrlKey, metaKey, expected }) => {
+    vi.stubGlobal("navigator", { userAgent });
+    render(
+      <MeetingWorkspace {...base} selected={withSegment} tab="transcript" />,
+    );
+    const find = screen.getByRole("searchbox", { name: "Find in transcript" });
+    const tab = screen.getByRole("tab", { name: "Transcript" });
+    tab.focus();
+    expect(fireEvent.keyDown(tab, { key: "f", ctrlKey, metaKey })).toBe(
+      !expected,
+    );
+    expect(document.activeElement).toBe(expected ? find : tab);
+  },
+);

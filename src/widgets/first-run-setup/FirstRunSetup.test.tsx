@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
 import { api, type Settings } from "../../shared/api/api";
 import { baseUrlError } from "../../features/provider-settings";
 import { CUSTOM_PROVIDER } from "../../shared/lib/providers";
@@ -28,6 +29,12 @@ vi.mock("../../shared/api/api", async (original) => ({
     saveProcessingDefault: vi.fn(),
     saveSetupDone: vi.fn(),
     providerKeyStatus: vi.fn(),
+    localAiStatus: vi.fn(),
+    onLocalAiProgress: vi.fn(),
+    localAiInstallEngine: vi.fn(),
+    localAiDownloadHf: vi.fn(),
+    localAiUse: vi.fn(),
+    localAiStart: vi.fn(),
   },
 }));
 
@@ -45,7 +52,10 @@ const settings = {
   setup_done: false,
 } as unknown as Settings;
 
-function show(overrides: Partial<Settings> = {}) {
+function show(
+  overrides: Partial<Settings> = {},
+  panelOverrides: Partial<ComponentProps<typeof FirstRunSetup>> = {},
+) {
   const props = {
     onInstallStt: vi.fn(),
     onSettings: vi.fn(),
@@ -68,6 +78,7 @@ function show(overrides: Partial<Settings> = {}) {
       onRefreshDevices={vi.fn()}
       onKeyStatus={vi.fn()}
       {...props}
+      {...panelOverrides}
     />,
   );
   return props;
@@ -108,6 +119,26 @@ beforeEach(() => {
       models: [{ id: "llama3" }, { id: "nomic-embed-text" }],
     },
   ]);
+  vi.mocked(api.localAiStatus).mockResolvedValue({
+    hardware: {
+      gpu_name: null,
+      gpu_vendor: null,
+      vram_bytes: 0,
+      ram_bytes: 16_000_000_000,
+      ram_available_bytes: 8_000_000_000,
+      backend: "cpu",
+    },
+    engine_installed: false,
+    engine_tag: "test-build",
+    engine_download_bytes: 100,
+    server: "stopped",
+    server_error: null,
+    active_model: null,
+    in_use: false,
+    models: [],
+    job: null,
+  });
+  vi.mocked(api.onLocalAiProgress).mockResolvedValue(() => {});
   vi.mocked(api.saveSttSettings).mockResolvedValue(settings);
   vi.mocked(api.saveSttMode).mockResolvedValue(settings);
   vi.mocked(api.providerKeyStatus).mockResolvedValue("missing");
@@ -219,14 +250,26 @@ it("uses an installed Whisper file in place and hides non-speech files", async (
   expect(props.onInstallStt).toHaveBeenCalled();
 });
 
-it("offers no local server for AI notes, even when one is detected", async () => {
+it("offers managed Local AI rather than a detected server as the default notes path", async () => {
   show();
   await screen.findByRole("heading", { name: "How should we transcribe?" });
   await next();
   await screen.findByRole("heading", { name: /AI notes/ });
   expect(screen.queryByRole("radio", { name: /on this computer/ })).toBeNull();
   expect(screen.queryByText(/No local AI server/)).toBeNull();
-  expect(screen.getByRole("radio", { name: /API service/ })).toBeTruthy();
+  expect(screen.getByRole("radio", { name: "On this PC" })).toHaveProperty(
+    "checked",
+    true,
+  );
+  expect(screen.getByRole("radio", { name: "With a connection" })).toBeTruthy();
+  expect(
+    await screen.findByRole("combobox", { name: "Local model" }),
+  ).toBeTruthy();
+  expect(api.localAiStatus).toHaveBeenCalled();
+  expect(api.localAiInstallEngine).not.toHaveBeenCalled();
+  expect(api.localAiDownloadHf).not.toHaveBeenCalled();
+  expect(api.localAiUse).not.toHaveBeenCalled();
+  expect(api.localAiStart).not.toHaveBeenCalled();
 });
 
 it("finishes with default devices, then starts a meeting", async () => {
@@ -240,7 +283,7 @@ it("finishes with default devices, then starts a meeting", async () => {
     screen.queryByRole("checkbox", { name: /Transcribe every recording/ }),
   ).toBeNull();
   await next();
-  expect(screen.getByRole("heading", { name: "You're set" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Ready to record" })).toBeTruthy();
   await userEvent.click(
     screen.getByRole("button", { name: "Start a meeting" }),
   );
@@ -342,7 +385,9 @@ it("offers the major providers for AI notes and connects the default one", async
   show();
   await screen.findByRole("heading", { name: "How should we transcribe?" });
   await next();
-  await userEvent.click(screen.getByRole("radio", { name: /API service/ }));
+  await userEvent.click(
+    screen.getByRole("radio", { name: "With a connection" }),
+  );
   const picker = screen.getByLabelText("Provider") as HTMLSelectElement;
   expect(
     within(picker)
@@ -406,7 +451,9 @@ it("says what a saved AI connection did not send, without claiming nothing was s
   show();
   await screen.findByRole("heading", { name: "How should we transcribe?" });
   await next();
-  await userEvent.click(screen.getByRole("radio", { name: /API service/ }));
+  await userEvent.click(
+    screen.getByRole("radio", { name: "With a connection" }),
+  );
   await userEvent.click(
     screen.getByRole("button", { name: "Connect and list models" }),
   );
@@ -552,4 +599,208 @@ it("rejects a base URL the way Settings does, before asking the server", async (
       }) as HTMLButtonElement
     ).disabled,
   ).toBe(false);
+});
+
+it("reports skipped transcript and notes setup without blocking recording", async () => {
+  show();
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(screen.getByRole("heading", { name: "Ready to record" })).toBeTruthy();
+  expect(screen.getByText("Recording is ready.")).toBeTruthy();
+  expect(screen.getByText("Local transcription is not set up.")).toBeTruthy();
+  expect(screen.getByText("AI notes are not set up.")).toBeTruthy();
+  expect(
+    screen.queryByText("OpenMeet is ready for your next meeting."),
+  ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Start a meeting" }),
+  ).toHaveProperty("disabled", false);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Set up transcription" }),
+  );
+  expect(
+    screen.getByRole("heading", { name: "How should we transcribe?" }),
+  ).toBeTruthy();
+  await next();
+  await next();
+  await next();
+  await userEvent.click(screen.getByRole("button", { name: "Set up notes" }));
+  expect(screen.getByRole("heading", { name: /AI notes/ })).toBeTruthy();
+});
+
+it("does not call recording ready without usable devices", async () => {
+  show(
+    {},
+    { devices: { capture_supported: true, microphones: [], outputs: [] } },
+  );
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(screen.getByRole("heading", { name: "Setup progress" })).toBeTruthy();
+  expect(
+    screen.getByText("Recording needs a microphone and system audio."),
+  ).toBeTruthy();
+  expect(screen.queryByText("Recording is ready.")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "Choose devices" }));
+  expect(
+    screen.getByRole("heading", { name: "Pick your devices" }),
+  ).toBeTruthy();
+});
+
+it("reports an installed local transcript separately from configured notes", async () => {
+  show(
+    {
+      llm: {
+        base_url: "https://api.example.com/v1",
+        model: "notes-model",
+        revision: 1,
+      },
+    },
+    {
+      stt: {
+        engine: true,
+        model: true,
+        vad: true,
+        installed: true,
+        supported: true,
+        missing_bytes: 0,
+        models: [],
+        languages: ["en"],
+      },
+    },
+  );
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(screen.getByText("Local transcription is ready.")).toBeTruthy();
+  expect(screen.getByText("AI notes are configured.")).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Set up transcription" }),
+  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Set up notes" })).toBeNull();
+});
+
+it("does not treat a connection without a model as configured notes", async () => {
+  show({
+    llm: { base_url: "https://api.example.com/v1", model: null, revision: 1 },
+  });
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(screen.getByText("AI notes are not set up.")).toBeTruthy();
+  expect(screen.queryByText("AI notes are configured.")).toBeNull();
+});
+
+it("reports cloud transcription without calling it local", async () => {
+  show({
+    stt_mode: "cloud",
+    cloud_stt: {
+      base_url: "https://api.example.com/v1",
+      model: "speech-model",
+      revision: 1,
+    },
+  });
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(screen.getByText("Cloud transcription is configured.")).toBeTruthy();
+  expect(screen.queryByText("Local transcription is ready.")).toBeNull();
+});
+
+it("switching notes paths saves nothing and the local path stays skippable", async () => {
+  show();
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await screen.findByRole("combobox", { name: "Local model" });
+  await userEvent.click(
+    screen.getByRole("radio", { name: "With a connection" }),
+  );
+  expect(screen.getByLabelText("Provider")).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "Local model" })).toBeNull();
+  await userEvent.click(screen.getByRole("radio", { name: "On this PC" }));
+  await screen.findByRole("combobox", { name: "Local model" });
+  expect(screen.queryByLabelText("Provider")).toBeNull();
+  expect(api.saveApiConnection).not.toHaveBeenCalled();
+  expect(api.saveProviderAssignment).not.toHaveBeenCalled();
+  expect(api.localAiUse).not.toHaveBeenCalled();
+  expect(api.localAiInstallEngine).not.toHaveBeenCalled();
+  expect(api.localAiDownloadHf).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Skip for now" }));
+  expect(
+    screen.getByRole("heading", { name: "Pick your devices" }),
+  ).toBeTruthy();
+});
+
+it("keeps the saved remote notes branch on first entry", async () => {
+  show({
+    llm: {
+      base_url: "https://api.example.com/v1",
+      model: "notes-model",
+      revision: 1,
+    },
+  });
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  expect(
+    screen.getByRole("radio", { name: "With a connection" }),
+  ).toHaveProperty("checked", true);
+  expect(screen.getByLabelText("Provider")).toBeTruthy();
+  expect(api.localAiStatus).not.toHaveBeenCalled();
+});
+
+it("reports that configured notes still need a transcript", async () => {
+  show({
+    llm: {
+      base_url: "http://127.0.0.1:8080/v1",
+      model: "local-notes",
+      revision: 1,
+    },
+  });
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(
+    screen.getByText("AI notes are configured but need a transcript."),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Set up transcription" }),
+  ).toBeTruthy();
+});
+
+it("does not call cloud transcription configured without a model", async () => {
+  show({
+    stt_mode: "cloud",
+    cloud_stt: {
+      base_url: "https://api.example.com/v1",
+      model: null,
+      revision: 1,
+    },
+  });
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(screen.getByText("Cloud transcription is not set up.")).toBeTruthy();
+});
+
+it("says recording is unavailable when capture is unsupported", async () => {
+  show(
+    {},
+    { devices: { capture_supported: false, microphones: [], outputs: [] } },
+  );
+  await screen.findByRole("heading", { name: "How should we transcribe?" });
+  await next();
+  await next();
+  await next();
+  expect(screen.getByRole("heading", { name: "Setup progress" })).toBeTruthy();
+  expect(
+    screen.getByText("Recording is not available on this device."),
+  ).toBeTruthy();
 });

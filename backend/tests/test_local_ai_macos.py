@@ -11,6 +11,7 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -314,18 +315,80 @@ def test_sigterm_ends_the_group_and_exits(tmp_path: Path, monkeypatch: pytest.Mo
     assert not built.pid_path.exists()
 
 
-def test_the_exit_hook_leaves_a_foreign_pid_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_exit_hook_signals_the_owned_group_not_a_foreign_pid_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     kills = Kills()
     built = spec(tmp_path)
-    found, _spawned, _jobs = supervisor(group_kill=kills, command_of=lambda pid: "/usr/bin/python3")
+    found, spawned, _jobs = supervisor(group_kill=kills, command_of=lambda pid: "/usr/bin/python3")
     found.start(built, background=False)
     built.pid_path.write_text("999\n", encoding="utf-8")  # the pid now belongs to something else
 
     found.end_if_running()
 
-    assert kills.calls == []
+    assert kills.calls == [(spawned[0].pid, signal.SIGTERM)]
     assert not built.pid_path.exists()
+
+
+def test_the_exit_hook_signals_the_owned_group_without_a_pid_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    kills = Kills()
+    found, spawned, _jobs = supervisor(group_kill=kills)
+    built = spec(tmp_path)
+    found.start(built, background=False)
+    built.pid_path.unlink()
+
+    server._end_live()
+
+    assert kills.calls == [(spawned[0].pid, signal.SIGTERM)]
+
+
+def test_failed_exit_signalling_keeps_the_pid_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    kills = Kills(accepted=False)
+    found, spawned, _jobs = supervisor(group_kill=kills, command_of=lambda pid: LLAMA_SERVER)
+    built = spec(tmp_path)
+    found.start(built, background=False)
+
+    server._end_live()
+
+    assert kills.calls == [(spawned[0].pid, signal.SIGTERM)]
+    assert built.pid_path.read_text(encoding="utf-8") == f"{spawned[0].pid}\n"
+
+
+def test_the_exit_hook_does_not_wait_for_the_supervisor_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    kills = Kills()
+    found, _spawned, _jobs = supervisor(group_kill=kills, command_of=lambda pid: LLAMA_SERVER)
+    built = spec(tmp_path)
+    found.start(built, background=False)
+    locked = threading.Event()
+    release = threading.Event()
+
+    def hold_lock() -> None:
+        with found._lock:
+            locked.set()
+            release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    try:
+        assert locked.wait(timeout=2)
+        found.end_if_running()
+        assert not release.is_set()
+        assert kills.calls == []
+        assert built.pid_path.exists()
+    finally:
+        release.set()
+        holder.join(timeout=2)
+    assert not holder.is_alive()
 
 
 def test_exit_hooks_are_installed_on_a_mac_and_not_on_windows(

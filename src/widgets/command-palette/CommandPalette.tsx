@@ -58,6 +58,7 @@ type Props = {
 
 type ActionRow = Omit<Row, "run"> & {
   action: PaletteAction;
+  group: "Create" | "This meeting" | "Preferences";
   /** The row's chord starts with the platform shortcut key, shown at render time. */
   mod?: boolean;
 };
@@ -66,6 +67,7 @@ const ACTIONS: ActionRow[] = [
   {
     key: "new-recording",
     action: "new-recording",
+    group: "Create",
     label: "New recording",
     icon: "mic",
     mod: true,
@@ -74,6 +76,7 @@ const ACTIONS: ActionRow[] = [
   {
     key: "new-note",
     action: "new-note",
+    group: "Create",
     label: "New note",
     icon: "plus",
     mod: true,
@@ -82,6 +85,7 @@ const ACTIONS: ActionRow[] = [
   {
     key: "settings",
     action: "settings",
+    group: "Preferences",
     label: "Open settings",
     icon: "settings",
     mod: true,
@@ -90,6 +94,7 @@ const ACTIONS: ActionRow[] = [
   {
     key: "export",
     action: "export",
+    group: "This meeting",
     label: "Export meeting",
     icon: "download",
     mod: true,
@@ -98,6 +103,7 @@ const ACTIONS: ActionRow[] = [
   {
     key: "rename",
     action: "rename",
+    group: "This meeting",
     label: "Rename",
     icon: "pencil",
     keys: ["F2"],
@@ -105,18 +111,21 @@ const ACTIONS: ActionRow[] = [
   {
     key: "theme-system",
     action: "theme-system",
+    group: "Preferences",
     label: "Theme: System",
     icon: "monitor",
   },
   {
     key: "theme-dark",
     action: "theme-dark",
+    group: "Preferences",
     label: "Theme: Dark",
     icon: "moon",
   },
   {
     key: "theme-light",
     action: "theme-light",
+    group: "Preferences",
     label: "Theme: Light",
     icon: "sun",
   },
@@ -148,24 +157,23 @@ export function CommandPalette(props: Props) {
     const needle = foldText(query.trim());
     const match = (label: string) =>
       needle === "" || foldText(label).includes(needle);
-    const actions: Row[] = ACTIONS.filter((row) => match(row.label)).map(
-      (row) => {
-        const wanted = themeOf(row.action);
-        const needsMeeting = row.action === "export" || row.action === "rename";
-        return {
-          key: row.key,
-          label: row.label,
-          icon: row.icon,
-          keys: row.mod && row.keys ? [modKeyLabel(), ...row.keys] : row.keys,
-          disabled: needsMeeting && currentMeetingId === null,
-          tag: wanted && theme === wanted ? "Current" : undefined,
-          run: () => {
-            onClose();
-            onAction(row.action);
-          },
-        };
-      },
-    );
+    const actions = ACTIONS.filter((row) => match(row.label)).map((row) => {
+      const wanted = themeOf(row.action);
+      const needsMeeting = row.action === "export" || row.action === "rename";
+      return {
+        key: row.key,
+        group: row.group,
+        label: row.label,
+        icon: row.icon,
+        keys: row.mod && row.keys ? [modKeyLabel(), ...row.keys] : row.keys,
+        disabled: needsMeeting && currentMeetingId === null,
+        tag: wanted && theme === wanted ? "Current" : undefined,
+        run: () => {
+          onClose();
+          onAction(row.action);
+        },
+      };
+    });
     const shown = meetings.filter((meeting) => match(meeting.title));
     // Without a query the list stays short; a typed title searches the library.
     const found: Row[] = (
@@ -181,7 +189,12 @@ export function CommandPalette(props: Props) {
       },
     }));
     return [
-      ...(actions.length > 0 ? [{ name: "Actions", rows: actions }] : []),
+      ...["Create", "This meeting", "Preferences"]
+        .map((name) => ({
+          name,
+          rows: actions.filter((row) => row.group === name),
+        }))
+        .filter((group) => group.rows.length > 0),
       ...(found.length > 0 ? [{ name: "Meetings", rows: found }] : []),
     ];
   }, [

@@ -25,6 +25,7 @@ import httpx
 from openmeet_py.api.errors import AppError
 from openmeet_py.speech import model_library, safe_archive
 from openmeet_py.speech.stt_catalog import SHERPA_MODELS, SHERPA_VAD, SherpaModel
+from openmeet_py.speech.targets import local_speech_supported
 
 SHERPA_PREFIX = "sherpa:"
 CUSTOM_PREFIX = "sherpa-dir:"
@@ -79,9 +80,6 @@ def is_sherpa(model_id: str) -> bool:
 
 
 def supported() -> bool:
-    """The shared target gate lives in stt.py, which imports this module, so it is imported lazily."""
-    from openmeet_py.speech.stt import local_speech_supported
-
     return local_speech_supported()
 
 

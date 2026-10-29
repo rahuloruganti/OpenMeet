@@ -1,6 +1,6 @@
 # OpenMeet
 
-A local-first meeting notetaker for Windows 11 and Apple silicon Macs. It records your microphone and system audio, transcribes on this PC, and writes AI notes from a model you choose. Version 0.9.0, unsigned, no installer: one `OpenMeet.exe` on Windows, one `.dmg` on macOS.
+A local-first meeting notetaker for Windows 11 and Apple silicon Macs. It records your microphone and system audio, transcribes on this PC, and writes AI notes from a model you choose. Version 0.9.0, unsigned, no installer: one `OpenMeet.exe` on Windows. On macOS you build the app yourself for now.
 
 Audio capture, local transcription, shortcuts and meeting detection have not been tested on real hardware yet. The macOS build has not run on a Mac at all; see [macOS](docs/macos.md) for what that means.
 
@@ -26,9 +26,11 @@ just build
 
 Apple silicon and macOS 14.2 or newer. There is no Intel build.
 
-1. Download `OpenMeet-0.9.0-arm64.dmg` from the [latest release](https://github.com/rahuloruganti/OpenMeet/releases/latest), open it and drag **OpenMeet** to **Applications**.
-2. The build is unsigned and not notarized, so the first open is a right-click, **Open**, **Open** again. To skip that step: `xattr -dr com.apple.quarantine /Applications/OpenMeet.app`.
-3. To build it yourself, install Xcode command line tools (`xcode-select --install`), [uv](https://docs.astral.sh/uv/getting-started/installation/), Node.js 24 with Corepack and Git, then run `just build`. That writes `packaging/dist/OpenMeet-<version>-arm64.dmg`.
+There is no published Mac download yet.
+
+1. Build it: install Xcode command line tools (`xcode-select --install`), [uv](https://docs.astral.sh/uv/getting-started/installation/), Node.js 24 with Corepack and Git, then run `just build`. That writes `packaging/dist/OpenMeet-<version>-arm64.dmg`.
+2. Open the DMG and drag **OpenMeet** to **Applications**.
+3. The build is unsigned and not notarized, so the first open is a right-click, **Open**, **Open** again. To skip that step: `xattr -dr com.apple.quarantine /Applications/OpenMeet.app`.
 
 Allow Microphone and System Audio Recording when macOS asks. [macOS notes](docs/macos.md) covers permissions, data location, shortcuts and what is still untested.
 

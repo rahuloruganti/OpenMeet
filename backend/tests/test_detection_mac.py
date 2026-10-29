@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import ctypes
 import os
+import platform
 import sys
+from functools import partial
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import pytest
@@ -43,6 +46,8 @@ class FakeLibrary:
         self.by_object = {process["object_id"]: process for process in processes}
         self.errors = errors or {}
         self.reads: list[tuple[int, int, int, int]] = []
+        self.AudioObjectGetPropertyDataSize = partial(self.AudioObjectGetPropertyDataSize)
+        self.AudioObjectGetPropertyData = partial(self.AudioObjectGetPropertyData)
 
     def _record(self, object_id: int, address: Any) -> tuple[int, int]:
         host = _read_address(address)
@@ -138,6 +143,41 @@ def test_the_process_list_is_read_from_the_system_object_in_the_global_scope(har
         detection_mac.SCOPE_GLOBAL,
         detection_mac.ELEMENT_MAIN,
     )
+
+
+def test_framework_signatures_preserve_native_integer_and_pointer_types() -> None:
+    library = SimpleNamespace(
+        AudioObjectGetPropertyDataSize=SimpleNamespace(),
+        AudioObjectGetPropertyData=SimpleNamespace(),
+    )
+    foundation = SimpleNamespace(
+        CFStringGetLength=SimpleNamespace(),
+        CFStringGetMaximumSizeForEncoding=SimpleNamespace(),
+        CFStringGetCString=SimpleNamespace(),
+        CFRelease=SimpleNamespace(),
+    )
+    detection_mac._bind_signatures(lib=library, foundation=foundation)
+    property_args = [
+        ctypes.c_uint32,
+        ctypes.POINTER(PropertyAddress),
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    assert library.AudioObjectGetPropertyDataSize.argtypes == property_args
+    assert getattr(library.AudioObjectGetPropertyDataSize, "restype") is ctypes.c_int32
+    assert library.AudioObjectGetPropertyData.argtypes == property_args + [ctypes.c_void_p]
+    assert getattr(library.AudioObjectGetPropertyData, "restype") is ctypes.c_int32
+    assert foundation.CFStringGetLength.argtypes == [ctypes.c_void_p]
+    assert getattr(foundation.CFStringGetLength, "restype") is ctypes.c_long
+    assert foundation.CFStringGetMaximumSizeForEncoding.argtypes == [ctypes.c_long, ctypes.c_uint32]
+    assert foundation.CFStringGetMaximumSizeForEncoding.restype is ctypes.c_long
+    assert foundation.CFStringGetCString.argtypes == [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_char), ctypes.c_long, ctypes.c_uint32,
+    ]
+    assert foundation.CFStringGetCString.restype is ctypes.c_ubyte
+    assert foundation.CFRelease.argtypes == [ctypes.c_void_p]
+    assert foundation.CFRelease.restype is None
 
 
 # ---- which app holds the microphone -------------------------------------------
@@ -263,6 +303,10 @@ class FakeFoundation:
         self.text = text
         self.encodings: list[int] = []
         self.released: list[Any] = []
+        self.CFStringGetLength = partial(self.CFStringGetLength)
+        self.CFStringGetMaximumSizeForEncoding = partial(self.CFStringGetMaximumSizeForEncoding)
+        self.CFStringGetCString = partial(self.CFStringGetCString)
+        self.CFRelease = partial(self.CFRelease)
 
     def CFStringGetLength(self, reference: Any) -> int:
         return len(self.text)
@@ -280,6 +324,36 @@ class FakeFoundation:
 
     def CFRelease(self, reference: Any) -> None:
         self.released.append(reference)
+
+
+def test_frameworks_are_bound_once_on_first_use(monkeypatch: pytest.MonkeyPatch) -> None:
+    library = FakeLibrary([])
+    foundation = FakeFoundation(ZOOM)
+    loads: list[str] = []
+
+    def load(path: str) -> Any:
+        loads.append(path)
+        return {detection_mac.CORE_AUDIO: library, detection_mac.CORE_FOUNDATION: foundation}[path]
+
+    monkeypatch.setattr(ctypes, "CDLL", load)
+    registry = MacConsentRegistry()
+    assert loads == []
+    assert registry._library() is library
+    reader = registry._strings()
+    assert getattr(library.AudioObjectGetPropertyData, "restype") is ctypes.c_int32
+    assert getattr(foundation.CFStringGetLength, "restype") is ctypes.c_long
+    assert reader(ctypes.c_void_p(0x123456789)) == ZOOM
+    assert registry._library() is library
+    assert registry._strings() is reader
+    assert loads == [detection_mac.CORE_AUDIO, detection_mac.CORE_FOUNDATION]
+
+
+def test_an_injected_core_audio_handle_is_bound() -> None:
+    library = FakeLibrary([])
+    registry = MacConsentRegistry(lib=library, read_string=FakeStrings({}))
+    assert registry._library() is library
+    assert getattr(library.AudioObjectGetPropertyData, "restype") is ctypes.c_int32
+    assert getattr(library.AudioObjectGetPropertyDataSize, "restype") is ctypes.c_int32
 
 
 def test_the_core_foundation_reader_copies_the_string_in_utf8_and_releases_it() -> None:
@@ -305,26 +379,35 @@ def _mac_ver(version: str) -> Any:
     return lambda: (version, ("", "", ""), "arm64")
 
 
-def test_detection_needs_macos_14_2(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("14.1.2", False),
+        ("14.2", True),
+        ("15.0.1", True),
+        ("", False),
+        ("15", False),
+        ("15.x", False),
+    ],
+)
+def test_detection_needs_macos_14_2(
+    monkeypatch: pytest.MonkeyPatch, version: str, expected: bool,
+) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(detection_mac.platform, "mac_ver", _mac_ver("14.1.2"))
-    assert detection_mac.supported() is False
-    monkeypatch.setattr(detection_mac.platform, "mac_ver", _mac_ver("14.2"))
-    assert detection_mac.supported() is True
-    monkeypatch.setattr(detection_mac.platform, "mac_ver", _mac_ver("15.0.1"))
-    assert detection_mac.supported() is True
+    monkeypatch.setattr(platform, "mac_ver", _mac_ver(version))
+    assert detection_mac.supported() is expected
 
 
 def test_detection_is_not_supported_off_macos(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(detection_mac.platform, "mac_ver", _mac_ver("15.0.1"))
+    monkeypatch.setattr(platform, "mac_ver", _mac_ver("15.0.1"))
     assert detection_mac.supported() is False
 
 
 def test_the_macos_registry_is_chosen_on_darwin(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     monkeypatch.delenv("OPENMEET_PY_FAKE_DETECTION", raising=False)
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(detection_mac.platform, "mac_ver", _mac_ver("14.2"))
+    monkeypatch.setattr(platform, "mac_ver", _mac_ver("14.2"))
     assert isinstance(detection.consent_from_env(tmp_path), MacConsentRegistry)
     assert detection.supported() is True
 

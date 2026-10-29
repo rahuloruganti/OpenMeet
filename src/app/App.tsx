@@ -28,7 +28,7 @@ import { MeetingPage, useMeetingPage } from "../pages/meeting";
 import { SettingsPage, useSettingsPage } from "../pages/settings";
 import { FirstRunPage, SetupPage, useSetupPage } from "../pages/setup";
 import { CommandPalette, type PaletteAction } from "../widgets/command-palette";
-import { isMac } from "../shared/lib/platform";
+import { primaryModifierPressed } from "../shared/lib/platform";
 
 type Panel = "setup" | "settings" | null;
 
@@ -624,7 +624,7 @@ export function App() {
     if (!desktop || !ready || firstRun) return;
     const onKey = (event: KeyboardEvent) => {
       // Only one modifier is the shortcut key per platform, so Ctrl+K stays inert on a Mac.
-      const mod = isMac() ? event.metaKey : event.ctrlKey;
+      const mod = primaryModifierPressed(event);
       const key = event.key.toLowerCase();
       if (mod && key === "k") {
         event.preventDefault();

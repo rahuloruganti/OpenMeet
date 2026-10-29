@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Folder, type Meeting } from "../../shared/api/api";
 import { formatShortDate, formatTime } from "../../entities/meeting";
 import { MeetingSidebar } from "./MeetingSidebar";
@@ -69,7 +69,19 @@ function sidebar(meetings: Meeting[], search = "") {
 
 const row = (name: RegExp) => screen.getByRole("button", { name });
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("meeting sidebar", () => {
+  it.each(["Windows", "Macintosh"])(
+    "does not advertise the palette shortcut in search on %s",
+    (platform) => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(platform);
+      sidebar([]);
+      const search = screen.getByRole("searchbox", { name: "Search meetings" });
+      expect(search.closest(".sb-search")?.querySelector("kbd")).toBeNull();
+      expect(search.getAttribute("aria-keyshortcuts")).toBeNull();
+    },
+  );
   it("filters with folded text in either direction", () => {
     sidebar(
       [

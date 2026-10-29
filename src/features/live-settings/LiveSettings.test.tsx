@@ -194,7 +194,7 @@ it("names the live model row, and says what Same as Transcription uses", async (
   expect(screen.getByRole("region", { name: "Live transcript" })).toBeTruthy();
   expect(screen.getByLabelText("Live model")).toBeTruthy();
   expect(
-    screen.getByText("Same as Transcription uses the Speech model above."),
+    screen.getByText("Uses the model chosen under Transcription."),
   ).toBeTruthy();
 });
 
@@ -212,7 +212,7 @@ it("shows no 'Leaves this device' tag, even when the Same row is marked as leavi
   ).toBeTruthy();
   expect(screen.queryByText("Leaves this device")).toBeNull();
   expect(
-    screen.getByText("Same as Transcription uses the Speech model above."),
+    screen.getByText("Uses the model chosen under Transcription."),
   ).toBeTruthy();
 });
 
@@ -242,6 +242,6 @@ it("makes Same as Transcription unavailable in cloud speech mode and says why, o
   expect(same).toHaveProperty("disabled", true);
   expect(screen.getAllByText(reason)).toHaveLength(1);
   expect(
-    screen.queryByText("Same as Transcription uses the Speech model above."),
+    screen.queryByText("Uses the model chosen under Transcription."),
   ).toBeNull();
 });

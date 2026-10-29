@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import invoke, invoke_error
-from openmeet_py.speech import model_library, sherpa_models, streaming_models, stt
+from openmeet_py.speech import model_library, sherpa_models, streaming_models, stt, targets
 from test_streaming_models import KROKO, archive_bytes, fake_catalog
 from stub_http import reply, serve  # noqa: F401  (serve is the stub-server fixture)
 
@@ -27,6 +27,11 @@ NEEDS_TARGET = "Windows x64 or a Mac with Apple silicon."
 def fake_platform(monkeypatch: pytest.MonkeyPatch, name: str, machine: str) -> None:
     monkeypatch.setattr(sys, "platform", name)
     monkeypatch.setattr(platform, "machine", lambda: machine)
+
+
+@pytest.mark.parametrize("module", [stt, sherpa_models, streaming_models])
+def test_speech_modules_import_the_gate_from_targets(module: Any) -> None:
+    assert module.local_speech_supported.__module__ == "openmeet_py.speech.targets"
 
 
 @pytest.mark.parametrize(
@@ -46,7 +51,7 @@ def test_the_gate_allows_windows_x64_and_apple_silicon_only(
     monkeypatch: pytest.MonkeyPatch, name: str, machine: str, wanted: bool
 ) -> None:
     fake_platform(monkeypatch, name, machine)
-    assert stt.local_speech_supported() is wanted
+    assert targets.local_speech_supported() is wanted
     assert stt.supported() is wanted
 
 

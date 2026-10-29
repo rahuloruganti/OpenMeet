@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import platform
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -43,12 +44,16 @@ class FakeSession:
         capture_failed: bool = False,
         stream_format: Optional[FakeFormat] = None,
         during_stop: Optional[FakeBuffer] = None,
+        stop_errors: Optional[list[Exception]] = None,
+        close_errors: Optional[list[Exception]] = None,
     ) -> None:
         self.on_buffer = on_buffer
         self.start_error = start_error
         self.stream_format = stream_format
         self.capture_failed = capture_failed
         self.during_stop = during_stop
+        self.stop_errors = list(stop_errors or [])
+        self.close_errors = list(close_errors or [])
         self.is_recording = False
         self.needs_cleanup = False
         self.calls: list[str] = []
@@ -61,6 +66,8 @@ class FakeSession:
 
     def stop(self) -> None:
         self.calls.append("stop")
+        if self.stop_errors:
+            raise self.stop_errors.pop(0)
         if not self.is_recording:
             raise RuntimeError("Not recording")
         self.is_recording = False
@@ -69,6 +76,9 @@ class FakeSession:
 
     def close(self) -> None:
         self.calls.append("close")
+        if self.close_errors:
+            raise self.close_errors.pop(0)
+        self.is_recording = False
         self.needs_cleanup = False
 
 
@@ -122,7 +132,8 @@ def _installed(
     return system_tap_mac.open_tap(lambda *_: None), module
 
 
-def test_system_audio_is_unavailable_off_a_mac() -> None:
+def test_system_audio_is_unavailable_off_a_mac(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
     assert system_tap_mac.tap_unavailable_reason() == system_tap_mac.NOT_MAC
     with pytest.raises(BackendError) as raised:
         system_tap_mac.open_tap(lambda *_: None)
@@ -140,12 +151,13 @@ def test_system_audio_needs_macos_14_2(
     assert system_tap_mac.tap_unavailable_reason() is None
 
 
+@pytest.mark.parametrize("version", ["", "14", "unknown", "14.x"])
 def test_an_unreadable_macos_version_is_not_trusted(
-    monkeypatch: pytest.MonkeyPatch, install: Callable[..., FakeCatap]
+    monkeypatch: pytest.MonkeyPatch, install: Callable[..., FakeCatap], version: str
 ) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     install()
-    monkeypatch.setattr(platform, "mac_ver", lambda: ("", ("", "", ""), ""))
+    monkeypatch.setattr(platform, "mac_ver", lambda: (version, ("", "", ""), ""))
     assert system_tap_mac.tap_unavailable_reason() == system_tap_mac.OLD_MACOS
 
 
@@ -254,8 +266,11 @@ def test_a_44_1k_tap_is_resampled_to_the_advertised_rate(
     stream = system_tap_mac.open_tap(lambda data, frames, gap: received.append((data, frames)))
     fmt = FakeFormat(sample_rate=44100.0, num_channels=1)
     stream.deliver(FakeBuffer(_f32(*([0.5] * 441)), 441, fmt))
-    assert received[0][1] == 480  # one 10 ms block at 48 kHz
-    assert len(np.frombuffer(received[0][0], dtype="<f4")) == 480 * 2
+    # One output frame waits for the next buffer rather than inventing a boundary sample.
+    assert received[0][1] == 479
+    assert len(np.frombuffer(received[0][0], dtype="<f4")) == 479 * 2
+    stream.deliver(FakeBuffer(_f32(*([0.5] * 441)), 441, fmt))
+    assert [frames for _, frames in received] == [479, 480]
 
 
 def test_a_partial_trailing_frame_is_dropped(darwin: None, install: Callable[..., FakeCatap]) -> None:
@@ -299,7 +314,7 @@ def test_the_reported_format_is_used_before_the_first_buffer(
     received: list[int] = []
     stream = system_tap_mac.open_tap(lambda data, frames, gap: received.append(frames))
     stream.deliver(FakeBuffer(_f32(*([0.0] * 441)), 441, FakeFormat()))
-    assert received == [480]
+    assert received == [479]  # the final interpolation needs the next input frame
 
 
 def test_a_failing_recorder_callback_is_reported_not_raised(
@@ -369,3 +384,182 @@ def test_the_tap_stays_usable_after_a_few_empty_buffers(
     stream.deliver(FakeBuffer(_f32(0.0, 0.0), 1, FakeFormat()))
     assert received == [1]
     assert stream.error() is None
+
+
+def test_resampling_many_buffers_has_no_frame_rounding_drift(
+    darwin: None, install: Callable[..., FakeCatap]
+) -> None:
+    install()
+    received: list[int] = []
+    stream = system_tap_mac.open_tap(lambda data, frames, gap: received.append(frames))
+    buffer = FakeBuffer(np.zeros((1024, 2), dtype="<f4").tobytes(), 1024, FakeFormat(sample_rate=44100))
+    for _ in range(1000):
+        stream.deliver(buffer)
+    stream.stop()
+    assert abs(sum(received) - 1000 * 1024 * 48000 / 44100) <= 1
+
+
+@pytest.mark.parametrize("rate", [32000, 44100, 96000])
+@pytest.mark.parametrize("chunk_size", [1, 7, 257, 1024])
+def test_resampling_is_independent_of_buffer_boundaries(
+    darwin: None, install: Callable[..., FakeCatap], rate: int, chunk_size: int
+) -> None:
+    install()
+    positions = np.arange(2051, dtype=np.float32)
+    signal = np.stack((np.sin(positions / 11), np.cos(positions / 17)), axis=1).astype("<f4")
+    fmt = FakeFormat(sample_rate=rate)
+
+    def capture(size: int) -> np.ndarray:
+        received: list[bytes] = []
+        stream = system_tap_mac.open_tap(lambda data, frames, gap: received.append(data))
+        for start in range(0, len(signal), size):
+            block = signal[start:start + size]
+            stream.deliver(FakeBuffer(block.tobytes(), len(block), fmt))
+            stream.deliver(FakeBuffer(b"", 0, fmt))
+        stream.stop()
+        return np.frombuffer(b"".join(received), dtype="<f4").reshape(-1, 2)
+
+    whole = capture(len(signal))
+    split = capture(chunk_size)
+    np.testing.assert_array_equal(split, whole)
+    output_positions = np.arange(len(whole)) * rate / 48000
+    expected = np.stack(
+        [np.interp(output_positions, positions, signal[:, channel]) for channel in range(2)], axis=1
+    )
+    np.testing.assert_allclose(whole, expected, atol=1e-7, rtol=1e-6)
+
+
+def test_adopting_the_started_format_keeps_an_active_resampler_phase() -> None:
+    received: list[int] = []
+    stream = system_tap_mac.TapStream(lambda data, frames, gap: received.append(frames))
+    fmt = FakeFormat(sample_rate=44100)
+    buffer = FakeBuffer(np.zeros((441, 2), dtype="<f4").tobytes(), 441, fmt)
+    # catap's worker can deliver before start returns and open_tap adopts stream_format.
+    stream.deliver(buffer)
+    stream.adopt(fmt)
+    stream.deliver(buffer)
+    assert received == [479, 480]
+
+
+@pytest.mark.parametrize("failed_method", ["stop", "close"])
+def test_failed_teardown_is_reported_and_retried(
+    darwin: None, install: Callable[..., FakeCatap], failed_method: str
+) -> None:
+    stream, module = _installed(install, **{f"{failed_method}_errors": [OSError("busy")]})
+    assert module.session is not None
+    stream.stop()
+    assert stream.error() == "OpenMeet could not finish stopping system audio. Try stopping again."
+    calls = list(module.session.calls)
+    stream.stop()
+    assert len(module.session.calls) > len(calls)
+    assert module.session.calls[-1] == "close"
+    assert stream.error() is None
+    calls = list(module.session.calls)
+    stream.stop()
+    assert module.session.calls == calls
+
+
+def test_teardown_keeps_retrying_until_both_operations_succeed(
+    darwin: None, install: Callable[..., FakeCatap]
+) -> None:
+    stream, module = _installed(
+        install,
+        stop_errors=[OSError("busy"), RuntimeError("still busy")],
+        close_errors=[RuntimeError("busy"), OSError("still busy")],
+    )
+    assert module.session is not None
+    for _ in range(2):
+        stream.stop()
+        assert stream.error() == "OpenMeet could not finish stopping system audio. Try stopping again."
+    stream.stop()
+    assert module.session.calls == ["start", "stop", "close", "stop", "close", "stop", "close"]
+    assert stream.error() is None
+
+
+def test_failed_teardown_still_waits_for_an_inflight_callback(
+    darwin: None, install: Callable[..., FakeCatap], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = install(stop_errors=[OSError("busy")])
+    callback_entered = threading.Event()
+    release_callback = threading.Event()
+    close_attempted = threading.Event()
+    stopped = threading.Event()
+
+    def on_audio(data: bytes, frames: int, gap: bool) -> None:
+        callback_entered.set()
+        assert release_callback.wait(5)
+
+    stream = system_tap_mac.open_tap(on_audio)
+    assert module.session is not None
+
+    def fail_close() -> None:
+        close_attempted.set()
+        raise RuntimeError("busy")
+
+    monkeypatch.setattr(module.session, "close", fail_close)
+    buffer = FakeBuffer(_f32(0.5, 0.5), 1, FakeFormat())
+    producer = threading.Thread(target=stream.deliver, args=(buffer,))
+
+    def stop() -> None:
+        stream.stop()
+        stopped.set()
+
+    stopper = threading.Thread(target=stop)
+    producer.start()
+    try:
+        assert callback_entered.wait(5)
+        stopper.start()
+        assert close_attempted.wait(5)
+        assert not stopped.wait(0.05)
+    finally:
+        release_callback.set()
+        producer.join(5)
+        if stopper.ident is not None:
+            stopper.join(5)
+    assert not producer.is_alive() and not stopper.is_alive()
+    assert stopped.is_set()
+    assert stream.error() is not None
+    callback_entered.clear()
+    stream.deliver(buffer)
+    assert not callback_entered.is_set()
+
+
+def test_concurrent_stop_calls_wait_for_the_same_cleanup(
+    darwin: None, install: Callable[..., FakeCatap], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stream, module = _installed(install)
+    assert module.session is not None
+    stop_entered = threading.Event()
+    release_stop = threading.Event()
+    second_entered = threading.Event()
+    second_finished = threading.Event()
+    original_stop = module.session.stop
+
+    def blocked_stop() -> None:
+        stop_entered.set()
+        assert release_stop.wait(5)
+        original_stop()
+
+    monkeypatch.setattr(module.session, "stop", blocked_stop)
+    first = threading.Thread(target=stream.stop)
+
+    def second_stop() -> None:
+        second_entered.set()
+        stream.stop()
+        second_finished.set()
+
+    second = threading.Thread(target=second_stop)
+    first.start()
+    try:
+        assert stop_entered.wait(5)
+        second.start()
+        assert second_entered.wait(5)
+        assert not second_finished.wait(0.05)
+    finally:
+        release_stop.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert second_finished.is_set()
+    assert module.session.calls == ["start", "stop", "close"]

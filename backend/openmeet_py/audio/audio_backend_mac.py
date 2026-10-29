@@ -175,7 +175,7 @@ class MacBackend:
                 raise library.CallbackAbort
 
         try:
-            # start=False: no callback can run before the wrapper below exists.
+            # A new InputStream is stopped: no callback can run before the wrapper below exists.
             raw = library.InputStream(
                 samplerate=device.rate,
                 channels=device.channels,
@@ -183,7 +183,6 @@ class MacBackend:
                 device=device.index,
                 blocksize=FRAMES_PER_BUFFER,
                 callback=callback,
-                start=False,
             )
         except errors as error:
             raise BackendError(_open_message(device, error)) from error
