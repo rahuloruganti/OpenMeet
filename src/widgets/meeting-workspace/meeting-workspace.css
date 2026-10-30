@@ -280,15 +280,7 @@
   align-items: center;
   min-width: 0;
 }
-.mw-meta .cal-linked,
-.mw-meta .cal-earlier {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-.mw-meta .cal-event button,
-.mw-meta .cal-link {
+.mw-meta .cal-event button {
   height: 28px;
   min-height: 28px;
   padding: 0 8px;
@@ -301,8 +293,7 @@
   font-weight: 400;
   text-decoration: none;
 }
-.mw-meta .cal-event button:hover:not(:disabled),
-.mw-meta .cal-link:hover:not(:disabled) {
+.mw-meta .cal-event button:hover:not(:disabled) {
   border-color: transparent;
   background: var(--hover);
   color: var(--ink);
@@ -316,12 +307,6 @@
 .mw-meta .cal-event .mono {
   color: var(--ink-3);
   font-size: var(--fs-xs);
-}
-.mw-meta .cal-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
 }
 .mw-meta .cal-choice {
   width: auto;

@@ -167,46 +167,82 @@
 }
 
 .cal-event {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.cal-linked,
-.cal-earlier {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-/* The linked event reads as one quiet chip, not a second card. */
-.cal-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   min-width: 0;
-  max-width: 100%;
-  min-height: 28px;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--hover);
-  color: var(--ink);
-  font-size: var(--fs-sm);
-  line-height: 1.35;
+  max-width: min(15rem, 100%);
 }
 
-.cal-chip svg {
+.cal-event button.cal-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: min(15rem, 100%);
+  min-height: var(--control-height-compact);
+  padding: 0 var(--space-8);
+  border-color: transparent;
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+}
+
+.cal-trigger svg {
   flex: none;
   color: var(--ink-3);
 }
 
-.cal-chip strong {
+.cal-trigger-title {
   min-width: 0;
   overflow: hidden;
-  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cal-event button.cal-trigger[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.cal-event button.cal-trigger:disabled,
+.cal-event .cal-dropdown button:disabled {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+/* Same anchored, elevated surface as the workspace's existing action menu. */
+.cal-event .cal-dropdown {
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  left: 0;
+  z-index: 7;
+  display: grid;
+  gap: var(--space-8);
+  width: 22rem;
+  max-width: calc(100vw - 2 * var(--space-16));
+  max-height: min(28rem, 60dvh);
+  overflow: auto;
+  padding: var(--space-8);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-8);
+  background: var(--elevated);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.cal-details,
+.cal-related {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.cal-details {
+  padding: var(--space-4) var(--space-8);
+}
+
+.cal-related > .om-muted {
+  padding: 0 var(--space-8);
 }
 
 .cal-time {
@@ -214,64 +250,44 @@
   font-family: var(--font-ui);
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
-.cal-earlier > span:first-child {
-  color: var(--ink-2);
-  font-size: var(--fs-xs);
-}
-
-.cal-link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
-.cal-link:hover:not(:disabled) {
-  border-color: transparent;
-  background: none;
-  color: var(--accent-hover);
-}
-
-.cal-picker {
+/* Override the metadata row's compact pill rules only inside this dropdown. */
+.cal-event .cal-dropdown button.cal-choice {
   display: grid;
-  gap: 4px;
-  justify-items: stretch;
+  justify-items: start;
+  gap: var(--space-4);
   width: 100%;
-}
-
-.cal-choice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 4px 12px;
-  width: 100%;
-  min-height: 36px;
-  padding: 6px 10px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-8);
+  height: auto;
+  min-height: var(--control-height-input);
+  padding: var(--space-8);
+  border-color: transparent;
+  border-radius: var(--radius-6);
   background: transparent;
+  color: var(--ink);
   text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.cal-choice:hover:not(:disabled) {
-  border-color: var(--divider);
+.cal-event .cal-dropdown button.cal-choice:hover:not(:disabled) {
   background: var(--hover);
+}
+
+.cal-event .cal-dropdown button.cal-choice:disabled {
+  color: var(--ink-3);
+}
+
+.cal-event .cal-dropdown .om-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
 }
 
 .cal-choice-title {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: var(--ink);
   font-size: var(--fs-sm);
   font-weight: 500;
 }

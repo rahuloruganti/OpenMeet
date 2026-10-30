@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -7,16 +8,19 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import type {
-  ActionItem,
-  MeetingDetail,
-  SummaryVersion,
+import {
+  api,
+  type ActionItem,
+  type CalendarEvent,
+  type MeetingDetail,
+  type SummaryVersion,
 } from "../../shared/api/api";
 import { sample } from "../../shared/test/app-harness";
 import { MeetingWorkspace } from "./MeetingWorkspace";
 
 const scrollIntoView = Element.prototype.scrollIntoView;
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   Element.prototype.scrollIntoView = scrollIntoView;
 });
@@ -147,6 +151,162 @@ it("shows meeting details under the title and the devices in the inspector", () 
   });
   expect(within(inspector).getByText("Headset (SoundCore 2)")).toBeTruthy();
   expect(within(inspector).getByText("Speakers (Realtek)")).toBeTruthy();
+});
+
+const navigationMeeting = (id: string, tags: string[] = []): MeetingDetail => ({
+  ...sample,
+  meeting: { ...sample.meeting, id, title: `Fictional ${id}`, tags },
+});
+
+const calendarChoice: CalendarEvent = {
+  id: "old-event",
+  feed_id: "fictional-feed",
+  title: "Fictional old event",
+  start_utc: "2026-10-09T10:00:00Z",
+  end_utc: "2026-10-09T10:30:00Z",
+  all_day: false,
+  location: null,
+  status: "confirmed",
+  attendees: [],
+  has_link: false,
+};
+
+it("keeps one calendar control across repeated unlinked, untagged navigation", () => {
+  const first = navigationMeeting("first");
+  const second = navigationMeeting("second");
+  const third = navigationMeeting("third");
+  const { rerender } = render(<MeetingWorkspace {...base} selected={first} />);
+
+  for (const selected of [first, second, first, third, second, first]) {
+    rerender(<MeetingWorkspace {...base} selected={selected} />);
+    expect(
+      screen.getAllByRole("button", { name: "Link to event" }),
+    ).toHaveLength(1);
+    expect(document.querySelectorAll(".cal-event")).toHaveLength(1);
+    expect(screen.getAllByRole("form", { name: "Meeting tags" })).toHaveLength(
+      1,
+    );
+    expect(screen.getByRole("textbox", { name: "Tags" })).toHaveProperty(
+      "value",
+      "",
+    );
+  }
+});
+
+it.each(["resolve", "reject"] as const)(
+  "ignores an old calendar picker response after navigation: %s",
+  async (settlement) => {
+    const first = navigationMeeting("first");
+    const second = navigationMeeting("second");
+    const currentChoice = {
+      ...calendarChoice,
+      id: "current-event",
+      title: "Fictional current event",
+    };
+    let resolveOld!: (events: CalendarEvent[]) => void;
+    let rejectOld!: (error: Error) => void;
+    const oldResponse = new Promise<CalendarEvent[]>((resolve, reject) => {
+      resolveOld = resolve;
+      rejectOld = reject;
+    });
+    const listEvents = vi
+      .spyOn(api, "listCalendarEvents")
+      .mockReturnValueOnce(oldResponse)
+      .mockResolvedValueOnce([currentChoice]);
+    const linkEvent = vi.spyOn(api, "linkMeetingEvent").mockResolvedValue({
+      ...second.meeting,
+      calendar_event_id: currentChoice.id,
+    });
+    vi.spyOn(api, "meetingPreparation").mockResolvedValue({
+      event: currentChoice,
+      related: [],
+    });
+    const { rerender } = render(
+      <MeetingWorkspace {...base} selected={first} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Link to event" }),
+    );
+    await waitFor(() => expect(listEvents).toHaveBeenCalledOnce());
+
+    rerender(<MeetingWorkspace {...base} selected={second} />);
+    await act(async () => {
+      if (settlement === "resolve") resolveOld([calendarChoice]);
+      else rejectOld(new Error("Fictional old calendar failure"));
+    });
+
+    expect(screen.queryByText(calendarChoice.title)).toBeNull();
+    expect(screen.queryByText("Fictional old calendar failure")).toBeNull();
+    expect(document.querySelectorAll(".cal-event")).toHaveLength(1);
+    expect(
+      screen.getAllByRole("button", { name: "Link to event" }),
+    ).toHaveLength(1);
+    expect(linkEvent).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Link to event" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Fictional current event/ }),
+    );
+    await waitFor(() =>
+      expect(linkEvent).toHaveBeenCalledExactlyOnceWith(
+        "second",
+        "current-event",
+      ),
+    );
+    expect(document.querySelectorAll(".cal-event")).toHaveLength(1);
+  },
+);
+
+it("preserves saved tags and saves edits for the selected meeting after navigation", async () => {
+  const first = navigationMeeting("first");
+  const second = navigationMeeting("second", ["atlas", "Q4"]);
+  const savedTags = ["atlas", "Q4", "review"];
+  const saveTags = vi.spyOn(api, "setMeetingTags").mockResolvedValue(savedTags);
+  const onTags = vi.fn();
+  const { rerender } = render(
+    <MeetingWorkspace {...base} selected={first} onTags={onTags} />,
+  );
+
+  rerender(<MeetingWorkspace {...base} selected={second} onTags={onTags} />);
+  expect(screen.getByRole("textbox", { name: "Tags" })).toHaveProperty(
+    "value",
+    "atlas, Q4",
+  );
+  const tags = screen.getByRole("form", { name: "Meeting tags" });
+  expect(within(tags).getByText("atlas")).toBeTruthy();
+  expect(within(tags).getByText("Q4")).toBeTruthy();
+  await userEvent.type(
+    screen.getByRole("textbox", { name: "Tags" }),
+    ", review",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save tags" }));
+  await waitFor(() =>
+    expect(onTags).toHaveBeenCalledExactlyOnceWith("second", savedTags),
+  );
+  expect(saveTags).toHaveBeenCalledExactlyOnceWith("second", savedTags);
+
+  const updated = {
+    ...second,
+    meeting: { ...second.meeting, tags: savedTags },
+  };
+  rerender(<MeetingWorkspace {...base} selected={updated} onTags={onTags} />);
+  expect(screen.queryByRole("button", { name: "Save tags" })).toBeNull();
+  rerender(<MeetingWorkspace {...base} selected={first} onTags={onTags} />);
+  expect(screen.getByRole("textbox", { name: "Tags" })).toHaveProperty(
+    "value",
+    "",
+  );
+  rerender(<MeetingWorkspace {...base} selected={updated} onTags={onTags} />);
+  expect(screen.getByRole("textbox", { name: "Tags" })).toHaveProperty(
+    "value",
+    "atlas, Q4, review",
+  );
+  expect(screen.getAllByRole("button", { name: "Link to event" })).toHaveLength(
+    1,
+  );
+  expect(document.querySelectorAll(".cal-event")).toHaveLength(1);
 });
 
 it("hides the Devices section for a note without tracks", () => {

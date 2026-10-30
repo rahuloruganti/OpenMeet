@@ -898,7 +898,7 @@ export function MeetingWorkspace(props: Props) {
                   {formatDuration(meeting.started_at, meeting.ended_at)}
                 </span>
                 <CalendarEventRow
-                  key={`${meeting.id}:${meeting.calendar_event_id ?? ""}`}
+                  key={`calendar:${meeting.id}:${meeting.calendar_event_id ?? ""}`}
                   meetingId={meeting.id}
                   startedAt={meeting.started_at}
                   eventId={meeting.calendar_event_id}
@@ -906,7 +906,7 @@ export function MeetingWorkspace(props: Props) {
                   onOpenMeeting={props.onOpenMeeting}
                 />
                 <MeetingTagsForm
-                  key={`${meeting.id}:${meeting.tags.join(",")}`}
+                  key={`tags:${meeting.id}:${meeting.tags.join(",")}`}
                   meetingId={meeting.id}
                   tags={meeting.tags}
                   disabled={disabled}

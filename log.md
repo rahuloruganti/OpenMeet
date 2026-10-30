@@ -977,3 +977,13 @@ Known limitation: per-block live timing metadata still grows with recording leng
 **Checks that ran:** tsc, ESLint, Prettier, vitest 564/564, token contrast script (160 required pairs pass), Impeccable detector (only finding: Inter flagged as an overused font, accepted), PyInstaller build, exe `--smoke`, packaged window confirms Inter and Plex load from the bundle.
 
 **Unverified or not done:** REA's own analyze call was rejected by the Granola ASAR integrity check, so research cites byte offsets, not REA evidence IDs; light theme and Granola Settings were never seen rendered live; recording bar is a clean pill row rather than a floating pill; empty-home top strip not added; Local AI model select truncates a long option; no hardware recording test; several states (auto-capture banner, folder manager, calendar, templates) checked by tests or sampling rather than full screenshot matrix.
+
+## Calendar navigation and compact event control
+
+**Request:** fix repeated Link to event controls while navigating meetings, with a focused compact calendar control and stable header. Owner approved the bounded design in chat.
+
+**Implemented:** namespaced calendar and tags sibling keys to prevent React identity collisions; a compact calendar-icon trigger and anchored dropdown for linking, event details, related meetings and unlinking; long titles truncate with full accessible text; Escape/outside dismissal, focus restoration and stale-response/error handling. Clamped the wrapper as well as its trigger after real layout checks found wasted metadata rows. Removed only newly orphaned calendar selectors.
+
+**Verified:** navigation regression reproduced before the fix. Final frontend suite 671 passed; backend suite 1068 passed, one existing filesystem-symlink skip. TypeScript, ESLint, Prettier and diff checks passed. Actual packaged WebView2 and final production bundle/headless local API each completed 24 meeting switches with exactly one calendar control; link/unlink persistence and focus, Escape/outside dismissal, light/dark at 1440 and 760, geometry and contrast checked using fictional fixtures. Independent final review APPROVED. Final executable smoke, read-only synthetic legacy import with read-back/source preservation, and synthetic-device graceful close all passed. Rebuilt artifact: packaging/dist/OpenMeet.exe, SHA256 da135fa8a6cc59410c19a367bd589a56f7ca7ccebe78749b15cc1df12b07b756.
+
+**Not changed:** backend, migrations, normal user library, or running Downloads executable. No agent-initiated recording or hardware qualification. The visible scratch test window began recording independently during verification; it was left running with its data preserved, and later checks moved offscreen. No push.
