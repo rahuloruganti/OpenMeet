@@ -9,7 +9,7 @@ Goal: an Apple Silicon build of OpenMeet next to the Windows one. Same app, same
 - CI is out of scope. Do not touch `.github/`.
 - **Nobody can run macOS code here.** This is a Windows PC. Every macOS code path is written against documented APIs and tested only with fakes. Never claim it works on a Mac. Say "written, unit-tested with fakes, unqualified on a Mac". The owner qualifies it on a real M3 Mac later.
 - The Windows build must not change behaviour. All existing Windows tests must keep passing.
-- Version stays 0.9.0.
+- Current release version: 0.9.1.
 
 ## Rules for every agent
 

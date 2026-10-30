@@ -2,7 +2,7 @@
 
 ## What this is
 
-OpenMeet is a local-first meeting notetaker: a Python 3.13 backend (`FastAPI` + `uvicorn`), a `pywebview` window, and a React 19 + TypeScript + Vite UI. Windows 11 ships as one PyInstaller executable (WebView2). Apple Silicon Macs (macOS 14.2 or newer) ship as an unsigned `.app` in a DMG built on a Mac with `packaging/build.sh`; there is no Apple Developer account, no notarization and no CI. Version 0.9.0.
+OpenMeet is a local-first meeting notetaker: a Python 3.13 backend (`FastAPI` + `uvicorn`), a `pywebview` window, and a React 19 + TypeScript + Vite UI. Windows 11 ships as one PyInstaller executable (WebView2). Apple Silicon Macs (macOS 14.2 or newer) ship as an unsigned `.app` in a DMG built on a Mac with `packaging/build.sh`; there is no Apple Developer account, no notarization and no CI. Version 0.9.1.
 
 - One active capture: microphone plus system audio, written locally as separate tracks.
 - Local transcription (whisper.cpp and sherpa-onnx) is the default; cloud STT and AI summaries are optional user-configured connections.

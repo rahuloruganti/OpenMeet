@@ -1,6 +1,6 @@
 # Data and privacy
 
-This page describes the Python build, version 0.9.0. It is not a claim that hardware pause privacy, local-only network behavior, or the complete release security boundary has passed qualification.
+This page describes the Python build, version 0.9.1. It is not a claim that hardware pause privacy, local-only network behavior, or the complete release security boundary has passed qualification.
 
 ## Local storage
 

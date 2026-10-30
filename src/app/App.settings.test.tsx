@@ -61,7 +61,7 @@ describe("settings and meeting detection", () => {
       screen.getByRole("region", { name: "Privacy & about" }),
     );
     expect(aboutPane.getByText("Version")).toBeTruthy();
-    expect(aboutPane.getByText("0.9.0")).toBeTruthy();
+    expect(aboutPane.getByText("0.9.1")).toBeTruthy();
     // Privacy prose is replaced by the short table of what leaves the device.
     expect(aboutPane.getByText("What leaves this device")).toBeTruthy();
   });

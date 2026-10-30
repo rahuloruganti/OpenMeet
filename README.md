@@ -1,6 +1,6 @@
 # OpenMeet
 
-A local-first meeting notetaker for Windows 11 and Apple silicon Macs. It records your microphone and system audio, transcribes on this PC, and writes AI notes from a model you choose. Version 0.9.0, unsigned, no installer: one `OpenMeet.exe` on Windows. On macOS you build the app yourself for now.
+A local-first meeting notetaker for Windows 11 and Apple silicon Macs. It records your microphone and system audio, transcribes on this PC, and writes AI notes from a model you choose. Version 0.9.1, unsigned, no installer: one `OpenMeet.exe` on Windows. On macOS you build the app yourself for now.
 
 Audio capture, local transcription, shortcuts and meeting detection have not been tested on real hardware yet. The macOS build has not run on a Mac at all; see [macOS](docs/macos.md) for what that means.
 
@@ -26,7 +26,7 @@ just build
 
 Apple silicon and macOS 14.2 or newer. There is no Intel build.
 
-There is no published Mac download yet.
+An older [0.9.0 Mac preview](https://github.com/rahuloruganti/OpenMeet/releases/download/v0.9.0/OpenMeet-0.9.0-arm64.dmg) is available. No 0.9.1 Mac binary is included; build 0.9.1 from source using the steps below.
 
 1. Build it: install Xcode command line tools (`xcode-select --install`), [uv](https://docs.astral.sh/uv/getting-started/installation/), Node.js 24 with Corepack and Git, then run `just build`. That writes `packaging/dist/OpenMeet-<version>-arm64.dmg`.
 2. Open the DMG and drag **OpenMeet** to **Applications**.

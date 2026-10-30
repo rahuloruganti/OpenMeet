@@ -1,6 +1,6 @@
 # Dependencies
 
-This inventory describes the direct dependencies of the Python-only build (version 0.9.0, Windows 11 x64 and Apple silicon macOS 14.2 or newer). It is not a complete redistribution notice bundle; the license labels are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
+This inventory describes the direct dependencies of the Python-only build (version 0.9.1, Windows 11 x64 and Apple silicon macOS 14.2 or newer). It is not a complete redistribution notice bundle; the license labels are in [THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md).
 
 Python versions are pinned in [backend/pyproject.toml](../backend/pyproject.toml) with resolutions in `backend/uv.lock`. JavaScript versions come from [package.json](../package.json) and `pnpm-lock.yaml`. License labels were read from installed package metadata in `backend/.venv` and `node_modules`, not from a legal review.
 
