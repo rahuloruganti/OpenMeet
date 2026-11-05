@@ -17,6 +17,8 @@ from openmeet_py.api.errors import AppError
 
 SERVICE = "OpenMeetPy"
 MAX_KEY_BYTES = 4096
+# Windows Credential Manager rejects a credential blob larger than CRED_MAX_CREDENTIAL_BLOB_SIZE (2560 bytes).
+WINDOWS_MAX_KEY_BYTES = 2560
 
 _override: Any = None
 _default: Any = None
@@ -55,9 +57,13 @@ def _unavailable() -> AppError:
     )
 
 
+def max_key_bytes() -> int:
+    return WINDOWS_MAX_KEY_BYTES if sys.platform == "win32" else MAX_KEY_BYTES
+
+
 def valid_key(value: str) -> bool:
     raw = value.encode("utf-8")
-    return 0 < len(raw) <= MAX_KEY_BYTES and all(0x21 <= byte <= 0x7E for byte in raw)
+    return 0 < len(raw) <= max_key_bytes() and all(0x21 <= byte <= 0x7E for byte in raw)
 
 
 def key_status(account: Optional[str]) -> str:
@@ -83,7 +89,7 @@ def store_key(key: str) -> str:
     if not valid_key(key):
         raise AppError(
             "provider_key",
-            "Enter a valid API key without whitespace, at most 4096 bytes.",
+            f"Enter a valid API key without whitespace, at most {max_key_bytes()} bytes.",
         )
     account = f"connection-{uuid.uuid4()}"
     try:

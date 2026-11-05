@@ -375,6 +375,22 @@ def test_runaway_rule_from_long_ago_is_skipped_within_the_step_budget(caplog: py
     assert "step budget" in caplog.text
 
 
+def test_an_event_whose_dates_leave_the_datetime_range_is_skipped_alone() -> None:
+    text = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
+        "BEGIN:VEVENT\r\nUID:far-end@example.test\r\nDTSTART:99991231T230000Z\r\nDURATION:PT2H\r\n"
+        "SUMMARY:Fictional event past the range\r\nEND:VEVENT\r\n"
+        "BEGIN:VEVENT\r\nUID:far-day@example.test\r\nDTSTART;VALUE=DATE:99991231\r\n"
+        "SUMMARY:Fictional day past the range\r\nEND:VEVENT\r\n"
+        "BEGIN:VEVENT\r\nUID:long-ago@example.test\r\nDTSTART:00010101T000000Z\r\nRRULE:FREQ=DAILY;COUNT=2\r\n"
+        "EXDATE:00010101T000000Z\r\nSUMMARY:Fictional long ago\r\nEND:VEVENT\r\n"
+        "BEGIN:VEVENT\r\nUID:plain@example.test\r\nDTSTART:20261020T090000Z\r\nDTEND:20261020T100000Z\r\n"
+        "SUMMARY:Fictional plain\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    events = cal.parse_ics(text, *OCTOBER_NOVEMBER)  # must not raise: the feed is still readable
+    assert [event.title for event in events] == ["Fictional plain"]
+
+
 def test_occurrences_are_capped_at_max_while_expanding_inside_the_window() -> None:
     text = (
         "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:minutely@example.test\r\n"

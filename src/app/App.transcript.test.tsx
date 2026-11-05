@@ -1007,7 +1007,7 @@ describe("transcript and audio", () => {
         sessionSnapshot(1, "cancelled"),
       );
       await ready();
-      await screen.findByRole("region", { name: "Session processing" });
+      await screen.findByRole("region", { name: "Meeting processing" });
       expect(screen.queryByRole("group", { name: "Next steps" })).toBeNull();
       await userEvent.click(
         screen.getByRole("button", { name: "Dismiss processing status" }),
@@ -1111,7 +1111,7 @@ describe("transcript and audio", () => {
         sessionSnapshot(1, "transcribing"),
       );
       await ready();
-      await screen.findByRole("region", { name: "Session processing" });
+      await screen.findByRole("region", { name: "Meeting processing" });
       expect(screen.queryByRole("group", { name: "Next steps" })).toBeNull();
     });
 
@@ -1122,7 +1122,7 @@ describe("transcript and audio", () => {
         sessionSnapshot(1, "failed"),
       );
       await ready();
-      await screen.findByRole("region", { name: "Session processing" });
+      await screen.findByRole("region", { name: "Meeting processing" });
       expect(
         await screen.findByRole("group", { name: "Next steps" }),
       ).toBeTruthy();

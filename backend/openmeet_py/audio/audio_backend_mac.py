@@ -33,7 +33,9 @@ MIC_DENIED = (
     "OpenMeet does not have microphone access. Allow it in System Settings, Privacy & Security, "
     "Microphone."
 )
-_PERMISSION_WORDS = ("permission", "not authorized", "denied", "authoriz", "access")
+# PortAudio has no permission-specific error code, so the text is the only signal. Only wording that
+# names permission or authorisation counts; generic words such as "access" or "denied" do not.
+_PERMISSION_WORDS = ("permission", "not authorized", "not authorised")
 
 
 def _port_audio_errors(library: object) -> tuple[type[BaseException], ...]:
@@ -129,6 +131,8 @@ class MacBackend:
 
     def input_devices(self) -> list[DeviceInfo]:
         library = self._library()
+        # PortAudio builds its device list once, at initialisation, so a microphone plugged in later
+        # is not listed until the app restarts. Known limitation, not tested on a Mac.
         try:
             raw = library.query_devices()
         except _port_audio_errors(library) as error:

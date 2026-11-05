@@ -271,6 +271,20 @@ def test_install_engine_does_nothing_when_the_build_is_already_there(
 # ---- downloads -----------------------------------------------------------------------
 
 
+def test_removing_a_model_is_refused_while_a_download_holds_the_job_lock(
+    client: TestClient, pinned: catalog.Catalog, spawns: list[Any]
+) -> None:
+    use_transport(client, [])
+    model_id = download_tiny(client)
+    file_path = models_dir(client) / "owner" / "tiny" / "tiny.gguf"
+    assert file_path.is_file()
+    with service._JOB.operation("model", "something-else"):
+        status, body = invoke_error(client, "local_ai_remove_model", modelId=model_id)
+    assert (status, body["code"]) == (400, "local_ai_busy")
+    assert file_path.is_file()
+    assert invoke(client, "local_ai_remove_model", modelId=model_id)["models"] == []
+
+
 def test_cancel_sets_the_running_jobs_flag(client: TestClient, pinned: catalog.Catalog) -> None:
     with service._JOB.operation("model", "tiny-model") as cancel:
         assert invoke(client, "local_ai_cancel") is None

@@ -259,6 +259,15 @@ export function TranscriptProvider(
   const retranscribeButton = useRef<HTMLButtonElement | null>(null);
   const retranscribeCancel = useRef<HTMLButtonElement | null>(null);
   const copyTimer = useRef<number | null>(null);
+  const scrollTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      if (scrollTimer.current !== null)
+        window.clearTimeout(scrollTimer.current);
+    },
+    [],
+  );
   // Bumped by each seek, pause and meeting switch; async work from an older generation is dropped.
   const seekGen = useRef(0);
 
@@ -714,8 +723,10 @@ export function TranscriptProvider(
     const element = meta ? document.getElementById(`segment-${meta.id}`) : null;
     programmatic.current = true;
     element?.scrollIntoView({ block: "center" });
-    window.setTimeout(() => {
+    if (scrollTimer.current !== null) window.clearTimeout(scrollTimer.current);
+    scrollTimer.current = window.setTimeout(() => {
       programmatic.current = false;
+      scrollTimer.current = null;
     }, 80);
   };
 
@@ -795,6 +806,8 @@ function engineLine(selected: MeetingDetail) {
     return "";
   if (selected.transcript_provider === "whisper")
     return "Transcribed locally with Whisper. Check names and numbers.";
+  if (selected.transcript_provider === "fake")
+    return "Fake test engine: fictional text, not a real transcript.";
   const provider = selected.transcript_provider ?? "an earlier engine";
   const model = selected.transcript_model
     ? ` / ${selected.transcript_model}`
@@ -1187,6 +1200,7 @@ export function TranscriptPanel() {
         <div
           className="tx-pop"
           role="dialog"
+          aria-modal="false"
           aria-label={model.pop.kind === "speakers" ? "Speakers" : "More"}
           ref={model.popRef}
           style={{

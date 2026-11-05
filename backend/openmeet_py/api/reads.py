@@ -124,7 +124,7 @@ def saved_connection(db: sqlite3.Connection, connection_id: str) -> Optional[dic
 
 
 def read_settings(db: sqlite3.Connection) -> Settings:
-    """The Settings shape from src/lib/api.ts, filled from the stored settings rows."""
+    """The Settings shape from src/shared/api/api.ts, filled from the stored settings rows."""
     saved_connections = [
         {"id": row[0], "name": row[1], "base_url": row[2], "revision": row[3]}
         for row in db.execute(

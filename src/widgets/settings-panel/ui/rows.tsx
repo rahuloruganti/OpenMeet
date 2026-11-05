@@ -12,7 +12,7 @@ export function Group(props: {
     <section className="om-group" aria-label={props.label}>
       <div className="om-group-head">
         <h3 className="om-group-label">{props.label}</h3>
-        {props.saved && <Saved show />}
+        <Saved show={props.saved === true} />
       </div>
       {props.children}
     </section>

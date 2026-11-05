@@ -281,12 +281,21 @@ def chat_completion(connection: Connection, payload: bytes, timeout: float = CHA
     )
     try:
         reply = json.loads(raw)
-        texts = [choice["message"].get("content") for choice in reply["choices"]]
+        choices = reply["choices"]
+        texts = [choice["message"].get("content") for choice in choices]
+        reasons = [choice.get("finish_reason") for choice in choices]
     except (ValueError, KeyError, TypeError, AttributeError):
         raise AppError(
             "provider_response",
             "the selected provider returned an unusable response. Nothing was saved.",
         ) from None
+    if "length" in reasons:
+        # The reply hit the model's output limit: the text is cut off, so it is refused rather than saved.
+        raise AppError(
+            "provider_response",
+            "The model stopped before finishing because its output limit was reached. Nothing was saved. "
+            "Try a shorter transcript or a model with a larger output limit.",
+        )
     for text in texts:
         if isinstance(text, str) and text.strip():
             return text.strip()

@@ -214,7 +214,7 @@ export type Settings = {
   processing_summary: string | null;
   /** The template the Enhance picker starts at. */
   summary_default: string;
-  /** Opt-in: prompt when another app starts using the microphone. Never starts recording. */
+  /** Always on (migration 037), not an opt-in: prompt when another app starts using the microphone. Never starts recording. */
   detection_enabled: boolean;
   /** Apps never to prompt about; `name` is empty for ones ignored before names were kept. */
   detection_ignored: MicApp[];

@@ -88,6 +88,19 @@ class Job:
         emit(PROGRESS_EVENT, snapshot)
 
     @contextmanager
+    def exclusive(self) -> Iterator[None]:
+        """Holds the operation lock with no job shown, so no download or install can start meanwhile."""
+        if not self._running.acquire(blocking=False):
+            raise AppError(
+                "local_ai_busy",
+                "A Local AI download is running. Wait for it or cancel it first.",
+            )
+        try:
+            yield
+        finally:
+            self._running.release()
+
+    @contextmanager
     def operation(self, kind: str, target: str) -> Iterator[threading.Event]:
         if not self._running.acquire(blocking=False):
             raise AppError(
@@ -613,13 +626,9 @@ def local_ai_remove_model(ctx: Context, model_id: Any) -> dict[str, Any]:
             "local_ai_file",
             "This model is a file on this PC. Delete it in its own folder instead.",
         )
-    if _JOB.snapshot() is not None:
-        raise AppError(
-            "local_ai_busy",
-            "A Local AI download is running. Wait for it or cancel it first.",
-        )
     path = managed[0]
-    with ctx.store.lock:
+    # The operation lock is held across the busy check and the unlink, so a download cannot start on this file in between.
+    with _JOB.exclusive(), ctx.store.lock:
         db = ctx.store.db
         row = _row(db)
         supervisor = _supervisor(ctx)

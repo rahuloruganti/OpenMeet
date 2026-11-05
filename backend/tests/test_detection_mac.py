@@ -191,6 +191,33 @@ def test_one_capturing_and_one_idle_process_become_two_consent_entries(harness: 
     assert not in_use(by_name[SAFARI].last_used_start, by_name[SAFARI].last_used_stop)
 
 
+HELPER_OBJECT = 13
+
+
+def _helper(running_input: int) -> dict[str, Any]:
+    return {"object_id": HELPER_OBJECT, "pid": 702, "bundle": 1, "running_input": running_input}
+
+
+@pytest.mark.parametrize("processes", [[capturing(), _helper(0)], [_helper(0), capturing()]])
+def test_an_idle_helper_does_not_hide_a_capturing_process_with_the_same_bundle(
+    monkeypatch: pytest.MonkeyPatch, processes: list[dict[str, Any]]
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    registry = Harness(processes, {1: ZOOM}).registry
+    entries = registry.entries()
+    assert [entry.name for entry in entries] == [ZOOM]
+    assert observed_apps(entries, detection_mac.OWN_BUNDLE_ID) == {ZOOM: ("Zoom", True)}
+    assert active_apps(entries, detection_mac.OWN_BUNDLE_ID) == {ZOOM: "Zoom"}
+
+
+def test_processes_sharing_a_bundle_that_are_all_idle_stay_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    registry = Harness([_helper(0), {**_helper(0), "object_id": 14, "pid": 703}], {1: ZOOM}).registry
+    entries = registry.entries()
+    assert len(entries) == 1
+    assert observed_apps(entries, detection_mac.OWN_BUNDLE_ID) == {ZOOM: ("Zoom", False)}
+
+
 def test_only_the_capturing_app_is_offered_a_recording_prompt(harness: Harness) -> None:
     entries = harness.registry.entries()
     assert active_apps(entries, detection_mac.OWN_BUNDLE_ID) == {ZOOM: "Zoom"}
@@ -386,7 +413,7 @@ def _mac_ver(version: str) -> Any:
         ("14.2", True),
         ("15.0.1", True),
         ("", False),
-        ("15", False),
+        ("15", True),  # a bare major is the .0 release
         ("15.x", False),
     ],
 )

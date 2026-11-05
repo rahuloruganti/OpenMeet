@@ -7,6 +7,7 @@ backend.deliver() and then pause, stop or wait for the writer through public cal
 from __future__ import annotations
 
 import logging
+import sqlite3
 import struct
 import threading
 import time
@@ -445,6 +446,35 @@ def test_audio_usage_counts_recorded_files(client: TestClient) -> None:
     assert invoke(client, "audio_usage") > 0
 
 
+def test_audio_usage_skips_files_that_vanish_while_it_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from openmeet_py.api import recording
+
+    folder = tmp_path / "audio" / "meeting"
+    folder.mkdir(parents=True)
+    (folder / "kept.wav").write_bytes(b"x" * 10)
+    (folder / "gone.wav").write_bytes(b"x" * 1000)
+    ctx = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
+    original_stat = Path.stat
+
+    def stat(self: Path, **kwargs: object):
+        if self.name == "gone.wav":
+            raise FileNotFoundError(self)  # deleted after iterdir listed it
+        return original_stat(self, **kwargs)
+
+    original_is_file = Path.is_file
+
+    def is_file(self: Path) -> bool:
+        return True if self.name == "gone.wav" else original_is_file(self)  # listed as a file, then gone
+
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(Path, "is_file", is_file)
+    assert recording.audio_usage(ctx) == 10
+
+
 def test_stale_recording_is_interrupted_at_startup(tmp_path: Path) -> None:
     from openmeet_py.infra.store import Store
 
@@ -665,3 +695,88 @@ def test_listeners_never_run_on_the_audio_callback_or_the_writer_thread(
     for kind, _meeting, _origin, _reason, thread_name in spy.events:
         assert thread_name != "openmeet-audio-writer", kind
         assert not getattr(in_callback, "active", False)
+
+
+def test_a_meter_wait_for_the_lock_is_not_a_suspend_gap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recorder_module, "SUSPEND_GAP", 0.5)
+    rec = recorder(client)
+    start(client)
+    with rec.lock:  # the meter waits on this lock for longer than SUSPEND_GAP
+        time.sleep(1.2)
+    time.sleep(0.5)  # a few meter ticks after the lock is released
+    state = rec.state()
+    assert state["status"] == "recording" and state["error"] is None
+    invoke(client, "stop_recording")
+
+
+def test_a_failed_stop_event_write_still_ends_the_recording(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    start(client)
+
+    def refuse(self: Any, kind: str, session: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(recorder_module.Recorder, "_capture_event", refuse)
+    with caplog.at_level(logging.ERROR, logger="openmeet_py"):
+        stopped = invoke(client, "stop_recording")
+    assert stopped["status"] == "stopped" and stopped["error"] is None
+    assert "OperationalError" in caplog.text and "database is locked" not in caplog.text
+    monkeypatch.undo()
+    start(client, "Next call")  # the stopped recording no longer blocks a new start
+    invoke(client, "stop_recording")
+
+
+def test_a_failed_live_finish_still_ends_the_recording(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    start(client)
+
+    def broken(self: Any, session: Any) -> None:
+        raise RuntimeError("decoder crashed")
+
+    monkeypatch.setattr(recorder_module.Recorder, "_finish_live", broken)
+    with caplog.at_level(logging.ERROR, logger="openmeet_py"):
+        stopped = invoke(client, "stop_recording")
+    assert stopped["status"] == "stopped"
+    assert "RuntimeError" in caplog.text and "decoder crashed" not in caplog.text
+    monkeypatch.undo()
+    start(client, "Next call")
+    invoke(client, "stop_recording")
+
+
+def test_a_stream_that_will_not_stop_pauses_visibly_and_resume_keeps_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    start(client)
+    deliver(client, mic=0.4, out=0.4)
+    mic = backend(client).stream_for("fake-mic")
+
+    def stuck(self: Any) -> None:
+        raise OSError("device busy")
+
+    monkeypatch.setattr(type(mic), "stop", stuck)
+    paused = invoke(client, "pause_recording")
+    assert paused["status"] == "paused"
+    assert "microphone: The stream did not stop." in paused["error"]
+    status, body = invoke_error(client, "resume_recording")
+    assert (status, body["code"]) == (400, "audio")
+    assert backend(client).stream_for("fake-mic") is mic  # the stream that did not stop is not replaced
+    invoke(client, "stop_recording")
+
+
+def test_an_unexpected_meter_error_pauses_capture_with_a_worker_fault(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    start(client)
+    deliver(client, mic=0.4, out=0.4)
+
+    def broken(self: Any, recording: bool) -> dict[str, Any]:
+        raise ValueError("meter broke")
+
+    monkeypatch.setattr(recorder_module.Session, "health", broken)
+    wait_for(lambda: invoke(client, "get_recording_state")["status"] == "paused")
+    error = invoke(client, "get_recording_state")["error"]
+    assert error is not None and "stopped responding" in error
+    monkeypatch.undo()
+    invoke(client, "stop_recording")

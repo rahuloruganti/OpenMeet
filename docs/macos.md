@@ -32,6 +32,7 @@ If macOS shows no prompt at all, the system track can come out silent. Check **S
 ## Recording on a Mac
 
 - The microphone track comes from Core Audio through `sounddevice`. The app asks for the device's own sample rate and input channels.
+- Unqualified: a microphone plugged in after OpenMeet starts is not listed until you restart the app, because PortAudio caches the device list at startup. This has not been tested on a Mac.
 - The system track is a Core Audio process tap, which records every app the Mac plays, OpenMeet's own playback included. The tap is an unmuted passthrough, so you still hear the audio while it records.
 - Both tracks are written as on Windows, and paused audio is never written to either.
 - Meeting detection reads the Core Audio process list, which says which app holds an active microphone input. It reads no audio, screen or camera content, and it only shows a prompt and bounces the Dock icon; it never starts a recording.

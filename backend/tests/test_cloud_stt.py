@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 import pytest
 
+from openmeet_py import model_hub
 from openmeet_py.api.errors import AppError
 from openmeet_py.audio.audio_wav import Block
 from openmeet_py.domain import providers
@@ -46,6 +47,26 @@ def test_chunks_split_at_pauses_and_generation_changes_and_repeat(tmp_path: Path
     finally:
         first.close()
         second.close()
+
+
+def test_a_plan_without_free_disk_space_writes_no_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    track = write_track(tmp_path, "mic", blocks=[(16000, 1_000_000, 1)])
+    written: list[Path] = []
+    real_write = cloud_stt._write_chunk
+
+    def recording_write(*args: Any, **kwargs: Any) -> None:
+        written.append(args[3])
+        real_write(*args, **kwargs)
+
+    class NoSpace:
+        total = free = used = 0
+
+    monkeypatch.setattr(cloud_stt, "_write_chunk", recording_write)
+    monkeypatch.setattr(model_hub.shutil, "disk_usage", lambda folder: NoSpace())
+    with pytest.raises(AppError) as info:
+        cloud_stt.plan([track], threading.Event())
+    assert "Not enough free disk space" in info.value.message
+    assert written == []
 
 
 def test_chunk_length_is_capped_at_five_minutes() -> None:

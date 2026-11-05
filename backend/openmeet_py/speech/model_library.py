@@ -6,9 +6,8 @@ existing file is never replaced. Only one artifact operation runs at a time.
 
 Network rules: HTTPS only, hosts huggingface.co, *.huggingface.co and *.hf.co, default port, no
 credentials, no proxies from the environment, no automatic redirects. Redirects are followed by hand
-(at most five) and every hop is checked again. OPENMEET_PY_TEST_HOSTS replaces the host list
-(comma-separated) and also allows plain HTTP; it is read only when set and is used by the stub-server
-tests on 127.0.0.1.
+(at most five) and every hop is checked again. Tests alone may replace the host list (127.0.0.1, plain HTTP
+allowed) through model_hub's test-only override; production code never reads an environment variable for it.
 """
 
 from __future__ import annotations
@@ -38,7 +37,6 @@ from openmeet_py.model_hub import (  # noqa: F401 - re-exported for existing cal
     MAX_METADATA,
     REDIRECT_CODES,
     REDIRECT_LIMIT,
-    TEST_HOSTS_ENV,
     TRANSFER_TIMEOUT,
     WINDOWS_RESERVED,
     _CANCEL,
@@ -492,13 +490,15 @@ def download_hf_model(
             transport,
         )
         manifest_name = filename + ".openmeet.json"
-        handle, manifest_name_temp = tempfile.mkstemp(dir=folder, prefix=".manifest-", suffix=".tmp")
-        with os.fdopen(handle, "w", encoding="utf-8") as out:
-            out.write(json.dumps(approved, indent=2))
-            out.flush()
-            os.fsync(out.fileno())
-        manifest_temp = Path(manifest_name_temp)
+        manifest_temp: Optional[Path] = None
         try:
+            # The manifest is written before anything is published, so a failure here leaves no model behind.
+            handle, manifest_name_temp = tempfile.mkstemp(dir=folder, prefix=".manifest-", suffix=".tmp")
+            manifest_temp = Path(manifest_name_temp)
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                out.write(json.dumps(approved, indent=2))
+                out.flush()
+                os.fsync(out.fileno())
             with _PUBLICATION:
                 check_cancel(cancel)
                 if (folder / manifest_name).exists() or destination.exists():
@@ -506,10 +506,16 @@ def download_hf_model(
                         "The model destination or manifest already exists. Existing files were preserved."
                     )
                 _link_or_fail(temp, destination)
-                _link_or_fail(manifest_temp, folder / manifest_name)
+                try:
+                    _link_or_fail(manifest_temp, folder / manifest_name)
+                except BaseException:
+                    # Never leave a model published without its manifest: later scans would report it as present.
+                    destination.unlink(missing_ok=True)
+                    raise
         finally:
             temp.unlink(missing_ok=True)
-            manifest_temp.unlink(missing_ok=True)
+            if manifest_temp is not None:
+                manifest_temp.unlink(missing_ok=True)
         return {"path": str(destination), "model_id": approved["model_id"]}
 
 

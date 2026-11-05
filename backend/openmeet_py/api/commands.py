@@ -1,6 +1,6 @@
 """Command handlers for the Python build, keyed by the snake_case names the React UI invokes.
 
-Names and argument shapes follow src/lib/api.ts, the UI's own client. Phases 1 to 4a are
+Names and argument shapes follow src/shared/api/api.ts, the UI's own client. Phases 1 to 4a are
 implemented here and in the feature modules. Every other command is listed in NOT_AVAILABLE and
 answers HTTP 501.
 """

@@ -392,8 +392,8 @@ def test_end_to_end_with_a_sherpa_id_and_the_fake_engine(client: TestClient, mon
     invoke(client, "save_stt_settings", language="en", prompt="", model="sherpa:parakeet-v3")
     invoke(client, "transcribe_meeting", id=meeting)
     detail = invoke(client, "get_meeting", id=meeting)
-    assert detail["transcript_provider"] == "whisper"  # every local run records "whisper"
-    assert detail["transcript_model"] == "sherpa:parakeet-v3"
+    assert detail["transcript_provider"] == "fake"  # the fake engine records "fake", not a model id
+    assert detail["transcript_model"] == "fake"
     assert {segment["speaker"] for segment in detail["segments"]} == {"You", "Others"}
     assert all(segment["timing"]["kind"] == "timed" for segment in detail["segments"])
 

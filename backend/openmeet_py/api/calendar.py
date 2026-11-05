@@ -75,7 +75,7 @@ def _keychain() -> AppError:
 
 
 class CalendarService:
-    """Sync thread (every 15 minutes), reminder ticks (every 30 seconds) and on-demand syncs.
+    """Sync thread (every 15 minutes), reminder thread (every 30 seconds) and on-demand syncs.
 
     Network I/O never holds the store lock. Syncs are serialized by one lock, so a command and the
     thread never fetch the same feed at once.
@@ -96,30 +96,40 @@ class CalendarService:
         self._reminder_lock = threading.Lock()
         self._reminded: set[str] = set()
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: Optional[threading.Thread] = None  # syncs
+        self._reminder_thread: Optional[threading.Thread] = None  # its own thread: a slow sync never delays a reminder
         self._next_sync = 0.0  # monotonic: the first tick syncs
 
     def start(self) -> None:
         if self._thread is None:
             self._stop.clear()
-            self._thread = threading.Thread(target=self._loop, name="openmeet-calendar", daemon=True)
+            self._thread = threading.Thread(target=self._sync_loop, name="openmeet-calendar", daemon=True)
+            self._reminder_thread = threading.Thread(
+                target=self._reminder_loop, name="openmeet-calendar-reminders", daemon=True
+            )
             self._thread.start()
+            self._reminder_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread is not None:
+        if self._thread is not None and self._reminder_thread is not None:
             # Every blocking step (the download, the reminder tick, the sync loop) checks the stop flag,
-            # so the thread exits promptly; the store must not be closed under a live sync.
+            # so the threads exit promptly; the store must not be closed under a live sync.
             self._thread.join()
+            self._reminder_thread.join()
             self._thread = None
+            self._reminder_thread = None
 
-    def _loop(self) -> None:
+    def _sync_loop(self) -> None:
         while not self._stop.wait(self._tick):
             if time.monotonic() >= self._next_sync:
                 try:
                     self.sync_all()
                 except Exception:  # truly unexpected; per-feed failures are recorded in sync_feed
                     log.warning("calendar sync failed unexpectedly")
+
+    def _reminder_loop(self) -> None:
+        while not self._stop.wait(self._tick):
             try:
                 self.tick_reminders()
             except Exception:  # a locked store must not stop the thread
@@ -232,7 +242,7 @@ class CalendarService:
             raise _Failed(BAD_ADDRESS)
         try:
             with httpx.Client(
-                timeout=FETCH_TIMEOUT_SECONDS, follow_redirects=False, transport=self.ctx.transport
+                timeout=FETCH_TIMEOUT_SECONDS, follow_redirects=False, trust_env=False, transport=self.ctx.transport
             ) as client:
                 with client.stream("GET", address, headers={"Accept": "text/calendar"}) as response:
                     if 300 <= response.status_code < 400:

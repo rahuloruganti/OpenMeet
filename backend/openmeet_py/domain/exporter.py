@@ -1,7 +1,7 @@
-"""Markdown snapshot export for notes-only meetings.
+"""Markdown snapshot export.
 
-Summaries and tasks render from the stored rows. The transcript and tracks stay empty until phases 3-4
-write them, so an empty meeting renders empty sections rather than dropping them.
+Summaries, tasks and the transcript render from the stored rows. A meeting with no transcript renders
+an explicit placeholder rather than dropping the section. Track files are not exported here.
 """
 
 from __future__ import annotations
@@ -69,8 +69,19 @@ def render(detail: Detail, options: dict[str, Any]) -> str:
         out += "\n"
     out += f"## My notes\n{detail['user_markdown']}\n"
     if options["transcript"]:
-        out += "\n## Transcript\nNo transcript generated.\n"
+        out += _transcript_section(detail)
     return out
+
+
+def _transcript_section(detail: Detail) -> str:
+    segments = detail.get("segments") or []
+    if not segments:
+        return "\n## Transcript\nNo transcript generated.\n"
+    heading = "## Transcript"
+    if detail.get("transcript_provider") == "fake":
+        # Fake engine text is fictional; the export must say so rather than read like a real transcript.
+        heading = "## Transcript (fake test engine, not a real transcript)"
+    return f"\n{heading}\n{render_transcript(detail, 'txt')}"
 
 
 def _label(names: dict[str, Any], speaker: str) -> str:

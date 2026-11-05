@@ -273,7 +273,7 @@ describe("speech engine and automatic processing", () => {
       snapshot.workflow.notes_barrier = "terminal-barrier";
       vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
       await ready();
-      await screen.findByRole("region", { name: "Session processing" });
+      await screen.findByRole("region", { name: "Meeting processing" });
       expect(api.acknowledgeProcessingNotes).not.toHaveBeenCalled();
       expect(
         screen.queryByText(/Automatic summary waits for saved notes/),
@@ -301,7 +301,7 @@ describe("speech engine and automatic processing", () => {
     snapshot.workflow.notes_barrier = "speech-only-barrier";
     vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
     await ready();
-    await screen.findByRole("region", { name: "Session processing" });
+    await screen.findByRole("region", { name: "Meeting processing" });
     expect(api.acknowledgeProcessingNotes).not.toHaveBeenCalled();
     expect(
       screen.queryByText(/Automatic summary waits for saved notes/),
@@ -315,12 +315,12 @@ describe("speech engine and automatic processing", () => {
         sessionSnapshot(5, stage),
       );
       await ready();
-      await screen.findByRole("region", { name: "Session processing" });
+      await screen.findByRole("region", { name: "Meeting processing" });
       await userEvent.click(
         screen.getByRole("button", { name: "Dismiss processing status" }),
       );
       expect(
-        screen.queryByRole("region", { name: "Session processing" }),
+        screen.queryByRole("region", { name: "Meeting processing" }),
       ).toBeNull();
       expect(document.activeElement).toBe(screen.getByRole("main"));
       // A newer revision of the same meeting shows the panel again.
@@ -329,7 +329,7 @@ describe("speech engine and automatic processing", () => {
       act(() =>
         vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](next),
       );
-      await screen.findByRole("region", { name: "Session processing" });
+      await screen.findByRole("region", { name: "Meeting processing" });
     },
   );
 
@@ -338,7 +338,7 @@ describe("speech engine and automatic processing", () => {
       sessionSnapshot(5, "failed"),
     );
     await ready();
-    await screen.findByRole("region", { name: "Session processing" });
+    await screen.findByRole("region", { name: "Meeting processing" });
     expect(
       screen.queryByRole("button", { name: "Dismiss processing status" }),
     ).toBeNull();
@@ -358,7 +358,7 @@ describe("speech engine and automatic processing", () => {
       vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
       await ready();
       const status = await screen.findByRole("region", {
-        name: "Session processing",
+        name: "Meeting processing",
       });
       expect(within(status).getByRole("status").textContent).toBe(
         "Finishing audio",
@@ -380,7 +380,7 @@ describe("speech engine and automatic processing", () => {
     snapshot.workflow.text_bytes_used = 0;
     vi.mocked(api.getSessionProcessing).mockResolvedValue(snapshot);
     await ready();
-    await screen.findByRole("region", { name: "Session processing" });
+    await screen.findByRole("region", { name: "Meeting processing" });
     expect(screen.queryByLabelText(/^Used /)).toBeNull();
     expect(screen.queryByText(/^Used /)).toBeNull();
   });
@@ -498,7 +498,7 @@ describe("speech engine and automatic processing", () => {
       vi.mocked(api.onSessionProcessingChanged).mock.calls[0]?.[0](awaiting),
     );
     const status = await screen.findByRole("region", {
-      name: "Session processing",
+      name: "Meeting processing",
     });
     await within(status).findByText(/disk full/);
     expect(api.acknowledgeProcessingNotes).not.toHaveBeenCalled();
@@ -583,7 +583,7 @@ describe("speech engine and automatic processing", () => {
     );
     await ready();
     await userEvent.click(
-      await screen.findByRole("button", { name: "Cancel session processing" }),
+      await screen.findByRole("button", { name: "Cancel meeting processing" }),
     );
     expect(api.cancelSessionProcessing).toHaveBeenCalledWith("sample", 5);
     vi.mocked(api.getSessionProcessing).mockResolvedValue(

@@ -17,6 +17,13 @@ type Props = {
   names: SpeakerNames;
 };
 
+/** Friendly engine name; the fake test engine is labelled so it never reads as a real transcript. */
+export function engineName(version: TranscriptVersion): string {
+  if (version.provider === "fake") return "Fake test engine";
+  const provider = version.provider ?? "Unknown engine";
+  return version.model ? `${provider} · ${version.model}` : provider;
+}
+
 /** History sheet body: transcripts kept before a re-transcription replaced them, read-only. */
 export function TranscriptVersions({ meetingId, versions, names }: Props) {
   const [chosen, setChosen] = useState<number | null>(null);
@@ -42,10 +49,7 @@ export function TranscriptVersions({ meetingId, versions, names }: Props) {
       {versions.map((version, index) => (
         <div className="ver" key={version.id}>
           <div className="ver-top">
-            <span className="ver-name">
-              {version.provider ?? "Unknown engine"}
-              {version.model ? ` · ${version.model}` : ""}
-            </span>
+            <span className="ver-name">{engineName(version)}</span>
             {version.edited && <span className="tag">Edited</span>}
             <button
               className="ver-go"

@@ -144,7 +144,9 @@ class MacConsentRegistry:
         read_string = self._strings()
         now = int(time.time())
         own_pid = os.getpid()
-        found: list[ConsentEntry] = []
+        # One app often has several processes with the same bundle id (Chrome and Teams helpers). The
+        # consumers key by bundle id, so the processes merge here: the app is in use if any of them is.
+        in_use_by_bundle: dict[str, bool] = {}
         for process in self._process_objects(lib):
             pid = self._uint32(lib, process, SELECTOR_PID)
             if pid is None or pid == own_pid:
@@ -153,8 +155,11 @@ class MacConsentRegistry:
             if not name:
                 continue
             running_input = self._uint32(lib, process, SELECTOR_RUNNING_INPUT)
-            found.append(ConsentEntry(name, now, 0) if running_input != 0 else ConsentEntry(name, 0, 0))
-        return found
+            in_use_by_bundle[name] = in_use_by_bundle.get(name, False) or running_input != 0
+        return [
+            ConsentEntry(name, now, 0) if active else ConsentEntry(name, 0, 0)
+            for name, active in in_use_by_bundle.items()
+        ]
 
     def _library(self) -> Any:
         if self._lib is None:

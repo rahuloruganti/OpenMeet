@@ -71,7 +71,8 @@ def replace_transcript(
         "DELETE FROM segments WHERE meeting_id = ?1 AND source IN ('whisper', 'cloud_stt')",
         (meeting_id,),
     )
-    source = "whisper" if provider == "whisper" else "cloud_stt"
+    # The segments CHECK allows only whisper and cloud_stt; the fake engine's rows sit in the local bucket.
+    source = "whisper" if provider in ("whisper", "fake") else "cloud_stt"
     for segment in segments:
         timing = segment["timing"]
         start_ms = timing.get("start_ms") if timing["kind"] == "timed" else None

@@ -443,13 +443,13 @@ def feed_row(h: Harness, feed_id: str) -> dict[str, Any]:
     return next(f for f in svc.list_calendar_feeds(h.ctx) if f["id"] == feed_id)
 
 
-def test_add_feed_with_out_of_range_dates_records_an_error_row_instead_of_failing(
+def test_add_feed_with_out_of_range_dates_skips_that_event_and_keeps_the_feed_ok(
     harness: Harness, memory_keyring: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
     harness.responses[FEED_URL] = (FIXTURES / "out_of_range.ics").read_bytes()
     with caplog.at_level(logging.WARNING, logger="openmeet_py"):
         feed = add_feed(harness)  # must return normally; the credential and row are already saved
-    assert feed["last_status"] == "error" and feed["last_error"] == svc.UNREADABLE
+    assert feed["last_status"] == "ok" and feed["last_error"] is None
     assert feed["has_url"] is True
     assert SECRET not in caplog.text and "calendar.example.test" not in caplog.text
 
@@ -461,12 +461,12 @@ def test_unreadable_feed_records_an_error_and_other_feeds_still_sync(
     assert good["last_status"] == "ok"
     harness.responses[OTHER_URL] = (FIXTURES / "folded_escaped.ics").read_bytes()
     other = add_feed(harness, label="Other", url=OTHER_URL)
-    harness.responses[FEED_URL] = (FIXTURES / "out_of_range.ics").read_bytes()  # the earlier feed goes bad
+    harness.responses[FEED_URL] = b"this is not a calendar"  # the earlier feed goes bad
     harness.requests.clear()
     with caplog.at_level(logging.WARNING, logger="openmeet_py"):
         svc.sync_calendars(harness.ctx)  # must not raise
     assert feed_row(harness, good["id"])["last_status"] == "error"  # previously ok: the failure is recorded
-    assert feed_row(harness, good["id"])["last_error"] == svc.UNREADABLE
+    assert feed_row(harness, good["id"])["last_error"] == svc.NOT_CALENDAR
     assert feed_row(harness, other["id"])["last_status"] == "ok"
     assert OTHER_URL in harness.requests
     assert SECRET not in caplog.text and "calendar.example.test" not in caplog.text
@@ -506,6 +506,26 @@ def test_reminders_keep_ticking_when_a_sync_pass_raises(harness: Harness, monkey
     try:
         assert ticked.wait(5)
     finally:
+        service.stop()
+
+
+def test_reminders_tick_while_a_slow_sync_pass_is_still_running(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ticked = threading.Event()
+    release = threading.Event()
+    service = svc.CalendarService(harness.ctx, clock=lambda: NOW, tick=0.01, sync_every=3600)
+
+    def slow_sync() -> None:
+        release.wait(10)  # a sync pass that is still fetching when the reminder tick is due
+
+    monkeypatch.setattr(service, "sync_all", slow_sync)
+    monkeypatch.setattr(service, "tick_reminders", lambda moment=None: ticked.set() or [])
+    service.start()
+    try:
+        assert ticked.wait(5)  # the tick must not queue behind the sync pass
+    finally:
+        release.set()
         service.stop()
 
 

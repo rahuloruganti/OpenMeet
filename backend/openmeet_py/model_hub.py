@@ -32,7 +32,9 @@ HUB = "https://huggingface.co"
 CONNECT_TIMEOUT = 15.0
 
 
-TRANSFER_TIMEOUT = 30 * 60.0
+# Per-read socket timeout, not a total limit: a slow transfer runs as long as bytes keep arriving. Cancel is
+# checked between chunks, so this also bounds how long a cancel can wait behind a stalled read.
+TRANSFER_TIMEOUT = 60.0
 
 
 REDIRECT_LIMIT = 5
@@ -44,7 +46,10 @@ CHUNK = 64 * 1024
 DISK_MARGIN = 64 * 1024 * 1024
 
 
-TEST_HOSTS_ENV = "OPENMEET_PY_TEST_HOSTS"
+# Test-only host override (a list of hosts that also allows plain HTTP). Only the stub-server test fixtures set
+# it, through monkeypatch. Production code never reads the environment for it, so a shipped build cannot
+# widen the allow-list.
+_TEST_HOSTS: Optional[frozenset[str]] = None
 
 
 REDIRECT_CODES = (301, 302, 303, 307, 308)
@@ -128,11 +133,8 @@ def _within(child: Path, root: Path) -> bool:
     return True
 
 
-def _test_hosts() -> Optional[set[str]]:
-    raw = os.environ.get(TEST_HOSTS_ENV)
-    if raw is None:
-        return None
-    return {host.strip().lower() for host in raw.split(",") if host.strip()}
+def _test_hosts() -> Optional[frozenset[str]]:
+    return _TEST_HOSTS
 
 
 def allowed_url(url: httpx.URL) -> bool:
@@ -267,8 +269,8 @@ def _check_disk(folder: Path, size: int) -> None:
     free = shutil.disk_usage(folder).free
     if free < size + DISK_MARGIN:
         raise _error(
-            f"Not enough free disk space for this model: it needs {size // (1024 * 1024)} MB plus "
-            f"a safety margin, and {free // (1024 * 1024)} MB is free. Nothing was downloaded."
+            f"Not enough free disk space: it needs {size // (1024 * 1024)} MB plus "
+            f"a safety margin, and {free // (1024 * 1024)} MB is free. Nothing was written."
         )
 
 

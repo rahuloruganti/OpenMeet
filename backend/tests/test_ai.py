@@ -513,6 +513,22 @@ def test_long_transcripts_are_chunked_with_one_merge_request() -> None:
     assert "<partial>\npartial\n</partial>" in stub.bodies()[-1]
 
 
+def test_a_reply_cut_off_at_the_output_limit_is_refused_and_not_saved(client: TestClient) -> None:
+    truncated = {"choices": [{"message": {"content": "## Summary\nFictional plan"}, "finish_reason": "length"}]}
+    configure(client, lambda r: httpx.Response(200, json=truncated))
+    meeting = note(client, "Fictional", "Notes.")
+    status, body = invoke_error(client, "generate_summary", id=meeting, template="general-v1")
+    assert body["code"] == "provider_response" and "output limit" in body["message"]
+    assert invoke(client, "list_summaries", id=meeting) == []
+
+
+def test_a_truncated_rewrite_is_refused_not_returned(client: TestClient) -> None:
+    truncated = {"choices": [{"message": {"content": "Shorter sen"}, "finish_reason": "length"}]}
+    configure(client, lambda r: httpx.Response(200, json=truncated))
+    status, body = invoke_error(client, "rewrite_text", text="A long sentence here.", request="Make it shorter")
+    assert body["code"] == "provider_response"
+
+
 def test_oversize_chat_response_is_rejected(client: TestClient) -> None:
     configure(client, lambda r: httpx.Response(200, content=b"{" + b" " * (2 * 1024 * 1024 + 8)))
     meeting = note(client, "Fictional", "Notes.")

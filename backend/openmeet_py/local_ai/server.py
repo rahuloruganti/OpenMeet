@@ -278,9 +278,11 @@ def clear_pid(spec: Spec) -> None:
 
 
 def environment(spec: Spec) -> dict[str, str]:
-    """This process's environment plus the key, read by llama-server from LLAMA_API_KEY (the env
-    form of --api-key in common/arg.cpp at the pinned build)."""
-    return {**os.environ, "LLAMA_API_KEY": spec.api_key}
+    """This process's environment minus every OPENMEET_* variable (OPENMEET_TOKEN guards the local API and
+    must not reach a child process), plus the key, read by llama-server from LLAMA_API_KEY (the env form of
+    --api-key in common/arg.cpp at the pinned build)."""
+    inherited = {name: value for name, value in os.environ.items() if not name.upper().startswith("OPENMEET_")}
+    return {**inherited, "LLAMA_API_KEY": spec.api_key}
 
 
 def _launch_flags(handle: Any) -> dict[str, Any]:

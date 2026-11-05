@@ -65,13 +65,16 @@ export function useSaved() {
   return { shown, mark };
 }
 
-/** The tick itself; polite, so a screen reader hears it without losing focus. */
+/** The tick itself. The live region stays mounted and only its content toggles, so a screen reader announces each save. */
 export function Saved(props: { show: boolean }) {
-  if (!props.show) return null;
   return (
     <span className="om-saved" aria-live="polite">
-      <IconCheck size={12} />
-      Saved
+      {props.show && (
+        <>
+          <IconCheck size={12} />
+          Saved
+        </>
+      )}
     </span>
   );
 }

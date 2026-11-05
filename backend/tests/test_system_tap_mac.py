@@ -563,3 +563,41 @@ def test_concurrent_stop_calls_wait_for_the_same_cleanup(
     assert not first.is_alive() and not second.is_alive()
     assert second_finished.is_set()
     assert module.session.calls == ["start", "stop", "close"]
+
+
+def test_an_unexpected_conversion_error_is_reported_not_raised(
+    darwin: None, install: Callable[..., FakeCatap], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install()
+
+    def broken(self: system_tap_mac._Layout, data: bytes, frames: int) -> tuple[bytes, int]:
+        raise ValueError("odd buffer")
+
+    monkeypatch.setattr(system_tap_mac._Layout, "convert", broken)
+    stream = system_tap_mac.open_tap(lambda data, frames, gap: None)
+    stream.deliver(FakeBuffer(_f32(0.0, 0.0), 1, FakeFormat()))  # must not escape the worker thread
+    assert stream.error() == system_tap_mac.STREAM_STOPPED
+
+
+@pytest.mark.parametrize("failure", ["create", "start"])
+def test_an_unexpected_tap_failure_is_a_denied_backend_error(
+    monkeypatch: pytest.MonkeyPatch, darwin: None, failure: str
+) -> None:
+    options = {"create_error": ValueError("bad")} if failure == "create" else {"start_error": ValueError("bad")}
+    module = FakeCatap(**options)
+    monkeypatch.setitem(sys.modules, "catap", module)
+    with pytest.raises(BackendError) as raised:
+        system_tap_mac.open_tap(lambda *_: None)
+    assert raised.value.message == system_tap_mac.DENIED
+    assert module.session is None or module.session.calls[-1] == "close"
+
+
+def test_an_unexpected_format_error_tears_down_and_is_denied(
+    darwin: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = FakeCatap(stream_format=FakeFormat(bits_per_sample="x"))
+    monkeypatch.setitem(sys.modules, "catap", module)
+    with pytest.raises(BackendError) as raised:
+        system_tap_mac.open_tap(lambda *_: None)
+    assert raised.value.message == system_tap_mac.DENIED
+    assert module.session is not None and module.session.calls[-1] == "close"

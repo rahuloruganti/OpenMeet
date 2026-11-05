@@ -65,6 +65,9 @@ def _local(ctx: Context, settings: dict[str, Any], tracks: list[dict[str, Any]],
     segments = pipeline.run_tracks(
         tracks, engine, settings["stt_language"], settings["stt_prompt"], cancel, report
     )
+    if engine.name == "fake":
+        # Fictional text is recorded as a fake run, never as a Whisper transcript with a real model id.
+        return segments, "fake", "fake"
     return segments, "whisper", settings["stt_model"]
 
 

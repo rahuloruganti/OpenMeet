@@ -86,9 +86,16 @@ def audio_usage(ctx: Context) -> int:
     for folder in root.iterdir():
         if folder.is_symlink() or not folder.is_dir():
             continue
-        for entry in folder.iterdir():
-            if entry.is_file() and not entry.is_symlink():
-                total += entry.stat().st_size
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            continue  # removed since it was listed: nothing to count
+        for entry in entries:
+            try:
+                if entry.is_file() and not entry.is_symlink():
+                    total += entry.stat().st_size
+            except OSError:
+                continue  # removed between listing and stat, for example by a delete in progress
     return total
 
 

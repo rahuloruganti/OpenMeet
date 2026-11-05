@@ -22,7 +22,7 @@ Architecture and user guidance are rewritten from implemented behavior as the re
 
 Windows 11 x64 and Apple silicon macOS 14.2 or newer are the supported platforms. The Windows build is a single unsigned `OpenMeet.exe` with no installer and the data folder `%APPDATA%\OpenMeetPy`; the Mac build is an unsigned, ad-hoc signed `OpenMeet.app` in a DMG with the data folder `~/Library/Application Support/OpenMeetPy`. There is no Intel Mac build.
 
-Real-hardware qualification is open. Audio capture (microphone and system loopback), local whisper.cpp and sherpa-onnx transcription, global shortcuts, opt-in meeting detection and the OS credential store are implemented but have been tested only with fakes and stubs. Builds, `just smoke` runs and mocked tests do not establish recording reliability, pause privacy, drift, transcript accuracy or live summary quality. Only a recorded real-device pass removes those labels.
+Real-hardware qualification is open. Audio capture (microphone and system loopback), local whisper.cpp and sherpa-onnx transcription, global shortcuts, meeting detection (always on; it only offers a prompt) and the OS credential store are implemented but have been tested only with fakes and stubs. Builds, `just smoke` runs and mocked tests do not establish recording reliability, pause privacy, drift, transcript accuracy or live summary quality. Only a recorded real-device pass removes those labels.
 
 The macOS port is further behind: its code is written and unit-tested with fakes on a Windows PC and has not run on a Mac at all. [macOS](macos.md) lists what the first real run must check.
 

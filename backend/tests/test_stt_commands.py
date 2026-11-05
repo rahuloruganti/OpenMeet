@@ -72,8 +72,9 @@ def test_transcribe_meeting_writes_labelled_timed_segments(client: TestClient, f
     meeting = recording(client.app.state.ctx)
     invoke(client, "transcribe_meeting", id=meeting)
     detail = invoke(client, "get_meeting", id=meeting)
-    assert detail["transcript_provider"] == "whisper"
-    assert detail["transcript_model"] == "small"
+    # The fake engine's fictional text is recorded as a fake run, not as a Whisper transcript.
+    assert detail["transcript_provider"] == "fake"
+    assert detail["transcript_model"] == "fake"
     speakers = {segment["speaker"] for segment in detail["segments"]}
     assert speakers == {"You", "Others"}
     assert all(segment["timing"]["kind"] == "timed" for segment in detail["segments"])

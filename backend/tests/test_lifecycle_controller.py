@@ -25,6 +25,7 @@ from openmeet_py.api.lifecycle import THREAD_NAME
 from openmeet_py.api.server import create_app
 from openmeet_py.audio.audio_backend import FakeBackend
 from openmeet_py.audio.recorder import Session
+from openmeet_py.domain import lifecycle as L
 from openmeet_py.platform.detection import ConsentEntry
 from openmeet_py.platform.win32 import FakeWin32
 
@@ -399,6 +400,17 @@ def test_a_fault_while_the_recorder_is_still_active_does_not_end_the_call(rig: R
     rig.lifecycle.recorder_event("fault", None, "auto", "audio")
     rig.pump()
     assert rig.state() == "recording"
+
+
+def test_a_refused_automatic_start_does_not_tag_the_active_meeting_with_the_calendar_event(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    invoke(rig.client, "start_recording", title="Planning", devices={"microphoneId": MIC, "outputId": OUT})
+    manual = rig.ctx.recorder.state()["meeting_id"]
+    monkeypatch.setattr(rig.lifecycle, "_current_calendar_event", lambda: {"id": "event-1", "title": "Standup"})
+    rig.lifecycle._start(L.StartAuto(session_id="session-1", app_id=ZOOM, call_key=f"{ZOOM}#0", reason="test"))
+    assert rig.ctx.recorder.state()["meeting_id"] == manual  # the refused start changed nothing
+    assert rig.rows("SELECT calendar_event_id FROM meetings WHERE id = ?1", (manual,)) == [(None,)]
 
 
 def test_a_failed_stop_leaves_the_call_recoverable_with_the_recorder_text(

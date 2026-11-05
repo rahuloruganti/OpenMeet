@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from conftest import TOKEN, invoke, invoke_error, latest_migration
 from openmeet_py import paths
+from openmeet_py.api import server
 from openmeet_py.api.commands import COMMANDS, NOT_AVAILABLE
 from openmeet_py.infra.store import Store
 
@@ -203,3 +206,47 @@ def test_files_route_never_serves_the_database(client: TestClient, tmp_path: Pat
     assert response.status_code in (403, 404)
     response = client.get("/files", params={"path": str(db_path)})
     assert response.status_code == 401
+
+
+def test_files_route_answers_401_404_403_and_200_by_rule(client: TestClient, tmp_path: Path) -> None:
+    # The lookup runs in the threadpool now; the status codes must not change.
+    data_dir = client.app.state.ctx.store.data_dir  # type: ignore[attr-defined]
+    audio = data_dir / "audio"
+    audio.mkdir(exist_ok=True)
+    wav = audio / "fictional.wav"
+    wav.write_bytes(b"RIFF fictional")
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"RIFF fictional")
+
+    response = client.get("/files", params={"path": str(wav)})
+    assert response.status_code == 401
+
+    response = client.get("/files", params={"path": str(wav), "token": TOKEN})
+    assert response.status_code == 200
+    assert response.content == b"RIFF fictional"
+
+    response = client.get("/files", params={"path": str(audio / "missing.wav"), "token": TOKEN})
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+
+    response = client.get("/files", params={"path": str(outside), "token": TOKEN})
+    assert response.status_code == 403
+    assert response.json()["code"] == "forbidden"
+
+    response = client.get("/files", params={"path": str(data_dir / "meetings.db"), "token": TOKEN})
+    assert response.status_code == 403
+    assert response.json()["code"] == "forbidden"
+
+
+def test_an_unexpected_failure_logs_the_exception_type_never_its_message(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def leaky(ctx: object, cmd: str, args: dict) -> None:
+        raise RuntimeError("echo https://calendar.example.test/ical/private-SECRET-TOKEN and transcript words")
+
+    monkeypatch.setattr(server, "dispatch", leaky)
+    with caplog.at_level(logging.ERROR, logger="openmeet_py"):
+        status, body = invoke_error(client, "get_settings")
+    assert status == 500 and body["code"] == "internal"
+    assert "unexpected failure in get_settings: RuntimeError" in caplog.text
+    assert "SECRET" not in caplog.text and "transcript words" not in caplog.text

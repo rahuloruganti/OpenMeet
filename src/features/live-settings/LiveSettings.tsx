@@ -148,7 +148,7 @@ export function LiveSettings({ settings, disabled, onSaved }: Props) {
     <section className="om-group" aria-label="Live transcript">
       <div className="om-group-head">
         <h3 className="om-group-label">Live transcript</h3>
-        {shown && <Saved show />}
+        <Saved show={shown} />
       </div>
 
       <div className="om-card om-rows">
