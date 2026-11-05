@@ -199,7 +199,7 @@ export function CalendarSettings({ settings, disabled, onSaved }: Props) {
     <section className="om-group" aria-label="Calendar">
       <div className="om-group-head">
         <h3 className="om-group-label">Calendar</h3>
-        {shown && <Saved show />}
+        <Saved show={shown} />
       </div>
 
       <div className="om-card om-rows">

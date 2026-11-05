@@ -24,7 +24,7 @@ export function enhanceBlockReason({
 type Props = Readiness & {
   /** The template the enhancement uses; the workspace template picker owns it. */
   template: string;
-  /** "Enhance notes" first, "Regenerate" once enhanced notes exist. */
+  /** "Enhance notes" first, "Regenerate notes" once enhanced notes exist. */
   label: string;
   busy: boolean;
   onEnhance: (template: string) => void;

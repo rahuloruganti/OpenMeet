@@ -328,6 +328,43 @@ it("opens transcript history from the meeting menu", async () => {
   ).toBeTruthy();
 });
 
+it("labels the fake test engine as fictional in the transcript and history", async () => {
+  const fake: MeetingDetail = {
+    ...recorded,
+    segments: [
+      { speaker: "You", timing: { kind: "untimed" }, text: "Fictional line." },
+    ],
+    transcript_provider: "fake",
+    transcript_model: "fake",
+    transcript_versions: [
+      {
+        id: 9,
+        provider: "fake",
+        model: "fake",
+        edited: false,
+        segment_count: 1,
+      },
+    ],
+  };
+  const { unmount } = render(
+    <MeetingWorkspace {...base} tab="transcript" selected={fake} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "More" }));
+  expect(
+    screen.getByText(
+      "Fake test engine: fictional text, not a real transcript.",
+    ),
+  ).toBeTruthy();
+  unmount();
+
+  render(<MeetingWorkspace {...base} selected={fake} />);
+  await userEvent.click(screen.getByLabelText("More meeting actions"));
+  await userEvent.click(screen.getByRole("button", { name: "History" }));
+  const sheet = screen.getByRole("dialog", { name: "Transcript history" });
+  expect(within(sheet).getByText("Fake test engine")).toBeTruthy();
+  expect(within(sheet).queryByText(/fake · fake/)).toBeNull();
+});
+
 it("renames the meeting from the title with the keyboard", async () => {
   render(<MeetingWorkspace {...base} selected={recorded} />);
   const title = screen.getByRole("button", { name: "Sample sync" });
@@ -563,7 +600,9 @@ it("regenerates enhanced notes with the picked template", async () => {
       onEnhance={onEnhance}
     />,
   );
-  await userEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Regenerate notes" }),
+  );
   expect(onEnhance).toHaveBeenCalledWith("general-v1");
 });
 
@@ -632,7 +671,7 @@ it("shows the plain summary and the enhanced notes as separate labelled blocks",
   expect(
     screen.getByRole("button", { name: "Edit enhanced notes" }),
   ).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Regenerate" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Regenerate notes" })).toBeTruthy();
 });
 
 it("gives each block its own freshness line", () => {

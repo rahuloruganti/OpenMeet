@@ -112,7 +112,7 @@
 .meeting-main .proc-icon {
   display: inline-flex;
   flex: none;
-  color: var(--accent);
+  color: var(--ink-2);
 }
 .meeting-main .proc-icon.failed,
 .meeting-main .proc-icon.interrupted {

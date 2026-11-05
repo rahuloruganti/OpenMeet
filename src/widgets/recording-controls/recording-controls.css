@@ -75,7 +75,7 @@
 }
 
 .rec .status-dot.simulated {
-  border: 1px solid var(--accent);
+  border: 1px solid var(--ink-2);
   background: transparent;
 }
 

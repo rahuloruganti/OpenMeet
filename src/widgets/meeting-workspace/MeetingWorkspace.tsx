@@ -1332,7 +1332,9 @@ export function MeetingWorkspace(props: Props) {
                     <span className="mw-gap" />
                     <EnhanceNotesButton
                       template={template}
-                      label={enhancedCurrent ? "Regenerate" : "Enhance notes"}
+                      label={
+                        enhancedCurrent ? "Regenerate notes" : "Enhance notes"
+                      }
                       hasTranscript={selected.segments.length > 0}
                       hasNotes={props.notes.trim() !== ""}
                       modelReady={props.llmBlocked === null}

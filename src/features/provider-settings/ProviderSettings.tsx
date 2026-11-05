@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   api,
   errorCode,
@@ -175,6 +175,7 @@ export function ConnectionEditor(props: Props) {
   const saveReason = missingFields ? "Enter a URL first." : null;
   // One reason per disabled button, shown only for the cause that applies.
   const urlMoved = !!connection && baseUrl.trim() !== connection.base_url;
+  const testHelpId = useId();
   const testReason =
     !baseUrl.trim() || urlError
       ? "Enter a valid URL first."
@@ -585,11 +586,15 @@ export function ConnectionEditor(props: Props) {
               className="om-ghost om-sm"
               disabled={disabled || selected === NONE || testReason !== null}
               title={testReason ?? "Checks the URL and key by listing models"}
+              aria-describedby={testHelpId}
               aria-busy={busy}
               onClick={() => void testConnection()}
             >
               Test
             </button>
+            <span id={testHelpId} className="sr-only">
+              {testReason ?? "Checks the URL and key by listing models"}
+            </span>
           </div>
         </div>
         <div className="om-row ps-model-row">

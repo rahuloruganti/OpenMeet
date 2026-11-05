@@ -10,7 +10,7 @@ import {
 import { awaitingNotes, endedStages, retryStages } from "../model/processing";
 
 /**
- * Session processing as ONE status row above the editor: what runs now, why it
+ * Meeting processing as ONE status row above the editor: what runs now, why it
  * stopped, and the single action that helps. Usage details sit beside it in muted text.
  */
 export function ProcessingStatus(props: {
@@ -56,7 +56,7 @@ export function ProcessingStatus(props: {
           : IconSpinner;
   const running = !ended;
   return (
-    <section className="proc" aria-label="Session processing">
+    <section className="proc" aria-label="Meeting processing">
       <span
         className={`proc-icon ${stage}${running ? " running" : ""}`}
         aria-hidden="true"
@@ -82,7 +82,7 @@ export function ProcessingStatus(props: {
         )}
         {!ended && (
           <button
-            aria-label="Cancel session processing"
+            aria-label="Cancel meeting processing"
             disabled={busy}
             onClick={props.onCancel}
           >

@@ -61,7 +61,7 @@ export function RewriteSelection(props: {
         onMouseDown={(event) => event.preventDefault()}
         onClick={open}
       >
-        Rewrite with AI…
+        Rewrite with AI
       </button>
       {props.blocked && <span className="muted">{props.blocked.message}</span>}
       {props.blocked?.section && (

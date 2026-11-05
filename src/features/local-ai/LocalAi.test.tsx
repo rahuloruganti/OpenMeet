@@ -294,7 +294,7 @@ it("downloads a file with progress, cancels it, and then lists it on this PC", a
   });
   expect(bar).toHaveProperty("value", 100);
   await userEvent.click(
-    screen.getByRole("button", { name: "Cancel download" }),
+    screen.getByRole("button", { name: "Cancel model file download" }),
   );
   expect(api.localAiCancel).toHaveBeenCalledTimes(1);
 

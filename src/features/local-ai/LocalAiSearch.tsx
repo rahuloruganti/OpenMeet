@@ -171,7 +171,7 @@ export function LocalAiSearch({
                       <ProgressJob
                         job={here}
                         label="Download progress"
-                        cancelLabel="Cancel download"
+                        cancelLabel="Cancel model file download"
                         onCancel={onCancel}
                       />
                     ) : file.downloaded ? (
