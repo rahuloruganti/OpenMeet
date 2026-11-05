@@ -10,6 +10,7 @@ const layers = ["app", "pages", "widgets", "features", "entities", "shared"];
 const slices = {
   pages: ["meeting", "settings", "setup"],
   widgets: [
+    "command-palette",
     "first-run-setup",
     "meeting-sidebar",
     "meeting-workspace",
@@ -20,6 +21,9 @@ const slices = {
   features: [
     "action-items",
     "auto-capture",
+    "calendar",
+    "enhanced-notes",
+    "folders",
     "live-settings",
     "live-transcript",
     "local-ai",

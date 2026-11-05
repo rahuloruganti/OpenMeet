@@ -130,7 +130,7 @@ def _models_listing(root: Path) -> list[dict[str, Any]]:
 
 
 def status(root: Path, model_id: str) -> dict[str, Any]:
-    """The SttStatus shape from src/lib/api.ts. Extra per-model "engine" and "reason" keys are additive."""
+    """The SttStatus shape from src/shared/api/api.ts. Extra per-model "engine" and "reason" keys are additive."""
     models = _models_listing(root)
     languages = list(LANGUAGES)
     if fake_engine():
