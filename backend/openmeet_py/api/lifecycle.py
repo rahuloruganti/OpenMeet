@@ -190,8 +190,9 @@ class LifecycleController:
         if event is not None:
             title = event["title"]
         self._starting = action.session_id
+        started: Optional[dict[str, Any]] = None
         try:
-            self.ctx.recorder.start(
+            started = self.ctx.recorder.start(
                 title,
                 settings["microphone_id"] or "",
                 settings["output_id"] or "",
@@ -204,8 +205,9 @@ class LifecycleController:
             self._start_failed(action, "internal", INTERNAL_START)
         finally:
             self._starting = None
-        if event is not None:
-            meeting_id = self.ctx.recorder.state()["meeting_id"]
+        # Only a start that succeeded owns a meeting; a refused start must not tag another active meeting.
+        if event is not None and started is not None:
+            meeting_id = started["meeting_id"]
             if meeting_id:
                 with self.ctx.store.lock:
                     self.ctx.store.db.execute(

@@ -208,3 +208,27 @@ def test_saved_settings_formats_drive_the_export(
     for path in result["transcript_paths"]:
         assert Path(path).parent == Path(result["path"]).parent
         assert Path(path).stem == Path(result["path"]).stem
+
+
+def test_markdown_snapshot_renders_stored_segments_not_the_placeholder() -> None:
+    detail = note_detail(SAMPLE, {"you": "Ana", "others": None})
+    text = exporter.render(detail, options())
+    assert "No transcript generated." not in text
+    assert text.endswith(
+        "## Transcript\n"
+        "[00:00:01] Ana (You): Hello\n"
+        "[01:00:05] Others: World <b> & again\n"
+    )
+
+
+def test_markdown_snapshot_keeps_the_placeholder_when_there_are_no_segments() -> None:
+    text = exporter.render(note_detail([]), options())
+    assert text.endswith("## Transcript\nNo transcript generated.\n")
+
+
+def test_markdown_snapshot_labels_a_fake_engine_transcript() -> None:
+    detail = note_detail(SAMPLE)
+    detail["transcript_provider"] = "fake"
+    text = exporter.render(detail, options())
+    assert "## Transcript (fake test engine, not a real transcript)\n" in text
+    assert "[00:00:01] You: Hello" in text

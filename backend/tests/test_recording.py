@@ -7,6 +7,7 @@ backend.deliver() and then pause, stop or wait for the writer through public cal
 from __future__ import annotations
 
 import logging
+import sqlite3
 import struct
 import threading
 import time
@@ -665,3 +666,51 @@ def test_listeners_never_run_on_the_audio_callback_or_the_writer_thread(
     for kind, _meeting, _origin, _reason, thread_name in spy.events:
         assert thread_name != "openmeet-audio-writer", kind
         assert not getattr(in_callback, "active", False)
+
+
+def test_a_meter_wait_for_the_lock_is_not_a_suspend_gap(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(recorder_module, "SUSPEND_GAP", 0.5)
+    rec = recorder(client)
+    start(client)
+    with rec.lock:  # the meter waits on this lock for longer than SUSPEND_GAP
+        time.sleep(1.2)
+    time.sleep(0.5)  # a few meter ticks after the lock is released
+    state = rec.state()
+    assert state["status"] == "recording" and state["error"] is None
+    invoke(client, "stop_recording")
+
+
+def test_a_failed_stop_event_write_still_ends_the_recording(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    start(client)
+
+    def refuse(self: Any, kind: str, session: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(recorder_module.Recorder, "_capture_event", refuse)
+    with caplog.at_level(logging.ERROR, logger="openmeet_py"):
+        stopped = invoke(client, "stop_recording")
+    assert stopped["status"] == "stopped" and stopped["error"] is None
+    assert "OperationalError" in caplog.text and "database is locked" not in caplog.text
+    monkeypatch.undo()
+    start(client, "Next call")  # the stopped recording no longer blocks a new start
+    invoke(client, "stop_recording")
+
+
+def test_a_failed_live_finish_still_ends_the_recording(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    start(client)
+
+    def broken(self: Any, session: Any) -> None:
+        raise RuntimeError("decoder crashed")
+
+    monkeypatch.setattr(recorder_module.Recorder, "_finish_live", broken)
+    with caplog.at_level(logging.ERROR, logger="openmeet_py"):
+        stopped = invoke(client, "stop_recording")
+    assert stopped["status"] == "stopped"
+    assert "RuntimeError" in caplog.text and "decoder crashed" not in caplog.text
+    monkeypatch.undo()
+    start(client, "Next call")
+    invoke(client, "stop_recording")

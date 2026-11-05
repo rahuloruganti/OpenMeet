@@ -203,3 +203,33 @@ def test_files_route_never_serves_the_database(client: TestClient, tmp_path: Pat
     assert response.status_code in (403, 404)
     response = client.get("/files", params={"path": str(db_path)})
     assert response.status_code == 401
+
+
+def test_files_route_answers_401_404_403_and_200_by_rule(client: TestClient, tmp_path: Path) -> None:
+    # The lookup runs in the threadpool now; the status codes must not change.
+    data_dir = client.app.state.ctx.store.data_dir  # type: ignore[attr-defined]
+    audio = data_dir / "audio"
+    audio.mkdir(exist_ok=True)
+    wav = audio / "fictional.wav"
+    wav.write_bytes(b"RIFF fictional")
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"RIFF fictional")
+
+    response = client.get("/files", params={"path": str(wav)})
+    assert response.status_code == 401
+
+    response = client.get("/files", params={"path": str(wav), "token": TOKEN})
+    assert response.status_code == 200
+    assert response.content == b"RIFF fictional"
+
+    response = client.get("/files", params={"path": str(audio / "missing.wav"), "token": TOKEN})
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+
+    response = client.get("/files", params={"path": str(outside), "token": TOKEN})
+    assert response.status_code == 403
+    assert response.json()["code"] == "forbidden"
+
+    response = client.get("/files", params={"path": str(data_dir / "meetings.db"), "token": TOKEN})
+    assert response.status_code == 403
+    assert response.json()["code"] == "forbidden"

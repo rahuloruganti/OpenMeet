@@ -718,8 +718,14 @@ class Recorder:
                 self._queue("stop_failed", session.meeting_id, origin, "database")
                 raise
             self.session = None
-            self._capture_event("stopped" if error is None else "error", session)
-            self._finish_live(session)
+            try:
+                self._capture_event("stopped" if error is None else "error", session)
+            except sqlite3.Error as failure:
+                log.error("the stop event could not be stored: %s", type(failure).__name__)
+            try:
+                self._finish_live(session)
+            except Exception as failure:
+                log.error("the live transcript could not be finished: %s", type(failure).__name__)
             self.status = "stopped"
             self.error = error
             self._queue("stopped", session.meeting_id, origin, CAPTURE_ERROR_CODE if error else None)
@@ -773,7 +779,8 @@ class Recorder:
                         self._pause_on_fault(session)
                 health = session.health(self.status == "recording")
             self._deliver()
-            last = tick
+            # Taken after the locked section: time spent waiting on the lock is not a suspend gap.
+            last = time.monotonic()
             self.emit("audio_health", health)
 
     def _pause_on_fault(self, session: Session) -> None:

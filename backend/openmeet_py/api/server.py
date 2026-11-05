@@ -82,6 +82,33 @@ def _error(status: int, code: str, message: str) -> JSONResponse:
     return JSONResponse({"code": code, "message": message}, status_code=status)
 
 
+def _locate_served_file(store: Store, path: str) -> tuple[int, Optional[Path]]:
+    """Blocking part of /files: takes store.lock and touches the disk, so it runs in the threadpool.
+
+    Returns (200, target) when the page may read the file, otherwise (404, None) or (403, None).
+    """
+    roots = [store.data_dir / "audio"]
+    with store.lock:
+        vault = store.db.execute("SELECT vault_folder FROM settings WHERE id = 1").fetchone()[0]
+    if vault:
+        roots.append(Path(vault))
+    try:
+        target = Path(path).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return 404, None
+    allowed = False
+    for root in roots:
+        try:
+            if target.is_relative_to(root.resolve()) and target.is_file():
+                allowed = True
+                break
+        except OSError:
+            continue
+    if not allowed or target.name == DB_FILE or target.suffix == ".db":
+        return 403, None
+    return 200, target
+
+
 def create_app(
     data_dir: Path,
     web_dir: Optional[Path] = None,
@@ -217,24 +244,10 @@ def create_app(
         # so the data folder itself is never served.
         if not local_host(request.headers) or not authorized(token):
             return _error(401, "unauthorized", "The OpenMeet page must be opened from the app.")
-        roots = [store.data_dir / "audio"]
-        with store.lock:
-            vault = store.db.execute("SELECT vault_folder FROM settings WHERE id = 1").fetchone()[0]
-        if vault:
-            roots.append(Path(vault))
-        try:
-            target = Path(path).resolve(strict=True)
-        except (OSError, RuntimeError):
-            return _error(404, "not_found", "File not found.")
-        allowed = False
-        for root in roots:
-            try:
-                if target.is_relative_to(root.resolve()) and target.is_file():
-                    allowed = True
-                    break
-            except OSError:
-                continue
-        if not allowed or target.name == DB_FILE or target.suffix == ".db":
+        status, target = await run_in_threadpool(_locate_served_file, store, path)
+        if target is None:
+            if status == 404:
+                return _error(404, "not_found", "File not found.")
             return _error(403, "forbidden", "That file is not available to the page.")
         return FileResponse(target)
 
