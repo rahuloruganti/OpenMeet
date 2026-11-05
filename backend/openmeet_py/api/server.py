@@ -13,7 +13,6 @@ import os
 import secrets
 import sqlite3
 import threading
-import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional
@@ -215,9 +214,9 @@ def create_app(
         except sqlite3.Error:
             log.error("database error in %s", cmd)
             return _error(500, "database", "The local database operation failed.")
-        except Exception:
-            # Log the exception type and frame only; messages can echo user content.
-            log.error("unexpected failure in %s: %s", cmd, traceback.format_exc(limit=1))
+        except Exception as failure:
+            # Log the exception type only; messages can echo URLs, transcript text or user content.
+            log.error("unexpected failure in %s: %s", cmd, type(failure).__name__)
             return _error(500, "internal", "The operation failed. Check the app log.")
         return JSONResponse(result)
 

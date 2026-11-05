@@ -97,3 +97,26 @@ def test_invalid_keys_are_refused_before_the_store_is_touched(memory_keyring: Me
         keys.store_key("has space")
     assert caught.value.code == "provider_key"
     assert memory_keyring.items == {}
+
+
+def test_the_key_size_limit_is_2560_bytes_on_windows_and_4096_elsewhere(
+    memory_keyring: MemoryKeyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys.use_backend(memory_keyring)
+    long_key = "k" * 2561
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert keys.max_key_bytes() == 2560
+    assert keys.valid_key("k" * 2560)
+    assert not keys.valid_key(long_key)
+    with pytest.raises(AppError) as caught:
+        keys.store_key(long_key)
+    assert caught.value.code == "provider_key"
+    assert "at most 2560 bytes" in caught.value.message
+    assert memory_keyring.items == {}
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert keys.max_key_bytes() == 4096
+    assert keys.valid_key(long_key)
+    assert not keys.valid_key("k" * 4097)
+    account = keys.store_key(long_key)
+    assert keys.read_key(account) == long_key

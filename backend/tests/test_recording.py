@@ -446,6 +446,35 @@ def test_audio_usage_counts_recorded_files(client: TestClient) -> None:
     assert invoke(client, "audio_usage") > 0
 
 
+def test_audio_usage_skips_files_that_vanish_while_it_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from openmeet_py.api import recording
+
+    folder = tmp_path / "audio" / "meeting"
+    folder.mkdir(parents=True)
+    (folder / "kept.wav").write_bytes(b"x" * 10)
+    (folder / "gone.wav").write_bytes(b"x" * 1000)
+    ctx = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
+    original_stat = Path.stat
+
+    def stat(self: Path, **kwargs: object):
+        if self.name == "gone.wav":
+            raise FileNotFoundError(self)  # deleted after iterdir listed it
+        return original_stat(self, **kwargs)
+
+    original_is_file = Path.is_file
+
+    def is_file(self: Path) -> bool:
+        return True if self.name == "gone.wav" else original_is_file(self)  # listed as a file, then gone
+
+    monkeypatch.setattr(Path, "stat", stat)
+    monkeypatch.setattr(Path, "is_file", is_file)
+    assert recording.audio_usage(ctx) == 10
+
+
 def test_stale_recording_is_interrupted_at_startup(tmp_path: Path) -> None:
     from openmeet_py.infra.store import Store
 
@@ -713,4 +742,41 @@ def test_a_failed_live_finish_still_ends_the_recording(
     assert "RuntimeError" in caplog.text and "decoder crashed" not in caplog.text
     monkeypatch.undo()
     start(client, "Next call")
+    invoke(client, "stop_recording")
+
+
+def test_a_stream_that_will_not_stop_pauses_visibly_and_resume_keeps_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    start(client)
+    deliver(client, mic=0.4, out=0.4)
+    mic = backend(client).stream_for("fake-mic")
+
+    def stuck(self: Any) -> None:
+        raise OSError("device busy")
+
+    monkeypatch.setattr(type(mic), "stop", stuck)
+    paused = invoke(client, "pause_recording")
+    assert paused["status"] == "paused"
+    assert "microphone: The stream did not stop." in paused["error"]
+    status, body = invoke_error(client, "resume_recording")
+    assert (status, body["code"]) == (400, "audio")
+    assert backend(client).stream_for("fake-mic") is mic  # the stream that did not stop is not replaced
+    invoke(client, "stop_recording")
+
+
+def test_an_unexpected_meter_error_pauses_capture_with_a_worker_fault(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    start(client)
+    deliver(client, mic=0.4, out=0.4)
+
+    def broken(self: Any, recording: bool) -> dict[str, Any]:
+        raise ValueError("meter broke")
+
+    monkeypatch.setattr(recorder_module.Session, "health", broken)
+    wait_for(lambda: invoke(client, "get_recording_state")["status"] == "paused")
+    error = invoke(client, "get_recording_state")["error"]
+    assert error is not None and "stopped responding" in error
+    monkeypatch.undo()
     invoke(client, "stop_recording")

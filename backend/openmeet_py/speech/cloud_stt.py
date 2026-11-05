@@ -27,6 +27,7 @@ from openmeet_py.api.errors import AppError
 from openmeet_py.audio import audio_wav
 from openmeet_py.domain import providers
 from openmeet_py.domain.transcript_edits import timed
+from openmeet_py.model_hub import _check_disk
 from openmeet_py.speech.transcription import audio_read
 from openmeet_py.speech.transcription.audio_read import WavTrack
 from openmeet_py.speech.transcription.pipeline import session_at_frame, speaker_for
@@ -187,6 +188,8 @@ def plan(tracks: list[dict[str, Any]], cancel: threading.Event, cap: int = MAX_C
             requests += len(ranges)
             if requests > MAX_REQUESTS:
                 raise _error("This recording would require more than 200 cloud requests. Nothing was sent.")
+            # Chunks are written to temporary WAV files before anything is sent: check the space first.
+            _check_disk(Path(scratch.name), frames * channels * 2 + len(ranges) * WAV_HEADER_BYTES)
             chunks: list[Chunk] = []
             for chunk_number, (start, length) in enumerate(ranges):
                 _cancel_check(cancel)

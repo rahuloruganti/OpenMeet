@@ -59,8 +59,9 @@ def _apply(db: sqlite3.Connection, number: int, path: Path, rebuild: bool) -> No
         if db.in_transaction:
             db.execute("ROLLBACK")
         raise
-    if rebuild:
-        db.execute("PRAGMA foreign_keys = ON")
+    finally:
+        if rebuild:  # restored on failure too, so a failed rebuild never leaves the connection without FK checks
+            db.execute("PRAGMA foreign_keys = ON")
 
 
 def _columns(db: sqlite3.Connection) -> set[tuple[str, str]]:
@@ -131,23 +132,27 @@ class Store:
             check_same_thread=False,
             timeout=5,
         )
-        db.execute("PRAGMA foreign_keys = ON")
-        db.execute("PRAGMA journal_mode = WAL")
-        migrate(db)
-        # A restarted process cannot still own a recording from the previous process.
-        db.execute(
-            "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')"
-        )
-        db.execute(
-            "UPDATE processing_runs SET stage='interrupted', error='Processing was interrupted. "
-            "Retry when ready.' WHERE stage IN ('live','finalizing_audio','transcribing',"
-            "'awaiting_notes','summarizing')"
-        )
-        db.execute(
-            "UPDATE processing_sessions SET state='interrupted', revision=revision+1 "
-            "WHERE state='prepared' AND meeting_id IN "
-            "(SELECT meeting_id FROM processing_runs WHERE stage='interrupted')"
-        )
+        try:
+            db.execute("PRAGMA foreign_keys = ON")
+            db.execute("PRAGMA journal_mode = WAL")
+            migrate(db)
+            # A restarted process cannot still own a recording from the previous process.
+            db.execute(
+                "UPDATE meetings SET status = 'interrupted' WHERE status IN ('recording', 'paused')"
+            )
+            db.execute(
+                "UPDATE processing_runs SET stage='interrupted', error='Processing was interrupted. "
+                "Retry when ready.' WHERE stage IN ('live','finalizing_audio','transcribing',"
+                "'awaiting_notes','summarizing')"
+            )
+            db.execute(
+                "UPDATE processing_sessions SET state='interrupted', revision=revision+1 "
+                "WHERE state='prepared' AND meeting_id IN "
+                "(SELECT meeting_id FROM processing_runs WHERE stage='interrupted')"
+            )
+        except BaseException:
+            db.close()  # a failed open must not leak the file handle
+            raise
         return db
 
     def close(self) -> None:

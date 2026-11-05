@@ -68,6 +68,10 @@ class _Skip(Exception):
     """An event the feed describes in a way this build will not guess at (e.g. an unknown TZID)."""
 
 
+# Per event: a date or time that does not fit the datetime range (year 1 or 9999 in some zone) skips only that event.
+_UNSAFE = (_Skip, OverflowError, OSError, ValueError)
+
+
 # ---- times ----------------------------------------------------------------------------------------
 
 
@@ -206,7 +210,7 @@ def _rule_walls(rule: Any, low: dt.datetime, high: dt.datetime) -> list[dt.datet
 def _safe_utc(value: dt.datetime) -> bool:
     try:
         _utc(value)
-    except (OverflowError, OSError, ValueError):
+    except _UNSAFE:
         return False
     return True
 
@@ -320,10 +324,11 @@ def parse_ics(text: str, window_start: dt.datetime, window_end: dt.datetime) -> 
         uid = _uid(component)
         try:
             original, _ = _wall(component.get("RECURRENCE-ID"))
-        except _Skip:
+            key = iso(original)
+        except _UNSAFE:
             continue
         if uid:
-            replaced.add((uid, iso(original)))
+            replaced.add((uid, key))
 
     found: list[EventInstance] = []
     ranges = _ranges(overrides)
@@ -331,26 +336,28 @@ def parse_ics(text: str, window_start: dt.datetime, window_end: dt.datetime) -> 
         uid = _uid(component)
         if uid is None or component.get("DTSTART") is None:
             continue
+        instances: list[EventInstance] = []
         try:
             start, all_day = _wall(component.get("DTSTART"))
             span = _span(component, start, all_day)
             lower = window_start - _span_margin(span) - dt.timedelta(days=1)
             upper = window_end + dt.timedelta(days=1)
             walls = _starts(component, start, span, lower, upper)
-        except _Skip:
-            continue
-        status = _status(component)
-        for wall in walls:
-            original = _utc(wall)
-            if (uid, iso(original)) in replaced:
-                continue
-            shift = _applicable_range(ranges.get(uid, []), original)
-            if shift is None:
-                instance = _event(component, uid, wall, all_day, span, None, status)
-            else:
-                instance = _range_event(shift, uid, original)
-            if _overlaps(instance, window_start, window_end):
-                found.append(instance)
+            status = _status(component)
+            for wall in walls:
+                original = _utc(wall)
+                if (uid, iso(original)) in replaced:
+                    continue
+                shift = _applicable_range(ranges.get(uid, []), original)
+                if shift is None:
+                    instance = _event(component, uid, wall, all_day, span, None, status)
+                else:
+                    instance = _range_event(shift, uid, original)
+                if _overlaps(instance, window_start, window_end):
+                    instances.append(instance)
+        except _UNSAFE:
+            continue  # this event alone is skipped; the rest of the feed still parses
+        found.extend(instances)
 
     for component in overrides:
         uid = _uid(component)
@@ -360,11 +367,11 @@ def parse_ics(text: str, window_start: dt.datetime, window_end: dt.datetime) -> 
             original, _ = _wall(component.get("RECURRENCE-ID"))
             start, all_day = _wall(component.get("DTSTART"))
             span = _span(component, start, all_day)
-        except _Skip:
+            instance = _event(
+                component, uid, start, all_day, span, iso(_utc(original)), _status(component)
+            )
+        except _UNSAFE:
             continue
-        instance = _event(
-            component, uid, start, all_day, span, iso(_utc(original)), _status(component)
-        )
         if _overlaps(instance, window_start, window_end):
             found.append(instance)
 
@@ -405,7 +412,7 @@ def _ranges(overrides: list[Any]) -> dict[str, list[_Range]]:
             span = _span(component, start, all_day)
             original_utc = _utc(original)
             delta = _utc(start) - original_utc
-        except _Skip:
+        except _UNSAFE:
             continue
         found.setdefault(uid, []).append(_Range(original_utc, delta, component, all_day, span, _status(component)))
     for ranges in found.values():

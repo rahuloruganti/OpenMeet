@@ -180,6 +180,10 @@ class CarbonLib:
         return True
 
     def register(self, vk: int, modifiers: int, hotkey_id: int) -> bool:
+        # An id already registered keeps its old Carbon hotkey live. Release it first; if Carbon refuses,
+        # keep the old ref tracked and refuse the new one rather than orphan a live registration.
+        if hotkey_id in self._refs and not self.unregister(hotkey_id):
+            return False
         ref = ctypes.c_void_p()
         hotkey = EventHotKeyID(HOTKEY_SIGNATURE, hotkey_id)
         target = self.lib().GetApplicationEventTarget()

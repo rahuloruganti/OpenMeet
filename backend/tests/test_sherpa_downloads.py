@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 import pytest
 
+from openmeet_py import model_hub
 from openmeet_py.api.errors import AppError
 from openmeet_py.speech import model_library, sherpa_models
 from openmeet_py.speech.stt_catalog import Artifact, SherpaModel
@@ -228,7 +229,7 @@ def test_an_existing_incomplete_model_folder_is_preserved_not_overwritten(serve,
 
 
 def test_release_hosts_are_github_only_over_https_and_never_huggingface(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(model_library.TEST_HOSTS_ENV, raising=False)
+    monkeypatch.setattr(model_hub, "_TEST_HOSTS", None)
     allowed = model_library.allowed_release_url
     for good in [
         "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/a.tar.bz2",

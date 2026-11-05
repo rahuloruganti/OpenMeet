@@ -259,12 +259,17 @@ class Session:
         """No callback can enqueue after this returns. Blocks already queued stay queued."""
         self.accepting = False
         self.generation += 1
-        for track in self.tracks:
+        for index, track in enumerate(self.tracks):
             if track.stream is not None:
                 try:
                     track.stream.stop()
                 except Exception:  # a device that fails to stop still has no more callbacks to route
                     log.warning("stopping an audio stream failed")
+                    self.stream_error(index, "The stream did not stop.")  # resume then refuses to reopen it
+                else:
+                    failure = track.stream.error()  # a stream that reports itself as not stopped
+                    if failure:
+                        self.stream_error(index, failure)
             track.segment_start_us = None  # the next stream run starts a new segment
 
     def checkpoint(self) -> bool:
@@ -765,19 +770,29 @@ class Recorder:
         while not session.finished.is_set():
             time.sleep(METER_INTERVAL)
             tick = time.monotonic()
-            with self.lock:
-                if self.session is not session:
-                    break
-                if self.status == "recording":
-                    if tick - last > SUSPEND_GAP:
-                        session.fault |= SUSPENDED
-                    for index, track in enumerate(session.tracks):
-                        error = track.stream.error() if track.stream is not None else None
-                        if error:
-                            session.stream_error(index, error)
-                    if session.fault:
+            try:
+                with self.lock:
+                    if self.session is not session:
+                        break
+                    if self.status == "recording":
+                        if tick - last > SUSPEND_GAP:
+                            session.fault |= SUSPENDED
+                        for index, track in enumerate(session.tracks):
+                            error = track.stream.error() if track.stream is not None else None
+                            if error:
+                                session.stream_error(index, error)
+                        if session.fault:
+                            self._pause_on_fault(session)
+                    health = session.health(self.status == "recording")
+            except Exception as error:  # an unexpected failure must pause capture, not end the meter silently
+                log.warning("the audio meter failed: %s", type(error).__name__)
+                with self.lock:
+                    if self.session is session and self.status == "recording":
+                        session.fault |= WORKER_ERROR
                         self._pause_on_fault(session)
-                health = session.health(self.status == "recording")
+                self._deliver()
+                last = time.monotonic()
+                continue
             self._deliver()
             # Taken after the locked section: time spent waiting on the lock is not a suspend gap.
             last = time.monotonic()

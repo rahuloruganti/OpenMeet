@@ -326,6 +326,36 @@ def test_a_denied_microphone_maps_to_the_permission_message(sd: FakeSoundDevice)
     )
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Error opening InputStream: Not authorized",
+        "Error opening InputStream: Microphone not authorised",
+    ],
+)
+def test_other_permission_wording_maps_to_the_permission_message(sd: FakeSoundDevice, text: str) -> None:
+    sd.open_error = FakePortAudioError(text)
+    with pytest.raises(audio_backend.BackendError) as raised:
+        MacBackend().open_stream(_mic_device(), lambda *_: None)
+    assert raised.value.message == MIC_DENIED
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Error opening InputStream: Device access denied",
+        "Error opening InputStream: Access to device failed",
+        "Error opening InputStream: Device denied by driver",
+    ],
+)
+def test_generic_access_or_denied_wording_is_not_a_permission_problem(sd: FakeSoundDevice, text: str) -> None:
+    sd.open_error = FakePortAudioError(text)
+    with pytest.raises(audio_backend.BackendError) as raised:
+        MacBackend().open_stream(_mic_device(), lambda *_: None)
+    assert raised.value.message.startswith('OpenMeet could not open the microphone "USB Mic".')
+    assert text.split(": ", 1)[1] in raised.value.message
+
+
 def test_other_open_errors_name_the_device_and_keep_the_text(sd: FakeSoundDevice) -> None:
     sd.open_error = FakePortAudioError("Error opening InputStream: Invalid sample rate")
     with pytest.raises(audio_backend.BackendError) as raised:

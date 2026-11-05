@@ -314,6 +314,40 @@ def test_a_failed_rollback_release_does_not_overwrite_the_live_handle(
     assert carbon._refs == {}
 
 
+def test_registering_an_id_again_releases_the_old_carbon_ref_first(
+    on_mac: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    framework = FakeCarbonFramework()
+    monkeypatch.setattr(ctypes, "CDLL", lambda path: framework)
+    carbon = CarbonLib()
+    native = NativeMacOS(carbon=carbon)
+    assert native.register_hotkey(PAUSE_ID, MOD_WIN, 0x65) is True
+    first_ref = carbon._refs[PAUSE_ID].value
+    assert native.register_hotkey(PAUSE_ID, MOD_WIN, 0x67) is True
+    assert framework.releases == [first_ref]
+    assert framework.registrations == [(PAUSE_ID, 0x65), (PAUSE_ID, 0x67)]
+    assert list(carbon._refs) == [PAUSE_ID]
+
+
+def test_a_refused_release_blocks_a_second_registration_under_the_same_id(
+    on_mac: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    framework = FakeCarbonFramework()
+    monkeypatch.setattr(ctypes, "CDLL", lambda path: framework)
+    carbon = CarbonLib()
+    native = NativeMacOS(carbon=carbon)
+    assert native.register_hotkey(PAUSE_ID, MOD_WIN, 0x65) is True
+    first_ref = carbon._refs[PAUSE_ID].value
+    framework.release_failures = {first_ref}
+    framework.release_status = -50
+    assert native.register_hotkey(PAUSE_ID, MOD_WIN, 0x67) is False
+    assert framework.registrations == [(PAUSE_ID, 0x65)]
+    assert carbon._refs[PAUSE_ID].value == first_ref
+    framework.release_status = 0
+    assert native.unregister_hotkey(PAUSE_ID) is True
+    assert carbon._refs == {}
+
+
 def test_the_pump_is_refused_because_the_cocoa_loop_delivers_events(on_mac: None) -> None:
     native = NativeMacOS(carbon=FakeCarbon())
     with pytest.raises(RuntimeError):

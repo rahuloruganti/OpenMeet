@@ -12,9 +12,15 @@ def macos_version() -> Optional[tuple[int, int]]:
     """Major and minor of the running macOS, or None when it cannot be read."""
     parts = platform.mac_ver()[0].split(".")
     try:
-        return int(parts[0]), int(parts[1])
-    except (IndexError, ValueError):
+        major = int(parts[0])
+        minor = int(parts[1]) if len(parts) > 1 else 0  # "14" means 14.0
+    except ValueError:
         return None
+    if (major, minor) == (10, 16):
+        # A build made with an SDK older than macOS 11 reports 10.16 whatever the release really is.
+        # The true version needs SystemVersion.plist, so it is not guessed: None means unknown.
+        return None
+    return major, minor
 
 
 def process_audio_supported() -> bool:

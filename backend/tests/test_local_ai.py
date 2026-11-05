@@ -650,6 +650,20 @@ def test_the_key_goes_in_the_environment_never_on_the_command_line(tmp_path: Pat
     assert server.environment(built)["LLAMA_API_KEY"] == built.api_key
 
 
+def test_the_child_environment_drops_openmeet_secrets_and_keeps_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENMEET_TOKEN", "local-api-secret")
+    monkeypatch.setenv("OPENMEET_PY_FAKE_STT", "1")
+    monkeypatch.setenv("OPENMEET_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FICTIONAL_UNRELATED", "kept")
+    env = server.environment(spec(tmp_path))
+    assert not [name for name in env if name.upper().startswith("OPENMEET_")]
+    assert "local-api-secret" not in env.values()
+    assert env["FICTIONAL_UNRELATED"] == "kept"
+    assert env["LLAMA_API_KEY"] == "test-key"
+
+
 def test_the_server_counts_as_running_only_after_health_and_one_touch(tmp_path: Path) -> None:
     answers = iter([False, False, True])
     probed: list[int] = []

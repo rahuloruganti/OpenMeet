@@ -1,7 +1,7 @@
 """A routed stub HTTP server on 127.0.0.1 for download and detection tests. Nothing leaves the machine.
 
 Each route maps a request path to a function that writes the response. Every requested path is recorded
-in `hits`. Tests set OPENMEET_PY_TEST_HOSTS=127.0.0.1 when they fetch from it.
+in `hits`. The fixture sets the model_hub test-only host override to 127.0.0.1 while it runs.
 """
 
 from __future__ import annotations
@@ -59,10 +59,10 @@ class RoutedServer(ThreadingHTTPServer):
 @pytest.fixture
 def serve(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[dict[str, Route]], RoutedServer]]:
     """Starts a routed server; returns a factory. Hosts are limited to 127.0.0.1 for the test."""
-    from openmeet_py.speech import model_library
+    from openmeet_py import model_hub
 
     servers: list[RoutedServer] = []
-    monkeypatch.setenv(model_library.TEST_HOSTS_ENV, "127.0.0.1")
+    monkeypatch.setattr(model_hub, "_TEST_HOSTS", frozenset({"127.0.0.1"}))
 
     def start(routes: dict[str, Route]) -> RoutedServer:
         server = RoutedServer(routes)

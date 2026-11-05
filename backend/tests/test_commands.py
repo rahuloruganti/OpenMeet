@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from conftest import TOKEN, invoke, invoke_error, latest_migration
 from openmeet_py import paths
+from openmeet_py.api import server
 from openmeet_py.api.commands import COMMANDS, NOT_AVAILABLE
 from openmeet_py.infra.store import Store
 
@@ -233,3 +236,17 @@ def test_files_route_answers_401_404_403_and_200_by_rule(client: TestClient, tmp
     response = client.get("/files", params={"path": str(data_dir / "meetings.db"), "token": TOKEN})
     assert response.status_code == 403
     assert response.json()["code"] == "forbidden"
+
+
+def test_an_unexpected_failure_logs_the_exception_type_never_its_message(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def leaky(ctx: object, cmd: str, args: dict) -> None:
+        raise RuntimeError("echo https://calendar.example.test/ical/private-SECRET-TOKEN and transcript words")
+
+    monkeypatch.setattr(server, "dispatch", leaky)
+    with caplog.at_level(logging.ERROR, logger="openmeet_py"):
+        status, body = invoke_error(client, "get_settings")
+    assert status == 500 and body["code"] == "internal"
+    assert "unexpected failure in get_settings: RuntimeError" in caplog.text
+    assert "SECRET" not in caplog.text and "transcript words" not in caplog.text

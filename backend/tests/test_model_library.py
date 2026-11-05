@@ -1,5 +1,5 @@
 """Model downloads, imports, scans and Hugging Face parsing. No real network: stub servers on 127.0.0.1
-(with OPENMEET_PY_TEST_HOSTS set) and httpx.MockTransport for the Hub metadata.
+(with the model_hub test-only host override) and httpx.MockTransport for the Hub metadata.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import Any, Iterator
 import httpx
 import pytest
 
+from openmeet_py import model_hub
 from openmeet_py.api.errors import AppError
 from openmeet_py.speech import model_library
 from openmeet_py.speech.stt_catalog import WHISPER_MODELS, Artifact
@@ -75,6 +76,22 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"\0" * 65536)
                 self.wfile.flush()
                 time.sleep(0.01)
+        elif self.path == "/trickle":  # total time well past the read timeout, but every read arrives in time
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(PAYLOAD)))
+            self.end_headers()
+            step = len(PAYLOAD) // 10 + 1
+            for start in range(0, len(PAYLOAD), step):
+                self.wfile.write(PAYLOAD[start : start + step])
+                self.wfile.flush()
+                time.sleep(0.1)
+        elif self.path == "/stall":  # one chunk, then silence longer than the read timeout
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(PAYLOAD)))
+            self.end_headers()
+            self.wfile.write(PAYLOAD[:1000])
+            self.wfile.flush()
+            time.sleep(3)
         else:
             self.send_error(404)
 
@@ -90,7 +107,7 @@ class _StubServer(ThreadingHTTPServer):
 @pytest.fixture
 def stub(monkeypatch: pytest.MonkeyPatch) -> Iterator[_StubServer]:
     server = _StubServer()
-    monkeypatch.setenv(model_library.TEST_HOSTS_ENV, "127.0.0.1")
+    monkeypatch.setattr(model_hub, "_TEST_HOSTS", frozenset({"127.0.0.1"}))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -245,7 +262,7 @@ def test_a_retry_starts_from_zero_with_no_range_header(stub: _StubServer, tmp_pa
 def test_without_the_test_override_plain_http_and_local_hosts_are_refused(
     stub: _StubServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv(model_library.TEST_HOSTS_ENV, raising=False)
+    monkeypatch.setattr(model_hub, "_TEST_HOSTS", None)
     folder = tmp_path / "models"
     folder.mkdir()
     with pytest.raises(AppError):
@@ -254,7 +271,7 @@ def test_without_the_test_override_plain_http_and_local_hosts_are_refused(
 
 
 def test_allowed_urls_are_https_hugging_face_hosts_without_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(model_library.TEST_HOSTS_ENV, raising=False)
+    monkeypatch.setattr(model_hub, "_TEST_HOSTS", None)
     allowed = [
         "https://huggingface.co/x",
         "https://cdn-lfs.huggingface.co/x",
@@ -281,8 +298,31 @@ def test_the_client_never_reads_proxy_or_netrc_settings() -> None:
 
 
 def test_the_download_timeout_and_redirect_cap_are_fixed() -> None:
-    assert model_library.TRANSFER_TIMEOUT == 30 * 60
+    assert model_library.TRANSFER_TIMEOUT == 60
     assert model_library.REDIRECT_LIMIT == 5
+
+
+def test_a_slow_transfer_completes_because_the_timeout_applies_per_read(
+    stub: _StubServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(model_hub, "TRANSFER_TIMEOUT", 0.5)  # total is about 1 s, every read arrives in 0.1 s
+    folder = tmp_path / "models"
+    folder.mkdir()
+    fetch(stub, "/trickle", folder)
+    assert (folder / "ggml-fictional.bin").read_bytes() == PAYLOAD
+
+
+def test_a_stalled_transfer_fails_at_the_read_timeout_so_cancel_is_not_stuck(
+    stub: _StubServer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(model_hub, "TRANSFER_TIMEOUT", 0.3)
+    folder = tmp_path / "models"
+    folder.mkdir()
+    started = time.monotonic()
+    with pytest.raises(AppError):
+        fetch(stub, "/stall", folder)
+    assert time.monotonic() - started < 2.5
+    assert leftovers(folder) == []
 
 
 # ---- imports -----------------------------------------------------------------------
@@ -480,6 +520,73 @@ def test_download_from_the_hub_verifies_checksum_writes_a_manifest_and_never_clo
         model_library.download_hf_model(tmp_path / "stt", proposed, events.append, transport=hub(handler))
     assert "already exists" in info.value.message
     assert model_path.read_bytes() == payload
+
+
+def _hub_download_fixture(payload: bytes) -> tuple[dict[str, Any], Any, dict[str, Any]]:
+    file_entry = sibling("ggml-fictional.bin", payload)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/api/models/{REPO}/revision/{REVISION}":
+            return httpx.Response(200, json=metadata([file_entry]))
+        if request.url.path == f"/{REPO}/resolve/{REVISION}/ggml-fictional.bin":
+            return httpx.Response(200, content=payload)
+        return httpx.Response(404)
+
+    proposed = {
+        "repo_id": REPO, "revision": REVISION, "filename": "ggml-fictional.bin", "size": len(payload),
+        "sha256": file_entry["lfs"]["sha256"], "license": "mit", "model_id": None,
+    }
+    return proposed, hub(handler), file_entry
+
+
+def test_a_failed_manifest_write_publishes_no_model_and_leaves_no_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tempfile
+
+    payload = b"fictional-whisper-weights" * 40
+    proposed, transport, _ = _hub_download_fixture(payload)
+    real_mkstemp = tempfile.mkstemp
+
+    def failing_mkstemp(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("prefix") == ".manifest-":
+            raise OSError("forced manifest failure")
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(model_library.tempfile, "mkstemp", failing_mkstemp)
+    root = tmp_path / "stt"
+    with pytest.raises(OSError):
+        model_library.download_hf_model(root, proposed, lambda _: None, transport=transport)
+    models = root / "models"
+    assert leftovers(models) == []
+
+    monkeypatch.setattr(model_library.tempfile, "mkstemp", real_mkstemp)
+    result = model_library.download_hf_model(root, proposed, lambda _: None, transport=transport)
+    assert Path(result["path"]).read_bytes() == payload
+
+
+def test_a_failed_manifest_publication_removes_the_model_so_a_retry_is_not_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"fictional-whisper-weights" * 40
+    proposed, transport, _ = _hub_download_fixture(payload)
+    real_link = model_library._link_or_fail
+
+    def failing_manifest_link(source: Path, destination: Path) -> None:
+        if destination.name.endswith(".openmeet.json"):
+            raise AppError("model_library", "Model publication failed. Existing files were preserved.")
+        real_link(source, destination)
+
+    monkeypatch.setattr(model_library, "_link_or_fail", failing_manifest_link)
+    root = tmp_path / "stt"
+    with pytest.raises(AppError):
+        model_library.download_hf_model(root, proposed, lambda _: None, transport=transport)
+    assert leftovers(root / "models") == []
+
+    monkeypatch.setattr(model_library, "_link_or_fail", real_link)
+    result = model_library.download_hf_model(root, proposed, lambda _: None, transport=transport)
+    assert Path(result["path"]).read_bytes() == payload
+    assert (Path(result["path"]).parent / "ggml-fictional.bin.openmeet.json").exists()
 
 
 def test_a_download_whose_metadata_changed_is_refused(tmp_path: Path) -> None:

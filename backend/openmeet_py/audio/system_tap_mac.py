@@ -226,6 +226,10 @@ class TapStream:
         except BackendError as error:
             self._fail(error.message)
             return
+        except Exception as error:  # e.g. numpy on an odd buffer: must not escape catap's worker thread
+            log.warning("converting a system audio buffer failed: %s", type(error).__name__)
+            self._fail(STREAM_STOPPED)
+            return
         if frames < 1 or self._closing.is_set():
             return
         try:
@@ -301,11 +305,11 @@ def open_tap(on_audio: AudioCallback) -> TapStream:
             max_pending_buffers=PENDING_BUFFERS,
         )
         stream.attach(session)
-    except (OSError, RuntimeError) as error:
+    except Exception as error:  # any failure to create the tap reads as a refused tap
         raise BackendError(DENIED) from error
     try:
         session.start()
-    except (OSError, RuntimeError) as error:
+    except Exception as error:
         stream.stop()
         raise BackendError(DENIED) from error
     try:
@@ -313,4 +317,7 @@ def open_tap(on_audio: AudioCallback) -> TapStream:
     except BackendError:
         stream.stop()
         raise
+    except Exception as error:
+        stream.stop()
+        raise BackendError(DENIED) from error
     return stream
