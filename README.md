@@ -1,8 +1,18 @@
 # OpenMeet
 
-A local-first meeting notetaker for Windows 11 and Apple silicon Macs. It records your microphone and system audio, transcribes on this PC, and writes AI notes from a model you choose. Version 0.9.1, unsigned, no installer: one `OpenMeet.exe` on Windows. On macOS you build the app yourself for now.
+A local-first meeting notetaker for Windows 11 and Apple silicon Macs. It records your microphone and system audio, transcribes on this PC, and writes AI notes from a model you choose.
 
-Audio capture, local transcription, shortcuts and meeting detection have not been tested on real hardware yet. The macOS build has not run on a Mac at all; see [macOS](docs/macos.md) for what that means.
+## Status
+
+| Build | What it is |
+| --- | --- |
+| Windows 0.9.1 | A public `OpenMeet.exe` on the [latest release](https://github.com/rahuloruganti/OpenMeet/releases/latest). Unsigned, no installer, one file. |
+| macOS 0.9.1 | Source only. You build the app yourself. |
+| macOS 0.9.0 preview | An older [DMG](https://github.com/rahuloruganti/OpenMeet/releases/download/v0.9.0/OpenMeet-0.9.0-arm64.dmg). Still unqualified. |
+
+**Not yet tested on real hardware.** Audio capture, local transcription, global shortcuts, meeting detection and the OS credential store are implemented, but have only been exercised with fakes and stubs. Builds and mocked tests do not establish recording reliability, pause behavior, transcript accuracy or summary quality. Consider it a preview, and do not rely on it as the only record of an important meeting until audio capture and transcription have been validated on real hardware.
+
+**The Mac build has never run on a Mac.** Its code was written and unit-tested with fakes on a Windows PC. See [macOS](docs/macos.md) for what the first real run has to check.
 
 ## Install
 
@@ -24,9 +34,9 @@ just build
 
 ## On a Mac
 
-Apple silicon and macOS 14.2 or newer. There is no Intel build.
+Apple silicon and macOS 14.2 or newer. There is no Intel build and no 0.9.1 binary.
 
-An older [0.9.0 Mac preview](https://github.com/rahuloruganti/OpenMeet/releases/download/v0.9.0/OpenMeet-0.9.0-arm64.dmg) is available. No 0.9.1 Mac binary is included; build 0.9.1 from source using the steps below.
+The older [0.9.0 Mac preview](https://github.com/rahuloruganti/OpenMeet/releases/download/v0.9.0/OpenMeet-0.9.0-arm64.dmg) is the only Mac download. Build 0.9.1 from source using the steps below.
 
 1. Build it: install Xcode command line tools (`xcode-select --install`), [uv](https://docs.astral.sh/uv/getting-started/installation/), Node.js 24 with Corepack and Git, then run `just build`. That writes `packaging/dist/OpenMeet-<version>-arm64.dmg`.
 2. Open the DMG and drag **OpenMeet** to **Applications**.
@@ -46,6 +56,22 @@ The first launch opens **Set up OpenMeet**:
 API keys go to the OS credential store (Windows Credential Manager, or Keychain on macOS) and are never shown again. You can change everything later in **Settings**. Nothing downloads until you click.
 
 Your data lives in `%APPDATA%\OpenMeetPy\` on Windows and `~/Library/Application Support/OpenMeetPy/` on a Mac, unencrypted. There is no telemetry. See [privacy](docs/privacy.md).
+
+## How it fits together
+
+The app is one Python backend and one React interface, packaged together as the `.exe` or the `.app`:
+
+```mermaid
+flowchart LR
+  UI["React interface<br/>pywebview window"] <-->|"HTTP and WebSocket<br/>127.0.0.1, token"| API["Python backend<br/>FastAPI and uvicorn"]
+  API --> DB[("meetings.db<br/>SQLite")]
+  API --> AUD["Audio capture<br/>microphone and system"]
+  AUD --> WAV["Two WAV tracks<br/>in the data folder"]
+  API --> STT["Speech to text<br/>whisper.cpp or sherpa-onnx<br/>or a cloud API"]
+  API --> AI["AI notes<br/>OpenAI-compatible API<br/>or local llama-server"]
+```
+
+The backend serves on a random loopback port and requires a per-run token for API commands, file reads and the event WebSocket; the health check, the page itself and its static assets are served without one. The window opens `http://127.0.0.1:<port>/`, and the server serves the built UI from the app bundle. Recordings are written to the data folder, and cloud calls happen only for the actions you configure. The [privacy page](docs/privacy.md) lists every network action.
 
 ## Develop
 
